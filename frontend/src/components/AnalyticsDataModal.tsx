@@ -13,19 +13,21 @@ export default function AnalyticsDataModal({ isOpen, onClose, onConfirmDisable }
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-foreground bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-card rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+    <div className="fixed inset-0 bg-foreground/50 flex items-center justify-center z-50">
+      <div role="dialog" aria-modal="true" aria-labelledby="analytics-modal-title" className="bg-card rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-border">
           <div className="flex items-center gap-3">
-            <Shield className="w-6 h-6 text-primary" />
-            <h2 className="text-xl font-semibold text-foreground">What Analytics Collects</h2>
+            <Shield aria-hidden="true" className="w-6 h-6 text-primary" />
+            <h2 id="analytics-modal-title" className="text-xl text-foreground">Hvad brugsstatistik indsamler</h2>
           </div>
           <button
+            type="button"
             onClick={onClose}
-            className="text-muted-foreground hover:text-foreground transition-colors"
+            aria-label="Luk"
+            className="p-2 rounded-md text-muted-foreground hover:text-foreground transition-colors focus-visible:ring-2 ring-ring"
           >
-            <X className="w-5 h-5" />
+            <X aria-hidden="true" className="w-5 h-5" />
           </button>
         </div>
 
@@ -34,92 +36,92 @@ export default function AnalyticsDataModal({ isOpen, onClose, onConfirmDisable }
           {/* Privacy Notice */}
           <div className="bg-success/10 border border-success/30 rounded-lg p-4">
             <div className="flex items-start gap-3">
-              <Info className="w-5 h-5 text-success mt-0.5 flex-shrink-0" />
+              <Info aria-hidden="true" className="w-5 h-5 text-success mt-0.5 flex-shrink-0" />
               <div className="text-sm text-success">
-                <p className="font-semibold mb-1">Your Privacy is Protected</p>
-                <p>Analytics is off by default. If you enable it, we collect <strong>anonymous usage data only</strong>. No meeting content, names, file paths, or personal information is ever collected.</p>
+                <p className="font-semibold mb-1">Dit privatliv er beskyttet</p>
+                <p>Brugsstatistik er slået fra som standard. Slår du den til, indsamler vi <strong>kun anonyme brugsdata</strong>. Vi indsamler aldrig mødeindhold, navne, filstier eller personoplysninger.</p>
               </div>
             </div>
           </div>
 
           {/* Data Categories */}
           <div className="space-y-4">
-            <h3 className="text-lg font-semibold text-foreground">Data We Collect When Enabled:</h3>
+            <h3 className="text-lg font-semibold text-foreground">Data, der indsamles, når statistik er slået til</h3>
 
             {/* Model Preferences */}
             <div className="border border-border rounded-lg p-4">
-              <h4 className="font-semibold text-foreground mb-2">1. Model Preferences</h4>
+              <h4 className="font-semibold text-foreground mb-2">1. Valg af modeller</h4>
               <ul className="text-sm text-foreground space-y-1 ml-4">
-                <li>• Transcription model (e.g., "Whisper large-v3", "Parakeet")</li>
-                <li>• Summary model (e.g., "Llama 3.2", "Claude Sonnet")</li>
-                <li>• Model provider (e.g., "Local", "Ollama", "OpenRouter")</li>
+                <li>• Transskriptionsmodel (fx "Whisper large-v3", "Parakeet")</li>
+                <li>• Opsummeringsmodel (fx "Llama 3.2", "Claude Sonnet")</li>
+                <li>• Modeludbyder (fx "Lokal", "Ollama", "OpenRouter")</li>
               </ul>
-              <p className="text-xs text-muted-foreground mt-2 italic">Helps us understand which models users prefer</p>
+              <p className="text-xs text-muted-foreground mt-2 italic">Hjælper os med at forstå, hvilke modeller der bruges</p>
             </div>
 
             {/* Meeting Metrics */}
             <div className="border border-border rounded-lg p-4">
-              <h4 className="font-semibold text-foreground mb-2">2. Anonymous Meeting Metrics</h4>
+              <h4 className="font-semibold text-foreground mb-2">2. Anonyme måltal for møder</h4>
               <ul className="text-sm text-foreground space-y-1 ml-4">
-                <li>• Recording duration (e.g., "125 seconds")</li>
-                <li>• Pause duration (e.g., "5 seconds")</li>
-                <li>• Number of transcript segments</li>
-                <li>• Number of audio chunks processed</li>
+                <li>• Optagelsens længde (fx "125 sekunder")</li>
+                <li>• Pausens længde (fx "5 sekunder")</li>
+                <li>• Antal transskriptsegmenter</li>
+                <li>• Antal behandlede lydstykker</li>
               </ul>
-              <p className="text-xs text-muted-foreground mt-2 italic">Helps us optimize performance and understand usage patterns</p>
+              <p className="text-xs text-muted-foreground mt-2 italic">Hjælper os med at forbedre ydeevnen og forstå, hvordan appen bruges</p>
             </div>
 
             {/* Device Types */}
             <div className="border border-border rounded-lg p-4">
-              <h4 className="font-semibold text-foreground mb-2">3. Device Types (Not Names)</h4>
+              <h4 className="font-semibold text-foreground mb-2">3. Enhedstyper (ikke navne)</h4>
               <ul className="text-sm text-foreground space-y-1 ml-4">
-                <li>• Microphone type: "Bluetooth" or "Wired" or "Unknown"</li>
-                <li>• System audio type: "Bluetooth" or "Wired" or "Unknown"</li>
+                <li>• Mikrofontype: "Bluetooth", "Kablet" eller "Ukendt"</li>
+                <li>• Systemlydtype: "Bluetooth", "Kablet" eller "Ukendt"</li>
               </ul>
-              <p className="text-xs text-muted-foreground mt-2 italic">Helps us improve compatibility, NOT the actual device names</p>
+              <p className="text-xs text-muted-foreground mt-2 italic">Hjælper os med at forbedre kompatibiliteten. Vi indsamler ikke enhedernes navne</p>
             </div>
 
             {/* Usage Patterns */}
             <div className="border border-border rounded-lg p-4">
-              <h4 className="font-semibold text-foreground mb-2">4. App Usage Patterns</h4>
+              <h4 className="font-semibold text-foreground mb-2">4. Brug af appen</h4>
               <ul className="text-sm text-foreground space-y-1 ml-4">
-                <li>• App started/stopped events</li>
-                <li>• Session duration</li>
-                <li>• Feature usage (e.g., "settings changed")</li>
-                <li>• Error occurrences (helps us fix bugs)</li>
+                <li>• At appen startes og lukkes</li>
+                <li>• Sessionens længde</li>
+                <li>• Brug af funktioner (fx "indstillinger ændret")</li>
+                <li>• Fejl, der opstår (hjælper os med at rette dem)</li>
               </ul>
-              <p className="text-xs text-muted-foreground mt-2 italic">Helps us improve user experience</p>
+              <p className="text-xs text-muted-foreground mt-2 italic">Hjælper os med at gøre appen bedre at bruge</p>
             </div>
 
             {/* Platform Info */}
             <div className="border border-border rounded-lg p-4">
-              <h4 className="font-semibold text-foreground mb-2">5. Platform Information</h4>
+              <h4 className="font-semibold text-foreground mb-2">5. Platform</h4>
               <ul className="text-sm text-foreground space-y-1 ml-4">
-                <li>• Operating system (e.g., "macOS", "Windows")</li>
-                <li>• App version (automatically included in all events)</li>
-                <li>• Architecture (e.g., "x86_64", "aarch64")</li>
+                <li>• Styresystem (fx "macOS", "Windows")</li>
+                <li>• Appens version (indgår automatisk i alle hændelser)</li>
+                <li>• Arkitektur (fx "x86_64", "aarch64")</li>
               </ul>
-              <p className="text-xs text-muted-foreground mt-2 italic">Helps us prioritize platform support</p>
+              <p className="text-xs text-muted-foreground mt-2 italic">Hjælper os med at prioritere, hvilke platforme vi understøtter</p>
             </div>
           </div>
 
           {/* What We DON'T Collect */}
           <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-4">
-            <h4 className="font-semibold text-destructive mb-2">What We DON'T Collect:</h4>
+            <h4 className="font-semibold text-destructive mb-2">Det indsamler vi ikke</h4>
             <ul className="text-sm text-destructive space-y-1 ml-4">
-              <li>• ❌ Meeting names or titles</li>
-              <li>• ❌ File names, file paths, or meeting folders</li>
-              <li>• ❌ Meeting transcripts or content</li>
-              <li>• ❌ Audio recordings</li>
-              <li>• ❌ Device names (only types: Bluetooth/Wired)</li>
-              <li>• ❌ Personal information</li>
-              <li>• ❌ Any identifiable data</li>
+              <li>• Mødenavne eller titler</li>
+              <li>• Filnavne, filstier eller mødemapper</li>
+              <li>• Transskripter eller mødeindhold</li>
+              <li>• Lydoptagelser</li>
+              <li>• Enhedsnavne (kun typer: Bluetooth/Kablet)</li>
+              <li>• Personoplysninger</li>
+              <li>• Data, der kan identificere dig</li>
             </ul>
           </div>
 
           {/* Example Event */}
           <div className="bg-background border border-border rounded-lg p-4">
-            <h4 className="font-semibold text-foreground mb-2">Example Event:</h4>
+            <h4 className="font-semibold text-foreground mb-2">Eksempel på en hændelse</h4>
             <pre className="text-xs text-foreground overflow-x-auto">
               {`{
   "event": "meeting_ended",
@@ -141,16 +143,18 @@ export default function AnalyticsDataModal({ isOpen, onClose, onConfirmDisable }
         {/* Footer */}
         <div className="flex items-center justify-between gap-4 p-6 border-t border-border bg-background">
           <button
+            type="button"
             onClick={onClose}
-            className="px-4 py-2 text-foreground bg-card border border-input rounded-md hover:bg-accent transition-colors"
+            className="min-h-[44px] px-4 py-2 text-foreground bg-card border border-input rounded-md hover:bg-accent transition-colors focus-visible:ring-2 ring-ring"
           >
-            Keep Analytics Enabled
+            Behold statistik slået til
           </button>
           <button
+            type="button"
             onClick={onConfirmDisable}
-            className="px-4 py-2 text-destructive-foreground bg-destructive rounded-md hover:bg-destructive/90 transition-colors"
+            className="min-h-[44px] px-4 py-2 focus-visible:ring-2 ring-ring text-destructive-foreground bg-destructive rounded-md hover:bg-destructive/90 transition-colors"
           >
-            Confirm: Disable Analytics
+            Slå statistik fra
           </button>
         </div>
       </div>

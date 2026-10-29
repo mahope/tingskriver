@@ -33,10 +33,10 @@ export function SettingTabs({
     return (
         <Tabs defaultValue={defaultTab} className="w-full max-h-[calc(100vh-10rem)] overflow-y-auto" onValueChange={handleTabChange}>
   <TabsList>
-    <TabsTrigger value="transcriptSettings">Transcript</TabsTrigger>
-    <TabsTrigger value="modelSettings">Ai Summary</TabsTrigger>
-    <TabsTrigger value="recordingSettings">Preferences</TabsTrigger>
-    <TabsTrigger value="about">About</TabsTrigger>
+    <TabsTrigger value="transcriptSettings">Transskript</TabsTrigger>
+    <TabsTrigger value="modelSettings">AI-opsummering</TabsTrigger>
+    <TabsTrigger value="recordingSettings">Indstillinger</TabsTrigger>
+    <TabsTrigger value="about">Om</TabsTrigger>
   </TabsList>
   <TabsContent value="modelSettings">
     <ModelSettingsModal

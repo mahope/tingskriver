@@ -15,10 +15,10 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 
 // Tabs configuration (constant)
 const TABS = [
-  { value: 'general', label: 'General', icon: Settings2 },
-  { value: 'recording', label: 'Recordings', icon: Mic },
-  { value: 'Transcriptionmodels', label: 'Transcription', icon: DatabaseIcon },
-  { value: 'summaryModels', label: 'Summary', icon: SparkleIcon },
+  { value: 'general', label: 'Generelt', icon: Settings2 },
+  { value: 'recording', label: 'Optagelser', icon: Mic },
+  { value: 'Transcriptionmodels', label: 'Transskription', icon: DatabaseIcon },
+  { value: 'summaryModels', label: 'Opsummering', icon: SparkleIcon },
   { value: 'beta', label: 'Beta', icon: FlaskConical }
 ] as const;
 
@@ -69,13 +69,14 @@ export default function SettingsPage() {
         <div className="max-w-6xl mx-auto px-8 py-6">
           <div className="flex items-center gap-4">
             <button
+              type="button"
               onClick={() => router.back()}
-              className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors"
+              className="flex items-center gap-2 min-h-[44px] px-2 text-muted-foreground hover:text-foreground transition-colors focus-visible:ring-2 ring-ring rounded-md"
             >
-              <ArrowLeft className="w-5 h-5" />
-              <span>Back</span>
+              <ArrowLeft aria-hidden="true" className="w-5 h-5" />
+              <span>Tilbage</span>
             </button>
-            <h1 className="text-3xl font-bold">Settings</h1>
+            <h1 className="text-3xl">Indstillinger</h1>
           </div>
         </div>
       </div>
@@ -95,7 +96,7 @@ export default function SettingsPage() {
                     ref={el => { tabRefs.current[index] = el }}
                     className="flex items-center gap-2 px-6 py-4 bg-transparent rounded-none border-0 data-[state=active]:bg-transparent data-[state=active]:text-primary data-[state=active]:shadow-none text-muted-foreground hover:text-foreground relative z-10"
                   >
-                    <Icon className="w-4 h-4" />
+                    <Icon aria-hidden="true" className="w-4 h-4" />
                     {tab.label}
                   </TabsTrigger>
                 );

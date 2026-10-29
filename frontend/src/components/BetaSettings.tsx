@@ -19,11 +19,11 @@ export function BetaSettings() {
     <div className="space-y-6">
       {/* Yellow Warning Banner */}
       <div className="flex items-start gap-3 p-4 bg-warning/10 border border-warning/30 rounded-lg">
-        <AlertCircle className="h-5 w-5 text-warning flex-shrink-0 mt-0.5" />
+        <AlertCircle aria-hidden="true" className="h-5 w-5 text-warning flex-shrink-0 mt-0.5" />
         <div className="text-sm text-warning">
-          <p className="font-medium">Beta Features</p>
+          <p className="font-medium">Betafunktioner</p>
           <p className="mt-1">
-            These features are still being tested. You may encounter issues, and we appreciate your feedback.
+            Disse funktioner er stadig under test. Du kan opleve fejl, og vi er glade for din tilbagemelding.
           </p>
         </div>
       </div>
@@ -37,12 +37,12 @@ export function BetaSettings() {
           <div className="flex items-center justify-between">
             <div className="flex-1">
               <div className="flex items-center gap-2 mb-2">
-                <FlaskConical className="h-5 w-5 text-muted-foreground" />
+                <FlaskConical aria-hidden="true" className="h-5 w-5 text-muted-foreground" />
                 <h3 className="text-lg font-semibold text-foreground">
                   {BETA_FEATURE_NAMES[featureKey]}
                 </h3>
                 <span className="px-2 py-0.5 text-xs font-medium bg-warning/15 text-warning rounded-full">
-                  BETA
+                  Beta
                 </span>
               </div>
               <p className="text-sm text-muted-foreground">
@@ -52,6 +52,7 @@ export function BetaSettings() {
 
             <div className="ml-6">
               <Switch
+                aria-label={BETA_FEATURE_NAMES[featureKey]}
                 checked={betaFeatures[featureKey]}
                 onCheckedChange={(checked) => toggleBetaFeature(featureKey, checked)}
               />
@@ -63,7 +64,7 @@ export function BetaSettings() {
       {/* Info Box */}
       <div className="p-4 bg-primary/10 border border-primary/30 rounded-lg">
         <p className="text-sm text-primary">
-          <strong>Note:</strong> When disabled, beta features will be hidden. Your existing meetings remain unaffected.
+          Når en betafunktion er slået fra, skjules den. Dine eksisterende møder berøres ikke.
         </p>
       </div>
     </div>

@@ -61,11 +61,11 @@ export function AudioLevelMeter({
   const sizes = sizeClasses[size];
 
   return (
-    <div className={`flex items-center space-x-2 ${className}`}>
+    <div className={`flex items-center space-x-2 ${className}`} role="meter" aria-label={`Lydniveau for ${deviceName}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={rmsPercent}>
       {/* Device activity indicator */}
       <div className={`w-2 h-2 rounded-full ${
         isActive ? 'bg-success animate-pulse' : 'bg-accent'
-      }`} title={`${deviceName} - ${isActive ? 'Active' : 'Inactive'}`} />
+      }`} title={`${deviceName}: ${isActive ? 'aktiv' : 'inaktiv'}`} />
 
       {/* Level meter container */}
       <div className={`flex-1 ${sizes.container} relative`}>
@@ -89,11 +89,11 @@ export function AudioLevelMeter({
         {/* Level markers */}
         <div className="absolute inset-0 flex justify-between items-center px-1 pointer-events-none">
           {/* 25% marker */}
-          <div className="w-px h-full bg-muted-foreground/50 opacity-30" style={{ marginLeft: '25%' }} />
+          <div className="w-px h-full bg-muted-foreground/30" style={{ marginLeft: '25%' }} />
           {/* 50% marker */}
-          <div className="w-px h-full bg-muted-foreground/50 opacity-30" style={{ marginLeft: '50%' }} />
+          <div className="w-px h-full bg-muted-foreground/30" style={{ marginLeft: '50%' }} />
           {/* 75% marker */}
-          <div className="w-px h-full bg-muted-foreground/50 opacity-30" style={{ marginLeft: '75%' }} />
+          <div className="w-px h-full bg-muted-foreground/30" style={{ marginLeft: '75%' }} />
         </div>
       </div>
 

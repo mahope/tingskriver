@@ -120,13 +120,13 @@ export function RecordingSettings({ onSave }: RecordingSettingsProps) {
       const store = await Store.load('preferences.json');
       await store.set('show_recording_notification', enabled);
       await store.save();
-      toast.success('Preference saved');
+      toast.success('Indstillingen er gemt');
       await Analytics.track('recording_notification_preference_changed', {
         enabled: enabled.toString()
       });
     } catch (error) {
       console.error('Failed to save notification preference:', error);
-      toast.error('Failed to save preference');
+      toast.error('Indstillingen kunne ikke gemmes', { description: 'Prøv igen. Hvis det fortsætter, så genstart Tingskriver.' });
     }
   };
 
@@ -137,15 +137,15 @@ export function RecordingSettings({ onSave }: RecordingSettingsProps) {
       onSave?.(prefs);
 
       // Show success toast with device details
-      const micDevice = prefs.preferred_mic_device || 'Default';
-      const systemDevice = prefs.preferred_system_device || 'Default';
-      toast.success("Device preferences saved", {
-        description: `Microphone: ${micDevice}, System Audio: ${systemDevice}`
+      const micDevice = prefs.preferred_mic_device || 'Standard';
+      const systemDevice = prefs.preferred_system_device || 'Standard';
+      toast.success("Enhedsvalg gemt", {
+        description: `Mikrofon: ${micDevice}, systemlyd: ${systemDevice}`
       });
     } catch (error) {
       console.error('Failed to save recording preferences:', error);
-      toast.error("Failed to save device preferences", {
-        description: error instanceof Error ? error.message : String(error)
+      toast.error("Enhedsvalget kunne ikke gemmes", {
+        description: `Prøv igen. ${error instanceof Error ? error.message : String(error)}`
       });
     } finally {
       setSaving(false);
@@ -162,23 +162,25 @@ export function RecordingSettings({ onSave }: RecordingSettingsProps) {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="max-w-2xl space-y-8">
       <div>
-        <h3 className="text-lg font-semibold mb-4">Recording Settings</h3>
-        <p className="text-sm text-muted-foreground mb-6">
-          Configure how your audio recordings are saved during meetings.
+        <h2 className="text-2xl text-foreground mb-1">Optagelser</h2>
+        <p className="text-sm text-muted-foreground">
+          Vælg, hvordan lyden fra dine møder gemmes.
         </p>
       </div>
 
       {/* Auto Save Toggle */}
-      <div className="flex items-center justify-between p-4 border rounded-lg">
+      <div className="flex items-center justify-between gap-6">
         <div className="flex-1">
-          <div className="font-medium">Save Audio Recordings</div>
-          <div className="text-sm text-muted-foreground">
-            Automatically save audio files when recording stops
+          <label htmlFor="rec-auto-save" className="font-medium text-foreground">Gem lydoptagelser</label>
+          <div id="rec-auto-save-hint" className="text-sm text-muted-foreground">
+            Gem automatisk lydfilen, når optagelsen stopper
           </div>
         </div>
         <Switch
+          id="rec-auto-save"
+          aria-describedby="rec-auto-save-hint"
           checked={preferences.auto_save}
           onCheckedChange={handleAutoSaveToggle}
           disabled={saving}
@@ -188,49 +190,47 @@ export function RecordingSettings({ onSave }: RecordingSettingsProps) {
       {/* Folder Location - Only shown when auto_save is enabled */}
       {preferences.auto_save && (
         <div className="space-y-4">
-          <div className="p-4 border rounded-lg bg-background">
-            <div className="font-medium mb-2">Save Location</div>
+          <div>
+            <div className="font-medium text-foreground mb-1">Gemmes i</div>
             <div className="text-sm text-muted-foreground mb-3 break-all">
-              {preferences.save_folder || 'Default folder'}
+              {preferences.save_folder || 'Standardmappen'}
             </div>
             <button
+              type="button"
               onClick={handleOpenFolder}
-              className="flex items-center gap-2 px-3 py-2 text-sm border border-input rounded-md hover:bg-accent transition-colors"
+              className="inline-flex items-center gap-2 min-h-[44px] px-4 text-sm border border-input rounded-md hover:bg-accent transition-colors focus-visible:ring-2 ring-ring"
             >
-              <FolderOpen className="w-4 h-4" />
-              Open Folder
+              <FolderOpen aria-hidden="true" className="w-4 h-4" />
+              Åbn mappen
             </button>
           </div>
 
-          <div className="p-4 border rounded-lg bg-primary/10">
-            <div className="text-sm text-primary">
-              <strong>File Format:</strong> {preferences.file_format.toUpperCase()} files
-            </div>
-            <div className="text-xs text-primary mt-1">
-              Recordings are saved with timestamp: recording_YYYYMMDD_HHMMSS.{preferences.file_format}
-            </div>
-          </div>
+          <p className="text-sm text-muted-foreground">
+            Filerne gemmes som {preferences.file_format.toUpperCase()} og navngives efter tidspunktet, fx recording_ÅÅÅÅMMDD_TTMMSS.{preferences.file_format}
+          </p>
         </div>
       )}
 
       {/* Info when auto_save is disabled */}
       {!preferences.auto_save && (
-        <div className="p-4 border rounded-lg bg-warning/10">
+        <div className="p-4 border border-warning/30 rounded-lg bg-warning/10">
           <div className="text-sm text-warning">
-            Audio recording is disabled. Enable "Save Audio Recordings" to automatically save your meeting audio.
+            Lyden gemmes ikke. Slå "Gem lydoptagelser" til, hvis du vil beholde lyden fra dine møder.
           </div>
         </div>
       )}
 
       {/* Recording Notification Toggle */}
-      <div className="flex items-center justify-between p-4 border rounded-lg">
+      <div className="flex items-center justify-between gap-6">
         <div className="flex-1">
-          <div className="font-medium">Recording Start Notification</div>
-          <div className="text-sm text-muted-foreground">
-            Show reminder to inform participants when recording starts
+          <label htmlFor="rec-start-notice" className="font-medium text-foreground">Påmindelse ved optagelsens start</label>
+          <div id="rec-start-notice-hint" className="text-sm text-muted-foreground">
+            Vis en påmindelse om at fortælle deltagerne, at mødet optages
           </div>
         </div>
         <Switch
+          id="rec-start-notice"
+          aria-describedby="rec-start-notice-hint"
           checked={showRecordingNotification}
           onCheckedChange={handleNotificationToggle}
         />
@@ -238,10 +238,10 @@ export function RecordingSettings({ onSave }: RecordingSettingsProps) {
 
       {/* Device Preferences */}
       <div className="space-y-4">
-        <div className="border-t pt-6">
-          <h4 className="text-base font-medium text-foreground mb-4">Default Audio Devices</h4>
+        <div className="border-t border-border pt-8">
+          <h3 className="text-xl text-foreground mb-1">Standardenheder til lyd</h3>
           <p className="text-sm text-muted-foreground mb-4">
-            Set your preferred microphone and system audio devices for recording. These will be automatically selected when starting new recordings.
+            Vælg den mikrofon og systemlyd, du helst vil optage med. De vælges automatisk, når du starter en ny optagelse.
           </p>
 
           {isRecording && (
@@ -250,11 +250,11 @@ export function RecordingSettings({ onSave }: RecordingSettingsProps) {
               aria-live="polite"
               className="text-sm text-warning bg-warning/10 border border-warning/30 rounded-md p-2 mb-4"
             >
-              Device selection is locked while a recording is in progress. Connecting a new device mid-recording will not switch to it. Stop the current meeting to change devices.
+              Enhedsvalget er låst, mens en optagelse kører. Tilslutter du en ny enhed undervejs, skifter Tingskriver ikke til den. Stop optagelsen for at ændre enhed.
             </p>
           )}
 
-          <div className="border rounded-lg p-4 bg-background">
+          <div>
             <DeviceSelection
               selectedDevices={{
                 micDevice: preferences.preferred_mic_device,

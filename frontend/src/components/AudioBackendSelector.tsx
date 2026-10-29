@@ -45,7 +45,7 @@ export function AudioBackendSelector({
         }
       } catch (err) {
         console.error('Failed to load audio backends:', err);
-        setError('Failed to load backend options');
+        setError('Lydmetoderne kunne ikke hentes. Genstart Tingskriver, og prøv igen.');
       } finally {
         setLoading(false);
       }
@@ -69,7 +69,7 @@ export function AudioBackendSelector({
       console.log(`Audio backend changed to: ${backendId}`);
     } catch (err) {
       console.error('Failed to set audio backend:', err);
-      setError('Failed to change backend. Please try again.');
+      setError('Lydmetoden kunne ikke skiftes. Prøv igen.');
     }
   };
 
@@ -91,21 +91,25 @@ export function AudioBackendSelector({
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2">
-        <label className="text-sm font-medium text-foreground">
-          System Audio Backend
-        </label>
+        <span id="audio-backend-label" className="text-sm font-medium text-foreground">
+          Metode til systemlyd
+        </span>
         <div className="relative">
           <button
             type="button"
+            aria-label="Om metoder til lydoptagelse"
+            aria-expanded={showTooltip}
+            onClick={() => setShowTooltip(v => !v)}
             onMouseEnter={() => setShowTooltip(true)}
             onMouseLeave={() => setShowTooltip(false)}
-            className="text-muted-foreground hover:text-foreground transition-colors"
+            onBlur={() => setShowTooltip(false)}
+            className="p-1 text-muted-foreground hover:text-foreground transition-colors focus-visible:ring-2 ring-ring rounded-md"
           >
-            <Info className="h-4 w-4" />
+            <Info aria-hidden="true" className="h-4 w-4" />
           </button>
           {showTooltip && (
             <div className="absolute z-10 left-6 top-0 w-64 p-3 text-xs bg-foreground text-background rounded-lg shadow-lg">
-              <p className="font-semibold mb-1">Audio Capture Methods:</p>
+              <p className="font-semibold mb-1">Metoder til lydoptagelse</p>
               <ul className="space-y-1">
                 {backends.map((backend) => (
                   <li key={backend.id}>
@@ -114,7 +118,7 @@ export function AudioBackendSelector({
                 ))}
               </ul>
               <p className="mt-2 text-muted-foreground">
-                Try different backends to find which works best for your system.
+                Prøv de forskellige metoder for at finde den, der virker bedst på din computer.
               </p>
             </div>
           )}
@@ -122,12 +126,12 @@ export function AudioBackendSelector({
       </div>
 
       {error && (
-        <div className="p-2 text-xs text-destructive bg-destructive/10 border border-destructive/30 rounded-md">
+        <div role="alert" className="p-2 text-sm text-destructive bg-destructive/10 border border-destructive/30 rounded-md">
           {error}
         </div>
       )}
 
-      <div className="space-y-2">
+      <div role="radiogroup" aria-labelledby="audio-backend-label" className="space-y-2">
         {backends.map((backend) => {
           // Disable Core Audio option
           const isCoreAudio = backend.id === 'screencapturekit';
@@ -158,12 +162,12 @@ export function AudioBackendSelector({
                   </span>
                   {currentBackend === backend.id && (
                     <span className="text-xs font-medium text-primary bg-primary/15 px-2 py-0.5 rounded">
-                      Active
+                      Aktiv
                     </span>
                   )}
                   {isCoreAudio && (
                     <span className="text-xs font-medium text-muted-foreground bg-secondary px-2 py-0.5 rounded">
-                      Disabled
+                      Ikke tilgængelig
                     </span>
                   )}
                 </div>
@@ -175,9 +179,9 @@ export function AudioBackendSelector({
       </div>
 
       <div className="text-xs text-muted-foreground space-y-1">
-        <p>• Backend selection only affects system audio capture</p>
-        <p>• Microphone always uses the default method</p>
-        <p>• Changes apply to new recording sessions</p>
+        <p>• Valget gælder kun optagelse af systemlyd</p>
+        <p>• Mikrofonen bruger altid standardmetoden</p>
+        <p>• Ændringer gælder for nye optagelser</p>
       </div>
     </div>
   );

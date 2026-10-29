@@ -62,7 +62,7 @@ export function BuiltInModelManager({
       }
     } catch (error) {
       console.error('Failed to fetch built-in AI models:', error);
-      toast.error('Failed to load models');
+      toast.error('Kunne ikke hente modellerne. Prøv igen om lidt.');
     } finally {
       setIsLoading(false);
       setHasFetched(true);
@@ -127,7 +127,7 @@ export function BuiltInModelManager({
           });
           // Refresh models list
           fetchModels();
-          toast.success(`Model ${model} downloaded successfully`);
+          toast.success(`Modellen ${model} er hentet`);
         }
 
         // Handle cancelled status
@@ -216,7 +216,7 @@ export function BuiltInModelManager({
       }
 
       // For real errors, show toast and remove from downloading
-      toast.error(`Failed to download ${modelName}`);
+      toast.error(`Kunne ikke hente ${modelName}. Tjek internetforbindelsen, og prøv igen.`);
 
       setDownloadingModels((prev) => {
         const newSet = new Set(prev);
@@ -232,7 +232,7 @@ export function BuiltInModelManager({
   const cancelDownload = async (modelName: string) => {
     try {
       await invoke('builtin_ai_cancel_download', { modelName });
-      toast.info(`Download of ${modelName} cancelled`);
+      toast.info(`Hentning af ${modelName} er annulleret`);
       setDownloadingModels((prev) => {
         const newSet = new Set(prev);
         newSet.delete(modelName);
@@ -246,11 +246,11 @@ export function BuiltInModelManager({
   const deleteModel = async (modelName: string) => {
     try {
       await invoke('builtin_ai_delete_model', { modelName });
-      toast.success(`Model ${modelName} deleted`);
+      toast.success(`Modellen ${modelName} er slettet`);
       fetchModels();
     } catch (error) {
       console.error('Failed to delete model:', error);
-      toast.error(`Failed to delete ${modelName}`);
+      toast.error(`Kunne ikke slette ${modelName}. Prøv igen.`);
     }
   };
 
@@ -259,7 +259,7 @@ export function BuiltInModelManager({
     return (
       <div className="text-center py-8 text-muted-foreground">
         <RefreshCw className="mx-auto h-8 w-8 animate-spin mb-2" />
-        Loading models...
+        Henter modeller…
       </div>
     );
   }
@@ -269,7 +269,7 @@ export function BuiltInModelManager({
     return (
       <Alert>
         <AlertDescription>
-          No models found. Download a model to get started with Built-in AI.
+          Ingen modeller fundet. Hent en model for at komme i gang med indbygget AI.
         </AlertDescription>
       </Alert>
     );
@@ -278,7 +278,7 @@ export function BuiltInModelManager({
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
-        <h4 className="text-sm font-bold">Built-in AI Models</h4>
+        <h4 className="text-sm font-bold">Indbyggede AI-modeller</h4>
       </div>
 
       <div
@@ -305,7 +305,7 @@ export function BuiltInModelManager({
                   ? 'bg-card border-border'
                   : 'bg-card',
                 selectedModel === model.name
-                  ? 'ring-2 ring-gray-800 border-gray-800'
+                  ? 'ring-2 ring-primary border-primary'
                   : 'border-border hover:border-input',
                 isAvailable && !modelIsDownloading && 'cursor-pointer'
               )}
@@ -324,11 +324,11 @@ export function BuiltInModelManager({
                       <>
                         <span className="flex shrink-0 items-center gap-1 text-xs font-medium text-success">
                           <span className="h-2 w-2 rounded-full bg-success"></span>
-                          Ready
+                          Klar
                         </span>
                         {selectedModel === model.name && (
                           <span className="shrink-0 rounded bg-primary/15 px-2 py-0.5 text-xs font-medium text-primary">
-                            Selected
+                            Valgt
                           </span>
                         )}
                       </>
@@ -336,12 +336,12 @@ export function BuiltInModelManager({
                     {isCorrupted && (
                       <span className="flex shrink-0 items-center gap-1 rounded bg-destructive/15 px-2 py-0.5 text-xs font-medium text-destructive">
                         <BadgeAlert className="h-3 w-3" />
-                        Corrupted
+                        Beskadiget
                       </span>
                     )}
                     {isError && (
                       <span className="shrink-0 rounded bg-destructive/15 px-2 py-0.5 text-xs font-medium text-destructive">
-                        Error
+                        Fejl
                       </span>
                     )}
                   </div>
@@ -359,7 +359,7 @@ export function BuiltInModelManager({
                       }}
                     >
                       <Download className="mr-2 h-4 w-4" />
-                      Download
+                      Hent
                     </Button>
                   )}
                   {/* Downloading - Show Cancel button */}
@@ -373,7 +373,7 @@ export function BuiltInModelManager({
                         cancelDownload(model.name);
                       }}
                     >
-                      Cancel
+                      Annullér
                     </Button>
                   )}
                   {/* Error - Show Retry button */}
@@ -388,7 +388,7 @@ export function BuiltInModelManager({
                       }}
                     >
                       <RefreshCw className="mr-2 h-4 w-4" />
-                      Retry
+                      Prøv igen
                     </Button>
                   )}
                   {/* Corrupted - Show both Retry and Delete buttons */}
@@ -403,7 +403,7 @@ export function BuiltInModelManager({
                         }}
                       >
                         <RefreshCw className="mr-2 h-4 w-4" />
-                        Retry
+                        Prøv igen
                       </Button>
                       <Button
                         variant="outline"
@@ -414,7 +414,7 @@ export function BuiltInModelManager({
                         }}
                       >
                         <Trash2 className="mr-2 h-4 w-4" />
-                        Delete
+                        Slet
                       </Button>
                     </>
                   )}
@@ -426,7 +426,8 @@ export function BuiltInModelManager({
                         e.stopPropagation();
                         deleteModel(model.name);
                       }}
-                      title="Delete model"
+                      title="Slet model"
+                      aria-label={`Slet ${model.display_name || model.name}`}
                     >
                       <Trash2 className="h-4 w-4" />
                     </button>
@@ -442,8 +443,8 @@ export function BuiltInModelManager({
                     {isError && typeof model.status === 'object' && 'Error' in model.status
                       ? (model.status as any).Error
                       : isCorrupted
-                      ? 'File is corrupted. Retry download or delete.'
-                      : 'An error occurred'}
+                      ? 'Filen er beskadiget. Hent den igen, eller slet den.'
+                      : 'Der opstod en fejl. Prøv at hente modellen igen.'}
                   </p>
                 )}
                 <div className="text-xs text-muted-foreground">
@@ -456,7 +457,7 @@ export function BuiltInModelManager({
               {modelIsDownloading && progress !== undefined && (
                 <div className="mt-3 pt-3 border-t border-border">
                   <div className="flex items-center justify-between mb-1">
-                    <span className="text-sm font-medium text-foreground">Downloading...</span>
+                    <span className="text-sm font-medium text-foreground">Henter…</span>
                     <span className="text-sm font-semibold text-foreground">
                       {Math.round(progress)}%
                     </span>
@@ -477,7 +478,7 @@ export function BuiltInModelManager({
                   </div>
                   <div className="w-full h-2.5 bg-muted rounded-full overflow-hidden">
                     <div
-                      className="h-full bg-gradient-to-r from-gray-800 to-gray-900 rounded-full transition-all duration-300"
+                      className="h-full bg-primary rounded-full transition-all duration-300"
                       style={{ width: `${progress}%` }}
                     />
                   </div>

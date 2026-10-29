@@ -59,7 +59,7 @@ export function DeviceSelection({ selectedDevices, onDeviceChange, disabled = fa
       console.log('Fetched audio devices:', result);
     } catch (err) {
       console.error('Failed to fetch audio devices:', err);
-      setError('Failed to load audio devices. Please check your system audio settings.');
+      setError('Lydenhederne kunne ikke hentes. Tjek computerens lydindstillinger, og tryk på knappen for at hente listen igen.');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -230,7 +230,7 @@ export function DeviceSelection({ selectedDevices, onDeviceChange, disabled = fa
       // Only monitor input devices for now (microphones)
       const deviceNames = inputDevices.map(device => device.name);
       if (deviceNames.length === 0) {
-        setError('No microphone devices found to monitor');
+        setError('Der blev ikke fundet nogen mikrofoner. Tilslut en mikrofon, og tryk på knappen for at hente listen igen.');
         return;
       }
 
@@ -240,7 +240,7 @@ export function DeviceSelection({ selectedDevices, onDeviceChange, disabled = fa
       console.log('Started audio level monitoring for input devices:', deviceNames);
     } catch (err) {
       console.error('Failed to start audio level monitoring:', err);
-      setError('Failed to start audio level monitoring');
+      setError('Lydniveauet kunne ikke måles. Prøv igen.');
     }
   };
 
@@ -268,7 +268,7 @@ export function DeviceSelection({ selectedDevices, onDeviceChange, disabled = fa
   if (loading) {
     return (
       <div className="p-4 space-y-4">
-        <div className="animate-pulse">
+        <div className="animate-pulse" role="status" aria-label="Henter lydenheder…">
           <div className="h-4 bg-muted rounded w-1/3 mb-4"></div>
           <div className="h-10 bg-muted rounded mb-3"></div>
           <div className="h-10 bg-muted rounded"></div>
@@ -280,7 +280,7 @@ export function DeviceSelection({ selectedDevices, onDeviceChange, disabled = fa
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h4 className="text-sm font-medium text-foreground">Audio Devices</h4>
+        <h4 className="text-sm font-medium text-foreground">Lydenheder</h4>
         <div className="flex items-center space-x-2">
           {/* TODO: Monitoring */}
           {/* <button */}
@@ -296,17 +296,20 @@ export function DeviceSelection({ selectedDevices, onDeviceChange, disabled = fa
           {/*   {isMonitoring ? 'Stop Test' : 'Test Mic'} */}
           {/* </button> */}
           <button
+            type="button"
             onClick={handleRefresh}
             disabled={refreshing || disabled}
-            className="h-8 w-8 p-0 inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors hover:bg-accent disabled:pointer-events-none disabled:opacity-50"
+            aria-label="Hent listen over lydenheder igen"
+            title="Hent listen igen"
+            className="h-8 w-8 p-0 inline-flex focus-visible:ring-2 ring-ring items-center justify-center rounded-md text-sm font-medium transition-colors hover:bg-accent disabled:pointer-events-none disabled:opacity-50"
           >
-            <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+            <RefreshCw aria-hidden="true" className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
           </button>
         </div>
       </div>
 
       {error && (
-        <div className="p-3 text-sm text-destructive bg-destructive/10 border border-destructive/30 rounded-md">
+        <div role="alert" className="p-3 text-sm text-destructive bg-destructive/10 border border-destructive/30 rounded-md">
           {error}
         </div>
       )}
@@ -315,9 +318,9 @@ export function DeviceSelection({ selectedDevices, onDeviceChange, disabled = fa
         {/* Microphone Selection */}
         <div className="space-y-2">
           <div className="flex items-center gap-2">
-            <Mic className="h-4 w-4 text-muted-foreground" />
+            <Mic aria-hidden="true" className="h-4 w-4 text-muted-foreground" />
             <Label htmlFor="mic-selection" className="text-sm font-medium text-foreground">
-              Microphone
+              Mikrofon
             </Label>
           </div>
           <Select
@@ -326,10 +329,10 @@ export function DeviceSelection({ selectedDevices, onDeviceChange, disabled = fa
             disabled={disabled}
           >
             <SelectTrigger id="mic-selection" className="w-full">
-              <SelectValue placeholder="Select Microphone" />
+              <SelectValue placeholder="Vælg mikrofon" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="default">Default Microphone</SelectItem>
+              <SelectItem value="default">Standardmikrofon</SelectItem>
               {inputDevices.map((device) => (
                 <SelectItem
                   key={device.name}
@@ -341,13 +344,13 @@ export function DeviceSelection({ selectedDevices, onDeviceChange, disabled = fa
             </SelectContent>
           </Select>
           {inputDevices.length === 0 && (
-            <p className="text-xs text-muted-foreground">No microphone devices found</p>
+            <p className="text-xs text-muted-foreground">Ingen mikrofoner fundet. Tilslut en mikrofon, og hent listen igen.</p>
           )}
 
           {/* Audio Level Meters for Input Devices */}
           {showLevels && inputDevices.length > 0 && (
             <div className="space-y-2 pt-2 border-t border-border">
-              <p className="text-xs text-muted-foreground font-medium">Microphone Levels:</p>
+              <p className="text-xs text-muted-foreground font-medium">Mikrofonniveau</p>
               {inputDevices.map((device) => {
                 const levelData = audioLevels.get(device.name);
                 return (
@@ -383,9 +386,9 @@ export function DeviceSelection({ selectedDevices, onDeviceChange, disabled = fa
         {/* System Audio Selection */}
         <div className="space-y-2">
           <div className="flex items-center gap-2">
-            <Speaker className="h-4 w-4 text-muted-foreground" />
+            <Speaker aria-hidden="true" className="h-4 w-4 text-muted-foreground" />
             <Label htmlFor="system-selection" className="text-sm font-medium text-foreground">
-              System Audio
+              Systemlyd
             </Label>
           </div>
 
@@ -395,10 +398,10 @@ export function DeviceSelection({ selectedDevices, onDeviceChange, disabled = fa
             disabled={disabled}
           >
             <SelectTrigger id="system-selection" className="w-full">
-              <SelectValue placeholder="Select System Audio" />
+              <SelectValue placeholder="Vælg systemlyd" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="default">Default System Audio</SelectItem>
+              <SelectItem value="default">Standard for systemlyd</SelectItem>
               {outputDevices.map((device) => (
                 <SelectItem
                   key={device.name}
@@ -411,7 +414,7 @@ export function DeviceSelection({ selectedDevices, onDeviceChange, disabled = fa
           </Select>
 
           {outputDevices.length === 0 && (
-            <p className="text-xs text-muted-foreground">No system audio devices found</p>
+            <p className="text-xs text-muted-foreground">Ingen enheder til systemlyd fundet. Hent listen igen, eller tjek computerens lydindstillinger.</p>
           )}
 
           {/* Backend Selection - available on all platforms */}
@@ -425,13 +428,10 @@ export function DeviceSelection({ selectedDevices, onDeviceChange, disabled = fa
 
       {/* Info text */}
       <div className="text-xs text-muted-foreground space-y-1">
-        <p>• <strong>Microphone:</strong> Records your voice and ambient sound</p>
-        <p>• <strong>System Audio:</strong> Records computer audio (music, calls, etc.)</p>
+        <p>• <strong>Mikrofon:</strong> optager din stemme og lyden omkring dig</p>
+        <p>• <strong>Systemlyd:</strong> optager lyd fra computeren (musik, opkald osv.)</p>
         {isMonitoring && (
-          <p>• <strong>Mic Levels:</strong> Green = good, Yellow = loud, Red = too loud</p>
-        )}
-        {!isMonitoring && inputDevices.length > 0 && (
-          <p>• <strong>Tip:</strong> Click "Test Mic" to check if your microphone is working</p>
+          <p>• <strong>Mikrofonniveau:</strong> grøn = godt, gul = højt, rød = for højt</p>
         )}
       </div>
     </div>
