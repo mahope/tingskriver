@@ -1,0 +1,23 @@
+name: Branch build
+
+# Every push to a branch other than main builds the Windows installer
+# (no release) so the branch can be verified and tested.
+
+on:
+  push:
+    branches-ignore:
+      - main
+
+concurrency:
+  group: branch-build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    uses: ./.github/workflows/windows-build.yml
+    with:
+      release: false
+    secrets: inherit
