@@ -20,16 +20,22 @@ export function MeetingHeader({ meetingId, title, createdAt, onTitleSaved, actio
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(title);
   const inputRef = useRef<HTMLInputElement>(null);
+  const finishedRef = useRef(false);
 
   useEffect(() => {
     if (!editing) setDraft(title);
   }, [title, editing]);
 
   useEffect(() => {
-    if (editing) inputRef.current?.select();
+    if (editing) {
+      finishedRef.current = false;
+      inputRef.current?.select();
+    }
   }, [editing]);
 
   const finish = async (save: boolean) => {
+    if (finishedRef.current) return;
+    finishedRef.current = true;
     setEditing(false);
     const next = draft.trim();
     if (!save || next === title) {

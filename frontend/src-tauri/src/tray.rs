@@ -323,7 +323,7 @@ fn build_menu<R: Runtime>(
     // If recording is not allowed (during onboarding, no transcription model), show disabled message
     if !can_record {
         builder = builder.item(
-            &MenuItemBuilder::new("⏳ Downloading transcription model...")
+            &MenuItemBuilder::new("⏳ Henter transskriptionsmodel...")
                 .enabled(false)
                 .build(app)?,
         );
@@ -331,49 +331,49 @@ fn build_menu<R: Runtime>(
         match state {
             RecordingState::Stopped => {
                 builder = builder
-                    .item(&MenuItemBuilder::with_id("toggle_recording", "Start Recording").build(app)?);
+                    .item(&MenuItemBuilder::with_id("toggle_recording", "Start optagelse").build(app)?);
             }
             RecordingState::Starting => {
                 builder = builder.item(
-                    &MenuItemBuilder::new("🔄 Starting Recording...")
+                    &MenuItemBuilder::new("🔄 Starter optagelse...")
                         .enabled(false)
                         .build(app)?,
                 );
             }
             RecordingState::Recording => {
                 builder = builder
-                    .item(&MenuItemBuilder::with_id("pause_recording", "⏸ Pause Recording").build(app)?)
-                    .item(&MenuItemBuilder::with_id("stop_recording", "⏹ Stop Recording").build(app)?);
+                    .item(&MenuItemBuilder::with_id("pause_recording", "⏸ Sæt optagelsen på pause").build(app)?)
+                    .item(&MenuItemBuilder::with_id("stop_recording", "⏹ Stop optagelse").build(app)?);
             }
             RecordingState::Pausing => {
                 builder = builder
                     .item(
-                        &MenuItemBuilder::new("⏸ Pausing...")
+                        &MenuItemBuilder::new("⏸ Sætter på pause...")
                             .enabled(false)
                             .build(app)?,
                     )
-                    .item(&MenuItemBuilder::with_id("stop_recording", "⏹ Stop Recording").build(app)?);
+                    .item(&MenuItemBuilder::with_id("stop_recording", "⏹ Stop optagelse").build(app)?);
             }
             RecordingState::Paused => {
                 builder = builder
                     .item(
-                        &MenuItemBuilder::with_id("resume_recording", "▶ Resume Recording")
+                        &MenuItemBuilder::with_id("resume_recording", "▶ Genoptag optagelse")
                             .build(app)?,
                     )
-                    .item(&MenuItemBuilder::with_id("stop_recording", "⏹ Stop Recording").build(app)?);
+                    .item(&MenuItemBuilder::with_id("stop_recording", "⏹ Stop optagelse").build(app)?);
             }
             RecordingState::Resuming => {
                 builder = builder
                     .item(
-                        &MenuItemBuilder::new("▶ Resuming...")
+                        &MenuItemBuilder::new("▶ Genoptager...")
                             .enabled(false)
                             .build(app)?,
                     )
-                    .item(&MenuItemBuilder::with_id("stop_recording", "⏹ Stop Recording").build(app)?);
+                    .item(&MenuItemBuilder::with_id("stop_recording", "⏹ Stop optagelse").build(app)?);
             }
             RecordingState::Stopping => {
                 builder = builder.item(
-                    &MenuItemBuilder::new("⏹ Stopping...")
+                    &MenuItemBuilder::new("⏹ Stopper...")
                         .enabled(false)
                         .build(app)?,
                 );
@@ -383,11 +383,11 @@ fn build_menu<R: Runtime>(
 
     builder
         .item(&PredefinedMenuItem::separator(app)?)
-        .item(&MenuItemBuilder::with_id("open_window", "Open Main Window").build(app)?)
-        .item(&MenuItemBuilder::with_id("settings", "Settings").build(app)?)
-        .item(&MenuItemBuilder::with_id("check_updates", "Check for Updates").build(app)?)
+        .item(&MenuItemBuilder::with_id("open_window", "Åbn hovedvindue").build(app)?)
+        .item(&MenuItemBuilder::with_id("settings", "Indstillinger").build(app)?)
+        .item(&MenuItemBuilder::with_id("check_updates", "Søg efter opdateringer").build(app)?)
         .item(&PredefinedMenuItem::separator(app)?)
-        .item(&MenuItemBuilder::with_id("quit", "Quit").build(app)?)
+        .item(&MenuItemBuilder::with_id("quit", "Afslut").build(app)?)
         .build()
 }
 

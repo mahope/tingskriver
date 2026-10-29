@@ -1,3 +1,4 @@
+import { formatDate, formatTime } from '@/lib/format';
 import { useCallback, RefObject } from 'react';
 import { MeetingSummary, Transcript } from '@/types';
 import { BlockNoteSummaryViewRef } from '@/components/AISummary/BlockNoteSummaryView';
@@ -84,8 +85,8 @@ export function useCopyOperations({
       return `[${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}]`;
     };
 
-    const header = `# Transcript of the Meeting: ${meeting.id} - ${meetingTitle ?? meeting.title}\n\n`;
-    const date = `## Date: ${new Date(meeting.created_at).toLocaleDateString()}\n\n`;
+    const header = `# Transskript af mødet: ${meetingTitle ?? meeting.title}\n\n`;
+    const date = `## Dato: ${formatDate(meeting.created_at)}\n\n`;
     const fullTranscript = allTranscripts
       .map(t => `${formatTime(t.audio_start_time, t.timestamp)} ${t.text}  `)
       .join('\n');
@@ -162,20 +163,8 @@ export function useCopyOperations({
       }
 
       // Build metadata header
-      const header = `# Meeting Summary: ${meetingTitle}\n\n`;
-      const metadata = `**Meeting ID:** ${meeting.id}\n**Date:** ${new Date(meeting.created_at).toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-      })}\n**Copied on:** ${new Date().toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-      })}\n\n---\n\n`;
+      const header = `# Opsummering af mødet: ${meetingTitle}\n\n`;
+      const metadata = `**Mødets id:** ${meeting.id}\n**Dato:** ${formatDate(meeting.created_at)} ${formatTime(meeting.created_at)}\n**Kopieret:** ${formatDate(new Date())} ${formatTime(new Date())}\n\n---\n\n`;
 
       const fullMarkdown = header + metadata + summaryMarkdown;
       await navigator.clipboard.writeText(fullMarkdown);

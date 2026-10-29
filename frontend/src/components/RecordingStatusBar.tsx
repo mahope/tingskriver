@@ -35,7 +35,9 @@ export const RecordingStatusBar: React.FC<RecordingStatusBarProps> = ({ isPaused
     }
   }, [activeDuration]);
 
-  const micLabel = activeMicName ?? selectedDevices.micDevice ?? 'Standardmikrofon';
+  const micLabel = deviceNotice?.kind === 'lost'
+    ? 'ingen (kun systemlyd)'
+    : activeMicName ?? selectedDevices.micDevice ?? 'Standardmikrofon';
   const systemLabel = selectedDevices.systemDevice ?? 'Standard for systemlyd';
   const isWarning = deviceNotice?.kind === 'failed' || deviceNotice?.kind === 'lost';
 
