@@ -23,7 +23,10 @@ interface DownloadState {
   error?: string;
 }
 
-export function DownloadProgressStep() {
+const TRANSCRIPTION_CARD_TITLE = 'Transskriptionsmodel';
+const SUMMARY_CARD_TITLE = 'Opsummeringsmodel';
+
+export function DownloadProgressStep({ totalSteps = 2 }: { totalSteps?: number }) {
   const {
     goNext,
     selectedSummaryModel,
@@ -89,11 +92,11 @@ export function DownloadProgressStep() {
       setParakeetState((prev) => ({
         ...prev,
         status: 'error',
-        error: error instanceof Error ? error.message : 'Retry failed',
+        error: error instanceof Error ? error.message : 'Det lykkedes ikke at prøve igen',
       }));
 
-      toast.error('Download retry failed', {
-        description: 'Please check your connection and try again.',
+      toast.error('Det lykkedes ikke at hente modellen', {
+        description: 'Tjek din internetforbindelse, og prøv igen.',
       });
     } finally {
       // Allow retry again after 2 seconds
@@ -137,11 +140,11 @@ export function DownloadProgressStep() {
       setSummaryState((prev) => ({
         ...prev,
         status: 'error',
-        error: error instanceof Error ? error.message : 'Retry failed',
+        error: error instanceof Error ? error.message : 'Det lykkedes ikke at prøve igen',
       }));
 
-      toast.error('Summary model download retry failed', {
-        description: 'Please check your connection and try again.',
+      toast.error('Det lykkedes ikke at hente opsummeringsmodellen', {
+        description: 'Tjek din internetforbindelse, og prøv igen.',
       });
     } finally {
       // Allow retry again after 2 seconds
@@ -355,8 +358,8 @@ export function DownloadProgressStep() {
         !actuallyAvailable &&
         (parakeetState.status === 'error' || parakeetState.status === 'cancelled')
       ) {
-        toast.error('Transcription engine required', {
-          description: 'Please retry the download before continuing.',
+        toast.error('Transskriptionsmodellen mangler', {
+          description: 'Tryk på Prøv igen for at hente den, før du fortsætter.',
         });
         return;
       }
@@ -370,8 +373,8 @@ export function DownloadProgressStep() {
 
     // Show toast if downloads still in progress
     if (!downloadsComplete) {
-      toast.info('Downloads will continue in the background', {
-        description: 'You can start using the app. Recording will be available once speech recognition is ready.',
+      toast.info('Hentningen fortsætter i baggrunden', {
+        description: 'Du kan begynde at bruge appen. Optagelse er klar, når talegenkendelsen er hentet.',
         duration: 5000,
       });
     }
@@ -391,8 +394,8 @@ export function DownloadProgressStep() {
         window.location.reload();
       } catch (error) {
         console.error('Failed to complete onboarding:', error);
-        toast.error('Failed to complete setup', {
-          description: 'Please try again.',
+        toast.error('Opsætningen kunne ikke gennemføres', {
+          description: 'Prøv igen.',
         });
         setIsCompleting(false);
       }
@@ -419,10 +422,10 @@ export function DownloadProgressStep() {
         </div>
         <div>
           {state.status === 'waiting' && (
-            <span className="text-sm text-muted-foreground">Waiting...</span>
+            <span className="text-sm text-muted-foreground">Venter…</span>
           )}
           {state.status === 'downloading' && (
-            <Loader2 className="w-5 h-5 text-foreground animate-spin" />
+            <Loader2 className="w-5 h-5 text-foreground animate-spin" aria-label="Henter" />
           )}
           {state.status === 'completed' && (
             <div className="w-6 h-6 rounded-full bg-success/15 flex items-center justify-center">
@@ -430,10 +433,10 @@ export function DownloadProgressStep() {
             </div>
           )}
           {state.status === 'error' && (
-            <span className="text-sm text-destructive">Failed</span>
+            <span className="text-sm text-destructive">Mislykkedes</span>
           )}
           {state.status === 'cancelled' && (
-            <span className="text-sm text-muted-foreground">Cancelled</span>
+            <span className="text-sm text-muted-foreground">Annulleret</span>
           )}
         </div>
       </div>
@@ -441,9 +444,16 @@ export function DownloadProgressStep() {
       {/* Progress Bar */}
       {(state.status === 'downloading' || state.status === 'completed') && (
         <div className="space-y-2">
-          <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
+          <div
+            className="w-full h-2 bg-muted rounded-full overflow-hidden"
+            role="progressbar"
+            aria-label={`Hentning af ${title.toLowerCase()}`}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(state.progress)}
+          >
             <div
-              className="h-full bg-gradient-to-r from-gray-700 to-gray-900 rounded-full transition-all duration-300"
+              className="h-full bg-primary rounded-full transition-all duration-300"
               style={{ width: `${state.progress}%` }}
             />
           </div>
@@ -468,19 +478,19 @@ export function DownloadProgressStep() {
       {(state.status === 'error' || state.status === 'cancelled') && (
         <div className="mt-2 p-3 bg-destructive/10 border border-destructive/30 rounded-md">
           <p className="text-sm text-destructive font-medium">
-            {state.status === 'cancelled' ? 'Download cancelled' : 'Download Error'}
+            {state.status === 'cancelled' ? 'Hentningen blev annulleret' : 'Hentningen mislykkedes'}
           </p>
           {state.error && <p className="text-xs text-destructive mt-1">{state.error}</p>}
-          {(title === 'Transcription Engine' || title === 'Summary Engine') && (
+          {(title === TRANSCRIPTION_CARD_TITLE || title === SUMMARY_CARD_TITLE) && (
             <button
-              onClick={title === 'Transcription Engine' ? handleRetryDownload : handleRetrySummaryDownload}
-              className="mt-3 w-full h-9 px-4 bg-foreground hover:bg-foreground text-background text-sm font-medium rounded-md transition-colors flex items-center justify-center gap-2"
+              onClick={title === TRANSCRIPTION_CARD_TITLE ? handleRetryDownload : handleRetrySummaryDownload}
+              className="mt-3 w-full min-h-[44px] px-4 bg-primary hover:bg-primary/90 text-primary-foreground text-sm font-medium rounded-md transition-colors flex items-center justify-center gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                       d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
               </svg>
-              Try Again
+              Prøv igen
             </button>
           )}
         </div>
@@ -490,23 +500,23 @@ export function DownloadProgressStep() {
 
   return (
     <OnboardingContainer
-      title="Getting things ready"
-      description="You can start using Tingskriver after downloading the Transcription Engine."
-      step={3}
-      totalSteps={isMac ? 4 : 3}
+      title="Hent transskriptionsmodel"
+      description="Modellen kører på din computer og skal hentes, før du kan optage. Du kan fortsætte, så snart den er klar."
+      step={2}
+      totalSteps={totalSteps}
     >
       <div className="flex flex-col items-center space-y-6">
         {/* Download Cards */}
         <div className="w-full max-w-lg space-y-4">
           {renderDownloadCard(
-            'Transcription Engine',
+            TRANSCRIPTION_CARD_TITLE,
             <Mic className="w-5 h-5 text-muted-foreground" />,
             parakeetState,
             '~670 MB'
           )}
 
           {renderDownloadCard(
-            'Summary Engine',
+            SUMMARY_CARD_TITLE,
             <Sparkles className="w-5 h-5 text-muted-foreground" />,
             summaryState,
             getSummaryModelSizeLabel(selectedSummaryModel || recommendedSummaryModel),
@@ -527,9 +537,9 @@ export function DownloadProgressStep() {
               <div className="flex items-start gap-3">
                 <Download className="w-5 h-5 text-muted-foreground flex-shrink-0 mt-0.5" />
                 <div>
-                  <p className="font-medium">You can continue while this finishes</p>
+                  <p className="font-medium">Du kan fortsætte, mens opsummeringsmodellen hentes</p>
                   <p className="text-foreground mt-1">
-                    Download will continue in the background.
+                    Hentningen fortsætter i baggrunden.
                   </p>
                 </div>
               </div>
@@ -542,13 +552,18 @@ export function DownloadProgressStep() {
           <Button
             onClick={handleContinue}
             disabled={!parakeetDownloaded || isCompleting}
-            className="w-full h-11 bg-foreground hover:bg-foreground text-background disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full min-h-[44px] focus-visible:ring-2 disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            {(isCompleting || !parakeetDownloaded) ? (
+            {(isCompleting || !parakeetDownloaded) && (
               <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-            ) : (
-              'Continue'
             )}
+            {isCompleting
+              ? 'Gør klar…'
+              : !parakeetDownloaded
+              ? 'Henter model…'
+              : isMac
+              ? 'Fortsæt'
+              : 'Færdig'}
           </Button>
         </div>
       </div>

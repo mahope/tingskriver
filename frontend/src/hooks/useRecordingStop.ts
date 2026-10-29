@@ -254,7 +254,7 @@ export function useRecordingStop(
 
         try {
           const responseData = await storageService.saveMeeting(
-            savedMeetingName || meetingTitle || 'New Meeting',  // PREFER savedMeetingName (backend source)
+            savedMeetingName || meetingTitle || 'Nyt møde',  // PREFER savedMeetingName (backend source)
             freshTranscripts,
             folderPath
           );
@@ -270,8 +270,8 @@ export function useRecordingStop(
             shouldDetectSummaryLanguage = !(await applyPinnedSummaryLanguageToMeeting(meetingId));
           } catch (error) {
             console.warn('Failed to apply pinned summary language preference for new meeting:', error);
-            toast.warning('Could not apply default summary language', {
-              description: 'The meeting was saved, but the default summary language was not applied.',
+            toast.warning('Standardsproget til opsummering kunne ikke bruges', {
+              description: 'Mødet er gemt, men standardsproget til opsummering blev ikke brugt.',
             });
           }
 
@@ -283,8 +283,8 @@ export function useRecordingStop(
               );
             } catch (error) {
               console.warn('Failed to detect summary language for new meeting:', error);
-              toast.warning('Could not detect summary language', {
-                description: 'The meeting was saved, but Auto could not detect the summary language.',
+              toast.warning('Sproget til opsummering kunne ikke findes', {
+                description: 'Mødet er gemt, men automatisk sprogvalg kunne ikke finde sproget til opsummeringen.',
               });
             }
           }
@@ -316,17 +316,17 @@ export function useRecordingStop(
             }
           } catch (error) {
             console.warn('Could not fetch meeting details, using ID only:', error);
-            setCurrentMeeting({ id: meetingId, title: savedMeetingName || meetingTitle || 'New Meeting' });
+            setCurrentMeeting({ id: meetingId, title: savedMeetingName || meetingTitle || 'Nyt møde' });
           }
 
           // Mark as completed
           setStatus(RecordingStatus.COMPLETED);
 
           // Show success toast with navigation option
-          toast.success('Recording saved successfully!', {
-            description: `${freshTranscripts.length} transcript segments saved.`,
+          toast.success('Optagelsen er gemt', {
+            description: `${freshTranscripts.length} transskriptsegmenter gemt.`,
             action: {
-              label: 'View Meeting',
+              label: 'Åbn mødet',
               onClick: () => {
                 router.push(`/meeting-details?id=${meetingId}`);
                 Analytics.trackButtonClick('view_meeting_from_toast', 'recording_complete');
@@ -397,9 +397,9 @@ export function useRecordingStop(
 
         } catch (saveError) {
           console.error('Failed to save meeting to database:', saveError);
-          setStatus(RecordingStatus.ERROR, saveError instanceof Error ? saveError.message : 'Unknown error');
-          toast.error('Failed to save meeting', {
-            description: saveError instanceof Error ? saveError.message : 'Unknown error'
+          setStatus(RecordingStatus.ERROR, saveError instanceof Error ? saveError.message : 'Ukendt fejl');
+          toast.error('Mødet kunne ikke gemmes', {
+            description: saveError instanceof Error ? saveError.message : 'Ukendt fejl'
           });
           throw saveError;
         }

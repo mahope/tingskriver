@@ -6,7 +6,7 @@ import { OnboardingContainer } from '../OnboardingContainer';
 import { PermissionRow } from '../shared';
 import { useOnboarding } from '@/contexts/OnboardingContext';
 
-export function PermissionsStep() {
+export function PermissionsStep({ totalSteps = 3 }: { totalSteps?: number }) {
   const { setPermissionStatus, setPermissionsSkipped, permissions, completeOnboarding } = useOnboarding();
   const [isPending, setIsPending] = useState(false);
 
@@ -32,7 +32,7 @@ export function PermissionsStep() {
       try {
         await invoke('open_system_settings');
       } catch {
-        alert('Please enable microphone access in System Preferences > Security & Privacy > Microphone');
+        alert('Slå mikrofonadgang til under Systemindstillinger > Anonymitet og sikkerhed > Mikrofon.');
       }
       return;
     }
@@ -64,7 +64,7 @@ export function PermissionsStep() {
       try {
         await invoke('open_system_settings');
       } catch {
-        alert('Please enable Audio Capture in System Settings → Privacy & Security → Audio Capture');
+        alert('Slå lydoptagelse til under Systemindstillinger > Anonymitet og sikkerhed > Lydoptagelse.');
       }
       return;
     }
@@ -113,12 +113,10 @@ export function PermissionsStep() {
 
   return (
     <OnboardingContainer
-      title="Grant Permissions"
-      description="Tingskriver needs access to your microphone and system audio to record meetings"
-      step={4}
-      hideProgress={true}
-      showNavigation={allPermissionsGranted}
-      canGoNext={allPermissionsGranted}
+      title="Giv adgang til lyd"
+      description="Tingskriver skal bruge din mikrofon og systemlyden for at kunne optage møder."
+      step={3}
+      totalSteps={totalSteps}
     >
       <div className="max-w-lg mx-auto space-y-6">
         {/* Permission Rows */}
@@ -126,8 +124,8 @@ export function PermissionsStep() {
           {/* Microphone */}
           <PermissionRow
             icon={<Mic className="w-5 h-5" />}
-            title="Microphone"
-            description="Required to capture your voice during meetings"
+            title="Mikrofon"
+            description="Bruges til at optage din stemme"
             status={permissions.microphone}
             isPending={isPending}
             onAction={handleMicrophoneAction}
@@ -136,8 +134,8 @@ export function PermissionsStep() {
           {/* System Audio */}
           <PermissionRow
             icon={<Volume2 className="w-5 h-5" />}
-            title="System Audio"
-            description="Click Enable to grant Audio Capture permission"
+            title="Systemlyd"
+            description="Bruges til at optage de andre deltagere"
             status={permissions.systemAudio}
             isPending={isPending}
             onAction={handleSystemAudioAction}
@@ -146,20 +144,20 @@ export function PermissionsStep() {
 
         {/* Action Buttons */}
         <div className="flex flex-col gap-3 pt-4">
-          <Button onClick={handleFinish} disabled={!allPermissionsGranted} className="w-full h-11">
-            Finish Setup
+          <Button onClick={handleFinish} disabled={!allPermissionsGranted} className="w-full min-h-[44px] focus-visible:ring-2">
+            Færdig
           </Button>
 
           <button
             onClick={handleSkip}
-            className="text-sm text-neutral-500 hover:text-neutral-700 transition-colors"
+            className="min-h-[44px] rounded-md text-sm text-muted-foreground hover:text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            I'll do this later
+            Det gør jeg senere
           </button>
 
           {!allPermissionsGranted && (
             <p className="text-xs text-center text-muted-foreground">
-              Recording won't work without permissions. You can grant them later in settings.
+              Du kan ikke optage uden adgang. Du kan give den senere i indstillingerne.
             </p>
           )}
         </div>
