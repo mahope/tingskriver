@@ -402,6 +402,13 @@ impl AudioCapture {
             return;
         }
 
+        // Track whether the input carries any signal at all (dead endpoints
+        // deliver exact zeros) before any processing.
+        self.state.note_input_level(
+            &self.device_type,
+            data.iter().fold(0.0f32, |peak, &x| peak.max(x.abs())),
+        );
+
         // Convert to mono if needed
         let mut mono_data = if self.channels > 1 {
             audio_to_mono(data, self.channels)

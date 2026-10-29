@@ -61,6 +61,9 @@ pub enum SwitchReason {
     PreferredReturned,
     /// The stream is not running (it failed to open earlier or a swap failed).
     StreamMissing,
+    /// The device is still listed (and may still be the default) but delivers
+    /// nothing but silence, e.g. a USB dongle whose headset is switched off.
+    EndpointSilent,
 }
 
 impl fmt::Display for SwitchReason {
@@ -70,6 +73,7 @@ impl fmt::Display for SwitchReason {
             SwitchReason::ActiveDisappeared => "active device disappeared",
             SwitchReason::PreferredReturned => "selected device returned",
             SwitchReason::StreamMissing => "stream not running",
+            SwitchReason::EndpointSilent => "device delivers only silence",
         };
         f.write_str(text)
     }
@@ -110,16 +114,33 @@ struct StreamTracker {
     active: Option<String>,
     /// Consecutive failed swap attempts (reset on success).
     failures: u32,
+    /// A device that is listed but known to deliver only silence; skipped as
+    /// a target while another device is available.
+    dead: Option<String>,
 }
 
 impl StreamTracker {
+    fn is_dead(&self, name: &str) -> bool {
+        self.dead.as_deref() == Some(name)
+    }
+
     fn target(&self, snap: &DeviceSnapshot) -> Option<String> {
         if let Some(pref) = &self.preferred {
-            if snap.is_present(pref) {
+            if snap.is_present(pref) && !self.is_dead(pref) {
                 return Some(pref.clone());
             }
         }
-        snap.default_name.clone()
+        match &snap.default_name {
+            Some(default) if !self.is_dead(default) => Some(default.clone()),
+            // The default is dead: use any other device that is there. If
+            // none is, stay on the default rather than on nothing.
+            default => snap
+                .present
+                .iter()
+                .find(|n| !self.is_dead(n))
+                .cloned()
+                .or_else(|| default.clone()),
+        }
     }
 
     fn evaluate(&self, snap: &DeviceSnapshot, eval: &mut Evaluation) {
@@ -142,6 +163,8 @@ impl StreamTracker {
             (Some(active), Some(target)) => {
                 let reason = if !active_present {
                     SwitchReason::ActiveDisappeared
+                } else if self.is_dead(active) {
+                    SwitchReason::EndpointSilent
                 } else if self.preferred.as_deref() == Some(target.as_str()) {
                     SwitchReason::PreferredReturned
                 } else {
@@ -203,6 +226,7 @@ impl DeviceFollower {
                 preferred: mic_preferred,
                 active: mic_active,
                 failures: 0,
+                dead: None,
             });
         }
         if track_system {
@@ -211,6 +235,7 @@ impl DeviceFollower {
                 preferred: system_preferred,
                 active: system_active,
                 failures: 0,
+                dead: None,
             });
         }
         Self { trackers }
@@ -244,6 +269,26 @@ impl DeviceFollower {
         if let Some(t) = self.tracker_mut(kind) {
             t.active = None;
         }
+    }
+
+    /// The device of `kind` is listed but delivers only silence: stop
+    /// targeting it until [`clear_dead`](Self::clear_dead).
+    pub fn mark_dead(&mut self, kind: StreamKind, device: &str) {
+        if let Some(t) = self.tracker_mut(kind) {
+            t.dead = Some(device.to_string());
+        }
+    }
+
+    /// Target the device again (Windows reported a change, or the wait ran out).
+    pub fn clear_dead(&mut self, kind: StreamKind) {
+        if let Some(t) = self.tracker_mut(kind) {
+            t.dead = None;
+        }
+    }
+
+    /// The device of `kind` currently marked as silent, if any.
+    pub fn dead(&self, kind: StreamKind) -> Option<&str> {
+        self.tracker(kind).and_then(|t| t.dead.as_deref())
     }
 
     pub fn swap_succeeded(&mut self, kind: StreamKind, device: &str) {
@@ -310,6 +355,22 @@ pub fn failure_notice(failures: u32) -> FailureNotice {
 pub fn retry_delay(failures: u32) -> Duration {
     let ms = 500u64.saturating_mul(1u64 << failures.saturating_sub(1).min(4));
     Duration::from_millis(ms.min(5_000))
+}
+
+/// Peak amplitude at or below which a buffer counts as silent. A live
+/// microphone always has a noise floor above this (one 16-bit step is ~3e-5);
+/// a dead endpoint delivers exact zeros.
+pub const SILENCE_PEAK: f32 = 1.0e-5;
+/// How long a microphone may deliver only silence before its endpoint is
+/// considered dead and another device is used.
+pub const DEAD_ENDPOINT_AFTER: Duration = Duration::from_secs(1);
+/// How long a device stays excluded if Windows reports no change for it.
+pub const DEAD_RETRY_AFTER: Duration = Duration::from_secs(120);
+
+/// True if a microphone that has been silent for `silent_for` should be
+/// treated as dead.
+pub fn endpoint_is_dead(silent_for: Duration) -> bool {
+    silent_for >= DEAD_ENDPOINT_AFTER
 }
 
 /// Number of silence samples to emit so that a stream that has been missing
@@ -757,5 +818,90 @@ mod tests {
             failure_notice(follower.failures(StreamKind::Microphone)),
             FailureNotice::SwapFailed
         );
+    }
+
+    // --- Headset switched off while its USB dongle stays listed ---------------
+
+    #[test]
+    fn listed_but_silent_endpoint_gives_no_os_level_signal() {
+        // The reported 14-21 s hole: the dongle stays present and default, so
+        // the OS state alone never asks for a switch.
+        let (fake, follower) = following_headset();
+        // (headset off: Windows still lists the dongle as default and present)
+        assert_eq!(follower.evaluate(&fake), Evaluation::default());
+    }
+
+    #[test]
+    fn silent_default_endpoint_falls_back_to_another_device() {
+        let (fake, mut follower) = following_headset();
+        follower.mark_dead(StreamKind::Microphone, HEADSET_MIC);
+
+        let eval = follower.evaluate(&fake);
+        assert_eq!(
+            eval.switches,
+            vec![SwitchAction {
+                kind: StreamKind::Microphone,
+                from: Some(HEADSET_MIC.into()),
+                to: LAPTOP_MIC.into(),
+                reason: SwitchReason::EndpointSilent,
+            }]
+        );
+        apply(&mut follower, &eval);
+        // Settled on the fallback; no ping-pong while the mark stands.
+        assert_eq!(follower.evaluate(&fake), Evaluation::default());
+    }
+
+    #[test]
+    fn cleared_mark_moves_back_to_the_default() {
+        let (fake, mut follower) = following_headset();
+        follower.mark_dead(StreamKind::Microphone, HEADSET_MIC);
+        let eval = follower.evaluate(&fake);
+        apply(&mut follower, &eval);
+
+        follower.clear_dead(StreamKind::Microphone);
+        let eval = follower.evaluate(&fake);
+        assert_eq!(eval.switches.len(), 1);
+        assert_eq!(eval.switches[0].to, HEADSET_MIC);
+        assert_eq!(eval.switches[0].reason, SwitchReason::DefaultChanged);
+    }
+
+    #[test]
+    fn silent_endpoint_without_alternative_keeps_the_stream() {
+        let fake = FakeDevices::new(&[HEADSET_MIC], HEADSET_MIC, &[SPEAKERS], SPEAKERS);
+        let mut follower = DeviceFollower::new(
+            true,
+            None,
+            Some(HEADSET_MIC.into()),
+            true,
+            None,
+            Some(SPEAKERS.into()),
+        );
+        follower.mark_dead(StreamKind::Microphone, HEADSET_MIC);
+        assert_eq!(follower.evaluate(&fake), Evaluation::default());
+    }
+
+    #[test]
+    fn dead_mark_does_not_override_a_new_working_default() {
+        let (fake, mut follower) = following_headset();
+        follower.mark_dead(StreamKind::Microphone, HEADSET_MIC);
+        let eval = follower.evaluate(&fake);
+        apply(&mut follower, &eval);
+
+        // The user picks the Yeti as default while the headset is still off.
+        fake.set(
+            StreamKind::Microphone,
+            &[LAPTOP_MIC, HEADSET_MIC, USB_MIC],
+            Some(USB_MIC),
+        );
+        let eval = follower.evaluate(&fake);
+        assert_eq!(eval.switches.len(), 1);
+        assert_eq!(eval.switches[0].to, USB_MIC);
+    }
+
+    #[test]
+    fn dead_endpoint_threshold_is_about_one_second() {
+        assert!(!endpoint_is_dead(Duration::from_millis(900)));
+        assert!(endpoint_is_dead(Duration::from_secs(1)));
+        assert!(endpoint_is_dead(Duration::from_secs(20)));
     }
 }
