@@ -61,6 +61,9 @@ pub enum SwitchReason {
     PreferredReturned,
     /// The stream is not running (it failed to open earlier or a swap failed).
     StreamMissing,
+    /// The device is still listed (and may still be the default) but delivers
+    /// nothing but silence, e.g. a USB dongle whose headset is switched off.
+    EndpointSilent,
 }
 
 impl fmt::Display for SwitchReason {
@@ -70,6 +73,7 @@ impl fmt::Display for SwitchReason {
             SwitchReason::ActiveDisappeared => "active device disappeared",
             SwitchReason::PreferredReturned => "selected device returned",
             SwitchReason::StreamMissing => "stream not running",
+            SwitchReason::EndpointSilent => "device delivers only silence",
         };
         f.write_str(text)
     }
@@ -99,6 +103,16 @@ pub struct Evaluation {
     pub retry: bool,
 }
 
+/// Inputs that capture what the PC plays (Stereo Mix, virtual cables) rather
+/// than a microphone. Never picked as a fallback, or system audio would be
+/// recorded twice.
+fn is_loopback_like(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    ["stereo mix", "stereomix", "what u hear", "cable output", "loopback"]
+        .iter()
+        .any(|p| lower.contains(p))
+}
+
 /// Tracks one stream (microphone or system audio).
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct StreamTracker {
@@ -110,16 +124,33 @@ struct StreamTracker {
     active: Option<String>,
     /// Consecutive failed swap attempts (reset on success).
     failures: u32,
+    /// A device that is listed but known to deliver only silence; skipped as
+    /// a target while another device is available.
+    dead: Option<String>,
 }
 
 impl StreamTracker {
+    fn is_dead(&self, name: &str) -> bool {
+        self.dead.as_deref() == Some(name)
+    }
+
     fn target(&self, snap: &DeviceSnapshot) -> Option<String> {
         if let Some(pref) = &self.preferred {
-            if snap.is_present(pref) {
+            if snap.is_present(pref) && !self.is_dead(pref) {
                 return Some(pref.clone());
             }
         }
-        snap.default_name.clone()
+        match &snap.default_name {
+            Some(default) if !self.is_dead(default) => Some(default.clone()),
+            // The default is dead: use any other device that is there. If
+            // none is, stay on the default rather than on nothing.
+            default => snap
+                .present
+                .iter()
+                .find(|n| !self.is_dead(n) && !is_loopback_like(n))
+                .cloned()
+                .or_else(|| default.clone()),
+        }
     }
 
     fn evaluate(&self, snap: &DeviceSnapshot, eval: &mut Evaluation) {
@@ -142,6 +173,8 @@ impl StreamTracker {
             (Some(active), Some(target)) => {
                 let reason = if !active_present {
                     SwitchReason::ActiveDisappeared
+                } else if self.is_dead(active) {
+                    SwitchReason::EndpointSilent
                 } else if self.preferred.as_deref() == Some(target.as_str()) {
                     SwitchReason::PreferredReturned
                 } else {
@@ -203,6 +236,7 @@ impl DeviceFollower {
                 preferred: mic_preferred,
                 active: mic_active,
                 failures: 0,
+                dead: None,
             });
         }
         if track_system {
@@ -211,6 +245,7 @@ impl DeviceFollower {
                 preferred: system_preferred,
                 active: system_active,
                 failures: 0,
+                dead: None,
             });
         }
         Self { trackers }
@@ -244,6 +279,26 @@ impl DeviceFollower {
         if let Some(t) = self.tracker_mut(kind) {
             t.active = None;
         }
+    }
+
+    /// The device of `kind` is listed but delivers only silence: stop
+    /// targeting it until [`clear_dead`](Self::clear_dead).
+    pub fn mark_dead(&mut self, kind: StreamKind, device: &str) {
+        if let Some(t) = self.tracker_mut(kind) {
+            t.dead = Some(device.to_string());
+        }
+    }
+
+    /// Target the device again (Windows reported a change, or the wait ran out).
+    pub fn clear_dead(&mut self, kind: StreamKind) {
+        if let Some(t) = self.tracker_mut(kind) {
+            t.dead = None;
+        }
+    }
+
+    /// The device of `kind` currently marked as silent, if any.
+    pub fn dead(&self, kind: StreamKind) -> Option<&str> {
+        self.tracker(kind).and_then(|t| t.dead.as_deref())
     }
 
     pub fn swap_succeeded(&mut self, kind: StreamKind, device: &str) {
@@ -310,6 +365,57 @@ pub fn failure_notice(failures: u32) -> FailureNotice {
 pub fn retry_delay(failures: u32) -> Duration {
     let ms = 500u64.saturating_mul(1u64 << failures.saturating_sub(1).min(4));
     Duration::from_millis(ms.min(5_000))
+}
+
+/// Peak amplitude at or below which a buffer counts as silent. A live
+/// microphone always has a noise floor above this (one 16-bit step is ~3e-5);
+/// a dead endpoint delivers exact zeros.
+pub const SILENCE_PEAK: f32 = 1.0e-5;
+/// How long a microphone may deliver only silence before its endpoint is
+/// considered dead and another device is used.
+pub const DEAD_ENDPOINT_AFTER: Duration = Duration::from_secs(1);
+/// How long a device stays excluded if Windows reports no change for it.
+pub const DEAD_RETRY_AFTER: Duration = Duration::from_secs(120);
+
+/// True if a microphone that has been silent for `silent_for` should be
+/// treated as dead.
+pub fn endpoint_is_dead(silent_for: Duration) -> bool {
+    silent_for >= DEAD_ENDPOINT_AFTER
+}
+
+/// Windows-1252 characters for the bytes 0x80..=0x9F (0 = undefined).
+const CP1252_HIGH: [u16; 32] = [
+    0x20AC, 0, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, 0x02C6, 0x2030, 0x0160, 0x2039,
+    0x0152, 0, 0x017D, 0, 0, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, 0x02DC,
+    0x2122, 0x0161, 0x203A, 0x0153, 0, 0x017E, 0x0178,
+];
+
+/// Undo UTF-8 text that was decoded as Windows-1252/Latin-1 and encoded as
+/// UTF-8 again ("pÃ¥" -> "på"). Text that is not such a double encoding is
+/// returned unchanged.
+pub fn repair_double_utf8(text: &str) -> String {
+    if text.is_ascii() {
+        return text.to_string();
+    }
+    let mut bytes = Vec::with_capacity(text.len());
+    for c in text.chars() {
+        let code = c as u32;
+        let byte = if code < 0x80 || (0xA0..=0xFF).contains(&code) {
+            code as u8
+        } else if let Some(i) = CP1252_HIGH.iter().position(|&h| h as u32 == code && h != 0) {
+            0x80 + i as u8
+        } else if (0x80..=0x9F).contains(&code) {
+            code as u8
+        } else {
+            return text.to_string();
+        };
+        bytes.push(byte);
+    }
+    match String::from_utf8(bytes) {
+        // Only a real repair if it actually shortened the text.
+        Ok(fixed) if fixed.chars().count() < text.chars().count() => fixed,
+        _ => text.to_string(),
+    }
 }
 
 /// Number of silence samples to emit so that a stream that has been missing
@@ -757,5 +863,130 @@ mod tests {
             failure_notice(follower.failures(StreamKind::Microphone)),
             FailureNotice::SwapFailed
         );
+    }
+
+    // --- Headset switched off while its USB dongle stays listed ---------------
+
+    #[test]
+    fn listed_but_silent_endpoint_gives_no_os_level_signal() {
+        // The reported 14-21 s hole: the dongle stays present and default, so
+        // the OS state alone never asks for a switch.
+        let (fake, follower) = following_headset();
+        // (headset off: Windows still lists the dongle as default and present)
+        assert_eq!(follower.evaluate(&fake), Evaluation::default());
+    }
+
+    #[test]
+    fn silent_default_endpoint_falls_back_to_another_device() {
+        let (fake, mut follower) = following_headset();
+        follower.mark_dead(StreamKind::Microphone, HEADSET_MIC);
+
+        let eval = follower.evaluate(&fake);
+        assert_eq!(
+            eval.switches,
+            vec![SwitchAction {
+                kind: StreamKind::Microphone,
+                from: Some(HEADSET_MIC.into()),
+                to: LAPTOP_MIC.into(),
+                reason: SwitchReason::EndpointSilent,
+            }]
+        );
+        apply(&mut follower, &eval);
+        // Settled on the fallback; no ping-pong while the mark stands.
+        assert_eq!(follower.evaluate(&fake), Evaluation::default());
+    }
+
+    #[test]
+    fn cleared_mark_moves_back_to_the_default() {
+        let (fake, mut follower) = following_headset();
+        follower.mark_dead(StreamKind::Microphone, HEADSET_MIC);
+        let eval = follower.evaluate(&fake);
+        apply(&mut follower, &eval);
+
+        follower.clear_dead(StreamKind::Microphone);
+        let eval = follower.evaluate(&fake);
+        assert_eq!(eval.switches.len(), 1);
+        assert_eq!(eval.switches[0].to, HEADSET_MIC);
+        assert_eq!(eval.switches[0].reason, SwitchReason::DefaultChanged);
+    }
+
+    #[test]
+    fn silent_endpoint_without_alternative_keeps_the_stream() {
+        let fake = FakeDevices::new(&[HEADSET_MIC], HEADSET_MIC, &[SPEAKERS], SPEAKERS);
+        let mut follower = DeviceFollower::new(
+            true,
+            None,
+            Some(HEADSET_MIC.into()),
+            true,
+            None,
+            Some(SPEAKERS.into()),
+        );
+        follower.mark_dead(StreamKind::Microphone, HEADSET_MIC);
+        assert_eq!(follower.evaluate(&fake), Evaluation::default());
+    }
+
+    #[test]
+    fn dead_mark_does_not_override_a_new_working_default() {
+        let (fake, mut follower) = following_headset();
+        follower.mark_dead(StreamKind::Microphone, HEADSET_MIC);
+        let eval = follower.evaluate(&fake);
+        apply(&mut follower, &eval);
+
+        // The user picks the Yeti as default while the headset is still off.
+        fake.set(
+            StreamKind::Microphone,
+            &[LAPTOP_MIC, HEADSET_MIC, USB_MIC],
+            Some(USB_MIC),
+        );
+        let eval = follower.evaluate(&fake);
+        assert_eq!(eval.switches.len(), 1);
+        assert_eq!(eval.switches[0].to, USB_MIC);
+    }
+
+    #[test]
+    fn fallback_skips_loopback_inputs() {
+        let fake = FakeDevices::new(
+            &["Stereo Mix (Realtek(R) Audio)", HEADSET_MIC, LAPTOP_MIC],
+            HEADSET_MIC,
+            &[SPEAKERS],
+            SPEAKERS,
+        );
+        let mut follower = DeviceFollower::new(
+            true,
+            None,
+            Some(HEADSET_MIC.into()),
+            true,
+            None,
+            Some(SPEAKERS.into()),
+        );
+        follower.mark_dead(StreamKind::Microphone, HEADSET_MIC);
+        let eval = follower.evaluate(&fake);
+        assert_eq!(eval.switches.len(), 1);
+        assert_eq!(eval.switches[0].to, LAPTOP_MIC);
+    }
+
+    #[test]
+    fn dead_endpoint_threshold_is_about_one_second() {
+        assert!(!endpoint_is_dead(Duration::from_millis(900)));
+        assert!(endpoint_is_dead(Duration::from_secs(1)));
+        assert!(endpoint_is_dead(Duration::from_secs(20)));
+    }
+
+    #[test]
+    fn repairs_double_encoded_danish_device_names() {
+        assert_eq!(
+            repair_double_utf8("Mikrofon pÃ¥ headset (Jabra Link 390)"),
+            "Mikrofon på headset (Jabra Link 390)"
+        );
+        assert_eq!(repair_double_utf8("HÃ¸jttalere (Senary Audio)"), "Højttalere (Senary Audio)");
+        // Uppercase Ø is byte 0x98 in the second position: a cp1252 character.
+        assert_eq!(repair_double_utf8("Ã˜ret"), "Øret");
+    }
+
+    #[test]
+    fn leaves_correct_names_alone() {
+        for name in ["Mikrofon på headset", "Højttalere", "Speakers (Realtek(R) Audio)", "マイク"] {
+            assert_eq!(repair_double_utf8(name), name);
+        }
     }
 }

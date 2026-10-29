@@ -24,8 +24,9 @@ use tauri::{AppHandle, Emitter, Runtime};
 use tokio::sync::mpsc;
 
 use super::device_follow::{
-    describe_switch, failure_notice, silence_samples_due, DeviceFollower, DeviceSnapshot,
-    DeviceSource, FailureNotice, StreamKind, SwitchAction, SwitchReason,
+    describe_switch, endpoint_is_dead, failure_notice, silence_samples_due, DeviceFollower,
+    DeviceSnapshot, DeviceSource, FailureNotice, StreamKind, SwitchAction, SwitchReason,
+    DEAD_RETRY_AFTER,
 };
 use super::device_monitor::DeviceEvent;
 use super::recording_commands::{session_live, RECORDING_MANAGER};
@@ -44,6 +45,12 @@ const STREAM_OPEN_TIMEOUT: Duration = Duration::from_secs(10);
 /// The pipeline runs at 48 kHz; capture resamples to it.
 const PIPELINE_SAMPLE_RATE: u32 = 48_000;
 const KEEPER_TICK: Duration = Duration::from_millis(50);
+/// How often the microphone is checked for a silent (dead) endpoint.
+const SILENCE_CHECK: Duration = Duration::from_millis(250);
+/// Upper bound for stopping the old stream. Stopping a WASAPI stream whose
+/// device just vanished can block for many seconds; the new stream must not
+/// wait for it (the stop keeps running on its own thread).
+const STREAM_STOP_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// Chunk ids for synthetic silence, far away from capture ids and from the
 /// pipeline's flush sentinels (>= u64::MAX - 10).
@@ -147,17 +154,24 @@ async fn tear_down(kind: StreamKind, session: &Arc<RecordingState>) -> Result<()
         }
     };
     if let Some(stream) = old {
-        // cpal stop/drop on a removed device may block briefly.
-        match tokio::task::spawn_blocking(move || stream.stop()).await {
-            Ok(Err(e)) => warn!(
+        // cpal stop/drop on a removed device can block for many seconds
+        // (Bluetooth and USB headsets). Give it a moment, then carry on
+        // without it: the blocking thread finishes the stop by itself.
+        let stopping = tokio::task::spawn_blocking(move || stream.stop());
+        match tokio::time::timeout(STREAM_STOP_TIMEOUT, stopping).await {
+            Ok(Ok(Err(e))) => warn!(
                 "[DEVICE_FOLLOW] Stopping old {} stream failed (ignored): {}",
                 kind, e
             ),
-            Err(e) => warn!(
+            Ok(Err(e)) => warn!(
                 "[DEVICE_FOLLOW] Stopping old {} stream panicked (ignored): {}",
                 kind, e
             ),
-            Ok(Ok(())) => {}
+            Ok(Ok(Ok(()))) => {}
+            Err(_) => warn!(
+                "[DEVICE_FOLLOW] Stopping old {} stream took over {:?}; continuing without waiting",
+                kind, STREAM_STOP_TIMEOUT
+            ),
         }
     }
     Ok(())
@@ -177,18 +191,27 @@ async fn open_on(
         },
     ));
 
-    let stream = tokio::time::timeout(
-        STREAM_OPEN_TIMEOUT,
-        AudioStream::create(
-            device.clone(),
-            session.clone(),
-            recording_device_type(kind),
+    // AudioStream::create has no await point that yields: cpal enumerates,
+    // configures and starts the WASAPI stream synchronously. Run it on a
+    // blocking thread so the timeout can actually fire and the follower loop
+    // (silence ticks, notifications) keeps running while a device hangs.
+    let handle = tokio::runtime::Handle::current();
+    let create_device = device.clone();
+    let create_session = session.clone();
+    let device_type = recording_device_type(kind);
+    let opening = tokio::task::spawn_blocking(move || {
+        handle.block_on(AudioStream::create(
+            create_device,
+            create_session,
+            device_type,
             None,
-        ),
-    )
-    .await
-    .map_err(|_| format!("opening stream timed out after {:?}", STREAM_OPEN_TIMEOUT))?
-    .map_err(|e| format!("failed to open stream: {}", e))?;
+        ))
+    });
+    let stream = tokio::time::timeout(STREAM_OPEN_TIMEOUT, opening)
+        .await
+        .map_err(|_| format!("opening stream timed out after {:?}", STREAM_OPEN_TIMEOUT))?
+        .map_err(|e| format!("opening stream panicked: {}", e))?
+        .map_err(|e| format!("failed to open stream: {}", e))?;
 
     let rejected = {
         let mut guard = RECORDING_MANAGER.lock().unwrap();
@@ -218,6 +241,8 @@ struct Follower<R: Runtime> {
     session: Arc<RecordingState>,
     follower: DeviceFollower,
     keepers: HashMap<StreamKind, SilenceKeeper>,
+    /// When the microphone device was marked as delivering only silence.
+    mic_dead_since: Option<Instant>,
 }
 
 impl<R: Runtime> Follower<R> {
@@ -288,7 +313,9 @@ impl<R: Runtime> Follower<R> {
         // plus enumeration, a few hundred ms) is not filled.
         let old_stream_dead = matches!(
             action.reason,
-            SwitchReason::ActiveDisappeared | SwitchReason::StreamMissing
+            SwitchReason::ActiveDisappeared
+                | SwitchReason::StreamMissing
+                | SwitchReason::EndpointSilent
         );
         if old_stream_dead {
             self.ensure_keeper(kind);
@@ -309,6 +336,10 @@ impl<R: Runtime> Follower<R> {
                     .map(SilenceKeeper::stop)
                     .unwrap_or_else(|| started.elapsed());
                 self.follower.swap_succeeded(kind, &action.to);
+                if kind == StreamKind::Microphone {
+                    // Judge the new device on its own audio, not the old one's.
+                    self.session.reset_mic_signal();
+                }
                 // Errors reported by the stream that died must not add up to
                 // the "too many errors" stop over a long meeting.
                 self.session.clear_recoverable_errors();
@@ -368,6 +399,44 @@ impl<R: Runtime> Follower<R> {
         self.keepers
             .entry(kind)
             .or_insert_with(|| SilenceKeeper::start(kind, session));
+    }
+
+    /// Mark the microphone device as dead when it has delivered only silence
+    /// for a while, and forget the mark when it is time to try it again.
+    /// Returns true if an evaluation should run now.
+    fn check_mic_silence(&mut self) -> bool {
+        if let Some(since) = self.mic_dead_since {
+            if since.elapsed() >= DEAD_RETRY_AFTER {
+                info!("[DEVICE_FOLLOW] Trying the silent microphone device again");
+                self.clear_mic_dead();
+                return true;
+            }
+            return false;
+        }
+        let (Some(active), Some(silent_for)) = (
+            self.follower
+                .active(StreamKind::Microphone)
+                .map(str::to_string),
+            self.session.mic_silent_for(),
+        ) else {
+            return false;
+        };
+        if !endpoint_is_dead(silent_for) {
+            return false;
+        }
+        warn!(
+            "[DEVICE_FOLLOW] Microphone '{}' has delivered only silence for {} ms; treating it as dead and looking for another device",
+            active,
+            silent_for.as_millis()
+        );
+        self.follower.mark_dead(StreamKind::Microphone, &active);
+        self.mic_dead_since = Some(Instant::now());
+        true
+    }
+
+    fn clear_mic_dead(&mut self) {
+        self.follower.clear_dead(StreamKind::Microphone);
+        self.mic_dead_since = None;
     }
 
     fn stop_keepers(&mut self) {
@@ -480,6 +549,7 @@ pub fn spawn<R: Runtime>(
                 system_active,
             ),
             keepers: HashMap::new(),
+            mic_dead_since: None,
         };
         let mut monitor_events = monitor_events;
         let mut notifier_alive = notifier.is_some();
@@ -489,6 +559,11 @@ pub fn spawn<R: Runtime>(
         // We are spawned just before the recording is flagged live.
         let spawned_at = Instant::now();
         let mut seen_live = false;
+        let mut silence_tick = tokio::time::interval(SILENCE_CHECK);
+        silence_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        // The silence tick wakes the loop often, so the heartbeat deadline
+        // must outlive an iteration.
+        let mut next_heartbeat = tokio::time::Instant::now() + HEARTBEAT;
 
         loop {
             if session_live(&session) {
@@ -499,12 +574,15 @@ pub fn spawn<R: Runtime>(
                 tokio::time::sleep(Duration::from_millis(100)).await;
                 continue;
             }
-            let wake = check_at.unwrap_or_else(|| tokio::time::Instant::now() + HEARTBEAT);
+            let wake = check_at.unwrap_or(next_heartbeat);
             tokio::select! {
                 event = rx.recv(), if notifier_alive => {
                     match event {
                         Some(event) => {
                             info!("[DEVICE_FOLLOW] Windows endpoint event: {:?}", event);
+                            // Windows says something changed: a silent device
+                            // may be alive again (headset switched on).
+                            state.clear_mic_dead();
                             let at = tokio::time::Instant::now() + DEBOUNCE;
                             check_at = Some(check_at.map_or(at, |c| c.min(at)));
                         }
@@ -524,8 +602,14 @@ pub fn spawn<R: Runtime>(
                         None => monitor_events = None,
                     }
                 }
+                _ = silence_tick.tick() => {
+                    if state.check_mic_silence() {
+                        check_at = Some(tokio::time::Instant::now());
+                    }
+                }
                 _ = tokio::time::sleep_until(wake) => {
                     check_at = None;
+                    next_heartbeat = tokio::time::Instant::now() + HEARTBEAT;
                     if !session_live(&session) {
                         break;
                     }

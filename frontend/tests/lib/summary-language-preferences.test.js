@@ -128,3 +128,24 @@ describe("summary language local fallback", () => {
     ).rejects.toThrow("Sproget til opsummering kunne ikke gemmes på denne enhed");
   });
 });
+
+describe("pinned summary language default", () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+    installLocalStorage();
+  });
+
+  test("is Danish until the user chooses something else", async () => {
+    const prefs = await import("../../src/lib/summary-language-preferences");
+    expect(prefs.readPinnedSummaryLanguageDefault()).toBe("da");
+    prefs.writePinnedSummaryLanguageDefault("fr");
+    expect(prefs.readPinnedSummaryLanguageDefault()).toBe("fr");
+  });
+
+  test("stays unpinned after the user unpins Danish", async () => {
+    const prefs = await import("../../src/lib/summary-language-preferences");
+    prefs.writePinnedSummaryLanguageDefault("da");
+    prefs.writePinnedSummaryLanguageDefault(null);
+    expect(prefs.readPinnedSummaryLanguageDefault()).toBeNull();
+  });
+});
