@@ -21,9 +21,9 @@ export function About() {
         getVersion().then(setCurrentVersion).catch(console.error);
     }, []);
 
-    const handleContactClick = async () => {
+    const openLink = async (url: string) => {
         try {
-            await invoke('open_external_url', { url: 'https://meetily.zackriya.com/#about' });
+            await invoke('open_external_url', { url });
         } catch (error) {
             console.error('Failed to open link:', error);
         }
@@ -53,14 +53,14 @@ export function About() {
             <div className="text-center">
                 <div className="mb-3">
                     <Image
-                        src="icon_128x128.png"
-                        alt="Meetily Logo"
+                        src="/tingskriver-logo.svg"
+                        alt="Tingskriver Logo"
                         width={64}
                         height={64}
                         className="mx-auto"
                     />
                 </div>
-                {/* <h1 className="text-xl font-bold text-gray-900">Meetily</h1> */}
+                {/* <h1 className="text-xl font-bold text-gray-900">Tingskriver</h1> */}
                 <span className="text-sm text-gray-500"> v{currentVersion}</span>
                 <p className="text-medium text-gray-600 mt-1">
                     Real-time notes and summaries that never leave your machine.
@@ -95,7 +95,7 @@ export function About() {
 
             {/* Features Grid - Compact */}
             <div className="space-y-3">
-                <h2 className="text-base font-semibold text-gray-800">What makes Meetily different</h2>
+                <h2 className="text-base font-semibold text-gray-800">What makes Tingskriver different</h2>
                 <div className="grid grid-cols-2 gap-2">
                     <div className="bg-gray-50 rounded p-3 hover:bg-gray-100 transition-colors">
                         <h3 className="font-bold text-sm text-gray-900 mb-1">Privacy-first</h3>
@@ -123,24 +123,16 @@ export function About() {
                 </p>
             </div>
 
-            {/* CTA Section - Compact */}
-            <div className="text-center space-y-2">
-                <h3 className="text-medium font-semibold text-gray-800">Ready to push your business further?</h3>
-                <p className="text-s text-gray-600">
-                    If you're planning to build privacy-first custom AI agents or a fully tailored product for your <span className="font-bold">business</span>, we can help you build it.
-                </p>
-                <button
-                    onClick={handleContactClick}
-                    className="inline-flex items-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded transition-colors duration-200 shadow-sm hover:shadow-md"
-                >
-                    Chat with the Zackriya team
-                </button>
-            </div>
-
             {/* Footer - Compact */}
-            <div className="pt-2 border-t border-gray-200 text-center">
+            <div className="pt-2 border-t border-gray-200 text-center space-y-1">
                 <p className="text-xs text-gray-400">
-                    Built by Zackriya Solutions
+                    Free and open source. Fork of an MIT-licensed open source project, see{' '}
+                    <button onClick={() => openLink('https://github.com/mahope/tingskriver/blob/main/NOTICE.md')} className="underline hover:text-gray-600">NOTICE.md</button>.
+                </p>
+                <p className="text-xs text-gray-400">
+                    <button onClick={() => openLink('https://tingskriver.mahoje.dk')} className="underline hover:text-gray-600">tingskriver.mahoje.dk</button>
+                    {' · '}
+                    <button onClick={() => openLink('https://github.com/mahope/tingskriver')} className="underline hover:text-gray-600">GitHub</button>
                 </p>
             </div>
             <AnalyticsConsentSwitch />
