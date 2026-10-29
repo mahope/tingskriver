@@ -246,3 +246,38 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+/* BlockNote følger Tingskrivers tokens: papirflade, blæksort tekst, Hanken Grotesk */
+.bn-container.bn-container,
+.bn-container.bn-container[data-color-scheme] {
+  --bn-colors-editor-background: transparent;
+  --bn-colors-editor-text: hsl(var(--foreground));
+  --bn-colors-menu-background: hsl(var(--popover));
+  --bn-colors-menu-text: hsl(var(--popover-foreground));
+  --bn-colors-tooltip-background: hsl(var(--popover));
+  --bn-colors-tooltip-text: hsl(var(--popover-foreground));
+  --bn-colors-hovered-background: hsl(var(--accent));
+  --bn-colors-selected-background: hsl(var(--primary) / 0.18);
+  --bn-colors-disabled-background: hsl(var(--muted));
+  --bn-colors-disabled-text: hsl(var(--muted-foreground));
+  --bn-colors-border: hsl(var(--border));
+  --bn-colors-side-menu: hsl(var(--muted-foreground));
+  --bn-font-family: var(--font-hanken), system-ui, "Segoe UI", sans-serif;
+  background: transparent;
+  color: hsl(var(--foreground));
+}
+
+.bn-container.bn-container .bn-editor,
+.bn-container.bn-container .bn-block-content {
+  font-family: var(--font-hanken), system-ui, "Segoe UI", sans-serif;
+  color: hsl(var(--foreground));
+}
+
+.bn-container.bn-container .bn-editor {
+  background: transparent;
+  padding-inline: 0;
+}
+
+.bn-container [data-content-type="heading"] {
+  font-family: var(--font-literata), Georgia, serif;
+}

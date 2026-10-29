@@ -290,7 +290,7 @@ export default function RootLayout({
         </AnalyticsProvider>
 
         <Toaster
-          position="bottom-center"
+          position="top-right"
           closeButton
           style={{
             '--normal-bg': 'hsl(var(--card))',

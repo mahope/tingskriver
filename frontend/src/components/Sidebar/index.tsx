@@ -489,11 +489,11 @@ const Sidebar: React.FC = () => {
           type="button"
           onClick={() => openMeeting(item)}
           aria-current={isActive ? 'page' : undefined}
-          className={`w-full text-left rounded-md pl-3 pr-16 py-2 min-h-[44px] transition-colors focus-visible:ring-2 focus-visible:ring-ring ${
+          className={`w-full text-left rounded-md px-3 py-2 min-h-[44px] transition-colors focus-visible:ring-2 focus-visible:ring-ring ${
             isActive ? 'bg-accent text-foreground' : 'hover:bg-accent/60 text-foreground'
           }`}
         >
-          <span className={`block truncate text-sm ${isActive ? 'font-semibold' : 'font-medium'}`}>{item.title}</span>
+          <span className={`block text-sm line-clamp-2 break-words ${isActive ? 'font-semibold' : 'font-medium'}`}>{item.title}</span>
           {item.createdAt && (
             <span className="block text-xs text-muted-foreground tabular-nums">{formatTime(item.createdAt)}</span>
           )}
@@ -503,7 +503,7 @@ const Sidebar: React.FC = () => {
             </span>
           )}
         </button>
-        <div className="absolute right-1 top-1.5 flex gap-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
+        <div className="absolute right-1 top-1.5 flex gap-0.5 rounded-md bg-accent opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
           <button
             type="button"
             onClick={() => handleEditStart(item.id, item.title)}
@@ -688,17 +688,18 @@ const Sidebar: React.FC = () => {
               )}
             </div>
 
-            <div className="flex-shrink-0 border-t border-border p-2 flex items-center gap-1">
+            <div className="flex-shrink-0 border-t border-border p-2 flex flex-col gap-0.5">
               {betaFeatures.importAndRetranscribe && (
                 <button
                   type="button"
                   onClick={() => openImportDialog()}
-                  className="inline-flex items-center gap-2 min-h-[44px] px-3 rounded-lg text-sm text-foreground hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+                  className="flex items-center gap-2 min-h-[44px] px-3 rounded-lg text-sm text-foreground hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   <Upload className="w-4 h-4" aria-hidden="true" />
                   Importér lyd
                 </button>
               )}
+              <div className="flex items-center gap-1">
               <button
                 type="button"
                 onClick={() => router.push('/settings')}
@@ -709,6 +710,7 @@ const Sidebar: React.FC = () => {
                 Indstillinger
               </button>
               <Info isCollapsed />
+              </div>
             </div>
           </>
         )}

@@ -16,7 +16,7 @@ function formatClock(seconds: number): string {
   const secs = seconds % 60;
   const mm = mins.toString().padStart(2, '0');
   const ss = secs.toString().padStart(2, '0');
-  return hours > 0 ? `${hours}.${mm}.${ss}` : `${mm}.${ss}`;
+  return hours > 0 ? `${hours}:${mm}:${ss}` : `${mm}:${ss}`;
 }
 
 /**

@@ -45,8 +45,8 @@ export function SetupOverviewStep() {
 
   return (
     <OnboardingContainer
-      title="Setup Overview"
-      description="Tingskriver requires that you download the Transcription & Summarization AI models for the software to work."
+      title="Overblik over opsætningen"
+      description="Tingskriver skal bruge en model til transskription og en til opsummering, før programmet virker."
       step={2}
       totalSteps={isMac ? 4 : 3}
     >

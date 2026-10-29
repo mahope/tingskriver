@@ -244,7 +244,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
             {/* Recording Status Bar - Sticky at top, always visible when recording */}
             <AnimatePresence>
                 {isRecording && (
-                    <div className="sticky top-0 z-10 bg-card pb-2">
+                    <div className="sticky top-0 z-10 bg-background pb-2">
                         <RecordingStatusBar isPaused={isPaused} />
                     </div>
                 )}
