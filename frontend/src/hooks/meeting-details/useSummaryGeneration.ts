@@ -28,8 +28,8 @@ async function resolveSummaryLanguage(
     if (perMeeting.language) return perMeeting.language;
   } catch (err) {
     console.warn('Failed to load meeting summary language:', err);
-    toast.warning('Could not load saved summary language', {
-      description: 'Using Auto for this generation.',
+    toast.warning('Det gemte sprog til opsummering kunne ikke indlæses', {
+      description: 'Bruger automatisk sprogvalg denne gang.',
     });
   }
 
@@ -43,8 +43,8 @@ async function resolveSummaryLanguage(
   try {
     const detection = await detectAndCacheSummaryLanguage(meetingId, transcriptTexts);
     if (detection.reason === 'tie') {
-      toast.warning('Bilingual transcript detected', {
-        description: 'Pick a summary language manually if Auto chooses the wrong fallback.',
+      toast.warning('Transskriptet er tosproget', {
+        description: 'Vælg sprog til opsummeringen selv, hvis automatisk sprogvalg vælger forkert.',
       });
     }
     return detection.language;
@@ -161,7 +161,7 @@ export function useSummaryGeneration({
     activeProcessIdRef.current = null;
     setSummaryError(message);
     setSummaryStatus('error');
-    toast.error(`Failed to ${isRegeneration ? 'regenerate' : 'generate'} summary`, {
+    toast.error(`Opsummeringen kunne ikke ${isRegeneration ? 'genskabes' : 'laves'}`, {
       description: message,
     });
     await finishGeneration(generationId, outcome);
@@ -222,8 +222,8 @@ export function useSummaryGeneration({
           setAiSummary(restoredSummary);
           setSummaryStatus('completed');
           setSummaryError(null);
-          toast.error('Failed to regenerate summary', {
-            description: `${errorMessage}. Your previous summary has been restored.`,
+          toast.error('Opsummeringen kunne ikke genskabes', {
+            description: `${errorMessage}. Din tidligere opsummering er gendannet.`,
           });
           activeProcessIdRef.current = null;
           await finishGeneration(generationId, 'generation_error');
@@ -253,14 +253,14 @@ export function useSummaryGeneration({
       activeProcessIdRef.current = null;
       setSummaryError(null);
       if (metadata.normalizationFallback) {
-        toast.warning('Summary generated with fallback', {
-          description: 'English normalization failed, so the original sanitized summary was kept.',
+        toast.warning('Opsummeringen er lavet med reservevalg', {
+          description: 'Normalisering til engelsk mislykkedes, så den oprindelige, rensede opsummering blev beholdt.',
         });
       } else {
-        toast.success('Summary generated successfully!', {
+        toast.success('Opsummeringen er klar', {
           description: metadata.reasoningStripped
-            ? 'Your meeting summary is ready. Model reasoning was filtered out of the notes.'
-            : 'Your meeting summary is ready',
+            ? 'Mødets opsummering er klar. Modellens tankegang er filtreret fra noterne.'
+            : 'Mødets opsummering er klar',
           duration: 4000,
         });
       }
@@ -348,8 +348,8 @@ export function useSummaryGeneration({
       if (customPrompt.trim()) {
         await Analytics.trackCustomPromptUsed(customPrompt.trim().length);
       }
-      toast.info(`${isRegeneration ? 'Regenerating' : 'Generating'} summary...`, {
-        description: `Using ${modelConfig.provider}/${modelConfig.model}`,
+      toast.info(`${isRegeneration ? 'Genskaber' : 'Laver'} opsummering…`, {
+        description: `Bruger ${modelConfig.provider}/${modelConfig.model}`,
         duration: 3000,
       });
 
@@ -428,7 +428,7 @@ export function useSummaryGeneration({
       return allData.transcripts;
     } catch (error) {
       console.error('❌ Error fetching all transcripts:', error);
-      toast.error('Failed to fetch transcripts for summary generation');
+      toast.error('Transskriptet kunne ikke hentes til opsummeringen');
       return [];
     }
   }, []);
@@ -458,12 +458,12 @@ export function useSummaryGeneration({
 
   const handleGenerateSummary = useCallback(async (customPrompt: string = '') => {
     if (isModelConfigLoading) {
-      toast.info('Loading model configuration, please wait...');
+      toast.info('Henter modelindstillinger…');
       return;
     }
     const allTranscripts = await fetchAllTranscripts(meeting.id);
     if (!allTranscripts.length) {
-      showPreflightError('No transcripts available for summary');
+      showPreflightError('Der er intet transskript at opsummere');
       return;
     }
 
@@ -473,13 +473,13 @@ export function useSummaryGeneration({
           endpoint: modelConfig.ollamaEndpoint || null,
         });
         if (models.length === 0) {
-          showPreflightError('No Ollama models found. Please download gemma3:1b from Model Settings.');
+          showPreflightError('Der er ingen Ollama-modeller. Hent gemma3:1b under modelindstillingerne.');
           return;
         }
       }
       if (modelConfig.provider === 'builtin-ai') {
         if (!modelConfig.model) {
-          showPreflightError('No built-in AI model selected. Please select a model in settings.');
+          showPreflightError('Der er ikke valgt en indbygget AI-model. Vælg en under indstillingerne.');
           onOpenModelSettings?.();
           return;
         }
@@ -488,14 +488,14 @@ export function useSummaryGeneration({
           refresh: true,
         });
         if (!isReady) {
-          showPreflightError('Built-in AI model is not ready. Please check model settings.');
+          showPreflightError('Den indbyggede AI-model er ikke klar. Tjek modelindstillingerne.');
           onOpenModelSettings?.();
           return;
         }
       }
     } catch (error) {
       console.error('Failed to validate summary model:', error);
-      showPreflightError('Failed to validate summary model. Please check model settings.');
+      showPreflightError('Opsummeringsmodellen kunne ikke kontrolleres. Tjek modelindstillingerne.');
       return;
     }
 
@@ -520,7 +520,7 @@ export function useSummaryGeneration({
 
     if (!allTranscripts.length) {
       console.error('No transcripts available for regeneration');
-      toast.error('No transcripts available for summary regeneration');
+      toast.error('Der er intet transskript at genskabe opsummeringen ud fra');
       return;
     }
 
@@ -540,8 +540,8 @@ export function useSummaryGeneration({
       setSummaryStatus('idle');
       setSummaryError(null);
       await finishGeneration(generationId, 'cancelled');
-      toast.info('Summary generation stopped', {
-        description: 'You can generate a new summary anytime',
+      toast.info('Opsummeringen er stoppet', {
+        description: 'Du kan lave en ny opsummering, når du vil',
         duration: 3000,
       });
       return;
@@ -562,13 +562,13 @@ export function useSummaryGeneration({
         setSummaryStatus('idle');
         setSummaryError(null);
         await finishGeneration(generationId, 'cancelled');
-        toast.info('Summary generation stopped', {
-          description: 'You can generate a new summary anytime',
+        toast.info('Opsummeringen er stoppet', {
+          description: 'Du kan lave en ny opsummering, når du vil',
           duration: 3000,
         });
       } else if (activeProcessIdRef.current === processId) {
-        toast.info('Summary is already finishing', {
-          description: 'Waiting for the latest result.',
+        toast.info('Opsummeringen er næsten færdig', {
+          description: 'Venter på det seneste resultat.',
         });
       }
     } catch (error) {
@@ -577,8 +577,8 @@ export function useSummaryGeneration({
         generationId === generationIdRef.current
         && activeProcessIdRef.current === processId
       ) {
-        toast.error('Failed to stop summary generation', {
-          description: 'Generation is still running; waiting for its latest status.',
+        toast.error('Opsummeringen kunne ikke stoppes', {
+          description: 'Opsummeringen kører stadig. Venter på den seneste status.',
         });
       }
     }

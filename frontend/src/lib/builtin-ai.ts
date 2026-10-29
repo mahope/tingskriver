@@ -51,12 +51,12 @@ export function getStatusColor(status: BuiltInModelStatus): string {
 
 export function getStatusLabel(status: BuiltInModelStatus): string {
   switch (status.type) {
-    case 'available': return 'Available';
-    case 'downloading': return `Downloading ${status.progress}%`;
-    case 'not_downloaded': return 'Not Downloaded';
-    case 'corrupted': return 'Corrupted';
-    case 'error': return 'Error';
-    default: return 'Unknown';
+    case 'available': return 'Tilgængelig';
+    case 'downloading': return `Henter ${status.progress} %`;
+    case 'not_downloaded': return 'Ikke hentet';
+    case 'corrupted': return 'Beskadiget';
+    case 'error': return 'Fejl';
+    default: return 'Ukendt';
   }
 }
 

@@ -52,7 +52,7 @@ export function useCopyOperations({
       return allData.transcripts;
     } catch (error) {
       console.error('❌ Error fetching all transcripts:', error);
-      toast.error('Failed to fetch transcripts for copying');
+      toast.error('Transskriptet kunne ikke hentes til kopiering');
       return [];
     }
   }, []);
@@ -64,7 +64,7 @@ export function useCopyOperations({
     const allTranscripts = await fetchAllTranscripts(meeting.id);
 
     if (!allTranscripts.length) {
-      const error_msg = 'No transcripts available to copy';
+      const error_msg = 'Der er intet transskript at kopiere';
       console.log(error_msg);
       toast.error(error_msg);
       return;
@@ -91,7 +91,7 @@ export function useCopyOperations({
       .join('\n');
 
     await navigator.clipboard.writeText(header + date + fullTranscript);
-    toast.success("Transcript copied to clipboard");
+    toast.success("Transskriptet er kopieret");
 
     // Track copy analytics
     const wordCount = allTranscripts
@@ -108,7 +108,7 @@ export function useCopyOperations({
   // Copy summary to clipboard
   const handleCopySummary = useCallback(async () => {
     if (!hasVisibleSummaryContent(aiSummary)) {
-      toast.error('No summary content available to copy');
+      toast.error('Der er ingen opsummering at kopiere');
       return;
     }
     try {
@@ -157,7 +157,7 @@ export function useCopyOperations({
       // If still no summary content, show message
       if (!summaryMarkdown.trim()) {
         console.error('❌ No summary content available to copy');
-        toast.error('No summary content available to copy');
+        toast.error('Der er ingen opsummering at kopiere');
         return;
       }
 
@@ -181,7 +181,7 @@ export function useCopyOperations({
       await navigator.clipboard.writeText(fullMarkdown);
 
       console.log('✅ Successfully copied to clipboard!');
-      toast.success("Summary copied to clipboard");
+      toast.success("Opsummeringen er kopieret");
 
       // Track copy analytics
       await Analytics.trackCopy('summary', {
@@ -190,7 +190,7 @@ export function useCopyOperations({
       });
     } catch (error) {
       console.error('❌ Failed to copy summary:', error);
-      toast.error("Failed to copy summary");
+      toast.error("Opsummeringen kunne ikke kopieres");
     }
   }, [aiSummary, meetingTitle, meeting, blockNoteSummaryRef]);
 

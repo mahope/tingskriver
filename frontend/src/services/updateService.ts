@@ -41,7 +41,7 @@ export class UpdateService {
   async checkForUpdates(force = false): Promise<UpdateInfo> {
     // Prevent concurrent update checks
     if (this.updateCheckInProgress) {
-      throw new Error('Update check already in progress');
+      throw new Error('Der søges allerede efter opdateringer');
     }
 
     // Skip if checked recently (unless forced)

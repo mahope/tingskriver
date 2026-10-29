@@ -35,7 +35,7 @@ export const useAudioPlayer = (audioPath: string | null) => {
       return true;
     } catch (error) {
       console.error('Error initializing AudioContext:', error);
-      setError('Failed to initialize audio');
+      setError('Lyden kunne ikke klargøres');
       return false;
     }
   };
@@ -122,7 +122,7 @@ export const useAudioPlayer = (audioPath: string | null) => {
           stack: error.stack,
         });
       }
-      setError('Failed to load audio file');
+      setError('Lydfilen kunne ikke indlæses');
     }
   };
 
@@ -232,7 +232,7 @@ export const useAudioPlayer = (audioPath: string | null) => {
       rafRef.current = requestAnimationFrame(updateTime);
     } catch (error) {
       console.error('Error during playback:', error);
-      setError('Failed to play audio');
+      setError('Lyden kunne ikke afspilles');
       stopPlayback();
     }
   };
