@@ -9,16 +9,18 @@ import type { SummaryProcessResponse } from '@/types';
 
 
 
-interface SidebarItem {
+export interface SidebarItem {
   id: string;
   title: string;
   type: 'folder' | 'file';
+  createdAt?: string;
   children?: SidebarItem[];
 }
 
 export interface CurrentMeeting {
   id: string;
   title: string;
+  createdAt?: string;
 }
 
 // Search result type for transcript search
@@ -76,8 +78,8 @@ export const useSidebar = () => {
 };
 
 export function SidebarProvider({ children }: { children: React.ReactNode }) {
-  const [currentMeeting, setCurrentMeeting] = useState<CurrentMeeting | null>({ id: 'intro-call', title: '+ New Call' });
-  const [isCollapsed, setIsCollapsed] = useState(true);
+  const [currentMeeting, setCurrentMeeting] = useState<CurrentMeeting | null>({ id: 'intro-call', title: 'Nyt møde' });
+  const [isCollapsed, setIsCollapsed] = useState(false);
   const [meetings, setMeetings] = useState<CurrentMeeting[]>([]);
   const [sidebarItems, setSidebarItems] = useState<SidebarItem[]>([]);
   const [isMeetingActive, setIsMeetingActive] = useState(false);
@@ -97,10 +99,11 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
   const fetchMeetings = React.useCallback(async () => {
     if (serverAddress) {
       try {
-        const meetings = await invoke('api_get_meetings') as Array<{ id: string, title: string }>;
+        const meetings = await invoke('api_get_meetings') as Array<{ id: string, title: string, created_at?: string }>;
         const transformedMeetings = meetings.map((meeting: any) => ({
           id: meeting.id,
-          title: meeting.title
+          title: meeting.title,
+          createdAt: meeting.created_at,
         }));
         setMeetings(transformedMeetings);
         Analytics.trackBackendConnection(true);
@@ -127,10 +130,10 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
   const baseItems: SidebarItem[] = [
     {
       id: 'meetings',
-      title: 'Meeting Notes',
+      title: 'Møder',
       type: 'folder' as const,
       children: [
-        ...meetings.map(meeting => ({ id: meeting.id, title: meeting.title, type: 'file' as const }))
+        ...meetings.map(meeting => ({ id: meeting.id, title: meeting.title, createdAt: meeting.createdAt, type: 'file' as const }))
       ]
     },
   ];
@@ -143,7 +146,7 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
   // Update current meeting when on home page
   useEffect(() => {
     if (pathname === '/') {
-      setCurrentMeeting({ id: 'intro-call', title: '+ New Call' });
+      setCurrentMeeting({ id: 'intro-call', title: 'Nyt møde' });
     }
     setSidebarItems(baseItems);
   }, [pathname]);
@@ -229,7 +232,7 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
             start: processId,
             end: null,
             data: null,
-            error: 'Summary generation timed out after 15 minutes. Please try again or check your model configuration.',
+            error: 'Opsummeringen tog mere end 15 minutter og blev stoppet. Prøv igen, eller tjek modelindstillingerne.',
           });
           if (summaryPollsRef.current.get(meetingId) === entry) {
             stopSummaryPolling(meetingId, processId);

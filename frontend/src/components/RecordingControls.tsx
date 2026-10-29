@@ -4,10 +4,10 @@ import { invoke } from '@tauri-apps/api/core';
 import { appDataDir } from '@tauri-apps/api/path';
 import { useCallback, useEffect, useState, useRef } from 'react';
 import { Play, Pause, Square, Mic, AlertCircle, X } from 'lucide-react';
+import { toast } from 'sonner';
 import { ProcessRequest, SummaryResponse } from '@/types/summary';
 import { listen } from '@tauri-apps/api/event';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import Analytics from '@/lib/analytics';
 import { useRecordingState } from '@/contexts/RecordingStateContext';
 import type { TranscriptionErrorPayload } from '@/services/transcriptService';
@@ -79,7 +79,7 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
         console.log('Tauri is initialized and ready, is_recording result:', result);
       } catch (error) {
         console.error('Tauri initialization error:', error);
-        alert('Failed to initialize recording. Please check the console for details.');
+        toast.error('Optagelsen kunne ikke gøres klar', { description: 'Genstart Tingskriver, og prøv igen.' });
       }
     };
     checkTauri();
@@ -117,23 +117,23 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
       // Check for device-related errors
       if (errorMsg.includes('microphone') || errorMsg.includes('mic') || errorMsg.includes('input')) {
         setDeviceError({
-          title: 'Microphone Not Available',
-          message: 'Unable to access your microphone. Please check that:\n• Your microphone is connected\n• The app has microphone permissions\n• No other app is using the microphone'
+          title: 'Mikrofonen er ikke tilgængelig',
+          message: 'Tingskriver kan ikke bruge din mikrofon. Tjek at:\n• mikrofonen er sluttet til\n• Tingskriver har adgang til mikrofonen i Windows under Indstillinger > Anonymitet og sikkerhed\n• ingen anden app bruger mikrofonen'
         });
       } else if (errorMsg.includes('system audio') || errorMsg.includes('speaker') || errorMsg.includes('output')) {
         setDeviceError({
-          title: 'System Audio Not Available',
-          message: 'Unable to capture system audio. Please check that:\n• A virtual audio device (like BlackHole) is installed\n• The app has screen recording permissions (macOS)\n• System audio is properly configured'
+          title: 'Systemlyd er ikke tilgængelig',
+          message: 'Tingskriver kan ikke optage lyden fra computeren. Tjek at:\n• der er valgt en lydenhed til systemlyd under Indstillinger\n• lydenheden er tændt i Windows'
         });
       } else if (errorMsg.includes('permission')) {
         setDeviceError({
-          title: 'Permission Required',
-          message: 'Recording permissions are required. Please:\n• Grant microphone access in System Settings\n• Grant screen recording access for system audio (macOS)\n• Restart the app after granting permissions'
+          title: 'Tilladelse mangler',
+          message: 'Tingskriver skal have adgang til at optage. Giv adgang til mikrofonen i Windows-indstillingerne, og genstart derefter Tingskriver.'
         });
       } else {
         setDeviceError({
-          title: 'Recording Failed',
-          message: 'Unable to start recording. Please check your audio device settings and try again.'
+          title: 'Optagelsen kunne ikke starte',
+          message: 'Tjek lydenhederne under Indstillinger, og prøv igen.'
         });
       }
     }
@@ -215,7 +215,7 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
       console.log('Recording paused successfully');
     } catch (error) {
       console.error('Failed to pause recording:', error);
-      alert('Failed to pause recording. Please check the console for details.');
+      toast.error('Optagelsen kunne ikke sættes på pause', { description: 'Prøv igen. Optagelsen kører stadig.' });
     } finally {
       setIsPausing(false);
     }
@@ -233,7 +233,7 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
       console.log('Recording resumed successfully');
     } catch (error) {
       console.error('Failed to resume recording:', error);
-      alert('Failed to resume recording. Please check the console for details.');
+      toast.error('Optagelsen kunne ikke genoptages', { description: 'Prøv igen, eller stop og gem optagelsen.' });
     } finally {
       setIsResuming(false);
     }
@@ -331,194 +331,118 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
     };
   }, [onRecordingStop, onTranscriptionError]);
 
+  const busyStarting = isStarting || isProcessing || isValidatingModel || isStartingRecording;
+  const pillButton =
+    'inline-flex items-center justify-center gap-2 min-h-[44px] px-5 rounded-full text-sm font-semibold transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card disabled:opacity-60 disabled:cursor-not-allowed';
+
   return (
-    <TooltipProvider>
-      <div className="flex flex-col space-y-2">
-        <div className="flex items-center space-x-2 bg-card rounded-full shadow-lg px-4 py-2">
-          {isProcessing && !isParentProcessing ? (
-            <div className="flex items-center space-x-2">
-              <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-gray-900"></div>
-              <span className="text-sm text-muted-foreground">Processing recording...</span>
-            </div>
-          ) : (
-            <>
-              {showPlayback ? (
-                <>
-                  <button
-                    onClick={handleStartRecording}
-                    className="w-10 h-10 flex items-center justify-center bg-destructive rounded-full text-destructive-foreground hover:bg-destructive/90 transition-colors"
-                  >
-                    <Mic size={16} />
-                  </button>
-
-                  <div className="w-px h-6 bg-muted mx-1" />
-
-                  <div className="flex items-center space-x-1 mx-2">
-                    <div className="text-sm text-muted-foreground min-w-[40px]">
-                      {formatTime(currentTime)}
-                    </div>
-                    <div
-                      className="relative w-24 h-1 bg-muted rounded-full"
-                    >
-                      <div
-                        className="absolute h-full bg-primary rounded-full"
-                        style={{ width: `${progress}%` }}
-                      />
-                    </div>
-                    <div className="text-sm text-muted-foreground min-w-[40px]">
-                      {formatTime(duration)}
-                    </div>
-                  </div>
-
-                  <button
-                    className="w-10 h-10 flex items-center justify-center bg-accent rounded-full text-white cursor-not-allowed"
-                    disabled
-                  >
-                    <Play size={16} />
-                  </button>
-                </>
-              ) : (
-                <>
-                  {!isRecording ? (
-                    // Start recording button
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <button
-                          onClick={() => {
-                            Analytics.trackButtonClick('start_recording', 'recording_controls');
-                            handleStartRecording();
-                          }}
-                          disabled={isStarting || isProcessing || isRecordingDisabled || isValidatingModel || isStartingRecording}
-                          className={`w-12 h-12 flex items-center justify-center ${isStarting || isProcessing || isValidatingModel || isStartingRecording ? 'bg-muted-foreground/50' : 'bg-destructive hover:bg-destructive/90'
-                            } rounded-full text-white transition-colors relative`}
-                        >
-                          {isValidatingModel || isStartingRecording ? (
-                            <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-card"></div>
-                          ) : (
-                            <Mic size={20} />
-                          )}
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <p>Start recording</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  ) : (
-                    // Recording controls (pause/resume + stop)
-                    <>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <button
-                            onClick={() => {
-                              if (isPaused) {
-                                Analytics.trackButtonClick('resume_recording', 'recording_controls');
-                                handleResumeRecording();
-                              } else {
-                                Analytics.trackButtonClick('pause_recording', 'recording_controls');
-                                handlePauseRecording();
-                              }
-                            }}
-                            disabled={isPausing || isResuming || isStopping}
-                            className={`w-10 h-10 flex items-center justify-center ${isPausing || isResuming || isStopping
-                              ? 'bg-muted border-2 border-input text-muted-foreground'
-                              : 'bg-card border-2 border-input text-muted-foreground hover:border-input hover:bg-accent'
-                              } rounded-full transition-colors relative`}
-                          >
-                            {isPaused ? <Play size={16} /> : <Pause size={16} />}
-                            {(isPausing || isResuming) && (
-                              <div className="absolute -top-8 text-muted-foreground font-medium text-xs">
-                                {isPausing ? 'Pausing...' : 'Resuming...'}
-                              </div>
-                            )}
-                          </button>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p>{isPaused ? 'Resume recording' : 'Pause recording'}</p>
-                        </TooltipContent>
-                      </Tooltip>
-
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <button
-                            onClick={() => {
-                              Analytics.trackButtonClick('stop_recording', 'recording_controls');
-                              handleStopRecording();
-                            }}
-                            disabled={isStopping || isPausing || isResuming || isStartingRecording}
-                            className={`w-10 h-10 flex items-center justify-center ${isStopping || isPausing || isResuming || isStartingRecording ? 'bg-muted-foreground/50' : 'bg-destructive hover:bg-destructive/90'
-                              } rounded-full text-white transition-colors relative`}
-                          >
-                            <Square size={16} />
-                            {isStopping && (
-                              <div className="absolute -top-8 text-muted-foreground font-medium text-xs">
-                                Stopping...
-                              </div>
-                            )}
-                          </button>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p>Stop recording</p>
-                        </TooltipContent>
-                      </Tooltip>
-                    </>
-                  )}
-
-                  <div className="flex items-center space-x-1 mx-4">
-                    {barHeights.map((height, index) => (
-                      <div
-                        key={index}
-                        className={`w-1 rounded-full transition-all duration-200 ${isPaused ? 'bg-warning' : 'bg-destructive'
-                          }`}
-                        style={{
-                          height: isRecording && !isPaused ? height : '4px',
-                          opacity: isPaused ? 0.6 : 1,
-                        }}
-                      />
-                    ))}
-                  </div>
-                </>
-              )}
-            </>
-          )}
-        </div>
-
-        {/* Show validation status only */}
-        {isValidatingModel && (
-          <div className="text-xs text-muted-foreground text-center mt-2">
-            Validating speech recognition...
+    <div className="flex flex-col items-center gap-2">
+      <div className="flex items-center gap-2 bg-card border border-border rounded-full shadow-md px-2.5 py-2">
+        {isProcessing && !isParentProcessing ? (
+          <div className="flex items-center gap-2 px-3" role="status">
+            <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-primary" aria-hidden="true"></div>
+            <span className="text-sm text-muted-foreground">Gemmer optagelsen…</span>
           </div>
-        )}
-
-        {/* Device error alert */}
-        {deviceError && (
-          <Alert variant="destructive" className="mt-4 border-destructive/40 bg-destructive/10">
-            <AlertCircle className="h-5 w-5 text-destructive" />
+        ) : !isRecording ? (
+          <button
+            type="button"
+            onClick={() => {
+              Analytics.trackButtonClick('start_recording', 'recording_controls');
+              handleStartRecording();
+            }}
+            disabled={busyStarting || isRecordingDisabled}
+            className={`${pillButton} bg-primary text-primary-foreground hover:bg-primary/90`}
+          >
+            {isValidatingModel || isStartingRecording ? (
+              <>
+                <span className="animate-spin rounded-full h-4 w-4 border-b-2 border-current" aria-hidden="true"></span>
+                Gør klar…
+              </>
+            ) : (
+              <>
+                <Mic size={18} aria-hidden="true" />
+                Start optagelse
+              </>
+            )}
+          </button>
+        ) : (
+          <>
             <button
-              onClick={() => setDeviceError(null)}
-              className="absolute right-3 top-3 text-destructive hover:text-destructive transition-colors"
-              aria-label="Close alert"
+              type="button"
+              onClick={() => {
+                if (isPaused) {
+                  Analytics.trackButtonClick('resume_recording', 'recording_controls');
+                  handleResumeRecording();
+                } else {
+                  Analytics.trackButtonClick('pause_recording', 'recording_controls');
+                  handlePauseRecording();
+                }
+              }}
+              disabled={isPausing || isResuming || isStopping}
+              className={`${pillButton} border border-input bg-card text-foreground hover:bg-accent`}
             >
-              <X className="h-4 w-4" />
+              {isPaused ? <Play size={16} aria-hidden="true" /> : <Pause size={16} aria-hidden="true" />}
+              {isPausing ? 'Sætter på pause…' : isResuming ? 'Genoptager…' : isPaused ? 'Genoptag' : 'Pause'}
             </button>
-            <AlertTitle className="text-destructive font-semibold mb-2">
-              {deviceError.title}
-            </AlertTitle>
-            <AlertDescription className="text-destructive">
-              {deviceError.message.split('\n').map((line, i) => (
-                <div key={i} className={i > 0 ? 'ml-2' : ''}>
-                  {line}
-                </div>
-              ))}
-            </AlertDescription>
-          </Alert>
-        )}
 
-        {/* {showPlayback && recordingPath && (
-        <div className="text-sm text-muted-foreground px-4">
-          Recording saved to: {recordingPath}
-        </div>
-      )} */}
+            <button
+              type="button"
+              onClick={() => {
+                Analytics.trackButtonClick('stop_recording', 'recording_controls');
+                handleStopRecording();
+              }}
+              disabled={isStopping || isPausing || isResuming || isStartingRecording}
+              className={`${pillButton} bg-foreground text-background hover:bg-foreground/90`}
+            >
+              <Square size={14} fill="currentColor" aria-hidden="true" />
+              {isStopping ? 'Stopper…' : 'Stop og gem'}
+            </button>
+
+            <div className="flex items-center gap-1 mx-3" aria-hidden="true">
+              {barHeights.map((height, index) => (
+                <div
+                  key={index}
+                  className={`w-1 rounded-full transition-all duration-200 ${isPaused ? 'bg-warning' : 'bg-recording'}`}
+                  style={{
+                    height: !isPaused ? height : '4px',
+                    opacity: isPaused ? 0.6 : 1,
+                  }}
+                />
+              ))}
+            </div>
+          </>
+        )}
       </div>
-    </TooltipProvider>
+
+      {isValidatingModel && (
+        <p className="text-xs text-muted-foreground text-center" role="status">
+          Tjekker at talegenkendelsen er klar…
+        </p>
+      )}
+
+      {deviceError && (
+        <Alert variant="destructive" className="mt-2 max-w-md border-destructive/40 bg-destructive/10">
+          <AlertCircle className="h-5 w-5 text-destructive" />
+          <button
+            type="button"
+            onClick={() => setDeviceError(null)}
+            className="absolute right-2 top-2 h-8 w-8 inline-flex items-center justify-center rounded-md text-destructive hover:bg-destructive/10"
+            aria-label="Luk besked"
+          >
+            <X className="h-4 w-4" />
+          </button>
+          <AlertTitle className="text-destructive font-semibold mb-2">
+            {deviceError.title}
+          </AlertTitle>
+          <AlertDescription className="text-foreground">
+            {deviceError.message.split('\n').map((line, i) => (
+              <div key={i} className={i > 0 ? 'ml-2' : ''}>
+                {line}
+              </div>
+            ))}
+          </AlertDescription>
+        </Alert>
+      )}
+    </div>
   );
 };

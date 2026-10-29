@@ -8,7 +8,8 @@ import { invoke } from '@tauri-apps/api/core';
 import { toast } from 'sonner';
 import { TranscriptPanel } from '@/components/MeetingDetails/TranscriptPanel';
 import { SummaryPanel } from '@/components/MeetingDetails/SummaryPanel';
-import { MeetingDetailsSplitView, type MeetingDetailsTab } from '@/components/MeetingDetails/MeetingDetailsSplitView';
+import { MeetingDocument } from '@/components/MeetingDetails/MeetingDocument';
+import { MeetingHeader } from '@/components/MeetingDetails/MeetingHeader';
 import { ModelConfig } from '@/components/ModelSettingsModal';
 
 // Custom hooks
@@ -59,12 +60,10 @@ export default function PageContent({
   // State
   const [customPrompt, setCustomPrompt] = useState<string>('');
   const isRecording = false;
-  const [activeTab, setActiveTab] = useState<MeetingDetailsTab>('transcript');
+  const [transcriptOpen, setTranscriptOpen] = useState(false);
 
   // Ref to store the modal open function from SummaryGeneratorButtonGroup
   const openModelSettingsRef = useRef<(() => void) | null>(null);
-  const autoSwitchedSummaryMeetingIdsRef = useRef(new Set<string>());
-  const manuallySelectedTabMeetingIdsRef = useRef(new Set<string>());
   const autoGenerationStartedMeetingIdRef = useRef<string | null>(null);
 
   // Sidebar context
@@ -109,10 +108,10 @@ export default function PageContent({
       const { emit } = await import('@tauri-apps/api/event');
       await emit('model-config-updated', config);
 
-      toast.success('Model settings saved successfully');
+      toast.success('Modelindstillingerne er gemt');
     } catch (error) {
       console.error('Failed to save model config:', error);
-      toast.error('Failed to save model settings');
+      toast.error('Modelindstillingerne kunne ikke gemmes', { description: 'Prøv igen.' });
     }
   };
 
@@ -145,17 +144,6 @@ export default function PageContent({
   useEffect(() => {
     Analytics.trackPageView('meeting_details');
   }, []);
-
-  useEffect(() => {
-    if (
-      (meetingData.aiSummary || summaryGeneration.summaryStatus === 'completed')
-      && !autoSwitchedSummaryMeetingIdsRef.current.has(meeting.id)
-      && !manuallySelectedTabMeetingIdsRef.current.has(meeting.id)
-    ) {
-      autoSwitchedSummaryMeetingIdsRef.current.add(meeting.id);
-      setActiveTab('summary');
-    }
-  }, [meeting.id, meetingData.aiSummary, summaryGeneration.summaryStatus]);
 
   // Auto-generate only after the model configuration has settled.
   useEffect(() => {
@@ -192,34 +180,42 @@ export default function PageContent({
       transition={{ duration: 0.3, ease: 'easeOut' }}
       className="flex flex-col h-screen min-w-0 bg-background"
     >
-      <div className="flex flex-1 min-w-0 overflow-hidden">
-        <MeetingDetailsSplitView
-          activeTab={activeTab}
-          onTabChange={(tab) => {
-            manuallySelectedTabMeetingIdsRef.current.add(meeting.id);
-            setActiveTab(tab);
-          }}
-          transcript={
-            <TranscriptPanel
-              transcripts={meetingData.transcripts}
-              customPrompt={customPrompt}
-              onPromptChange={setCustomPrompt}
-              onCopyTranscript={copyOperations.handleCopyTranscript}
-              onOpenMeetingFolder={meetingOperations.handleOpenMeetingFolder}
-              isRecording={isRecording}
-              disableAutoScroll={true}
-              usePagination={true}
-              segments={segments}
-              hasMore={hasMore}
-              isLoadingMore={isLoadingMore}
-              totalCount={totalCount}
-              loadedCount={loadedCount}
-              onLoadMore={onLoadMore}
-              meetingId={meeting.id}
-              meetingFolderPath={meeting.folder_path}
-              onRefetchTranscripts={onRefetchTranscripts}
-            />
-          }
+      <MeetingDocument
+        header={
+          <MeetingHeader
+            meetingId={meeting.id}
+            title={meetingData.meetingTitle}
+            createdAt={meeting.created_at}
+            onTitleSaved={(title) => {
+              meetingData.updateMeetingTitle(title);
+              void onMeetingUpdated?.();
+            }}
+          />
+        }
+        transcriptCount={totalCount ?? meetingData.transcripts.length}
+        transcriptOpen={transcriptOpen}
+        onTranscriptToggle={setTranscriptOpen}
+        transcript={
+          <TranscriptPanel
+            transcripts={meetingData.transcripts}
+            customPrompt={customPrompt}
+            onPromptChange={setCustomPrompt}
+            onCopyTranscript={copyOperations.handleCopyTranscript}
+            onOpenMeetingFolder={meetingOperations.handleOpenMeetingFolder}
+            isRecording={isRecording}
+            disableAutoScroll={true}
+            usePagination={true}
+            segments={segments}
+            hasMore={hasMore}
+            isLoadingMore={isLoadingMore}
+            totalCount={totalCount}
+            loadedCount={loadedCount}
+            onLoadMore={onLoadMore}
+            meetingId={meeting.id}
+            meetingFolderPath={meeting.folder_path}
+            onRefetchTranscripts={onRefetchTranscripts}
+          />
+        }
           summary={
             <SummaryPanel
               meeting={meeting}
@@ -251,8 +247,7 @@ export default function PageContent({
               onOpenModelSettings={handleRegisterModalOpen}
             />
           }
-        />
-      </div>
+      />
     </motion.div>
   );
 }

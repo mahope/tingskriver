@@ -273,8 +273,8 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                         </>
                     ) : (
                         <>
-                            <p className="text-lg font-semibold">Velkommen til Tingskriver</p>
-                            <p className="text-xs mt-1">Start en optagelse for at se transskriptionen live</p>
+                            <p className="text-base font-medium text-foreground">Ingen transskription</p>
+                            <p className="text-sm mt-1">Der blev ikke genkendt tale i denne optagelse.</p>
                         </>
                     )}
                 </motion.div>

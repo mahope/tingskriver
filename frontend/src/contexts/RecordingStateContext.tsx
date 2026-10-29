@@ -37,7 +37,18 @@ interface RecordingState {
   statusMessage?: string;  // Optional message for current status
 }
 
+/** Rolig besked om enhedsskift under optagelse, vist som banner på optagesiden. */
+export interface DeviceNotice {
+  kind: 'switched' | 'failed' | 'lost';
+  deviceName: string;
+  message: string;
+}
+
 interface RecordingStateContextType extends RecordingState {
+  // Mikrofonen der optages fra lige nu (opdateres når backend skifter)
+  activeMicName: string | null;
+  deviceNotice: DeviceNotice | null;
+  dismissDeviceNotice: () => void;
   // NEW: Setters for status management
   setStatus: (status: RecordingStatus, message?: string) => void;
 
@@ -243,6 +254,9 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
   // Ref tracks latest isRecording for the mount-once listener below — the
   // effect has [] deps so it can't read state directly (it would capture the
   // initial value). Kept current by this small sync effect.
+  const [activeMicName, setActiveMicName] = useState<string | null>(null);
+  const [deviceNotice, setDeviceNotice] = useState<DeviceNotice | null>(null);
+  const dismissDeviceNotice = useCallback(() => setDeviceNotice(null), []);
   const isRecordingRef = useRef(false);
   useEffect(() => {
     isRecordingRef.current = state.isRecording;
@@ -264,6 +278,12 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
           // Fires for both cases: a mic that disconnects mid-recording, and a
           // selected mic that wasn't available at start (backend fell back to
           // the default). Copy is worded to be accurate for both.
+          setActiveMicName(device_name);
+          setDeviceNotice({
+            kind: 'switched',
+            deviceName: device_name,
+            message: `Mikrofonen er skiftet til ${device_name}. Optagelsen fortsætter som normalt.`,
+          });
           toast.info(
             `Mikrofonen er skiftet til ${device_name} for dette møde.`,
             { duration: 6000 }
@@ -278,6 +298,11 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
           // during a hot-swap race fails with "Recording manager not
           // available" — expected, not an error worth a toast.
           if (isRecordingRef.current) {
+            setDeviceNotice({
+              kind: 'failed',
+              deviceName: device_name,
+              message: `Vi kunne ikke skifte til ${device_name}. Optagelsen fortsætter på den forrige mikrofon, hvis den stadig virker.`,
+            });
             toast.error(
               `Det lykkedes ikke at skifte til mikrofonen ${device_name}: ${error}`,
               { duration: 8000 }
@@ -304,6 +329,11 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
           // Fires mid-recording only — gate on the recording ref like
           // mic-swap-failed so a stale event after Stop doesn't alarm the user.
           if (isRecordingRef.current) {
+            setDeviceNotice({
+              kind: 'lost',
+              deviceName: device_name,
+              message: `Mikrofonen ${device_name} kunne ikke genoprettes. Der optages kun systemlyd. Stop og start optagelsen igen for at rette det.`,
+            });
             toast.error(
               `Mikrofonen "${device_name}" kunne ikke genoprettes. Optagelsen fortsætter uden mikrofon. Stop og start optagelsen igen for at rette det.`,
               { duration: 10000 }
@@ -338,14 +368,25 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
   }, []);
 
   // NEW: Computed helpers from status
+  // Ryd enhedsbeskeden når optagelsen er slut, og nulstil den aktive mikrofon
+  useEffect(() => {
+    if (!state.isRecording) {
+      setDeviceNotice(null);
+      setActiveMicName(null);
+    }
+  }, [state.isRecording]);
+
   const contextValue = useMemo(() => ({
     ...state,
+    activeMicName,
+    deviceNotice,
+    dismissDeviceNotice,
     setStatus,
     isStopping: state.status === RecordingStatus.STOPPING,
     isProcessing: state.status === RecordingStatus.PROCESSING_TRANSCRIPTS,
     isSaving: state.status === RecordingStatus.SAVING,
     isStartingRecording: state.status === RecordingStatus.STARTING,
-  }), [state, setStatus]);
+  }), [state, setStatus, activeMicName, deviceNotice, dismissDeviceNotice]);
 
   return (
     <RecordingStateContext.Provider value={contextValue}>

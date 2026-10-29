@@ -1,10 +1,11 @@
 'use client';
 
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
-import { ChevronDown, ChevronRight, File, Settings, ChevronLeftCircle, ChevronRightCircle, Calendar, StickyNote, Home, Trash2, Mic, Square, Plus, Search, Pencil, NotebookPen, SearchIcon, X, Upload } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Settings, Trash2, Mic, Square, Pencil, NotebookPen, SearchIcon, X, Upload } from 'lucide-react';
+import { formatDayLong, formatTime } from '@/lib/format';
 import { useRouter, usePathname } from 'next/navigation';
 import { useSidebar } from './SidebarProvider';
-import type { CurrentMeeting } from '@/components/Sidebar/SidebarProvider';
+import type { CurrentMeeting, SidebarItem } from '@/components/Sidebar/SidebarProvider';
 import { ConfirmationModal } from '../ConfirmationModel/confirmation-modal';
 import { ModelConfig } from '@/components/ModelSettingsModal';
 import { SettingTabs } from '../SettingTabs';
@@ -31,13 +32,6 @@ import Info from '../Info';
 import { ComplianceNotification } from '../ComplianceNotification';
 import { Input } from '../ui/input';
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '../ui/input-group';
-
-interface SidebarItem {
-  id: string;
-  title: string;
-  type: 'folder' | 'file';
-  children?: SidebarItem[];
-}
 
 const Sidebar: React.FC = () => {
   const router = useRouter();
@@ -337,18 +331,18 @@ const Sidebar: React.FC = () => {
       Analytics.trackMeetingDeleted(itemId);
 
       // Show success toast
-      toast.success("Meeting deleted successfully", {
-        description: "All associated data has been removed"
+      toast.success("Mødet er slettet", {
+        description: "Optagelse, transskript og opsummering er fjernet"
       });
 
       // If deleting the active meeting, navigate to home
       if (currentMeeting?.id === itemId) {
-        setCurrentMeeting({ id: 'intro-call', title: '+ New Call' });
+        setCurrentMeeting({ id: 'intro-call', title: 'Nyt møde' });
         router.push('/');
       }
     } catch (error) {
       console.error('Failed to delete meeting:', error);
-      toast.error("Failed to delete meeting", {
+      toast.error("Mødet kunne ikke slettes", {
         description: error instanceof Error ? error.message : String(error)
       });
     }
@@ -379,7 +373,7 @@ const Sidebar: React.FC = () => {
 
     // Prevent empty titles
     if (!newTitle) {
-      toast.error("Meeting title cannot be empty");
+      toast.error("Mødet skal have et navn");
       return;
     }
 
@@ -403,14 +397,14 @@ const Sidebar: React.FC = () => {
       // Track the edit
       Analytics.trackButtonClick('edit_meeting_title', 'sidebar');
 
-      toast.success("Meeting title updated successfully");
+      toast.success("Mødet er omdøbt");
 
       // Close modal and reset state
       setEditModalState({ isOpen: false, meetingId: null, currentTitle: '' });
       setEditingTitle('');
     } catch (error) {
       console.error('Failed to update meeting title:', error);
-      toast.error("Failed to update meeting title", {
+      toast.error("Mødet kunne ikke omdøbes", {
         description: error instanceof Error ? error.message : String(error)
       });
     }
@@ -444,433 +438,332 @@ const Sidebar: React.FC = () => {
     };
   }, []);
 
-  const renderCollapsedIcons = () => {
-    if (!isCollapsed) return null;
-
-    const isHomePage = pathname === '/';
-    const isMeetingPage = pathname?.includes('/meeting-details');
-    const isSettingsPage = pathname === '/settings';
-
-    return (
-      <TooltipProvider>
-        <div className="flex flex-col items-center space-y-4 mt-4">
-          <Logo isCollapsed={isCollapsed} />
-
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={() => router.push('/')}
-                className={`p-2 rounded-lg transition-colors duration-150 ${isHomePage ? 'bg-secondary' : 'hover:bg-accent'
-                  }`}
-              >
-                <Home className="w-5 h-5 text-muted-foreground" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="right">
-              <p>Home</p>
-            </TooltipContent>
-          </Tooltip>
-
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={handleRecordingToggle}
-                disabled={isRecording}
-                className={`p-2 ${isRecording ? 'bg-red-500 cursor-not-allowed' : 'bg-red-500 hover:bg-red-600'} rounded-full transition-colors duration-150 shadow-sm`}
-              >
-                {isRecording ? (
-                  <Square className="w-5 h-5 text-white" />
-                ) : (
-                  <Mic className="w-5 h-5 text-white" />
-                )}
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="right">
-              <p>{isRecording ? "Recording in progress..." : "Start Recording"}</p>
-            </TooltipContent>
-          </Tooltip>
-
-          {betaFeatures.importAndRetranscribe && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={() => openImportDialog()}
-                  className="p-2 rounded-lg transition-colors duration-150 hover:bg-primary/15 bg-primary/10"
-                >
-                  <Upload className="w-5 h-5 text-primary" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="right">
-                <p>Import Audio</p>
-              </TooltipContent>
-            </Tooltip>
-          )}
-
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={() => {
-                  if (isCollapsed) toggleCollapse();
-                  toggleFolder('meetings');
-                }}
-                className={`p-2 rounded-lg transition-colors duration-150 ${isMeetingPage ? 'bg-secondary' : 'hover:bg-accent'
-                  }`}
-              >
-                <NotebookPen className="w-5 h-5 text-muted-foreground" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="right">
-              <p>Meeting Notes</p>
-            </TooltipContent>
-          </Tooltip>
-
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={() => router.push('/settings')}
-                className={`p-2 rounded-lg transition-colors duration-150 ${isSettingsPage ? 'bg-secondary' : 'hover:bg-accent'
-                  }`}
-              >
-                <Settings className="w-5 h-5 text-muted-foreground" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="right">
-              <p>Settings</p>
-            </TooltipContent>
-          </Tooltip>
-
-          <Info isCollapsed={isCollapsed} />
-        </div>
-      </TooltipProvider>
-    );
-  };
-
   // Find matching transcript snippet for a meeting item
   const findMatchingSnippet = (itemId: string) => {
     if (!searchQuery.trim() || !searchResults.length) return null;
     return searchResults.find(result => result.id === itemId);
   };
 
-  const renderItem = (item: SidebarItem, depth = 0) => {
-    const isExpanded = expandedFolders.has(item.id);
-    const paddingLeft = `${depth * 12 + 12}px`;
-    const isActive = item.type === 'file' && currentMeeting?.id === item.id;
-    const isMeetingItem = item.id.includes('-') && !item.id.startsWith('intro-call');
+  const isMeetingId = (id: string) => id.includes('-') && !id.startsWith('intro-call');
 
-    // Check if this item has a matching transcript snippet
-    const matchingResult = isMeetingItem ? findMatchingSnippet(item.id) : null;
-    const hasTranscriptMatch = !!matchingResult;
+  // Mødelisten grupperes pr. dag: "I dag", "I går", ellers "torsdag 22. oktober"
+  const meetingGroups = useMemo(() => {
+    const folder = filteredSidebarItems.find(item => item.type === 'folder' && item.id === 'meetings');
+    const children = (folder?.children ?? []).filter(child => isMeetingId(child.id));
+    const today = new Date();
+    const dayKey = (d: Date) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+    const yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1);
+    const groups: { key: string; label: string; items: SidebarItem[] }[] = [];
+    for (const child of children) {
+      const created = child.createdAt ? new Date(child.createdAt) : null;
+      const valid = created && !Number.isNaN(created.getTime());
+      const key = valid ? dayKey(created) : 'ukendt';
+      let group = groups.find(g => g.key === key);
+      if (!group) {
+        const label = !valid ? 'Tidligere'
+          : key === dayKey(today) ? 'I dag'
+          : key === dayKey(yesterday) ? 'I går'
+          : formatDayLong(created);
+        group = { key, label, items: [] };
+        groups.push(group);
+      }
+      group.items.push(child);
+    }
+    return groups;
+  }, [filteredSidebarItems]);
 
-    if (isCollapsed) return null;
+  const openMeeting = (item: SidebarItem) => {
+    setCurrentMeeting({ id: item.id, title: item.title });
+    router.push(`/meeting-details?id=${item.id}`);
+  };
+
+  const iconButton = 'inline-flex items-center justify-center h-8 w-8 rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring';
+
+  const renderMeeting = (item: SidebarItem) => {
+    const isActive = currentMeeting?.id === item.id;
+    const matchingResult = findMatchingSnippet(item.id);
 
     return (
-      <div key={item.id}>
-        <div
-          className={`flex items-center transition-all duration-150 group ${item.type === 'folder' && depth === 0
-            ? 'p-3 text-lg font-semibold h-10 mx-3 mt-3 rounded-lg'
-            : `px-3 py-2 my-0.5 rounded-md text-sm ${isActive ? 'bg-primary/15 text-primary font-medium' :
-              hasTranscriptMatch ? 'bg-warning/10' : 'hover:bg-accent'
-            } cursor-pointer`
-            }`}
-          style={item.type === 'folder' && depth === 0 ? {} : { paddingLeft }}
-          onClick={() => {
-            if (item.type === 'folder') {
-              toggleFolder(item.id);
-            } else {
-              setCurrentMeeting({ id: item.id, title: item.title });
-              const basePath = item.id.startsWith('intro-call') ? '/' :
-                item.id.includes('-') ? `/meeting-details?id=${item.id}` : `/notes/${item.id}`;
-              router.push(basePath);
-            }
-          }}
+      <li key={item.id} className="group relative">
+        <button
+          type="button"
+          onClick={() => openMeeting(item)}
+          aria-current={isActive ? 'page' : undefined}
+          className={`w-full text-left rounded-md pl-3 pr-16 py-2 min-h-[44px] transition-colors focus-visible:ring-2 focus-visible:ring-ring ${
+            isActive ? 'bg-accent text-foreground' : 'hover:bg-accent/60 text-foreground'
+          }`}
         >
-          {item.type === 'folder' ? (
-            <>
-              {item.id === 'meetings' ? (
-                <Calendar className="w-4 h-4 mr-2" />
-              ) : item.id === 'notes' ? (
-                <Calendar className="w-4 h-4 mr-2" />
-              ) : null}
-              <span className={depth === 0 ? "" : "font-medium"}>{item.title}</span>
-              <div className="ml-auto">
-                {isExpanded ? (
-                  <ChevronDown className="w-4 h-4 text-muted-foreground" />
-                ) : (
-                  <ChevronRight className="w-4 h-4 text-muted-foreground" />
-                )}
-              </div>
-              {searchQuery && item.id === 'meetings' && isSearching && (
-                <span className="ml-2 text-xs text-primary animate-pulse">Searching...</span>
-              )}
-            </>
-          ) : (
-            <div className="flex flex-col w-full">
-              <div className="flex items-center w-full">
-                {isMeetingItem ? (
-                  <div className="flex-shrink-0 flex items-center justify-center w-6 h-6 rounded-full mr-2 bg-secondary">
-                    <File className="w-3.5 h-3.5 text-muted-foreground" />
-                  </div>
-                ) : (
-                  <div className="flex-shrink-0 flex items-center justify-center w-6 h-6 rounded-full mr-2 bg-primary/15">
-                    <Plus className="w-3.5 h-3.5 text-primary" />
-                  </div>
-                )}
-                <span className="flex-1 break-words">{item.title}</span>
-                {isMeetingItem && (
-                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleEditStart(item.id, item.title);
-                      }}
-                      className="hover:text-primary p-1 rounded-md hover:bg-primary/10 flex-shrink-0"
-                      aria-label="Edit meeting title"
-                    >
-                      <Pencil className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setDeleteModalState({ isOpen: true, itemId: item.id });
-                      }}
-                      className="hover:text-destructive p-1 rounded-md hover:bg-destructive/10 flex-shrink-0"
-                      aria-label="Delete meeting"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              {/* Show transcript match snippet if available */}
-              {hasTranscriptMatch && (
-                <div className="mt-1 ml-8 text-xs text-muted-foreground bg-warning/10 p-1.5 rounded border border-warning/20 line-clamp-2">
-                  <span className="font-medium text-warning">Match:</span> {matchingResult.matchContext}
-                </div>
-              )}
-            </div>
+          <span className={`block truncate text-sm ${isActive ? 'font-semibold' : 'font-medium'}`}>{item.title}</span>
+          {item.createdAt && (
+            <span className="block text-xs text-muted-foreground tabular-nums">{formatTime(item.createdAt)}</span>
           )}
+          {matchingResult && (
+            <span className="mt-1 block text-xs text-muted-foreground line-clamp-2">
+              {matchingResult.matchContext}
+            </span>
+          )}
+        </button>
+        <div className="absolute right-1 top-1.5 flex gap-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
+          <button
+            type="button"
+            onClick={() => handleEditStart(item.id, item.title)}
+            className={iconButton}
+            aria-label={`Omdøb mødet ${item.title}`}
+            title="Omdøb"
+          >
+            <Pencil className="w-4 h-4" aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setDeleteModalState({ isOpen: true, itemId: item.id })}
+            className={`${iconButton} hover:text-destructive`}
+            aria-label={`Slet mødet ${item.title}`}
+            title="Slet"
+          >
+            <Trash2 className="w-4 h-4" aria-hidden="true" />
+          </button>
         </div>
-        {item.type === 'folder' && isExpanded && item.children && (
-          <div className="ml-1">
-            {item.children.map(child => renderItem(child, depth + 1))}
-          </div>
-        )}
-      </div>
+      </li>
+    );
+  };
+
+  const recordButtonLabel = isRecording ? 'Optagelse i gang' : 'Ny optagelse';
+
+  const renderCollapsedIcons = () => {
+    const isSettingsPage = pathname === '/settings';
+    return (
+      <TooltipProvider>
+        <div className="flex flex-col items-center gap-3 pt-4">
+          <Logo isCollapsed />
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={handleRecordingToggle}
+                disabled={isRecording}
+                aria-label={recordButtonLabel}
+                className="h-11 w-11 inline-flex items-center justify-center rounded-full bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-100 disabled:bg-recording/15 disabled:text-recording"
+              >
+                {isRecording ? <Square className="w-5 h-5" aria-hidden="true" /> : <Mic className="w-5 h-5" aria-hidden="true" />}
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="right"><p>{recordButtonLabel}</p></TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={toggleCollapse}
+                aria-label="Vis mødelisten"
+                className="h-11 w-11 inline-flex items-center justify-center rounded-lg hover:bg-accent"
+              >
+                <NotebookPen className="w-5 h-5 text-muted-foreground" aria-hidden="true" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="right"><p>Møder</p></TooltipContent>
+          </Tooltip>
+          {betaFeatures.importAndRetranscribe && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={() => openImportDialog()}
+                  aria-label="Importér lyd"
+                  className="h-11 w-11 inline-flex items-center justify-center rounded-lg hover:bg-accent"
+                >
+                  <Upload className="w-5 h-5 text-muted-foreground" aria-hidden="true" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="right"><p>Importér lyd</p></TooltipContent>
+            </Tooltip>
+          )}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={() => router.push('/settings')}
+                aria-label="Indstillinger"
+                className={`h-11 w-11 inline-flex items-center justify-center rounded-lg ${isSettingsPage ? 'bg-accent' : 'hover:bg-accent'}`}
+              >
+                <Settings className="w-5 h-5 text-muted-foreground" aria-hidden="true" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="right"><p>Indstillinger</p></TooltipContent>
+          </Tooltip>
+          <Info isCollapsed />
+        </div>
+      </TooltipProvider>
     );
   };
 
   return (
     <div className="fixed top-0 left-0 h-screen z-40">
-      {/* Floating collapse button */}
-      <button
-        onClick={toggleCollapse}
-        className="absolute -right-6 top-20 z-50 p-1 bg-card hover:bg-accent rounded-full shadow-lg border"
-        style={{ transform: 'translateX(50%)' }}
+      <nav
+        aria-label="Hovedmenu"
+        className={`relative h-screen bg-card border-r border-border flex flex-col transition-[width] duration-200 ${isCollapsed ? 'w-16' : 'w-64'}`}
       >
+        <button
+          type="button"
+          onClick={toggleCollapse}
+          aria-label={isCollapsed ? 'Fold sidepanelet ud' : 'Fold sidepanelet sammen'}
+          aria-expanded={!isCollapsed}
+          className="absolute -right-3 top-5 z-50 h-6 w-6 inline-flex items-center justify-center rounded-full bg-card border border-border text-muted-foreground hover:text-foreground hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {isCollapsed ? <ChevronRight className="w-4 h-4" aria-hidden="true" /> : <ChevronLeft className="w-4 h-4" aria-hidden="true" />}
+        </button>
+
         {isCollapsed ? (
-          <ChevronRightCircle className="w-6 h-6" />
+          renderCollapsedIcons()
         ) : (
-          <ChevronLeftCircle className="w-6 h-6" />
-        )}
-      </button>
-
-      <div
-        className={`h-screen bg-white border-r shadow-sm flex flex-col transition-all duration-300 ${isCollapsed ? 'w-16' : 'w-64'
-          }`}
-      >
-        {/*  Header with traffic light spacing */}
-        <div className="flex-shrink-0 h-22 flex items-center">
-
-          {/* Title container */}
-
-
-
-          <div className="flex-1">
-            {!isCollapsed && (
-              <div className="p-3">
-                {/* <span className="text-lg text-center border rounded-full bg-primary/10 border-card font-semibold text-foreground mb-2 block items-center">
-                  <span>Tingskriver</span>
-                </span> */}
-                <Logo isCollapsed={isCollapsed} />
-
-                <div className="relative mb-1">
-                  <InputGroup >
-                    <InputGroupInput placeholder='Search meeting content...' value={searchQuery}
-                      onChange={(e) => handleSearchChange(e.target.value)}
-                    />
-                    <InputGroupAddon>
-                      <SearchIcon />
-                    </InputGroupAddon>
-                    {searchQuery &&
-                      <InputGroupAddon align={'inline-end'}>
-                        <InputGroupButton
-                          onClick={() => handleSearchChange('')}
-                        >
-                          <X />
-                        </InputGroupButton>
-                      </InputGroupAddon>
-                    }
-                  </InputGroup>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Main content - scrollable area */}
-        <div className="flex-1 flex flex-col min-h-0">
-          {/* Fixed navigation items */}
-          <div className="flex-shrink-0">
-            {!isCollapsed && (
-              <div
-                onClick={() => router.push('/')}
-                className="p-3  text-lg font-semibold items-center hover:bg-accent h-10   flex mx-3 mt-3 rounded-lg cursor-pointer"
-              >
-                <Home className="w-4 h-4 mr-2" />
-                <span>Home</span>
-              </div>
-            )}
-          </div>
-
-          {/* Content area */}
-          <div className="flex-1 flex flex-col min-h-0">
-            {renderCollapsedIcons()}
-            {/* Meeting Notes folder header - fixed */}
-            {!isCollapsed && (
-              <div className="flex-shrink-0">
-                {filteredSidebarItems.filter(item => item.type === 'folder').map(item => (
-                  <div key={item.id}>
-                    <div
-                      className="flex items-center transition-all duration-150 p-3 text-lg font-semibold h-10 mx-3 mt-3 rounded-lg"
-                    >
-                      <NotebookPen className="w-4 h-4 mr-2 text-muted-foreground" />
-                      <span className="text-foreground">{item.title}</span>
-                      {searchQuery && item.id === 'meetings' && isSearching && (
-                        <span className="ml-2 text-xs text-primary animate-pulse">Searching...</span>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Scrollable meeting items */}
-            {!isCollapsed && (
-              <div className="flex-1 overflow-y-auto custom-scrollbar min-h-0">
-                {filteredSidebarItems
-                  .filter(item => item.type === 'folder' && expandedFolders.has(item.id) && item.children)
-                  .map(item => (
-                    <div key={`${item.id}-children`} className="mx-3">
-                      {item.children!.map(child => renderItem(child, 1))}
-                    </div>
-                  ))}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Footer */}
-        {!isCollapsed && (
-
-          <div className="flex-shrink-0 p-2 border-t border-border">
-            <button
-              onClick={handleRecordingToggle}
-              disabled={isRecording}
-              className={`w-full flex items-center justify-center px-3 py-2 text-sm font-medium text-white ${isRecording ? 'bg-red-300 cursor-not-allowed' : 'bg-red-500 hover:bg-red-600'} rounded-lg transition-colors shadow-sm`}
-            >
-              {isRecording ? (
-                <>
-                  <Square className="w-4 h-4 mr-2" />
-                  <span>Recording in progress...</span>
-                </>
-              ) : (
-                <>
-                  <Mic className="w-4 h-4 mr-2" />
-                  <span>Start Recording</span>
-                </>
-              )}
-            </button>
-
-            {betaFeatures.importAndRetranscribe && (
+          <>
+            <div className="flex-shrink-0 px-4 pt-5 pb-3">
+              <Logo isCollapsed={false} />
               <button
-                onClick={() => openImportDialog()}
-                className="w-full flex items-center justify-center px-3 py-2 mt-1 text-sm font-medium text-foreground bg-primary/15 hover:bg-primary/25 rounded-lg transition-colors shadow-sm"
+                type="button"
+                onClick={handleRecordingToggle}
+                disabled={isRecording}
+                className={`mt-4 w-full inline-flex items-center justify-center gap-2 min-h-[44px] px-3 rounded-lg text-sm font-semibold transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card ${
+                  isRecording
+                    ? 'bg-recording/10 text-recording cursor-default'
+                    : 'bg-primary text-primary-foreground hover:bg-primary/90'
+                }`}
               >
-                <Upload className="w-4 h-4 mr-2" />
-                <span>Import Audio</span>
+                {isRecording ? (
+                  <>
+                    <span className="h-2.5 w-2.5 rounded-full bg-recording motion-safe:animate-pulse" aria-hidden="true" />
+                    <span>Optagelse i gang</span>
+                  </>
+                ) : (
+                  <>
+                    <Mic className="w-4 h-4" aria-hidden="true" />
+                    <span>Ny optagelse</span>
+                  </>
+                )}
               </button>
-            )}
 
-            <button
-              onClick={() => router.push('/settings')}
-              className="w-full flex items-center justify-center px-3 py-1.5 mt-1 mb-1 text-sm font-medium text-foreground bg-muted hover:bg-accent rounded-lg transition-colors shadow-sm"
-            >
-              <Settings className="w-4 h-4 mr-2" />
-              <span>Settings</span>
-            </button>
-            <Info isCollapsed={isCollapsed} />
-            <div className="w-full flex items-center justify-center px-3 py-1 text-xs text-muted-foreground">
-              v0.4.1
+              <div className="mt-3">
+                <InputGroup>
+                  <InputGroupInput
+                    placeholder="Søg i møder"
+                    aria-label="Søg i møder og transskripter"
+                    value={searchQuery}
+                    onChange={(e) => handleSearchChange(e.target.value)}
+                  />
+                  <InputGroupAddon>
+                    <SearchIcon aria-hidden="true" />
+                  </InputGroupAddon>
+                  {searchQuery && (
+                    <InputGroupAddon align="inline-end">
+                      <InputGroupButton onClick={() => handleSearchChange('')} aria-label="Ryd søgning">
+                        <X />
+                      </InputGroupButton>
+                    </InputGroupAddon>
+                  )}
+                </InputGroup>
+              </div>
             </div>
-          </div>
-        )}
-      </div>
 
-      {/* Confirmation Modal for Delete */}
+            <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-2 pb-2" aria-live="polite">
+              {searchQuery && isSearching && (
+                <p className="px-3 py-2 text-sm text-muted-foreground">Søger…</p>
+              )}
+              {meetingGroups.length === 0 ? (
+                <div className="px-3 py-6 text-sm text-muted-foreground">
+                  {searchQuery ? (
+                    <p>Ingen møder matcher "{searchQuery}". Prøv et andet ord.</p>
+                  ) : (
+                    <>
+                      <p className="font-medium text-foreground">Ingen møder endnu</p>
+                      <p className="mt-1">Tryk på "Ny optagelse", så dukker dit første møde op her.</p>
+                    </>
+                  )}
+                </div>
+              ) : (
+                meetingGroups.map(group => (
+                  <section key={group.key} className="mt-3 first:mt-0" aria-label={group.label}>
+                    <h2 className="px-3 pb-1 text-xs font-medium text-muted-foreground font-sans tracking-normal">{group.label}</h2>
+                    <ul className="space-y-0.5">{group.items.map(renderMeeting)}</ul>
+                  </section>
+                ))
+              )}
+            </div>
+
+            <div className="flex-shrink-0 border-t border-border p-2 flex items-center gap-1">
+              {betaFeatures.importAndRetranscribe && (
+                <button
+                  type="button"
+                  onClick={() => openImportDialog()}
+                  className="inline-flex items-center gap-2 min-h-[44px] px-3 rounded-lg text-sm text-foreground hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <Upload className="w-4 h-4" aria-hidden="true" />
+                  Importér lyd
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => router.push('/settings')}
+                aria-current={pathname === '/settings' ? 'page' : undefined}
+                className={`flex-1 inline-flex items-center gap-2 min-h-[44px] px-3 rounded-lg text-sm text-foreground hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring ${pathname === '/settings' ? 'bg-accent' : ''}`}
+              >
+                <Settings className="w-4 h-4" aria-hidden="true" />
+                Indstillinger
+              </button>
+              <Info isCollapsed />
+            </div>
+          </>
+        )}
+      </nav>
+
       <ConfirmationModal
         isOpen={deleteModalState.isOpen}
-        text="Are you sure you want to delete this meeting? This action cannot be undone."
+        text="Vil du slette dette møde? Optagelse, transskript og opsummering fjernes, og det kan ikke fortrydes."
         onConfirm={handleDeleteConfirm}
         onCancel={() => setDeleteModalState({ isOpen: false, itemId: null })}
       />
 
-      {/* Edit Meeting Title Modal */}
       <Dialog open={editModalState.isOpen} onOpenChange={(open) => {
         if (!open) handleEditCancel();
       }}>
         <DialogContent className="sm:max-w-[425px]">
           <VisuallyHidden>
-            <DialogTitle>Edit Meeting Title</DialogTitle>
+            <DialogTitle>Omdøb møde</DialogTitle>
           </VisuallyHidden>
           <div className="py-4">
-            <h3 className="text-lg font-semibold mb-4">Edit Meeting Title</h3>
-            <div className="space-y-4">
-              <div>
-                <label htmlFor="meeting-title" className="block text-sm font-medium text-foreground mb-2">
-                  Meeting Title
-                </label>
-                <input
-                  id="meeting-title"
-                  type="text"
-                  value={editingTitle}
-                  onChange={(e) => setEditingTitle(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      handleEditConfirm();
-                    } else if (e.key === 'Escape') {
-                      handleEditCancel();
-                    }
-                  }}
-                  className="w-full px-3 py-2 border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
-                  placeholder="Enter meeting title"
-                  autoFocus
-                />
-              </div>
-            </div>
+            <h3 className="text-lg font-semibold mb-4">Omdøb møde</h3>
+            <label htmlFor="meeting-title" className="block text-sm font-medium text-foreground mb-2">
+              Mødets navn
+            </label>
+            <input
+              id="meeting-title"
+              type="text"
+              value={editingTitle}
+              onChange={(e) => setEditingTitle(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  handleEditConfirm();
+                } else if (e.key === 'Escape') {
+                  handleEditCancel();
+                }
+              }}
+              className="w-full min-h-[44px] px-3 border border-input bg-background rounded-md focus-visible:ring-2 focus-visible:ring-ring"
+              placeholder="Skriv et navn"
+              autoFocus
+            />
           </div>
           <DialogFooter>
             <button
+              type="button"
               onClick={handleEditCancel}
-              className="px-4 py-2 text-sm font-medium text-foreground bg-secondary hover:bg-accent rounded-md transition-colors"
+              className="min-h-[44px] px-4 text-sm font-medium text-foreground bg-secondary hover:bg-accent rounded-md transition-colors"
             >
-              Cancel
+              Annullér
             </button>
             <button
+              type="button"
               onClick={handleEditConfirm}
-              className="px-4 py-2 text-sm font-medium text-primary-foreground bg-primary hover:bg-primary/90 rounded-md transition-colors"
+              className="min-h-[44px] px-4 text-sm font-medium text-primary-foreground bg-primary hover:bg-primary/90 rounded-md transition-colors"
             >
-              Save
+              Gem
             </button>
           </DialogFooter>
         </DialogContent>
