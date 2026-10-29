@@ -19,17 +19,17 @@ const Info = React.forwardRef<HTMLButtonElement, InfoProps>(({ isCollapsed }, re
               ? "bg-transparent p-2 hover:bg-accent rounded-lg" 
               : "w-full px-3 py-1.5 mt-1 text-sm font-medium text-foreground bg-muted hover:bg-accent rounded-lg shadow-sm"
           }`}
-          title="About Tingskriver"
+          title="Om Tingskriver" aria-label="Om Tingskriver"
         >
           <InfoIcon className={`text-muted-foreground ${isCollapsed ? "w-5 h-5" : "w-4 h-4"}`} />
           {!isCollapsed && (
-            <span className="ml-2 text-sm text-foreground">About</span>
+            <span className="ml-2 text-sm text-foreground">Om</span>
           )}
         </button>
       </DialogTrigger>
       <DialogContent>
         <VisuallyHidden>
-          <DialogTitle>About Tingskriver</DialogTitle>
+          <DialogTitle>Om Tingskriver</DialogTitle>
         </VisuallyHidden>
         <About />
       </DialogContent>
@@ -37,6 +37,6 @@ const Info = React.forwardRef<HTMLButtonElement, InfoProps>(({ isCollapsed }, re
   );
 });
 
-Info.displayName = "About";
+Info.displayName = "Info";
 
 export default Info; 

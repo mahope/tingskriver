@@ -32,10 +32,10 @@ export function EmptyStateSummary({
     >
       <FileQuestion className="w-16 h-16 text-muted-foreground mb-4" />
       <h3 className="text-lg font-semibold text-foreground mb-2">
-        No Summary Generated Yet
+        Ingen opsummering endnu
       </h3>
       <p className="text-sm text-muted-foreground mb-6 max-w-md">
-        Generate an AI-powered summary of your meeting transcript to get key points, action items, and decisions.
+        Lad AI lave en opsummering af mødets transskript med hovedpunkter, handlepunkter og beslutninger.
       </p>
 
       {error && (
@@ -50,17 +50,17 @@ export function EmptyStateSummary({
             <div>
               <Button
                 onClick={onGenerate}
+                className="gap-2 min-h-[44px]"
                 disabled={!hasModel || isGenerating}
-                className="gap-2"
               >
                 <Sparkles className="w-4 h-4" />
-                {isGenerating ? 'Generating...' : error ? 'Retry summary' : 'Generate Summary'}
+                {isGenerating ? 'Opsummerer…' : error ? 'Prøv igen' : 'Lav opsummering'}
               </Button>
             </div>
           </TooltipTrigger>
           {!hasModel && (
             <TooltipContent>
-              <p>Please select a model in Settings first</p>
+              <p>Vælg en model under Indstillinger først</p>
             </TooltipContent>
           )}
         </Tooltip>
@@ -68,7 +68,7 @@ export function EmptyStateSummary({
 
       {!hasModel && (
         <p className="text-xs text-warning mt-3">
-          Please select a model in Settings first
+          Vælg en model under Indstillinger først
         </p>
       )}
     </motion.div>

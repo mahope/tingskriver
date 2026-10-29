@@ -6,6 +6,7 @@ import { useCreateBlockNote } from "@blocknote/react";
 import { BlockNoteView } from "@blocknote/shadcn";
 import "@blocknote/shadcn/style.css";
 import "@blocknote/core/fonts/inter.css";
+import { useTheme } from "@/contexts/ThemeContext";
 
 interface EditorProps {
   initialContent?: Block[];
@@ -19,6 +20,9 @@ export default function Editor({ initialContent, onChange, editable = true }: Ed
     blocksCount: initialContent?.length || 0,
     editable
   });
+
+  // Følger appens lyse/mørke tema; shadcn-varianten læser selv designtokens.
+  const { resolved } = useTheme();
 
   const editor = useCreateBlockNote({
     initialContent: initialContent as PartialBlock[] | undefined,
@@ -47,5 +51,5 @@ export default function Editor({ initialContent, onChange, editable = true }: Ed
     };
   }, [editor, onChange]);
 
-  return <BlockNoteView editor={editor} editable={editable} theme="light" />;
+  return <BlockNoteView editor={editor} editable={editable} theme={resolved} />;
 }

@@ -22,7 +22,7 @@ export function ModelDownloadProgress({ status, modelName, onCancel }: ModelDown
         <div className="flex items-center space-x-2">
           <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
           <span className="text-sm font-medium text-primary">
-            {isCompleted ? 'Finalizing...' : `Downloading ${modelName}`}
+            {isCompleted ? 'Gør klar…' : `Henter ${modelName}`}
           </span>
         </div>
       </div>
@@ -35,16 +35,16 @@ export function ModelDownloadProgress({ status, modelName, onCancel }: ModelDown
           />
         </div>
         <div className="flex justify-between text-xs text-primary mt-1">
-          <span>{Math.round(progress)}% complete</span>
+          <span>{Math.round(progress)} % hentet</span>
           {!isCompleted && (
-            <span className="animate-pulse">Downloading...</span>
+            <span className="animate-pulse">Henter…</span>
           )}
         </div>
       </div>
       
       {isCompleted && (
         <div className="mt-2 text-xs text-success">
-          ✓ Download completed, loading model...
+          Hentningen er færdig. Indlæser model…
         </div>
       )}
     </div>
@@ -74,7 +74,7 @@ export function ProgressRing({ progress, size = 40, strokeWidth = 3 }: ProgressR
           cx={size / 2}
           cy={size / 2}
           r={radius}
-          stroke="#e5e7eb"
+          className="stroke-muted"
           strokeWidth={strokeWidth}
           fill="transparent"
         />
@@ -82,13 +82,12 @@ export function ProgressRing({ progress, size = 40, strokeWidth = 3 }: ProgressR
           cx={size / 2}
           cy={size / 2}
           r={radius}
-          stroke="#3b82f6"
+          className="stroke-primary transition-all duration-300 ease-in-out"
           strokeWidth={strokeWidth}
           strokeDasharray={strokeDasharray}
           strokeDashoffset={strokeDashoffset}
           strokeLinecap="round"
           fill="transparent"
-          className="transition-all duration-300 ease-in-out"
         />
       </svg>
       <span className="absolute text-xs font-medium text-primary">
@@ -106,23 +105,23 @@ interface DownloadSummaryProps {
 
 export function DownloadSummary({ totalModels, downloadedModels, totalSizeMb }: DownloadSummaryProps) {
   const formatSize = (mb: number) => {
-    if (mb >= 1000) return `${(mb / 1000).toFixed(1)}GB`;
-    return `${mb}MB`;
+    if (mb >= 1000) return `${(mb / 1000).toFixed(1).replace('.', ',')} GB`;
+    return `${mb} MB`;
   };
 
   return (
     <div className="bg-background rounded-lg p-3 text-sm">
       <div className="flex items-center justify-between">
         <span className="text-foreground">
-          📦 {downloadedModels} of {totalModels} models available
+          {downloadedModels} af {totalModels} modeller er hentet
         </span>
         <span className="text-muted-foreground">
-          💾 {formatSize(totalSizeMb)} total
+          {formatSize(totalSizeMb)} i alt
         </span>
       </div>
       {downloadedModels > 0 && (
         <div className="mt-1 text-xs text-success">
-          ✓ Models run locally - no internet required for transcription
+          Modellerne kører lokalt. Transskription kræver ikke internet.
         </div>
       )}
     </div>
