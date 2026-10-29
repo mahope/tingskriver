@@ -237,7 +237,7 @@ export const BlockNoteSummaryView = forwardRef<BlockNoteSummaryViewRef, BlockNot
     console.log('🎨 Rendering BLOCKNOTE format (direct)');
     return (
       <div className="flex flex-col w-full">
-        <div className="w-full">
+        <div className="summary-doc w-full max-w-[68ch] [&_.bn-block-content]:text-[1.0625rem] [&_.bn-block-content]:leading-[1.65] [&_.bn-block-outer]:mb-1 [&_[data-content-type=heading]]:font-serif [&_[data-content-type=heading]]:font-semibold [&_[data-content-type=heading][data-level=1]]:text-[1.5rem] [&_[data-content-type=heading][data-level=2]]:text-[1.375rem] [&_[data-content-type=heading][data-level=3]]:text-[1.25rem] [&_[data-content-type=heading]]:mt-6">
           <Editor
             initialContent={data.summary_json}
             onChange={(blocks) => {
@@ -256,7 +256,7 @@ export const BlockNoteSummaryView = forwardRef<BlockNoteSummaryViewRef, BlockNot
     console.log('🎨 Rendering MARKDOWN format (parsed to BlockNote)');
     return (
       <div className="flex flex-col w-full">
-        <div className="w-full">
+        <div className="summary-doc w-full max-w-[68ch] [&_.bn-block-content]:text-[1.0625rem] [&_.bn-block-content]:leading-[1.65] [&_.bn-block-outer]:mb-1 [&_[data-content-type=heading]]:font-serif [&_[data-content-type=heading]]:font-semibold [&_[data-content-type=heading][data-level=1]]:text-[1.5rem] [&_[data-content-type=heading][data-level=2]]:text-[1.375rem] [&_[data-content-type=heading][data-level=3]]:text-[1.25rem] [&_[data-content-type=heading]]:mt-6">
           <BlockNoteView
             editor={editor}
             editable={true}

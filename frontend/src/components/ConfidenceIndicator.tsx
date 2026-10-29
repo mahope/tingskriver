@@ -1,5 +1,8 @@
 'use client';
 
+/** Below this value a transcript line is marked as uncertain. */
+export const LOW_CONFIDENCE_THRESHOLD = 0.4;
+
 interface ConfidenceIndicatorProps {
   confidence: number;
   showIndicator?: boolean;
@@ -14,34 +17,32 @@ export const ConfidenceIndicator: React.FC<ConfidenceIndicatorProps> = ({
     return null;
   }
 
-  // Get color class based on confidence threshold
-  const getColorClass = (conf: number): string => {
-    if (conf >= 0.8) return 'bg-success'; // 80-100%: High confidence
-    if (conf >= 0.7) return 'bg-warning'; // 70-79%: Good confidence
-    if (conf >= 0.4) return 'bg-warning'; // 40-79%: Medium confidence
-    return 'bg-destructive'; // Below 50%: Low confidence
+  // Calm marking: filled dot for confident text, hollow dot when the model was unsure
+  const getMarkClass = (conf: number): string => {
+    if (conf >= LOW_CONFIDENCE_THRESHOLD) return 'bg-muted-foreground/50';
+    return 'border-2 border-muted-foreground bg-transparent';
   };
 
   // Get descriptive label for accessibility
   const getConfidenceLabel = (conf: number): string => {
-    if (conf >= 0.8) return 'High confidence';
-    if (conf >= 0.7) return 'Good confidence';
-    if (conf >= 0.4) return 'Medium confidence';
-    return 'Low confidence';
+    if (conf >= 0.8) return 'Høj sikkerhed';
+    if (conf >= 0.7) return 'God sikkerhed';
+    if (conf >= 0.4) return 'Middel sikkerhed';
+    return 'Lav sikkerhed, tjek teksten';
   };
 
   const confidencePercent = (confidence * 100).toFixed(0);
-  const colorClass = getColorClass(confidence);
+  const colorClass = getMarkClass(confidence);
   const label = getConfidenceLabel(confidence);
 
   return (
     <div
       className="flex items-center gap-1"
-      title={`${confidencePercent}% confidence - ${label}`}
-      aria-label={`Transcription confidence: ${confidencePercent}%`}
+      title={`${confidencePercent} % sikkerhed: ${label}`}
+      aria-label={`Transskriptionens sikkerhed: ${confidencePercent} procent. ${label}`}
     >
       <div
-        className={`w-2 h-2 rounded-full ${colorClass} transition-colors duration-200`}
+        className={`w-2 h-2 rounded-full box-border ${colorClass} transition-colors duration-200`}
         role="status"
       />
     </div>
