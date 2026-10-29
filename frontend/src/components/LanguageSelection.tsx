@@ -11,107 +11,107 @@ export interface Language {
 
 // ISO 639-1 language codes supported by Whisper
 const LANGUAGES: Language[] = [
-  { code: 'auto', name: 'Auto Detect (Original Language)' },
-  { code: 'auto-translate', name: 'Auto Detect (Translate to English)' },
-  { code: 'en', name: 'English' },
-  { code: 'zh', name: 'Chinese' },
-  { code: 'de', name: 'German' },
-  { code: 'es', name: 'Spanish' },
-  { code: 'ru', name: 'Russian' },
-  { code: 'ko', name: 'Korean' },
-  { code: 'fr', name: 'French' },
-  { code: 'ja', name: 'Japanese' },
-  { code: 'pt', name: 'Portuguese' },
-  { code: 'tr', name: 'Turkish' },
-  { code: 'pl', name: 'Polish' },
-  { code: 'ca', name: 'Catalan' },
-  { code: 'nl', name: 'Dutch' },
-  { code: 'ar', name: 'Arabic' },
-  { code: 'sv', name: 'Swedish' },
-  { code: 'it', name: 'Italian' },
-  { code: 'id', name: 'Indonesian' },
+  { code: 'auto', name: 'Automatisk (originalsproget)' },
+  { code: 'auto-translate', name: 'Automatisk (oversæt til engelsk)' },
+  { code: 'en', name: 'Engelsk' },
+  { code: 'zh', name: 'Kinesisk' },
+  { code: 'de', name: 'Tysk' },
+  { code: 'es', name: 'Spansk' },
+  { code: 'ru', name: 'Russisk' },
+  { code: 'ko', name: 'Koreansk' },
+  { code: 'fr', name: 'Fransk' },
+  { code: 'ja', name: 'Japansk' },
+  { code: 'pt', name: 'Portugisisk' },
+  { code: 'tr', name: 'Tyrkisk' },
+  { code: 'pl', name: 'Polsk' },
+  { code: 'ca', name: 'Catalansk' },
+  { code: 'nl', name: 'Hollandsk' },
+  { code: 'ar', name: 'Arabisk' },
+  { code: 'sv', name: 'Svensk' },
+  { code: 'it', name: 'Italiensk' },
+  { code: 'id', name: 'Indonesisk' },
   { code: 'hi', name: 'Hindi' },
-  { code: 'fi', name: 'Finnish' },
-  { code: 'vi', name: 'Vietnamese' },
-  { code: 'he', name: 'Hebrew' },
-  { code: 'uk', name: 'Ukrainian' },
-  { code: 'el', name: 'Greek' },
-  { code: 'ms', name: 'Malay' },
-  { code: 'cs', name: 'Czech' },
-  { code: 'ro', name: 'Romanian' },
-  { code: 'da', name: 'Danish' },
-  { code: 'hu', name: 'Hungarian' },
+  { code: 'fi', name: 'Finsk' },
+  { code: 'vi', name: 'Vietnamesisk' },
+  { code: 'he', name: 'Hebraisk' },
+  { code: 'uk', name: 'Ukrainsk' },
+  { code: 'el', name: 'Græsk' },
+  { code: 'ms', name: 'Malajisk' },
+  { code: 'cs', name: 'Tjekkisk' },
+  { code: 'ro', name: 'Rumænsk' },
+  { code: 'da', name: 'Dansk' },
+  { code: 'hu', name: 'Ungarsk' },
   { code: 'ta', name: 'Tamil' },
-  { code: 'no', name: 'Norwegian' },
+  { code: 'no', name: 'Norsk' },
   { code: 'th', name: 'Thai' },
   { code: 'ur', name: 'Urdu' },
-  { code: 'hr', name: 'Croatian' },
-  { code: 'bg', name: 'Bulgarian' },
-  { code: 'lt', name: 'Lithuanian' },
+  { code: 'hr', name: 'Kroatisk' },
+  { code: 'bg', name: 'Bulgarsk' },
+  { code: 'lt', name: 'Litauisk' },
   { code: 'la', name: 'Latin' },
   { code: 'mi', name: 'Maori' },
   { code: 'ml', name: 'Malayalam' },
-  { code: 'cy', name: 'Welsh' },
-  { code: 'sk', name: 'Slovak' },
+  { code: 'cy', name: 'Walisisk' },
+  { code: 'sk', name: 'Slovakisk' },
   { code: 'te', name: 'Telugu' },
-  { code: 'fa', name: 'Persian' },
-  { code: 'lv', name: 'Latvian' },
+  { code: 'fa', name: 'Persisk' },
+  { code: 'lv', name: 'Lettisk' },
   { code: 'bn', name: 'Bengali' },
-  { code: 'sr', name: 'Serbian' },
-  { code: 'az', name: 'Azerbaijani' },
-  { code: 'sl', name: 'Slovenian' },
+  { code: 'sr', name: 'Serbisk' },
+  { code: 'az', name: 'Aserbajdsjansk' },
+  { code: 'sl', name: 'Slovensk' },
   { code: 'kn', name: 'Kannada' },
-  { code: 'et', name: 'Estonian' },
-  { code: 'mk', name: 'Macedonian' },
-  { code: 'br', name: 'Breton' },
-  { code: 'eu', name: 'Basque' },
-  { code: 'is', name: 'Icelandic' },
-  { code: 'hy', name: 'Armenian' },
-  { code: 'ne', name: 'Nepali' },
-  { code: 'mn', name: 'Mongolian' },
-  { code: 'bs', name: 'Bosnian' },
-  { code: 'kk', name: 'Kazakh' },
-  { code: 'sq', name: 'Albanian' },
+  { code: 'et', name: 'Estisk' },
+  { code: 'mk', name: 'Makedonsk' },
+  { code: 'br', name: 'Bretonsk' },
+  { code: 'eu', name: 'Baskisk' },
+  { code: 'is', name: 'Islandsk' },
+  { code: 'hy', name: 'Armensk' },
+  { code: 'ne', name: 'Nepalesisk' },
+  { code: 'mn', name: 'Mongolsk' },
+  { code: 'bs', name: 'Bosnisk' },
+  { code: 'kk', name: 'Kasakhisk' },
+  { code: 'sq', name: 'Albansk' },
   { code: 'sw', name: 'Swahili' },
-  { code: 'gl', name: 'Galician' },
+  { code: 'gl', name: 'Galicisk' },
   { code: 'mr', name: 'Marathi' },
   { code: 'pa', name: 'Punjabi' },
-  { code: 'si', name: 'Sinhala' },
+  { code: 'si', name: 'Singalesisk' },
   { code: 'km', name: 'Khmer' },
   { code: 'sn', name: 'Shona' },
   { code: 'yo', name: 'Yoruba' },
   { code: 'so', name: 'Somali' },
   { code: 'af', name: 'Afrikaans' },
-  { code: 'oc', name: 'Occitan' },
-  { code: 'ka', name: 'Georgian' },
-  { code: 'be', name: 'Belarusian' },
-  { code: 'tg', name: 'Tajik' },
+  { code: 'oc', name: 'Occitansk' },
+  { code: 'ka', name: 'Georgisk' },
+  { code: 'be', name: 'Hviderussisk' },
+  { code: 'tg', name: 'Tadsjikisk' },
   { code: 'sd', name: 'Sindhi' },
   { code: 'gu', name: 'Gujarati' },
-  { code: 'am', name: 'Amharic' },
-  { code: 'yi', name: 'Yiddish' },
-  { code: 'lo', name: 'Lao' },
-  { code: 'uz', name: 'Uzbek' },
-  { code: 'fo', name: 'Faroese' },
-  { code: 'ht', name: 'Haitian Creole' },
+  { code: 'am', name: 'Amharisk' },
+  { code: 'yi', name: 'Jiddisch' },
+  { code: 'lo', name: 'Laotisk' },
+  { code: 'uz', name: 'Usbekisk' },
+  { code: 'fo', name: 'Færøsk' },
+  { code: 'ht', name: 'Haitiansk kreolsk' },
   { code: 'ps', name: 'Pashto' },
-  { code: 'tk', name: 'Turkmen' },
-  { code: 'nn', name: 'Norwegian Nynorsk' },
-  { code: 'mt', name: 'Maltese' },
+  { code: 'tk', name: 'Turkmensk' },
+  { code: 'nn', name: 'Nynorsk' },
+  { code: 'mt', name: 'Maltesisk' },
   { code: 'sa', name: 'Sanskrit' },
-  { code: 'lb', name: 'Luxembourgish' },
-  { code: 'my', name: 'Myanmar' },
-  { code: 'bo', name: 'Tibetan' },
+  { code: 'lb', name: 'Luxembourgsk' },
+  { code: 'my', name: 'Burmesisk' },
+  { code: 'bo', name: 'Tibetansk' },
   { code: 'tl', name: 'Tagalog' },
-  { code: 'mg', name: 'Malagasy' },
-  { code: 'as', name: 'Assamese' },
-  { code: 'tt', name: 'Tatar' },
-  { code: 'haw', name: 'Hawaiian' },
+  { code: 'mg', name: 'Malagassisk' },
+  { code: 'as', name: 'Assamesisk' },
+  { code: 'tt', name: 'Tatarisk' },
+  { code: 'haw', name: 'Hawaiiansk' },
   { code: 'ln', name: 'Lingala' },
   { code: 'ha', name: 'Hausa' },
-  { code: 'ba', name: 'Bashkir' },
-  { code: 'jw', name: 'Javanese' },
-  { code: 'su', name: 'Sundanese' },
+  { code: 'ba', name: 'Basjkirsk' },
+  { code: 'jw', name: 'Javanesisk' },
+  { code: 'su', name: 'Sundanesisk' },
 ];
 
 interface LanguageSelectionProps {
@@ -148,20 +148,20 @@ export function LanguageSelection({
       const selectedLang = LANGUAGES.find(lang => lang.code === languageCode);
       await Analytics.track('language_selected', {
         language_code: languageCode,
-        language_name: selectedLang?.name || 'Unknown',
+        language_name: selectedLang?.code || 'unknown',
         is_auto_detect: (languageCode === 'auto').toString(),
         is_auto_translate: (languageCode === 'auto-translate').toString()
       });
 
       // Show success toast
       const languageName = selectedLang?.name || languageCode;
-      toast.success("Language preference saved", {
-        description: `Transcription language set to ${languageName}`
+      toast.success("Sprog gemt", {
+        description: `Transskriptionssproget er sat til ${languageName}`
       });
     } catch (error) {
       console.error('Failed to save language preference:', error);
-      toast.error("Failed to save language preference", {
-        description: error instanceof Error ? error.message : String(error)
+      toast.error("Sproget kunne ikke gemmes", {
+        description: `Prøv igen. ${error instanceof Error ? error.message : String(error)}`
       });
     } finally {
       setSaving(false);
@@ -171,23 +171,25 @@ export function LanguageSelection({
   // Find the selected language name for display
   const selectedLanguageName = LANGUAGES.find(
     lang => lang.code === selectedLanguage
-  )?.name || 'Auto Detect (Original Language)';
+  )?.name || 'Automatisk (originalsproget)';
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Globe className="h-4 w-4 text-gray-600" />
-          <h4 className="text-sm font-medium text-gray-900">Transcription Language</h4>
+          <Globe aria-hidden="true" className="h-4 w-4 text-muted-foreground" />
+          <label htmlFor="transcription-language" className="text-sm font-medium text-foreground">Transskriptionssprog</label>
         </div>
       </div>
 
       <div className="space-y-2">
         <select
+          id="transcription-language"
+          aria-describedby="transcription-language-hint"
           value={selectedLanguage}
           onChange={(e) => handleLanguageChange(e.target.value)}
           disabled={disabled || saving}
-          className="w-full px-3 py-2 text-sm bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-50 disabled:text-gray-500"
+          className="w-full px-3 py-2 text-sm bg-card border border-input rounded-md shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus:border-ring disabled:bg-background disabled:text-muted-foreground"
         >
           {availableLanguages.map((language) => (
             <option key={language.code} value={language.code}>
@@ -197,34 +199,36 @@ export function LanguageSelection({
           ))}
         </select>
 
+        <p id="transcription-language-hint" className="text-xs text-muted-foreground">Vælg det sprog, der tales i dine møder.</p>
+
         {/* Parakeet language limitation warning */}
         {isParakeet && (
-          <div className="p-2 bg-amber-50 border border-amber-200 rounded text-amber-800">
-            <p className="font-medium">ℹ️ Parakeet Language Support</p>
-            <p className="mt-1 text-xs">Parakeet currently only supports automatic language detection. Manual language selection is not available. Use Whisper if you need to specify a particular language.</p>
+          <div className="p-2 bg-warning/10 border border-warning/30 rounded text-warning">
+            <p className="font-medium">Sprogvalg med Parakeet</p>
+            <p className="mt-1 text-xs">Parakeet kan kun genkende sproget automatisk. Skift til Whisper, hvis du selv vil vælge sprog.</p>
           </div>
         )}
 
         {/* Info text */}
         <div className="text-xs space-y-2 pt-2">
-          <p className="text-gray-600">
-            <strong>Current:</strong> {selectedLanguageName}
+          <p className="text-muted-foreground">
+            <strong>Valgt:</strong> {selectedLanguageName}
           </p>
           {selectedLanguage === 'auto' && (
-            <div className="p-2 bg-yellow-50 border border-yellow-200 rounded text-yellow-800">
-              <p className="font-medium">⚠️ Auto Detect may produce incorrect results</p>
-              <p className="mt-1">For best accuracy, select your specific language (e.g., English, Spanish, etc.)</p>
+            <div className="p-2 bg-warning/10 border border-warning/30 rounded text-warning">
+              <p className="font-medium">Automatisk genkendelse kan give fejl</p>
+              <p className="mt-1">Vælg dit sprog (fx dansk eller engelsk) for at få det bedste resultat.</p>
             </div>
           )}
           {selectedLanguage === 'auto-translate' && (
-            <div className="p-2 bg-blue-50 border border-blue-200 rounded text-blue-800">
-              <p className="font-medium">🌐 Translation Mode Active</p>
-              <p className="mt-1">All audio will be automatically translated to English. Best for multilingual meetings where you need English output.</p>
+            <div className="p-2 bg-primary/10 border border-primary/30 rounded text-primary">
+              <p className="font-medium">Oversættelse til engelsk er slået til</p>
+              <p className="mt-1">Al tale oversættes automatisk til engelsk. Velegnet til møder på flere sprog, hvor du har brug for engelsk tekst.</p>
             </div>
           )}
           {selectedLanguage !== 'auto' && selectedLanguage !== 'auto-translate' && (
-            <p className="text-gray-600">
-              Transcription will be optimized for <strong>{selectedLanguageName}</strong>
+            <p className="text-muted-foreground">
+              Transskriptionen tilpasses <strong>{selectedLanguageName}</strong>
             </p>
           )}
         </div>

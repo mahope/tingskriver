@@ -146,16 +146,16 @@ export function useModelConfiguration({ serverAddress }: UseModelConfigurationPr
       const { emit } = await import('@tauri-apps/api/event');
       await emit('model-config-updated', payload);
 
-      toast.success("Summary settings Saved successfully");
+      toast.success("Indstillingerne for opsummering er gemt");
 
       await Analytics.trackSettingsChanged('model_config', `${payload.provider}_${payload.model}`);
     } catch (error) {
       console.error('Failed to save model config:', error);
-      toast.error("Failed to save summary settings", { description: String(error) });
+      toast.error("Indstillingerne for opsummering kunne ikke gemmes", { description: String(error) });
       if (error instanceof Error) {
         setError(error.message);
       } else {
-        setError('Failed to save model config: Unknown error');
+        setError('Modelindstillingerne kunne ikke gemmes: ukendt fejl');
       }
     }
   }, [modelConfig]);

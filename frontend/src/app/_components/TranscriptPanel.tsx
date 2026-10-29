@@ -49,49 +49,14 @@ export function TranscriptPanel({
     [transcripts]
   );
 
-  return (
-    <div ref={transcriptContainerRef} className="w-full border-r border-gray-200 bg-white flex flex-col overflow-y-auto">
-      {/* Title area - Sticky header */}
-      <div className="sticky top-0 z-10 bg-white p-4 border-gray-200">
-        <div className="flex flex-col space-y-3">
-          <div className="flex  flex-col space-y-2">
-            <div className="flex justify-center  items-center space-x-2">
-              <ButtonGroup>
-                {transcripts?.length > 0 && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={copyTranscript}
-                    title="Copy Transcript"
-                  >
-                    <Copy />
-                    <span className='hidden md:inline'>
-                      Copy
-                    </span>
-                  </Button>
-                )}
-                {transcriptModelConfig.provider === "localWhisper" &&
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => showModal('languageSettings')}
-                    title="Language"
-                  >
-                    <GlobeIcon />
-                    <span className='hidden md:inline'>
-                      Language
-                    </span>
-                  </Button>
-                }
-              </ButtonGroup>
-            </div>
-          </div>
-        </div>
-      </div>
+  const isIdle = !isRecording && !isProcessingStop && !isStopping && transcripts.length === 0;
+  const showToolbar = transcripts.length > 0 || transcriptModelConfig.provider === "localWhisper";
 
-      {/* Permission Warning - Not needed on Linux */}
+  return (
+    <div ref={transcriptContainerRef} className="w-full bg-background flex flex-col overflow-y-auto">
+      {/* Tilladelser */}
       {!isRecording && !isChecking && !isLinux && (
-        <div className="flex justify-center px-4 pt-4">
+        <div className="flex justify-center px-6 pt-4">
           <PermissionWarning
             hasMicrophone={hasMicrophone}
             hasSystemAudio={hasSystemAudio}
@@ -101,10 +66,39 @@ export function TranscriptPanel({
         </div>
       )}
 
-      {/* Transcript content */}
-      <div className="pb-20">
-        <div className="flex justify-center">
-          <div className="w-2/3 max-w-[750px]">
+      {isIdle ? (
+        <div className="flex flex-1 items-center justify-center px-8 pb-32">
+          <div className="max-w-md text-center">
+            <h1 className="font-serif text-3xl font-semibold text-foreground">Klar til dit næste møde</h1>
+            <p className="mt-3 text-base text-muted-foreground">
+              Tingskriver optager og skriver referat på din computer. Lyden bliver her, og du kan læse noterne bagefter.
+            </p>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Tryk på "Start optagelse" nedenfor. Transskriptionen vises her, mens du optager.
+            </p>
+          </div>
+        </div>
+      ) : (
+        <div className="pb-32 pt-6">
+          <div className="mx-auto w-full max-w-[44rem] px-6">
+            {showToolbar && (
+              <div className="mb-2 flex justify-end">
+                <ButtonGroup>
+                  {transcripts?.length > 0 && (
+                    <Button variant="outline" size="sm" onClick={copyTranscript} title="Kopiér transskriptionen">
+                      <Copy />
+                      <span className="hidden md:inline">Kopiér</span>
+                    </Button>
+                  )}
+                  {transcriptModelConfig.provider === "localWhisper" && (
+                    <Button variant="outline" size="sm" onClick={() => showModal('languageSettings')} title="Vælg sprog">
+                      <GlobeIcon />
+                      <span className="hidden md:inline">Sprog</span>
+                    </Button>
+                  )}
+                </ButtonGroup>
+              </div>
+            )}
             <VirtualizedTranscriptView
               segments={segments}
               isRecording={isRecording}
@@ -116,7 +110,7 @@ export function TranscriptPanel({
             />
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

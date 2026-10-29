@@ -26,9 +26,9 @@ function StatusOverlay({ show, message, sidebarCollapsed }: StatusOverlayProps) 
         }}
       >
         <div className="w-2/3 max-w-[750px] flex justify-center">
-          <div className="bg-white rounded-lg shadow-lg px-4 py-2 flex items-center space-x-2">
-            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-900"></div>
-            <span className="text-sm text-gray-700">{message}</span>
+          <div className="bg-card border border-border rounded-lg shadow-md px-4 py-2 flex items-center space-x-2" role="status">
+            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
+            <span className="text-sm text-foreground">{message}</span>
           </div>
         </div>
       </div>
@@ -47,14 +47,14 @@ export function StatusOverlays({
       {/* Processing status overlay - shown after recording stops while finalizing transcription */}
       <StatusOverlay
         show={isProcessing}
-        message="Finalizing transcription..."
+        message="Gør transskriptionen færdig…"
         sidebarCollapsed={sidebarCollapsed}
       />
 
       {/* Saving status overlay - shown while saving transcript to database */}
       <StatusOverlay
         show={isSaving}
-        message="Saving transcript..."
+        message="Gemmer mødet…"
         sidebarCollapsed={sidebarCollapsed}
       />
     </>

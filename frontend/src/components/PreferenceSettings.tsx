@@ -5,6 +5,7 @@ import { Switch } from "./ui/switch"
 import { FolderOpen } from "lucide-react"
 import { invoke } from "@tauri-apps/api/core"
 import Analytics from "@/lib/analytics"
+import { ThemeSelector } from "@/components/ThemeSelector"
 import { useConfig, NotificationSettings } from "@/contexts/ConfigContext"
 
 export function PreferenceSettings() {
@@ -137,106 +138,96 @@ export function PreferenceSettings() {
 
   // Show loading only if we're actually loading and don't have cached data
   if (isLoadingPreferences && !notificationSettings && !storageLocations) {
-    return <div className="max-w-2xl mx-auto p-6">Loading Preferences...</div>
+    return <div className="max-w-2xl mx-auto p-6 text-muted-foreground" role="status">Henter indstillinger…</div>
   }
 
   // Show loading if notificationsEnabled hasn't been determined yet
   if (notificationsEnabled === null && !isLoadingPreferences) {
-    return <div className="max-w-2xl mx-auto p-6">Loading Preferences...</div>
+    return <div className="max-w-2xl mx-auto p-6 text-muted-foreground" role="status">Henter indstillinger…</div>
   }
 
   // Ensure we have a boolean value for the Switch component
   const notificationsEnabledValue = notificationsEnabled ?? false;
 
   return (
-    <div className="space-y-6">
-      {/* Notifications Section */}
-      <div className="bg-white rounded-lg border border-gray-200 p-6 shadow-sm">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">Notifications</h3>
-            <p className="text-sm text-gray-600">Enable or disable notifications of start and end of meeting</p>
-          </div>
-          <Switch checked={notificationsEnabledValue} onCheckedChange={setNotificationsEnabled} />
-        </div>
-      </div>
+    <div className="max-w-2xl space-y-10">
+      {/* Appearance */}
+      <section aria-labelledby="pref-appearance">
+        <h2 id="pref-appearance" className="text-2xl text-foreground mb-1">Udseende</h2>
+        <p className="text-sm text-muted-foreground mb-4">
+          Vælg et lyst eller mørkt udseende, eller lad Tingskriver følge din computers indstilling.
+        </p>
+        <ThemeSelector />
+      </section>
 
-      {/* Data Storage Locations Section */}
-      <div className="bg-white rounded-lg border border-gray-200 p-6 shadow-sm">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">Data Storage Locations</h3>
-        <p className="text-sm text-gray-600 mb-6">
-          View and access where Tingskriver stores your data
+      {/* Notifications */}
+      <section aria-labelledby="pref-notifications" className="border-t border-border pt-8">
+        <h2 id="pref-notifications" className="text-2xl text-foreground mb-1">Notifikationer</h2>
+        <p className="text-sm text-muted-foreground mb-4">
+          Få en besked, når en optagelse starter og stopper.
+        </p>
+        <div className="flex items-center justify-between gap-6">
+          <div>
+            <label htmlFor="pref-notifications-switch" className="font-medium text-foreground">
+              Notifikationer om start og slut
+            </label>
+            <p id="pref-notifications-hint" className="text-sm text-muted-foreground">
+              Slå fra, hvis du ikke vil forstyrres under møder.
+            </p>
+          </div>
+          <Switch
+            id="pref-notifications-switch"
+            aria-describedby="pref-notifications-hint"
+            checked={notificationsEnabledValue}
+            onCheckedChange={setNotificationsEnabled}
+          />
+        </div>
+      </section>
+
+      {/* Data storage */}
+      <section aria-labelledby="pref-storage" className="border-t border-border pt-8">
+        <h2 id="pref-storage" className="text-2xl text-foreground mb-1">Placering af data</h2>
+        <p className="text-sm text-muted-foreground mb-4">
+          Her gemmer Tingskriver dine optagelser på din computer.
         </p>
 
-        <div className="space-y-4">
-          {/* Database Location */}
-          {/* <div className="p-4 border rounded-lg bg-gray-50">
-            <div className="font-medium mb-2">Database</div>
-            <div className="text-sm text-gray-600 mb-3 break-all font-mono text-xs">
-              {storageLocations?.database || 'Loading...'}
-            </div>
-            <button
-              onClick={() => handleOpenFolder('database')}
-              className="flex items-center gap-2 px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-100 transition-colors"
-            >
-              <FolderOpen className="w-4 h-4" />
-              Open Folder
-            </button>
-          </div> */}
-
-          {/* Models Location */}
-          {/* <div className="p-4 border rounded-lg bg-gray-50">
-            <div className="font-medium mb-2">Whisper Models</div>
-            <div className="text-sm text-gray-600 mb-3 break-all font-mono text-xs">
-              {storageLocations?.models || 'Loading...'}
-            </div>
-            <button
-              onClick={() => handleOpenFolder('models')}
-              className="flex items-center gap-2 px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-100 transition-colors"
-            >
-              <FolderOpen className="w-4 h-4" />
-              Open Folder
-            </button>
-          </div> */}
-
-          {/* Recordings Location */}
-          <div className="p-4 border rounded-lg bg-gray-50">
-            <div className="font-medium mb-2">Meeting Recordings</div>
-            <div className="text-sm text-gray-600 mb-3 break-all font-mono text-xs">
-              {storageLocations?.recordings || 'Loading...'}
-            </div>
-            <button
-              onClick={() => handleOpenFolder('recordings')}
-              className="flex items-center gap-2 px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-100 transition-colors"
-            >
-              <FolderOpen className="w-4 h-4" />
-              Open Folder
-            </button>
+        <div className="font-medium text-foreground mb-1">Mødeoptagelser</div>
+        {storageLocations?.recordings ? (
+          <div className="text-sm text-muted-foreground mb-3 break-all font-mono">
+            {storageLocations.recordings}
           </div>
-
-          {/* Log files */}
-          <div className="p-4 border rounded-lg bg-gray-50">
-            <div className="font-medium mb-2">Logfiler</div>
-            <div className="text-sm text-gray-600 mb-3">
-              Appens log (fx enhedsskift under optagelse). Send mappen, hvis noget fejler.
-            </div>
-            <button
-              onClick={() => handleOpenFolder('logs')}
-              className="flex items-center gap-2 px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-100 transition-colors"
-            >
-              <FolderOpen className="w-4 h-4" />
-              Åbn logmappe
-            </button>
-          </div>
-        </div>
-
-        <div className="mt-4 p-3 bg-blue-50 rounded-md">
-          <p className="text-xs text-blue-800">
-            <strong>Note:</strong> Database and models are stored together in your application data directory for unified management.
+        ) : (
+          <p className="text-sm text-muted-foreground mb-3">
+            Placeringen kunne ikke hentes. Genstart Tingskriver, og prøv igen.
           </p>
-        </div>
-      </div>
+        )}
+        <button
+          type="button"
+          onClick={() => handleOpenFolder('recordings')}
+          disabled={!storageLocations?.recordings}
+          className="inline-flex items-center gap-2 min-h-[44px] px-4 text-sm border border-input rounded-md hover:bg-accent transition-colors focus-visible:ring-2 ring-ring disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <FolderOpen className="w-4 h-4" aria-hidden="true" />
+          Åbn mappen
+        </button>
 
+        <div className="font-medium text-foreground mt-6 mb-1">Logfiler</div>
+        <p className="text-sm text-muted-foreground mb-3">
+          Appens log, fx skift af lydenhed under en optagelse. Send mappen, hvis noget fejler.
+        </p>
+        <button
+          type="button"
+          onClick={() => handleOpenFolder('logs')}
+          className="inline-flex items-center gap-2 min-h-[44px] px-4 text-sm border border-input rounded-md hover:bg-accent transition-colors focus-visible:ring-2 ring-ring"
+        >
+          <FolderOpen className="w-4 h-4" aria-hidden="true" />
+          Åbn logmappe
+        </button>
+
+        <p className="mt-6 text-sm text-muted-foreground">
+          Databasen og modellerne ligger sammen i programmets datamappe, så alt er samlet ét sted.
+        </p>
+      </section>
     </div>
   )
 }

@@ -62,7 +62,7 @@ export function SummaryModelSettings({ refetchTrigger }: SummaryModelSettingsPro
       }
     } catch (error) {
       console.error('Failed to fetch model config:', error);
-      toast.error('Failed to load model settings');
+      toast.error('Modelindstillingerne kunne ikke hentes. Luk og åbn indstillingerne igen.');
     }
   }, []);
 
@@ -115,31 +115,31 @@ export function SummaryModelSettings({ refetchTrigger }: SummaryModelSettingsPro
       const { emit } = await import('@tauri-apps/api/event');
       await emit('model-config-updated', config);
 
-      toast.success('Model settings saved successfully');
+      toast.success('Modelindstillingerne er gemt');
     } catch (error) {
       console.error('Error saving model config:', error);
-      toast.error('Failed to save model settings');
+      toast.error('Modelindstillingerne kunne ikke gemmes. Prøv igen.');
     }
   };
 
   return (
     <div className='flex flex-col gap-4'>
-      <div className="bg-white rounded-lg border border-gray-200 p-6 shadow-sm">
+      <div className="bg-card rounded-lg border border-border p-6 shadow-sm">
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">Auto Summary</h3>
-            <p className="text-sm text-gray-600">Auto Generating summary after meeting completion(Stopping)</p>
+            <h3 className="text-lg font-semibold text-foreground mb-2">Automatisk opsummering</h3>
+            <p id="auto-summary-help" className="text-sm text-muted-foreground">Lav automatisk en opsummering, når du stopper optagelsen af et møde.</p>
           </div>
-          <Switch checked={isAutoSummary} onCheckedChange={toggleIsAutoSummary} />
+          <Switch aria-label="Automatisk opsummering" aria-describedby="auto-summary-help" checked={isAutoSummary} onCheckedChange={toggleIsAutoSummary} />
         </div>
       </div>
 
       <SummaryLanguageSettings />
 
-      <div className="bg-white rounded-lg border border-gray-200 p-6 shadow-sm">
-        <h3 className="text-lg font-semibold mb-4">Summary Model Configuration</h3>
-        <p className="text-sm text-gray-600 mb-6">
-          Configure the AI model used for generating meeting summaries.
+      <div className="bg-card rounded-lg border border-border p-6 shadow-sm">
+        <h3 className="text-lg font-semibold mb-4">Model til opsummering</h3>
+        <p className="text-sm text-muted-foreground mb-6">
+          Vælg den AI-model, der laver opsummeringer af dine møder.
         </p>
 
         <ModelSettingsModal

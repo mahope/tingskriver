@@ -125,7 +125,7 @@ describe("summary language local fallback", () => {
 
     await expect(
       prefs.saveMeetingSummaryLanguage("meeting-1", "it"),
-    ).rejects.toThrow("Failed to save summary language on this device");
+    ).rejects.toThrow("Sproget til opsummering kunne ikke gemmes på denne enhed");
   });
 });
 

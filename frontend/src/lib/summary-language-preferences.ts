@@ -138,7 +138,7 @@ export async function saveMeetingSummaryLanguage(
 
   if (response.storage === 'local_fallback') {
     if (!writeLanguageFallback(SUMMARY_LANGUAGE_FALLBACK_PREFIX, meetingId, normalised)) {
-      throw new Error('Failed to save summary language on this device');
+      throw new Error('Sproget til opsummering kunne ikke gemmes på denne enhed');
     }
     return {
       language: normalised,

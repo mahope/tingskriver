@@ -4,7 +4,6 @@ import {
   WelcomeStep,
   PermissionsStep,
   DownloadProgressStep,
-  SetupOverviewStep,
 } from './steps';
 
 interface OnboardingFlowProps {
@@ -12,7 +11,7 @@ interface OnboardingFlowProps {
 }
 
 export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
-  const { currentStep } = useOnboarding();
+  const { currentStep, goToStep } = useOnboarding();
   const [isMac, setIsMac] = React.useState(false);
 
   useEffect(() => {
@@ -31,18 +30,21 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
     checkPlatform();
   }, []);
 
-  // 4-Step Onboarding Flow (System-Recommended Models):
-  // Step 1: Welcome - Introduce Tingskriver features
-  // Step 2: Setup Overview - Database initialization + show recommended downloads
-  // Step 3: Download Progress - Download Parakeet + Summary Model (auto-selected based on platform/RAM)
-  // Step 4: Permissions - Request mic + system audio (macOS only)
+  // Internal step numbers are unchanged (saved status uses them):
+  //   1 Welcome, 2 Setup overview (SetupOverviewStep, skipped), 3 Model download, 4 Permissions (macOS only).
+  // Step 2 is skipped by jumping straight to step 3; the database is initialised in OnboardingContext.
+  useEffect(() => {
+    if (currentStep === 2) goToStep(3);
+  }, [currentStep, goToStep]);
+
+  // Visible numbering: Welcome = 1, Download = 2, Permissions = 3 (macOS only).
+  const totalSteps = isMac ? 3 : 2;
 
   return (
     <div className="onboarding-flow">
-      {currentStep === 1 && <WelcomeStep />}
-      {currentStep === 2 && <SetupOverviewStep />}
-      {currentStep === 3 && <DownloadProgressStep />}
-      {currentStep === 4 && isMac && <PermissionsStep />}
+      {currentStep === 1 && <WelcomeStep totalSteps={totalSteps} />}
+      {currentStep === 3 && <DownloadProgressStep totalSteps={totalSteps} />}
+      {currentStep === 4 && isMac && <PermissionsStep totalSteps={totalSteps} />}
     </div>
   );
 }

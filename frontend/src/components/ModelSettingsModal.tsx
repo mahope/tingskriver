@@ -418,7 +418,7 @@ export function ModelSettingsModal({
 
     // Validate URL if provided
     if (trimmedEndpoint && !validateOllamaEndpoint(trimmedEndpoint)) {
-      const errorMsg = 'Invalid Ollama endpoint URL. Must start with http:// or https://';
+      const errorMsg = 'Ollama-adressen er ugyldig. Den skal starte med http:// eller https://';
       setError(errorMsg);
       if (!silent) {
         toast.error(errorMsg);
@@ -441,7 +441,7 @@ export function ModelSettingsModal({
       // Successfully fetched models, Ollama is installed
       setOllamaNotInstalled(false);
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : 'Failed to load Ollama models';
+      const errorMsg = err instanceof Error ? err.message : 'Ollama-modellerne kunne ikke hentes. Tjek adressen, og prøv igen.';
       setError(errorMsg);
 
       // Check if error indicates Ollama is not installed
@@ -496,7 +496,7 @@ export function ModelSettingsModal({
     } catch (err) {
       console.error('Error loading OpenRouter models:', err);
       setOpenRouterError(
-        err instanceof Error ? err.message : 'Failed to load OpenRouter models'
+        err instanceof Error ? err.message : 'OpenRouter-modellerne kunne ikke hentes. Tjek din internetforbindelse, og prøv igen.'
       );
     } finally {
       setIsLoadingOpenRouter(false);
@@ -519,7 +519,7 @@ export function ModelSettingsModal({
       }
     } catch (err) {
       console.error('Error loading Built-in AI models:', err);
-      toast.error('Failed to load Built-in AI models');
+      toast.error('De indbyggede AI-modeller kunne ikke hentes. Prøv igen.');
     }
   };
 
@@ -629,7 +629,7 @@ export function ModelSettingsModal({
         console.log('Custom OpenAI config saved successfully');
       } catch (err) {
         console.error('Failed to save custom OpenAI config:', err);
-        toast.error('Failed to save custom OpenAI configuration');
+        toast.error('Indstillingerne til den egne server kunne ikke gemmes. Prøv igen.');
         return;
       }
     }
@@ -671,7 +671,7 @@ export function ModelSettingsModal({
   // Test custom OpenAI connection
   const testCustomOpenAIConnection = async () => {
     if (!customOpenAIEndpoint.trim() || !customOpenAIModel.trim()) {
-      toast.error('Please enter endpoint URL and model name first');
+      toast.error('Udfyld adresse og modelnavn, før du tester forbindelsen.');
       return;
     }
 
@@ -682,7 +682,7 @@ export function ModelSettingsModal({
         apiKey: customOpenAIApiKey.trim() || null,
         model: customOpenAIModel.trim(),
       });
-      toast.success(result.message || 'Connection successful!');
+      toast.success(result.message || 'Forbindelsen virker');
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       toast.error(errorMsg);
@@ -704,8 +704,8 @@ export function ModelSettingsModal({
 
     // Prevent duplicate downloads (defense in depth - backend also checks)
     if (isDownloading(recommendedModel)) {
-      toast.info(`${recommendedModel} is already downloading`, {
-        description: `Progress: ${Math.round(getProgress(recommendedModel) || 0)}%`
+      toast.info(`${recommendedModel} bliver allerede hentet`, {
+        description: `Fremdrift: ${Math.round(getProgress(recommendedModel) || 0)} %`
       });
       return;
     }
@@ -726,16 +726,16 @@ export function ModelSettingsModal({
       // Note: Model is NOT auto-selected - user must explicitly choose it
       // This respects the database as the single source of truth
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : 'Failed to download model';
+      const errorMsg = err instanceof Error ? err.message : 'Modellen kunne ikke hentes. Prøv igen.';
       console.error('Error downloading model:', err);
 
       // Check if Ollama is not installed and show appropriate error
       if (isOllamaNotInstalledError(errorMsg)) {
-        toast.error('Ollama is not installed', {
-          description: 'Please download and install Ollama before downloading models.',
+        toast.error('Ollama er ikke installeret', {
+          description: 'Hent og installér Ollama, før du henter modeller.',
           duration: 7000,
           action: {
-            label: 'Download',
+            label: 'Hent Ollama',
             onClick: () => invoke('open_external_url', { url: 'https://ollama.com/download' })
           }
         });
@@ -755,10 +755,10 @@ export function ModelSettingsModal({
         endpoint
       });
 
-      toast.success(`Model ${modelName} deleted`);
+      toast.success(`Modellen ${modelName} er slettet`);
       await fetchOllamaModels(true); // Refresh list
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : 'Failed to delete model';
+      const errorMsg = err instanceof Error ? err.message : 'Modellen kunne ikke slettes. Prøv igen.';
       toast.error(errorMsg);
       console.error('Error deleting model:', err);
     }
@@ -804,12 +804,13 @@ export function ModelSettingsModal({
   return (
     <div>
       <div className="flex justify-between items-center mb-4">
-        <h3 className="text-lg font-semibold">Model Settings</h3>
+        <h3 className="text-lg font-semibold">Modelindstillinger</h3>
       </div>
 
       <div className="space-y-4">
         <div>
-          <Label>Summarization Model</Label>
+          <Label id="summary-provider-label">Model til opsummering</Label>
+          <p className="text-xs text-muted-foreground mt-1">Vælg først en udbyder og derefter en model.</p>
           <div className="flex space-x-2 mt-1">
             <Select
               value={modelConfig.provider}
@@ -870,13 +871,13 @@ export function ModelSettingsModal({
                 }
               }}
             >
-              <SelectTrigger>
-                <SelectValue placeholder="Select provider" />
+              <SelectTrigger aria-labelledby="summary-provider-label">
+                <SelectValue placeholder="Vælg udbyder" />
               </SelectTrigger>
               <SelectContent className="max-h-64 overflow-y-auto">
-                <SelectItem value="builtin-ai">Built-in AI (Offline, No API needed)</SelectItem>
+                <SelectItem value="builtin-ai">Indbygget AI (offline, ingen API nødvendig)</SelectItem>
                 <SelectItem value="claude">Claude</SelectItem>
-                <SelectItem value="custom-openai">Custom Server (OpenAI)</SelectItem>
+                <SelectItem value="custom-openai">Egen server (OpenAI-kompatibel)</SelectItem>
                 <SelectItem value="groq">Groq</SelectItem>
                 <SelectItem value="ollama">Ollama</SelectItem>
                 <SelectItem value="openai">OpenAI</SelectItem>
@@ -891,17 +892,18 @@ export function ModelSettingsModal({
                     variant="outline"
                     role="combobox"
                     aria-expanded={modelComboboxOpen}
+                    aria-label="Vælg model"
                     className="flex-1 max-w-[200px] justify-between font-normal"
                   >
                     <span className="truncate">
-                      {modelConfig.model || "Select model..."}
+                      {modelConfig.model || "Vælg model…"}
                     </span>
                     <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                   </Button>
                 </PopoverTrigger>
                 <PopoverContent className="w-[250px] p-0" align="start">
                   <Command>
-                    <CommandInput placeholder="Search models..." />
+                    <CommandInput placeholder="Søg efter modeller…" />
                     <CommandList className="max-h-[300px]">
                       {(modelConfig.provider === 'openrouter' && isLoadingOpenRouter) ||
                        (modelConfig.provider === 'openai' && isLoadingOpenAI) ||
@@ -909,11 +911,11 @@ export function ModelSettingsModal({
                        (modelConfig.provider === 'groq' && isLoadingGroq) ? (
                         <div className="py-6 text-center text-sm text-muted-foreground">
                           <RefreshCw className="mx-auto h-4 w-4 animate-spin mb-2" />
-                          Loading models...
+                          Henter modeller…
                         </div>
                       ) : (
                         <>
-                          <CommandEmpty>No models found.</CommandEmpty>
+                          <CommandEmpty>Ingen modeller fundet. Prøv et andet søgeord.</CommandEmpty>
                           <CommandGroup>
                             {modelOptions[modelConfig.provider]?.map((model) => (
                               <CommandItem
@@ -948,7 +950,7 @@ export function ModelSettingsModal({
         {modelConfig.provider === 'custom-openai' && (
           <div className="space-y-4 border-t pt-4">
             <div>
-              <Label htmlFor="custom-endpoint">Endpoint URL *</Label>
+              <Label htmlFor="custom-endpoint">Adresse (URL) *</Label>
               <Input
                 id="custom-endpoint"
                 value={customOpenAIEndpoint}
@@ -957,65 +959,67 @@ export function ModelSettingsModal({
                 className="mt-1"
               />
               <p className="text-xs text-muted-foreground mt-1">
-                Base URL of the OpenAI-compatible API
+                Basisadressen til den OpenAI-kompatible API
               </p>
             </div>
 
             <div>
-              <Label htmlFor="custom-model">Model Name *</Label>
+              <Label htmlFor="custom-model">Modelnavn *</Label>
               <Input
                 id="custom-model"
                 value={customOpenAIModel}
                 onChange={(e) => setCustomOpenAIModel(e.target.value)}
-                placeholder="gpt-4, llama-3-70b, etc."
+                placeholder="fx gpt-4 eller llama-3-70b"
                 className="mt-1"
               />
               <p className="text-xs text-muted-foreground mt-1">
-                Model identifier to use for requests
+                Navnet på den model, serveren skal bruge
               </p>
             </div>
 
             <div>
-              <Label htmlFor="custom-api-key">API Key (optional)</Label>
+              <Label htmlFor="custom-api-key">API-nøgle (valgfri)</Label>
               <Input
                 id="custom-api-key"
                 type="password"
                 value={customOpenAIApiKey}
                 onChange={(e) => setCustomOpenAIApiKey(e.target.value)}
-                placeholder="Leave empty if not required"
+                placeholder="Lad stå tom, hvis serveren ikke kræver en"
                 className="mt-1"
               />
             </div>
 
             {/* Advanced Options (Collapsible) */}
             <div>
-              <div
-                className="flex items-center justify-between cursor-pointer py-2"
+              <button
+                type="button"
+                aria-expanded={isCustomOpenAIAdvancedOpen}
+                className="flex w-full items-center justify-between cursor-pointer py-2 min-h-[24px] rounded-md focus-visible:ring-2 ring-ring"
                 onClick={() => setIsCustomOpenAIAdvancedOpen(!isCustomOpenAIAdvancedOpen)}
               >
-                <Label className="cursor-pointer">Advanced Options</Label>
+                <span className="text-sm font-medium">Avancerede indstillinger</span>
                 {isCustomOpenAIAdvancedOpen ? (
-                  <ChevronUp className="h-4 w-4 text-muted-foreground" />
+                  <ChevronUp className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
                 ) : (
-                  <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                  <ChevronDown className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
                 )}
-              </div>
+              </button>
 
               {isCustomOpenAIAdvancedOpen && (
                 <div className="space-y-3 pl-2 border-l-2 border-muted mt-2">
                   <div>
-                    <Label htmlFor="custom-max-tokens">Max Tokens</Label>
+                    <Label htmlFor="custom-max-tokens">Maks. tokens</Label>
                     <Input
                       id="custom-max-tokens"
                       type="number"
                       value={customMaxTokens}
                       onChange={(e) => setCustomMaxTokens(e.target.value)}
-                      placeholder="e.g., 4096"
+                      placeholder="fx 4096"
                       className="mt-1"
                     />
                   </div>
                   <div>
-                    <Label htmlFor="custom-temperature">Temperature (0.0-2.0)</Label>
+                    <Label htmlFor="custom-temperature">Temperatur (0,0-2,0)</Label>
                     <Input
                       id="custom-temperature"
                       type="number"
@@ -1024,12 +1028,12 @@ export function ModelSettingsModal({
                       max="2"
                       value={customTemperature}
                       onChange={(e) => setCustomTemperature(e.target.value)}
-                      placeholder="e.g., 0.7"
+                      placeholder="fx 0.7"
                       className="mt-1"
                     />
                   </div>
                   <div>
-                    <Label htmlFor="custom-top-p">Top P (0.0-1.0)</Label>
+                    <Label htmlFor="custom-top-p">Top P (0,0-1,0)</Label>
                     <Input
                       id="custom-top-p"
                       type="number"
@@ -1038,7 +1042,7 @@ export function ModelSettingsModal({
                       max="1"
                       value={customTopP}
                       onChange={(e) => setCustomTopP(e.target.value)}
-                      placeholder="e.g., 0.9"
+                      placeholder="fx 0.9"
                       className="mt-1"
                     />
                   </div>
@@ -1058,12 +1062,12 @@ export function ModelSettingsModal({
               {isTestingConnection ? (
                 <>
                   <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                  Testing Connection...
+                  Tester forbindelsen…
                 </>
               ) : (
                 <>
                   <CheckCircle2 className="mr-2 h-4 w-4" />
-                  Test Connection
+                  Test forbindelsen
                 </>
               )}
             </Button>
@@ -1072,14 +1076,15 @@ export function ModelSettingsModal({
 
         {requiresApiKey && (
           <div>
-            <Label>API Key</Label>
+            <Label htmlFor="provider-api-key">API-nøgle</Label>
             <div className="relative mt-1">
               <Input
+                id="provider-api-key"
                 type={showApiKey ? 'text' : 'password'}
                 value={apiKey || ''}
                 onChange={(e) => setApiKey(e.target.value)}
                 disabled={isApiKeyLocked}
-                placeholder="Enter your API key"
+                placeholder="Indsæt din API-nøgle"
                 className="pr-24"
               />
               {isApiKeyLocked && apiKey?.trim() && (
@@ -1095,8 +1100,9 @@ export function ModelSettingsModal({
                     variant="ghost"
                     size="icon"
                     onClick={() => setIsApiKeyLocked(!isApiKeyLocked)}
-                    className={isLockButtonVibrating ? 'animate-vibrate text-red-500' : ''}
-                    title={isApiKeyLocked ? 'Unlock to edit' : 'Lock to prevent editing'}
+                    className={isLockButtonVibrating ? 'animate-vibrate text-destructive' : ''}
+                    title={isApiKeyLocked ? 'Lås op for at redigere' : 'Lås for at undgå ændringer'}
+                    aria-label={isApiKeyLocked ? 'Lås API-nøglen op for at redigere' : 'Lås API-nøglen for at undgå ændringer'}
                   >
                     {isApiKeyLocked ? <Lock /> : <Unlock />}
                   </Button>
@@ -1106,6 +1112,8 @@ export function ModelSettingsModal({
                   variant="ghost"
                   size="icon"
                   onClick={() => setShowApiKey(!showApiKey)}
+                  aria-label={showApiKey ? 'Skjul API-nøglen' : 'Vis API-nøglen'}
+                  title={showApiKey ? 'Skjul API-nøglen' : 'Vis API-nøglen'}
                 >
                   {showApiKey ? <EyeOff /> : <Eye />}
                 </Button>
@@ -1116,27 +1124,30 @@ export function ModelSettingsModal({
 
         {modelConfig.provider === 'ollama' && (
           <div>
-            <div
-              className="flex items-center justify-between cursor-pointer py-2"
+            <button
+              type="button"
+              aria-expanded={!isEndpointSectionCollapsed}
+              className="flex w-full items-center justify-between cursor-pointer py-2 min-h-[24px] rounded-md focus-visible:ring-2 ring-ring"
               onClick={() => setIsEndpointSectionCollapsed(!isEndpointSectionCollapsed)}
             >
-              <Label className="cursor-pointer">Custom Endpoint (optional)</Label>
+              <span className="text-sm font-medium">Egen adresse (valgfri)</span>
               {isEndpointSectionCollapsed ? (
-                <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                <ChevronDown className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
               ) : (
-                <ChevronUp className="h-4 w-4 text-muted-foreground" />
+                <ChevronUp className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
               )}
-            </div>
+            </button>
 
             {!isEndpointSectionCollapsed && (
               <>
                 <p className="text-sm text-muted-foreground mt-1 mb-2">
-                  Leave empty or enter a custom endpoint (e.g., http://x.yy.zz:11434)
+                  Lad feltet stå tomt, eller skriv adressen til en anden Ollama-server (fx http://x.yy.zz:11434).
                 </p>
                 <div className="flex gap-2 mt-1">
                   <div className="relative flex-1">
                     <Input
                       type="url"
+                      aria-label="Ollama-adresse"
                       value={ollamaEndpoint}
                       onChange={(e) => {
                         setOllamaEndpoint(e.target.value);
@@ -1149,14 +1160,14 @@ export function ModelSettingsModal({
                       placeholder="http://localhost:11434"
                       className={cn(
                         "pr-10",
-                        endpointValidationState === 'invalid' && "border-red-500"
+                        endpointValidationState === 'invalid' && "border-destructive"
                       )}
                     />
                     {endpointValidationState === 'valid' && (
-                      <CheckCircle2 className="absolute right-3 top-1/2 -translate-y-1/2 h-5 w-5 text-green-500" />
+                      <CheckCircle2 className="absolute right-3 top-1/2 -translate-y-1/2 h-5 w-5 text-success" />
                     )}
                     {endpointValidationState === 'invalid' && (
-                      <XCircle className="absolute right-3 top-1/2 -translate-y-1/2 h-5 w-5 text-red-500" />
+                      <XCircle className="absolute right-3 top-1/2 -translate-y-1/2 h-5 w-5 text-destructive" />
                     )}
                   </div>
                   <Button
@@ -1170,20 +1181,20 @@ export function ModelSettingsModal({
                     {isLoadingOllama ? (
                       <>
                         <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                        Fetching...
+                        Henter…
                       </>
                     ) : (
                       <>
                         <RefreshCw className="mr-2 h-4 w-4" />
-                        Fetch Models
+                        Hent modeller
                       </>
                     )}
                   </Button>
                 </div>
                 {ollamaEndpointChanged && !error && (
-                  <Alert className="mt-3 border-yellow-500 bg-yellow-50">
-                    <AlertDescription className="text-yellow-800">
-                      Endpoint changed. Please click "Fetch Models" to load models from the new endpoint before saving.
+                  <Alert className="mt-3 border-warning bg-warning/10">
+                    <AlertDescription className="text-warning">
+                      Adressen er ændret. Klik på "Hent modeller" for at hente modeller fra den nye adresse, før du gemmer.
                     </AlertDescription>
                   </Alert>
                 )}
@@ -1195,10 +1206,10 @@ export function ModelSettingsModal({
         {modelConfig.provider === 'ollama' && (
           <div>
             <div className="flex items-center justify-between mb-4">
-              <h4 className="text-sm font-bold">Available Ollama Models</h4>
+              <h4 className="text-sm font-bold">Tilgængelige Ollama-modeller</h4>
               {lastFetchedEndpoint && models.length > 0 && (
                 <div className="flex items-center gap-2 text-sm">
-                  <span className="text-muted-foreground">Using:</span>
+                  <span className="text-muted-foreground">Bruger:</span>
                   <code className="px-2 py-1 bg-muted rounded text-xs">
                     {lastFetchedEndpoint || 'http://localhost:11434'}
                   </code>
@@ -1208,7 +1219,8 @@ export function ModelSettingsModal({
             {models.length > 0 && (
               <div className="mb-4">
                 <Input
-                  placeholder="Search models..."
+                  placeholder="Søg efter modeller…"
+                  aria-label="Søg efter modeller"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-full"
@@ -1218,29 +1230,29 @@ export function ModelSettingsModal({
             {isLoadingOllama ? (
               <div className="text-center py-8 text-muted-foreground">
                 <RefreshCw className="mx-auto h-8 w-8 animate-spin mb-2" />
-                Loading models...
+                Henter modeller…
               </div>
             ) : models.length === 0 ? (
               <div className="space-y-3">
                 {ollamaNotInstalled ? (
                   /* Show Ollama download link when not installed */
                   <div className="space-y-4">
-                    <Alert className="border-orange-500 bg-orange-50">
-                      <AlertDescription className="text-orange-800">
-                        Ollama is not installed or not running. Please download and install Ollama to use local models.
+                    <Alert className="border-warning bg-warning/10">
+                      <AlertDescription className="text-warning">
+                        Ollama er ikke installeret eller kører ikke. Hent og installér Ollama for at bruge lokale modeller.
                       </AlertDescription>
                     </Alert>
                     <Button
                       variant="default"
                       size="sm"
                       onClick={() => invoke('open_external_url', { url: 'https://ollama.com/download' })}
-                      className="w-full bg-blue-600 hover:bg-blue-700"
+                      className="w-full bg-primary hover:bg-primary/90 min-h-[44px]"
                     >
                       <ExternalLink className="mr-2 h-4 w-4" />
-                      Download Ollama
+                      Hent Ollama
                     </Button>
                     <div className="text-sm text-muted-foreground text-center">
-                      After installing Ollama, restart this application and click "Fetch Models" to continue.
+                      Når Ollama er installeret, skal du genstarte Tingskriver og klikke på "Hent modeller".
                     </div>
                   </div>
                 ) : (
@@ -1249,8 +1261,8 @@ export function ModelSettingsModal({
                     <Alert className="mb-4">
                       <AlertDescription>
                         {ollamaEndpointChanged
-                          ? 'Endpoint changed. Click "Fetch Models" to load models from the new endpoint.'
-                          : 'No models found. Download a recommended model or click "Fetch Models" to load available Ollama models.'}
+                          ? 'Adressen er ændret. Klik på "Hent modeller" for at hente modeller fra den nye adresse.'
+                          : 'Ingen modeller fundet. Hent den anbefalede model, eller klik på "Hent modeller" for at se de Ollama-modeller, du har.'}
                       </AlertDescription>
                     </Alert>
                     {!ollamaEndpointChanged && (
@@ -1265,28 +1277,28 @@ export function ModelSettingsModal({
                           {isDownloading('gemma3:1b') ? (
                             <>
                               <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                              Downloading gemma3:1b...
+                              Henter gemma3:1b…
                             </>
                           ) : (
                             <>
                               <Download className="mr-2 h-4 w-4" />
-                              Download gemma3:1b (Recommended, ~800MB)
+                              Hent gemma3:1b (anbefalet, ca. 800 MB)
                             </>
                           )}
                         </Button>
 
                         {/* Show progress for gemma3:1b download */}
                         {isDownloading('gemma3:1b') && getProgress('gemma3:1b') !== undefined && (
-                          <div className="bg-white rounded-md border p-3">
+                          <div className="bg-card rounded-md border p-3">
                             <div className="flex items-center justify-between mb-2">
-                              <span className="text-sm font-medium text-blue-600">Downloading gemma3:1b</span>
-                              <span className="text-sm font-semibold text-blue-600">
+                              <span className="text-sm font-medium text-primary">Henter gemma3:1b</span>
+                              <span className="text-sm font-semibold text-primary">
                                 {Math.round(getProgress('gemma3:1b')!)}%
                               </span>
                             </div>
-                            <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
+                            <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
                               <div
-                                className="h-full bg-gradient-to-r from-blue-500 to-blue-600 rounded-full transition-all duration-300"
+                                className="h-full bg-primary rounded-full transition-all duration-300"
                                 style={{ width: `${getProgress('gemma3:1b')}%` }}
                               />
                             </div>
@@ -1302,7 +1314,7 @@ export function ModelSettingsModal({
                 {filteredModels.length === 0 ? (
                   <Alert>
                     <AlertDescription>
-                      No models found matching "{searchQuery}". Try a different search term.
+                      Ingen modeller matcher "{searchQuery}". Prøv et andet søgeord.
                     </AlertDescription>
                   </Alert>
                 ) : (
@@ -1317,7 +1329,7 @@ export function ModelSettingsModal({
                           className={cn(
                             'bg-card p-2 m-0 rounded-md border transition-colors',
                             modelConfig.model === model.name
-                              ? 'ring-1 ring-blue-500 border-blue-500 background-blue-100'
+                              ? 'ring-1 ring-ring border-primary bg-primary/10'
                               : 'hover:bg-muted/50',
                             !modelIsDownloading && 'cursor-pointer'
                           )}
@@ -1329,20 +1341,20 @@ export function ModelSettingsModal({
                         >
                           <div>
                             <b className="font-bold">{model.name}&nbsp;</b>
-                            <span className="text-muted-foreground">with a size of </span>
+                            <span className="text-muted-foreground">med en størrelse på </span>
                             <span className="font-mono font-bold text-sm">{model.size}</span>
                           </div>
 
                           {/* Progress bar for downloading models */}
                           {modelIsDownloading && progress !== undefined && (
-                            <div className="mt-3 pt-3 border-t border-gray-200">
+                            <div className="mt-3 pt-3 border-t border-border">
                               <div className="flex items-center justify-between mb-2">
-                                <span className="text-sm font-medium text-blue-600">Downloading...</span>
-                                <span className="text-sm font-semibold text-blue-600">{Math.round(progress)}%</span>
+                                <span className="text-sm font-medium text-primary">Henter…</span>
+                                <span className="text-sm font-semibold text-primary">{Math.round(progress)}%</span>
                               </div>
-                              <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
+                              <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
                                 <div
-                                  className="h-full bg-gradient-to-r from-blue-500 to-blue-600 rounded-full transition-all duration-300"
+                                  className="h-full bg-primary rounded-full transition-all duration-300"
                                   style={{ width: `${progress}%` }}
                                 />
                               </div>
@@ -1373,7 +1385,7 @@ export function ModelSettingsModal({
       </div>
 
       {/* Auto-generate summaries toggle */}
-      {/* <div className="mt-6 pt-6 border-t border-gray-200">
+      {/* <div className="mt-6 pt-6 border-t border-border">
         <div className="flex items-center justify-between">
           <div className="flex-1">
             <Label htmlFor="auto-generate" className="text-base font-medium">
@@ -1394,13 +1406,13 @@ export function ModelSettingsModal({
       <div className="mt-6 flex justify-end">
         <Button
           className={cn(
-            'px-4 text-sm font-medium text-white rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500',
-            isDoneDisabled ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
+            'px-4 min-h-[44px] text-sm font-medium text-primary-foreground rounded-md focus-visible:ring-2 focus-visible:ring-offset-2 ring-ring',
+            isDoneDisabled ? 'bg-muted-foreground/50 cursor-not-allowed' : 'bg-primary hover:bg-primary/90'
           )}
           onClick={handleSave}
           disabled={isDoneDisabled}
         >
-          Save
+          Gem
         </Button>
       </div>
     </div>

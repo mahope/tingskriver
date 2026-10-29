@@ -157,24 +157,25 @@ export default function AnalyticsConsentSwitch() {
     <>
       <div className="space-y-4">
         <div>
-          <h3 className="text-base font-semibold text-gray-800 mb-2">Usage Analytics</h3>
-          <p className="text-sm text-gray-600 mb-4">
-            Usage analytics is off by default. You can turn it on to share anonymous product and performance data; no personal content is collected.
+          <h3 className="text-base font-semibold text-foreground mb-2">Anonym brugsstatistik</h3>
+          <p className="text-sm text-muted-foreground mb-4">
+            Brugsstatistik er slået fra som standard. Du kan slå den til for at dele anonyme data om brug og ydeevne. Der indsamles aldrig personligt indhold.
           </p>
         </div>
 
-        <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-200">
+        <div className="flex items-center justify-between p-3 bg-background rounded-lg border border-border">
           <div>
-            <h4 className="font-semibold text-gray-800">Enable Analytics</h4>
-            <p className="text-sm text-gray-600">
-              {isProcessing ? 'Updating...' : 'Off unless you choose to enable it'}
+            <h4 className="font-semibold text-foreground">Del anonym brugsstatistik</h4>
+            <p className="text-sm text-muted-foreground">
+              {isProcessing ? 'Opdaterer…' : 'Slået fra, medmindre du vælger at slå den til'}
             </p>
           </div>
           <div className="flex items-center gap-2 ml-4">
             {isProcessing && (
-              <Loader2 className="w-4 h-4 animate-spin text-gray-500" />
+              <Loader2 aria-hidden="true" className="w-4 h-4 animate-spin text-muted-foreground" />
             )}
             <Switch
+              aria-label="Del anonym brugsstatistik"
               checked={isAnalyticsOptedIn}
               onCheckedChange={handleToggle}
               disabled={isProcessing}
@@ -184,15 +185,15 @@ export default function AnalyticsConsentSwitch() {
 
         {/* User ID Display */}
         {isAnalyticsOptedIn && userId && (
-          <div className="p-4 border rounded-lg bg-gray-50">
+          <div className="p-4 border rounded-lg bg-background">
             <div className="flex items-start justify-between gap-4">
               <div className="flex-1 min-w-0">
-                <div className="font-medium text-gray-800 mb-1">Your User ID</div>
-                <p className="text-xs text-gray-600 mb-2">
-                  Share this ID when reporting issues to help us investigate your issue logs
+                <div className="font-medium text-foreground mb-1">Dit bruger-id</div>
+                <p className="text-xs text-muted-foreground mb-2">
+                  Oplys dette id, når du melder en fejl, så kan vi finde de relevante logs.
                 </p>
                 <div className="flex items-center gap-2">
-                  <code className="text-xs text-gray-700 bg-white px-2 py-1 rounded border border-gray-300 font-mono flex-1 truncate">
+                  <code className="text-xs text-foreground bg-card px-2 py-1 rounded border border-input font-mono flex-1 truncate">
                     {userId}
                   </code>
                   <Button
@@ -200,17 +201,18 @@ export default function AnalyticsConsentSwitch() {
                     variant="outline"
                     size="sm"
                     className="flex-shrink-0"
-                    title="Copy User ID"
+                    title="Kopiér bruger-id"
+                    aria-label="Kopiér bruger-id"
                   >
                     {isCopied ? (
                       <>
-                        <Check className="w-3.5 h-3.5 text-green-600" />
-                        <span className="text-green-600">Copied!</span>
+                        <Check aria-hidden="true" className="w-3.5 h-3.5 text-success" />
+                        <span className="text-success">Kopieret</span>
                       </>
                     ) : (
                       <>
-                        <Copy className="w-3.5 h-3.5" />
-                        <span>Copy</span>
+                        <Copy aria-hidden="true" className="w-3.5 h-3.5" />
+                        <span>Kopiér</span>
                       </>
                     )}
                   </Button>
@@ -220,17 +222,18 @@ export default function AnalyticsConsentSwitch() {
           </div>
         )}
 
-        <div className="flex items-start gap-2 p-2 bg-blue-50 rounded border border-blue-200">
-          <Info className="w-4 h-4 text-blue-600 mt-0.5 flex-shrink-0" />
-          <div className="text-xs text-blue-700">
+        <div className="flex items-start gap-2 p-2 bg-primary/10 rounded border border-primary/30">
+          <Info aria-hidden="true" className="w-4 h-4 text-primary mt-0.5 flex-shrink-0" />
+          <div className="text-sm text-primary">
             <p className="mb-1">
-              Your meetings, transcripts, and recordings remain completely private and local.
+              Dine møder, transskripter og optagelser forbliver private og ligger kun på din computer.
             </p>
             <button
+              type="button"
               onClick={handlePrivacyPolicyClick}
-              className="text-blue-600 hover:text-blue-800 underline hover:no-underline"
+              className="text-primary underline hover:no-underline focus-visible:ring-2 ring-ring rounded-sm"
             >
-              View Privacy Policy
+              Læs privatlivspolitikken
             </button>
           </div>
         </div>

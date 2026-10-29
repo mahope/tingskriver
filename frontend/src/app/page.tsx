@@ -123,12 +123,12 @@ export default function Home() {
       const result = await recoverMeeting(meetingId);
 
       if (result.success) {
-        toast.success('Meeting recovered successfully!', {
+        toast.success('Mødet er gendannet', {
           description: result.audioRecoveryStatus?.status === 'success'
-            ? 'Transcripts and audio recovered'
-            : 'Transcripts recovered (no audio available)',
+            ? 'Transskription og lyd er gendannet'
+            : 'Transskriptionen er gendannet (der var ingen lyd at gendanne)',
           action: result.meetingId ? {
-            label: 'View Meeting',
+            label: 'Åbn mødet',
             onClick: () => {
               router.push(`/meeting-details?id=${result.meetingId}`);
             }
@@ -152,8 +152,8 @@ export default function Home() {
         }
       }
     } catch (error) {
-      toast.error('Failed to recover meeting', {
-        description: error instanceof Error ? error.message : 'Unknown error occurred',
+      toast.error('Mødet kunne ikke gendannes', {
+        description: error instanceof Error ? error.message : 'Der opstod en ukendt fejl. Prøv igen.',
       });
       throw error;
     }
@@ -189,7 +189,7 @@ export default function Home() {
   const isProcessingStop = status === RecordingStatus.PROCESSING_TRANSCRIPTS || isProcessing;
 
   return (
-    <div className="flex flex-col h-screen bg-gray-50">
+    <div className="flex flex-col h-screen bg-background">
       {/* All Modals supported*/}
       <SettingsModals
         modals={modals}
@@ -225,7 +225,7 @@ export default function Home() {
                 }}
               >
                 <div className="w-2/3 max-w-[750px] flex justify-center">
-                  <div className="bg-white rounded-full shadow-lg flex items-center">
+                  <div className="flex items-center">
                     <RecordingControls
                       isRecording={recordingState.isRecording}
                       onRecordingStop={(callApi = true) => handleRecordingStop(callApi)}

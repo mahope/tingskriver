@@ -16,7 +16,7 @@ export function useMeetingData({ meeting, summaryData, onMeetingUpdated }: UseMe
   // State
   // Use prop directly since summary generation fetches transcripts independently
   const transcripts = meeting.transcripts;
-  const [meetingTitle, setMeetingTitle] = useState(meeting.title || '+ New Call');
+  const [meetingTitle, setMeetingTitle] = useState(meeting.title || 'Nyt møde');
   const [aiSummary, setAiSummary] = useState<MeetingSummary | null>(summaryData);
   const [isSaving, setIsSaving] = useState(false);
   const [isSummaryDirty, setIsSummaryDirty] = useState(false);
@@ -41,7 +41,7 @@ export function useMeetingData({ meeting, summaryData, onMeetingUpdated }: UseMe
 
   const handleSaveSummary = useCallback(async (summary: MeetingSummary) => {
     if (!hasVisibleSummaryContent(summary)) {
-      throw new Error('Summary contains no visible content to save.');
+      throw new Error('Opsummeringen har intet synligt indhold at gemme.');
     }
 
     const formattedSummary = 'markdown' in summary || 'summary_json' in summary
@@ -64,10 +64,10 @@ export function useMeetingData({ meeting, summaryData, onMeetingUpdated }: UseMe
         await handleSaveSummary(aiSummary);
       }
 
-      toast.success("Changes saved successfully");
+      toast.success("Ændringerne er gemt");
     } catch (error) {
       console.error('Failed to save changes:', error);
-      toast.error("Failed to save changes", { description: String(error) });
+      toast.error("Ændringerne kunne ikke gemmes", { description: String(error) });
     } finally {
       setIsSaving(false);
     }
@@ -78,7 +78,7 @@ export function useMeetingData({ meeting, summaryData, onMeetingUpdated }: UseMe
     console.log('📝 Updating meeting title to:', newTitle);
     setMeetingTitle(newTitle);
     const updatedMeetings = sidebarMeetings.map((m: CurrentMeeting) =>
-      m.id === meeting.id ? { id: m.id, title: newTitle } : m
+      m.id === meeting.id ? { ...m, title: newTitle } : m
     );
     setMeetings(updatedMeetings);
     setCurrentMeeting({ id: meeting.id, title: newTitle });

@@ -9,6 +9,7 @@ import { useCreateBlockNote } from '@blocknote/react';
 import { BlockNoteView } from '@blocknote/shadcn';
 import { blocksToMarkdownSafely } from '@/lib/blocknote-markdown';
 import "@blocknote/shadcn/style.css";
+import { useTheme } from '@/contexts/ThemeContext';
 
 // Dynamically import BlockNote Editor to avoid SSR issues
 const Editor = dynamic(() => import('../BlockNoteEditor/Editor'), { ssr: false });
@@ -76,6 +77,7 @@ export const BlockNoteSummaryView = forwardRef<BlockNoteSummaryViewRef, BlockNot
   onDirtyChange
 }, ref) => {
   const { format, data } = detectSummaryFormat(summaryData);
+  const { resolved: resolvedTheme } = useTheme();
   const [isDirty, setIsDirty] = useState(false);
   const [currentBlocks, setCurrentBlocks] = useState<Block[]>([]);
   const [isSaving, setIsSaving] = useState(false);
@@ -237,7 +239,7 @@ export const BlockNoteSummaryView = forwardRef<BlockNoteSummaryViewRef, BlockNot
     console.log('🎨 Rendering BLOCKNOTE format (direct)');
     return (
       <div className="flex flex-col w-full">
-        <div className="w-full">
+        <div className="summary-doc w-full max-w-[68ch] [&_.bn-block-content]:text-[1.0625rem] [&_.bn-block-content]:leading-[1.65] [&_.bn-block-outer]:mb-1 [&_[data-content-type=heading]]:font-serif [&_[data-content-type=heading]]:font-semibold [&_[data-content-type=heading][data-level=1]]:text-[1.5rem] [&_[data-content-type=heading][data-level=2]]:text-[1.375rem] [&_[data-content-type=heading][data-level=3]]:text-[1.25rem] [&_[data-content-type=heading]]:mt-6">
           <Editor
             initialContent={data.summary_json}
             onChange={(blocks) => {
@@ -256,7 +258,7 @@ export const BlockNoteSummaryView = forwardRef<BlockNoteSummaryViewRef, BlockNot
     console.log('🎨 Rendering MARKDOWN format (parsed to BlockNote)');
     return (
       <div className="flex flex-col w-full">
-        <div className="w-full">
+        <div className="summary-doc w-full max-w-[68ch] [&_.bn-block-content]:text-[1.0625rem] [&_.bn-block-content]:leading-[1.65] [&_.bn-block-outer]:mb-1 [&_[data-content-type=heading]]:font-serif [&_[data-content-type=heading]]:font-semibold [&_[data-content-type=heading][data-level=1]]:text-[1.5rem] [&_[data-content-type=heading][data-level=2]]:text-[1.375rem] [&_[data-content-type=heading][data-level=3]]:text-[1.25rem] [&_[data-content-type=heading]]:mt-6">
           <BlockNoteView
             editor={editor}
             editable={true}
@@ -265,7 +267,7 @@ export const BlockNoteSummaryView = forwardRef<BlockNoteSummaryViewRef, BlockNot
                 handleEditorChange(editor.document);
               }
             }}
-            theme="light"
+            theme={resolvedTheme}
           />
         </div>
       </div>

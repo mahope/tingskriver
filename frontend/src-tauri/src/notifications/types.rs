@@ -115,8 +115,8 @@ impl Default for NotificationTimeout {
 impl Notification {
     pub fn recording_started(meeting_name: Option<String>) -> Self {
         let body = match meeting_name {
-            Some(name) => format!("Recording started for meeting: {}", name),
-            None => "Recording has started. Please inform others in the meeting that you are recording.".to_string(),
+            Some(name) => format!("Optagelsen er startet for mødet: {}", name),
+            None => "Optagelsen er startet. Husk at fortælle de andre i mødet, at du optager.".to_string(),
         };
 
         Notification::new("Tingskriver", body, NotificationType::RecordingStarted)
@@ -127,7 +127,7 @@ impl Notification {
     pub fn recording_stopped() -> Self {
         Notification::new(
             "Tingskriver",
-            "Recording has been stopped and saved",
+            "Optagelsen er stoppet og gemt",
             NotificationType::RecordingStopped
         )
         .with_priority(NotificationPriority::Normal)
@@ -137,7 +137,7 @@ impl Notification {
     pub fn recording_paused() -> Self {
         Notification::new(
             "Tingskriver",
-            "Recording has been paused",
+            "Optagelsen er sat på pause",
             NotificationType::RecordingPaused
         )
         .with_priority(NotificationPriority::Normal)
@@ -147,7 +147,7 @@ impl Notification {
     pub fn recording_resumed() -> Self {
         Notification::new(
             "Tingskriver",
-            "Recording has been resumed",
+            "Optagelsen er genoptaget",
             NotificationType::RecordingResumed
         )
         .with_priority(NotificationPriority::Normal)
@@ -156,8 +156,8 @@ impl Notification {
 
     pub fn transcription_complete(file_path: Option<String>) -> Self {
         let body = match file_path {
-            Some(path) => format!("Transcription completed and saved to: {}", path),
-            None => "Transcription has been completed".to_string(),
+            Some(path) => format!("Transskriptionen er færdig og gemt i: {}", path),
+            None => "Transskriptionen er færdig".to_string(),
         };
 
         Notification::new("Tingskriver", body, NotificationType::TranscriptionComplete)
@@ -167,8 +167,8 @@ impl Notification {
 
     pub fn meeting_reminder(minutes_until: u64, meeting_title: Option<String>) -> Self {
         let body = match meeting_title {
-            Some(title) => format!("Meeting '{}' starts in {} minutes", title, minutes_until),
-            None => format!("Meeting starts in {} minutes", minutes_until),
+            Some(title) => format!("Mødet '{}' starter om {} minutter", title, minutes_until),
+            None => format!("Mødet starter om {} minutter", minutes_until),
         };
 
         Notification::new("Tingskriver", body, NotificationType::MeetingReminder(minutes_until))
@@ -190,7 +190,7 @@ impl Notification {
     pub fn test_notification() -> Self {
         Notification::new(
             "Tingskriver",
-            "This is a test notification to verify the system is working correctly",
+            "Det her er en testnotifikation, der viser at systemet virker",
             NotificationType::Test
         )
         .with_priority(NotificationPriority::Normal)

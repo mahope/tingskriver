@@ -114,8 +114,8 @@ export function useImportAudio({
             await applyPinnedSummaryLanguageToMeeting(event.payload.meeting_id);
           } catch (error) {
             console.warn('Failed to apply pinned summary language to imported meeting:', error);
-            toast.warning('Could not apply default summary language', {
-              description: 'The imported meeting was saved, but the default summary language was not applied.',
+            toast.warning('Standardsproget til opsummering kunne ikke bruges', {
+              description: 'Det importerede møde er gemt, men standardsproget til opsummering blev ikke brugt.',
             });
           }
           onCompleteRef.current?.(event.payload);
@@ -175,7 +175,7 @@ export function useImportAudio({
       }
     } catch (err: any) {
       setStatus('error');
-      const errorMsg = typeof err === 'string' ? err : (err?.message || String(err) || 'Failed to validate file');
+      const errorMsg = typeof err === 'string' ? err : (err?.message || String(err) || 'Filen kunne ikke kontrolleres');
       setError(errorMsg);
       onErrorRef.current?.(errorMsg);
       return null;
@@ -194,7 +194,7 @@ export function useImportAudio({
       return result;
     } catch (err: any) {
       setStatus('error');
-      const errorMsg = typeof err === 'string' ? err : (err?.message || String(err) || 'Failed to validate file');
+      const errorMsg = typeof err === 'string' ? err : (err?.message || String(err) || 'Filen kunne ikke kontrolleres');
       setError(errorMsg);
       onErrorRef.current?.(errorMsg);
       return null;
@@ -235,7 +235,7 @@ export function useImportAudio({
         });
       } catch (err: any) {
         setStatus('error');
-        const errorMsg = typeof err === 'string' ? err : (err?.message || String(err) || 'Failed to start import');
+        const errorMsg = typeof err === 'string' ? err : (err?.message || String(err) || 'Importen kunne ikke startes');
         setError(errorMsg);
 
         await Analytics.trackError('import_audio_failed', errorMsg);

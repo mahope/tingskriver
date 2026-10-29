@@ -61,7 +61,7 @@ export const Section: React.FC<SectionProps> = ({
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5 }}
-      className="mb-8"
+      className="mb-10"
     >
       <div className="flex items-center justify-between mb-4">
         <EditableTitle
@@ -75,9 +75,9 @@ export const Section: React.FC<SectionProps> = ({
         {onSectionDelete && (
           <button
             onClick={() => onSectionDelete(sectionKey)}
-            className="text-gray-400 hover:text-gray-600"
+            className="text-muted-foreground hover:text-foreground"
           >
-            Delete
+            Slet
           </button>
         )}
       </div>

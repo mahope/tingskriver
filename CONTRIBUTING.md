@@ -1,6 +1,6 @@
 # Contributing to Meeting Minutes Updates
 
-Thank you for your interest in contributing to Meetily! This document provides guidelines and instructions for contributing to this project.
+Thank you for your interest in contributing to Tingskriver! This document provides guidelines and instructions for contributing to this project.
 
 ## Development Workflow
 
@@ -19,7 +19,7 @@ Thank you for your interest in contributing to Meetily! This document provides g
    ```
 3. Add the original repository as upstream:
    ```bash
-   git remote add upstream https://github.com/Zackriya-Solutions/meeting-minutes.git
+   git remote add upstream https://github.com/mahope/tingskriver.git
    ```
 4. Create a new branch from `devtest`:
    ```bash

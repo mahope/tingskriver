@@ -154,7 +154,7 @@ export function RetranscribeDialog({
 
             setIsProcessing(false);
             toast.success(
-              `Retranscription complete! ${event.payload.segments_count} segments created.`
+              `Gentranskriberingen er færdig. ${event.payload.segments_count} afsnit er oprettet.`
             );
             onCompleteRef.current?.();
             onOpenChangeRef.current(false);
@@ -198,7 +198,7 @@ export function RetranscribeDialog({
 
   const handleStartRetranscription = async () => {
     if (!meetingFolderPath) {
-      setError('Meeting folder path not available');
+      setError('Mødets mappe blev ikke fundet. Luk dialogen, og åbn mødet igen.');
       return;
     }
 
@@ -236,7 +236,7 @@ export function RetranscribeDialog({
         await invoke('cancel_retranscription_command');
         setIsProcessing(false);
         setProgress(null);
-        toast.info('Retranscription cancelled');
+        toast.info('Gentranskriberingen er annulleret');
       } catch (err) {
         console.error('Failed to cancel retranscription:', err);
       }
@@ -275,27 +275,27 @@ export function RetranscribeDialog({
           <DialogTitle className="flex items-center gap-2">
             {isProcessing ? (
               <>
-                <Loader2 className="h-5 w-5 animate-spin text-blue-600" />
-                Retranscribing...
+                <Loader2 className="h-5 w-5 animate-spin text-primary" aria-hidden="true" />
+                Transskriberer igen …
               </>
             ) : error ? (
               <>
-                <AlertCircle className="h-5 w-5 text-red-600" />
-                Retranscription Failed
+                <AlertCircle className="h-5 w-5 text-destructive" aria-hidden="true" />
+                Gentranskriberingen mislykkedes
               </>
             ) : (
               <>
-                <RefreshCw className="h-5 w-5 text-blue-600" />
-                Retranscribe Meeting
+                <RefreshCw className="h-5 w-5 text-primary" aria-hidden="true" />
+                Transskribér mødet igen
               </>
             )}
           </DialogTitle>
           <DialogDescription>
             {isProcessing
-              ? progress?.message || 'Processing audio...'
+              ? progress?.message || 'Behandler lyden …'
               : error
-                ? 'An error occurred during retranscription'
-                : 'Re-process the audio with different language settings'}
+                ? 'Noget gik galt under gentranskriberingen'
+                : 'Behandl lyden igen med andre sprogindstillinger'}
           </DialogDescription>
         </DialogHeader>
 
@@ -305,11 +305,11 @@ export function RetranscribeDialog({
               <div className="space-y-3">
                 <div className="flex items-center gap-2">
                   <Globe className="h-4 w-4 text-muted-foreground" />
-                  <span className="text-sm font-medium">Language</span>
+                  <span className="text-sm font-medium">Sprog</span>
                 </div>
                 <Select value={selectedLang} onValueChange={setSelectedLang}>
                   <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Select language" />
+                    <SelectValue placeholder="Vælg sprog" />
                   </SelectTrigger>
                   <SelectContent className="max-h-60">
                     {LANGUAGES.map((lang) => (
@@ -320,17 +320,17 @@ export function RetranscribeDialog({
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground">
-                  Select a specific language to improve accuracy, or use auto-detect
+                  Vælg et bestemt sprog for bedre træfsikkerhed, eller lad appen finde sproget selv
                 </p>
               </div>
             ) : (
               <div className="space-y-3">
                 <div className="flex items-center gap-2">
                   <Globe className="h-4 w-4 text-muted-foreground" />
-                  <span className="text-sm font-medium">Language</span>
+                  <span className="text-sm font-medium">Sprog</span>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Language selection isn't supported for Parakeet. It always uses automatic detection.
+                  Parakeet understøtter ikke valg af sprog. Sproget findes altid automatisk.
                 </p>
               </div>
             )
@@ -344,7 +344,7 @@ export function RetranscribeDialog({
               </div>
               <Select value={selectedModelKey} onValueChange={setSelectedModelKey} disabled={loadingModels}>
                 <SelectTrigger className="w-full">
-                  <SelectValue placeholder={loadingModels ? "Loading models..." : "Select model"} />
+                  <SelectValue placeholder={loadingModels ? "Henter modeller …" : "Vælg model"} />
                 </SelectTrigger>
                 <SelectContent>
                   {availableModels.map((model) => (
@@ -355,7 +355,7 @@ export function RetranscribeDialog({
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">
-                Choose a transcription model
+                Vælg en transskriptionsmodel
               </p>
             </div>
           )}
@@ -363,13 +363,13 @@ export function RetranscribeDialog({
           {isProcessing && progress && (
             <div className="space-y-2">
               <div className="relative">
-                <div className="w-full bg-gray-200 rounded-full h-3">
+                <div className="w-full bg-muted rounded-full h-3">
                   <div
-                    className="bg-blue-600 h-3 rounded-full transition-all duration-300 ease-out"
+                    className="bg-primary h-3 rounded-full transition-all duration-300 ease-out"
                     style={{ width: `${Math.min(progress.progress_percentage, 100)}%` }}
                   />
                 </div>
-                <div className="flex justify-between text-xs text-gray-600 mt-1">
+                <div className="flex justify-between text-xs text-muted-foreground mt-1">
                   <span>{progress.stage}</span>
                   <span>{Math.round(progress.progress_percentage)}%</span>
                 </div>
@@ -381,8 +381,9 @@ export function RetranscribeDialog({
           )}
 
           {error && (
-            <div className="bg-red-50 border border-red-200 rounded-lg p-3">
-              <p className="text-sm text-red-800">{error}</p>
+            <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-3">
+              <p className="text-sm text-destructive">{error}</p>
+              <p className="text-sm text-muted-foreground mt-1">Prøv igen, eller vælg en anden model.</p>
             </div>
           )}
         </div>
@@ -391,28 +392,28 @@ export function RetranscribeDialog({
           {!isProcessing && !error && (
             <>
               <Button variant="outline" onClick={() => onOpenChange(false)}>
-                Cancel
+                Annullér
               </Button>
               <Button
                 onClick={handleStartRetranscription}
-                className="bg-blue-600 hover:bg-blue-700"
+                className="min-h-[44px]"
                 disabled={!meetingFolderPath}
               >
-                <RefreshCw className="h-4 w-4 mr-2" />
-                Start Retranscription
+                <RefreshCw className="h-4 w-4 mr-2" aria-hidden="true" />
+                Start gentranskribering
               </Button>
             </>
           )}
           {isProcessing && (
             <Button variant="outline" onClick={handleCancel}>
-              <X className="h-4 w-4 mr-2" />
-              Cancel
+              <X className="h-4 w-4 mr-2" aria-hidden="true" />
+              Annullér
             </Button>
           )}
           {error && (
             <>
               <Button variant="outline" onClick={() => onOpenChange(false)}>
-                Close
+                Luk
               </Button>
               <Button
                 onClick={() => {
@@ -421,7 +422,7 @@ export function RetranscribeDialog({
                 }}
                 variant="outline"
               >
-                Try Again
+                Prøv igen
               </Button>
             </>
           )}

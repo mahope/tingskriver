@@ -14,6 +14,6 @@ describe('empty summary state', () => {
 
     expect(html).toContain('role="alert"');
     expect(html).toContain('Summary request failed');
-    expect(html).toContain('Retry summary');
+    expect(html).toContain('Prøv igen');
   });
 });
