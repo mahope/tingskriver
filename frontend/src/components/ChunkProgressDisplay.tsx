@@ -46,16 +46,16 @@ export function ChunkProgressDisplay({
     const hours = Math.floor(minutes / 60);
 
     if (hours > 0) {
-      return `${hours}h ${minutes % 60}m ${seconds % 60}s`;
+      return `${hours} t ${minutes % 60} min ${seconds % 60} sek.`;
     } else if (minutes > 0) {
-      return `${minutes}m ${seconds % 60}s`;
+      return `${minutes} min ${seconds % 60} sek.`;
     } else {
-      return `${seconds}s`;
+      return `${seconds} sek.`;
     }
   };
 
   const formatTimeRemaining = (ms?: number) => {
-    if (!ms || ms <= 0) return 'Calculating...';
+    if (!ms || ms <= 0) return 'Beregner…';
     return formatDuration(ms);
   };
 
@@ -93,11 +93,11 @@ export function ChunkProgressDisplay({
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center space-x-3">
           <h3 className="text-lg font-semibold text-foreground">
-            Processing Progress
+            Fremgang
           </h3>
           {isPaused && (
             <span className="bg-warning/15 text-warning px-2 py-1 rounded-full text-xs font-medium">
-              Paused
+              På pause
             </span>
           )}
         </div>
@@ -106,25 +106,25 @@ export function ChunkProgressDisplay({
           {!isPaused ? (
             <button
               onClick={onPause}
-              className="bg-warning hover:bg-warning/90 text-warning-foreground px-3 py-1 rounded text-sm transition-colors"
+              className="bg-warning hover:bg-warning/90 text-warning-foreground px-3 py-2 min-h-[44px] rounded text-sm transition-colors"
               disabled={progress.processing_chunks === 0 && progress.completed_chunks === progress.total_chunks}
             >
-              Pause
+              Sæt på pause
             </button>
           ) : (
             <button
               onClick={onResume}
-              className="bg-success hover:bg-success/90 text-success-foreground px-3 py-1 rounded text-sm transition-colors"
+              className="bg-success hover:bg-success/90 text-success-foreground px-3 py-2 min-h-[44px] rounded text-sm transition-colors"
             >
-              Resume
+              Genoptag
             </button>
           )}
 
           <button
             onClick={onCancel}
-            className="bg-destructive hover:bg-destructive/90 text-destructive-foreground px-3 py-1 rounded text-sm transition-colors"
+            className="bg-destructive hover:bg-destructive/90 text-destructive-foreground px-3 py-2 min-h-[44px] rounded text-sm transition-colors"
           >
-            Cancel
+            Annullér
           </button>
         </div>
       </div>
@@ -133,7 +133,7 @@ export function ChunkProgressDisplay({
       <div className="mb-4">
         <div className="flex items-center justify-between mb-2">
           <span className="text-sm font-medium text-foreground">
-            {progress.completed_chunks} of {progress.total_chunks} chunks completed
+            {progress.completed_chunks} af {progress.total_chunks} stykker færdige
           </span>
           <span className="text-sm font-medium text-foreground">
             {completionPercentage}%
@@ -154,28 +154,28 @@ export function ChunkProgressDisplay({
           <div className="text-lg font-semibold text-success">
             {progress.completed_chunks}
           </div>
-          <div className="text-muted-foreground">Completed</div>
+          <div className="text-muted-foreground">Færdige</div>
         </div>
 
         <div className="text-center">
           <div className="text-lg font-semibold text-primary">
             {progress.processing_chunks}
           </div>
-          <div className="text-muted-foreground">Processing</div>
+          <div className="text-muted-foreground">Behandles</div>
         </div>
 
         <div className="text-center">
           <div className="text-lg font-semibold text-muted-foreground">
             {progress.total_chunks - progress.completed_chunks - progress.processing_chunks - progress.failed_chunks}
           </div>
-          <div className="text-muted-foreground">Pending</div>
+          <div className="text-muted-foreground">Venter</div>
         </div>
 
         <div className="text-center">
           <div className="text-lg font-semibold text-destructive">
             {progress.failed_chunks}
           </div>
-          <div className="text-muted-foreground">Failed</div>
+          <div className="text-muted-foreground">Fejlede</div>
         </div>
       </div>
 
@@ -183,9 +183,8 @@ export function ChunkProgressDisplay({
       {progress.estimated_remaining_ms && progress.estimated_remaining_ms > 0 && (
         <div className="bg-primary/10 border border-primary/30 rounded-lg p-3 mb-4">
           <div className="flex items-center space-x-2">
-            <span className="text-primary">⏱️</span>
-            <span className="text-sm text-primary">
-              Estimated time remaining: {formatTimeRemaining(progress.estimated_remaining_ms)}
+                        <span className="text-sm text-primary">
+              Forventet tid tilbage: {formatTimeRemaining(progress.estimated_remaining_ms)}
             </span>
           </div>
         </div>
@@ -194,7 +193,7 @@ export function ChunkProgressDisplay({
       {/* Recent Chunks Grid */}
       <div className="space-y-2">
         <h4 className="text-sm font-medium text-foreground mb-2">
-          Recent Chunks ({Math.min(progress.chunks.length, 10)} of {progress.total_chunks})
+          Seneste stykker ({Math.min(progress.chunks.length, 10)} af {progress.total_chunks})
         </h4>
 
         <div className="max-h-48 overflow-y-auto space-y-1">
@@ -210,7 +209,7 @@ export function ChunkProgressDisplay({
                   <div className="flex items-center space-x-2">
                     <span>{getChunkStatusIcon(chunk.status)}</span>
                     <span className="font-medium">
-                      Chunk {chunk.chunk_id}
+                      Stykke {chunk.chunk_id}
                     </span>
                     {chunk.duration_ms && (
                       <span className="text-muted-foreground">
@@ -234,7 +233,7 @@ export function ChunkProgressDisplay({
 
                 {chunk.error_message && (
                   <div className="mt-1 text-destructive text-xs">
-                    Error: {chunk.error_message}
+                    Fejl: {chunk.error_message}
                   </div>
                 )}
               </div>
@@ -246,9 +245,8 @@ export function ChunkProgressDisplay({
       {progress.completed_chunks === progress.total_chunks && progress.total_chunks > 0 && (
         <div className="mt-4 bg-success/10 border border-success/30 rounded-lg p-3">
           <div className="flex items-center space-x-2">
-            <span className="text-success">🎉</span>
-            <span className="text-sm font-medium text-success">
-              Processing completed! All {progress.total_chunks} chunks have been transcribed.
+                        <span className="text-sm font-medium text-success">
+              Færdig. Alle {progress.total_chunks} stykker er transskriberet.
             </span>
           </div>
         </div>
@@ -267,7 +265,7 @@ export function ChunkProgressMini({ progress, className = '' }: { progress: Proc
     <div className={`bg-background border border-border rounded-lg p-3 ${className}`}>
       <div className="flex items-center justify-between mb-2">
         <span className="text-sm font-medium text-foreground">
-          Processing
+          Behandler…
         </span>
         <span className="text-sm font-medium text-foreground">
           {completionPercentage}%
@@ -282,10 +280,10 @@ export function ChunkProgressMini({ progress, className = '' }: { progress: Proc
       </div>
 
       <div className="text-xs text-muted-foreground">
-        {progress.completed_chunks} / {progress.total_chunks} chunks
+        {progress.completed_chunks} / {progress.total_chunks} stykker
         {progress.processing_chunks > 0 && (
           <span className="ml-2 text-primary">
-            ({progress.processing_chunks} processing)
+            ({progress.processing_chunks} behandles)
           </span>
         )}
       </div>

@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
-import Image from 'next/image';
 import { UpdateDialog } from "./UpdateDialog";
 import { updateService, UpdateInfo } from '@/services/updateService';
 import { Button } from './ui/button';
@@ -36,102 +35,89 @@ export function About() {
             if (info.available) {
                 setShowUpdateDialog(true);
             } else {
-                toast.success('You are running the latest version');
+                toast.success('Du har den nyeste version');
             }
         } catch (error: any) {
             console.error('Failed to check for updates:', error);
-            toast.error('Failed to check for updates: ' + (error.message || 'Unknown error'));
+            toast.error('Kunne ikke søge efter opdateringer. Tjek din internetforbindelse og prøv igen.');
         } finally {
             setIsChecking(false);
         }
     };
 
     return (
-        <div className="p-4 space-y-4 h-[80vh] overflow-y-auto">
-            {/* Compact Header */}
+        <div className="p-4 space-y-6 max-h-[80vh] overflow-y-auto">
             <div className="text-center">
-                <div className="mb-3">
-                    <Image
-                        src="/tingskriver-logo.svg"
-                        alt="Tingskriver Logo"
-                        width={64}
-                        height={64}
-                        className="mx-auto"
-                    />
-                </div>
-                {/* <h1 className="text-xl font-bold text-foreground">Tingskriver</h1> */}
-                <span className="text-sm text-muted-foreground"> v{currentVersion}</span>
-                <p className="text-medium text-muted-foreground mt-1">
-                    Real-time notes and summaries that never leave your machine.
+                <img
+                    src="/tingskriver-mark.svg"
+                    alt=""
+                    width={56}
+                    height={56}
+                    className="mx-auto mb-3"
+                />
+                <h2 className="text-xl font-semibold text-foreground">Tingskriver</h2>
+                <p className="text-sm text-muted-foreground">Version {currentVersion}</p>
+                <p className="text-sm text-foreground mt-2">
+                    Referater der aldrig forlader din computer.
                 </p>
-                <div className="mt-3">
+                <div className="mt-4">
                     <Button
                         onClick={handleCheckForUpdates}
                         disabled={isChecking}
                         variant="outline"
-                        size="sm"
-                        className="text-xs"
+                        className="min-h-[44px]"
                     >
                         {isChecking ? (
                             <>
-                                <Loader2 className="h-3 w-3 mr-2 animate-spin" />
-                                Checking...
+                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                Søger…
                             </>
                         ) : (
                             <>
-                                <CheckCircle2 className="h-3 w-3 mr-2" />
-                                Check for Updates
+                                <CheckCircle2 className="h-4 w-4 mr-2" />
+                                Søg efter opdateringer
                             </>
                         )}
                     </Button>
                     {updateInfo?.available && (
-                        <div className="mt-2 text-xs text-primary">
-                            Update available: v{updateInfo.version}
-                        </div>
+                        <p className="mt-2 text-sm text-primary">
+                            Opdatering klar: version {updateInfo.version}
+                        </p>
                     )}
                 </div>
             </div>
 
-            {/* Features Grid - Compact */}
             <div className="space-y-3">
-                <h2 className="text-base font-semibold text-foreground">What makes Tingskriver different</h2>
-                <div className="grid grid-cols-2 gap-2">
-                    <div className="bg-background rounded p-3 hover:bg-accent transition-colors">
-                        <h3 className="font-bold text-sm text-foreground mb-1">Privacy-first</h3>
-                        <p className="text-xs text-muted-foreground leading-relaxed">Your data & AI processing workflow can now stay within your premise. No cloud, no leaks.</p>
+                <h3 className="text-base font-semibold text-foreground">Det adskiller Tingskriver</h3>
+                <dl className="space-y-3 text-sm">
+                    <div>
+                        <dt className="font-medium text-foreground">Lokalt fra start til slut</dt>
+                        <dd className="text-muted-foreground">Optagelse, transskription og opsummering sker på din egen computer. Ingen sky, ingen lækager.</dd>
                     </div>
-                    <div className="bg-background rounded p-3 hover:bg-accent transition-colors">
-                        <h3 className="font-bold text-sm text-foreground mb-1">Use Any Model</h3>
-                        <p className="text-xs text-muted-foreground leading-relaxed">Prefer local open-source model? Great. Want to plug in an external API? Also fine. No lock-in.</p>
+                    <div>
+                        <dt className="font-medium text-foreground">Vælg din egen model</dt>
+                        <dd className="text-muted-foreground">Brug en lokal åben model, eller tilslut en ekstern udbyder. Du er ikke låst fast.</dd>
                     </div>
-                    <div className="bg-background rounded p-3 hover:bg-accent transition-colors">
-                        <h3 className="font-bold text-sm text-foreground mb-1">Cost-Smart</h3>
-                        <p className="text-xs text-muted-foreground leading-relaxed">Avoid pay-per-minute bills by running models locally (or pay only for the calls you choose).</p>
+                    <div>
+                        <dt className="font-medium text-foreground">Ingen pris pr. minut</dt>
+                        <dd className="text-muted-foreground">Kører modellerne lokalt, betaler du ikke for tid. Bruger du en ekstern udbyder, betaler du kun for de kald, du selv vælger.</dd>
                     </div>
-                    <div className="bg-background rounded p-3 hover:bg-accent transition-colors">
-                        <h3 className="font-bold text-sm text-foreground mb-1">Works everywhere</h3>
-                        <p className="text-xs text-muted-foreground leading-relaxed">Google Meet, Zoom, Teams-online or offline.</p>
+                    <div>
+                        <dt className="font-medium text-foreground">Virker med dine møder</dt>
+                        <dd className="text-muted-foreground">Google Meet, Zoom og Teams, og møder uden internet.</dd>
                     </div>
-                </div>
+                </dl>
             </div>
 
-            {/* Coming Soon - Compact */}
-            <div className="bg-primary/10 rounded p-3">
-                <p className="text-s text-primary">
-                    <span className="font-bold">Coming soon:</span> A library of on-device AI agents-automating follow-ups, action tracking, and more.
-                </p>
-            </div>
-
-            {/* Footer - Compact */}
-            <div className="pt-2 border-t border-border text-center space-y-1">
+            <div className="pt-3 border-t border-border text-center space-y-1">
                 <p className="text-xs text-muted-foreground">
-                    Free and open source. Fork of an MIT-licensed open source project, see{' '}
-                    <button onClick={() => openLink('https://github.com/mahope/tingskriver/blob/main/NOTICE.md')} className="underline hover:text-foreground">NOTICE.md</button>.
+                    Gratis og open source. Tingskriver er en afledning af Meetily fra Zackriya Solutions (MIT-licens), se{' '}
+                    <button type="button" onClick={() => openLink('https://github.com/mahope/tingskriver/blob/main/NOTICE.md')} className="underline hover:text-foreground">NOTICE.md</button>.
                 </p>
                 <p className="text-xs text-muted-foreground">
-                    <button onClick={() => openLink('https://tingskriver.mahoje.dk')} className="underline hover:text-foreground">tingskriver.mahoje.dk</button>
+                    <button type="button" onClick={() => openLink('https://tingskriver.mahoje.dk')} className="underline hover:text-foreground">tingskriver.mahoje.dk</button>
                     {' · '}
-                    <button onClick={() => openLink('https://github.com/mahope/tingskriver')} className="underline hover:text-foreground">GitHub</button>
+                    <button type="button" onClick={() => openLink('https://github.com/mahope/tingskriver')} className="underline hover:text-foreground">GitHub</button>
                 </p>
             </div>
 

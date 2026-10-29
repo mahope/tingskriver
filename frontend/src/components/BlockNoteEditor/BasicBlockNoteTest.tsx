@@ -33,7 +33,7 @@ export default function BasicBlockNoteTest() {
   return (
     <div className="views">
       <div className="view-wrapper">
-        <div className="view-label">Markdown Input</div>
+        <div className="view-label">Markdown-input</div>
         <div className="view">
           <code>
             <textarea
@@ -44,7 +44,7 @@ export default function BasicBlockNoteTest() {
         </div>
       </div>
       <div className="view-wrapper">
-        <div className="view-label">Editor Output</div>
+        <div className="view-label">Editorens visning</div>
         <div className="view">
           <BlockNoteView editor={editor} editable={true} />
         </div>

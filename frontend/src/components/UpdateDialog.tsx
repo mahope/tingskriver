@@ -13,6 +13,7 @@ import { updateService, UpdateInfo, UpdateProgress } from '@/services/updateServ
 import { check, Update } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { toast } from 'sonner';
+import { formatDate as formatDateDa } from '@/lib/format';
 
 interface UpdateDialogProps {
   open: boolean;
@@ -38,11 +39,11 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
         if (updateResult?.available) {
           setUpdate(updateResult);
         } else {
-          setError('Update no longer available');
+          setError('Opdateringen er ikke længere tilgængelig. Søg efter opdateringer igen senere.');
         }
       }).catch((err) => {
         console.error('Failed to get update object:', err);
-        setError('Failed to prepare update: ' + (err.message || 'Unknown error'));
+        setError('Opdateringen kunne ikke gøres klar. Tjek din internetforbindelse og prøv igen.');
       });
     } else {
       // Reset state when dialog closes
@@ -63,11 +64,11 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
           updateToUse = updateResult;
           setUpdate(updateResult);
         } else {
-          setError('Update not available');
+          setError('Opdateringen er ikke tilgængelig. Søg efter opdateringer igen senere.');
           return;
         }
       } catch (err: any) {
-        setError('Failed to get update: ' + (err.message || 'Unknown error'));
+        setError('Opdateringen kunne ikke hentes. Tjek din internetforbindelse og prøv igen.');
         return;
       }
     }
@@ -123,7 +124,7 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
       });
 
       console.log('[UpdateDialog] Update installed successfully');
-      toast.success('Update installed successfully. The app will restart...');
+      toast.success('Opdateringen er installeret. Appen genstarter…');
 
       // Mark download as complete before closing
       setIsDownloading(false);
@@ -135,16 +136,16 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
       await relaunch();
     } catch (err: any) {
       console.error('Update failed:', err);
-      setError(err.message || 'Failed to download or install update');
+      setError('Opdateringen kunne ikke hentes eller installeres. Tjek din internetforbindelse og prøv igen.');
       setIsDownloading(false);
-      toast.error('Update failed: ' + (err.message || 'Unknown error'));
+      toast.error('Opdateringen mislykkedes. Prøv igen om lidt.');
     }
   };
 
   const formatDate = (dateString?: string) => {
     if (!dateString) return '';
     try {
-      return new Date(dateString).toLocaleDateString();
+      return formatDateDa(dateString);
     } catch {
       return dateString;
     }
@@ -190,26 +191,26 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
             {isDownloading ? (
               <>
                 <Loader2 className="h-5 w-5 animate-spin text-primary" />
-                Downloading Update
+                Henter opdatering
               </>
             ) : error ? (
               <>
                 <AlertCircle className="h-5 w-5 text-destructive" />
-                Update Error
+                Opdatering mislykkedes
               </>
             ) : (
               <>
                 <Download className="h-5 w-5 text-primary" />
-                Update Available
+                Opdatering klar
               </>
             )}
           </DialogTitle>
           <DialogDescription>
             {isDownloading
-              ? 'Downloading the latest version...'
+              ? 'Henter den nyeste version…'
               : error
-              ? 'An error occurred while updating'
-              : `A new version (${updateInfo.version}) is available`}
+              ? 'Noget gik galt under opdateringen'
+              : `Version ${updateInfo.version} kan hentes`}
           </DialogDescription>
         </DialogHeader>
 
@@ -218,16 +219,16 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
             <>
               <div className="space-y-2">
                 <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Current Version:</span>
+                  <span className="text-muted-foreground">Nuværende version:</span>
                   <span className="font-medium">{updateInfo.currentVersion}</span>
                 </div>
                 <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">New Version:</span>
+                  <span className="text-muted-foreground">Ny version:</span>
                   <span className="font-medium text-primary">{updateInfo.version}</span>
                 </div>
                 {updateInfo.date && (
                   <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Release Date:</span>
+                    <span className="text-muted-foreground">Udgivet:</span>
                     <span className="font-medium">{formatDate(updateInfo.date)}</span>
                   </div>
                 )}
@@ -253,7 +254,7 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
                   />
                 </div>
                 <div className="flex justify-between text-xs text-muted-foreground mt-1">
-                  <span>{Math.round(progress.percentage)}% complete</span>
+                  <span>{Math.round(progress.percentage)} % hentet</span>
                   {progress.total > 0 && (
                     <span>
                       {formatBytes(progress.downloaded)} / {formatBytes(progress.total)}
@@ -262,7 +263,7 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
                 </div>
               </div>
               <p className="text-sm text-muted-foreground text-center">
-                The app will restart automatically after installation
+                Appen genstarter automatisk efter installationen
               </p>
             </div>
           )}
@@ -277,18 +278,18 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
         <DialogFooter>
           {!isDownloading && !error && (
             <>
-              <Button variant="outline" onClick={() => handleOpenChange(false)}>
-                Later
+              <Button variant="outline" className="min-h-[44px]" onClick={() => handleOpenChange(false)}>
+                Senere
               </Button>
-              <Button onClick={handleDownloadAndInstall} className="bg-primary hover:bg-primary/90">
+              <Button onClick={handleDownloadAndInstall} className="min-h-[44px]">
                 <Download className="h-4 w-4 mr-2" />
-                Download & Install
+                Hent og installér
               </Button>
             </>
           )}
           {error && (
-            <Button variant="outline" onClick={() => handleOpenChange(false)}>
-              Close
+            <Button variant="outline" className="min-h-[44px]" onClick={() => handleOpenChange(false)}>
+              Luk
             </Button>
           )}
         </DialogFooter>
@@ -298,9 +299,9 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
 }
 
 function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 Bytes';
+  if (bytes === 0) return '0 B';
   const k = 1024;
-  const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+  const sizes = ['B', 'KB', 'MB', 'GB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+  return (Math.round(bytes / Math.pow(k, i) * 100) / 100).toLocaleString('da-DK') + ' ' + sizes[i];
 }

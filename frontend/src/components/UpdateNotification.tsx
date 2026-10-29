@@ -23,9 +23,9 @@ export function showUpdateNotification(updateInfo: UpdateInfo, onUpdateClick?: (
       <div className="flex items-center gap-2">
         <Download className="h-4 w-4" />
         <div>
-          <p className="font-medium">Update Available</p>
+          <p className="font-medium">Opdatering klar</p>
           <p className="text-sm text-muted-foreground">
-            Version {updateInfo.version} is now available
+            Version {updateInfo.version} kan hentes
           </p>
         </div>
       </div>
@@ -34,9 +34,9 @@ export function showUpdateNotification(updateInfo: UpdateInfo, onUpdateClick?: (
           e.stopPropagation();
           handleClick();
         }}
-        className="text-sm font-medium text-primary hover:text-primary underline"
+        className="text-sm font-medium text-primary hover:text-primary/80 underline min-h-[24px]"
       >
-        View Details
+        Se detaljer
       </button>
     </div>,
     {

@@ -72,21 +72,21 @@ export function BluetoothPlaybackWarning({
       <div className="flex items-start justify-between w-full">
         <div className="flex-1">
           <AlertTitle className="text-warning font-semibold">
-            Bluetooth Playback Detected
+            Afspilning via Bluetooth
           </AlertTitle>
           <AlertDescription className="text-warning mt-1">
-            You're using <strong>{deviceName}</strong> for playback.
-            Recordings may sound distorted or sped up through Bluetooth devices.
-            For accurate review, please use <strong>computer speakers</strong> or{' '}
-            <strong>wired headphones</strong>.
+            Du afspiller via <strong>{deviceName}</strong>.
+            Optagelser kan lyde forvrængede eller for hurtige over Bluetooth.
+            Brug <strong>computerens højttalere</strong> eller{' '}
+            <strong>hovedtelefoner med ledning</strong>, når du gennemgår dem.
           </AlertDescription>
         </div>
         <Button
           variant="ghost"
           size="icon"
           onClick={() => setIsDismissed(true)}
-          className="ml-4 h-6 w-6 text-warning hover:text-warning hover:bg-warning/15"
-          aria-label="Dismiss warning"
+          className="ml-4 h-6 w-6 min-h-[24px] min-w-[24px] text-warning hover:text-warning hover:bg-warning/15"
+          aria-label="Luk"
         >
           <X className="h-4 w-4" />
         </Button>

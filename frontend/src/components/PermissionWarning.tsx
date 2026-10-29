@@ -61,7 +61,7 @@ export function PermissionWarning({
             <div className="flex items-center gap-2">
               {!hasMicrophone && <Mic className="h-4 w-4" />}
               {!hasSystemAudio && <Speaker className="h-4 w-4" />}
-              {!hasMicrophone && !hasSystemAudio ? 'Permissions Required' : !hasMicrophone ? 'Microphone Permission Required' : 'System Audio Permission Required'}
+              {!hasMicrophone && !hasSystemAudio ? 'Tilladelser mangler' : !hasMicrophone ? 'Tilladelse til mikrofon mangler' : 'Tilladelse til systemlyd mangler'}
             </div>
           </AlertTitle>
           {/* Action Buttons */}
@@ -69,28 +69,28 @@ export function PermissionWarning({
             {isMacOS && !hasMicrophone && (
               <button
                 onClick={openMicrophoneSettings}
-                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-warning-foreground bg-warning hover:bg-warning/90 rounded-md transition-colors"
+                className="inline-flex items-center gap-2 px-4 py-2 min-h-[44px] text-sm font-medium text-warning-foreground bg-warning hover:bg-warning/90 rounded-md transition-colors"
               >
                 <Mic className="h-4 w-4" />
-                Open Microphone Settings
+                Åbn mikrofonindstillinger
               </button>
             )}
             {isMacOS && !hasSystemAudio && (
               <button
                 onClick={openScreenRecordingSettings}
-                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-primary-foreground bg-primary hover:bg-primary/90 rounded-md transition-colors"
+                className="inline-flex items-center gap-2 px-4 py-2 min-h-[44px] text-sm font-medium text-primary-foreground bg-primary hover:bg-primary/90 rounded-md transition-colors"
               >
                 <Speaker className="h-4 w-4" />
-                Open Screen Recording Settings
+                Åbn indstillinger for skærmoptagelse
               </button>
             )}
             <button
               onClick={onRecheck}
               disabled={isRechecking}
-              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-warning bg-warning/15 hover:bg-warning/25 rounded-md transition-colors disabled:opacity-50"
+              className="inline-flex items-center gap-2 px-4 py-2 min-h-[44px] text-sm font-medium text-warning bg-warning/15 hover:bg-warning/25 rounded-md transition-colors disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-ring"
             >
               <RefreshCw className={`h-4 w-4 ${isRechecking ? 'animate-spin' : ''}`} />
-              Recheck
+              Tjek igen
             </button>
           </div>
           <AlertDescription className="text-warning mt-2">
@@ -98,14 +98,14 @@ export function PermissionWarning({
             {!hasMicrophone && (
               <>
                 <p className="mb-3">
-                  Tingskriver needs access to your microphone to record meetings. No microphone devices were detected.
+                  Tingskriver skal bruge din mikrofon for at optage møder, men ingen mikrofon blev fundet.
                 </p>
                 <div className="space-y-2 text-sm mb-4">
-                  <p className="font-medium">Please check:</p>
+                  <p className="font-medium">Tjek følgende:</p>
                   <ul className="list-disc list-inside ml-2 space-y-1">
-                    <li>Your microphone is connected and powered on</li>
-                    <li>Microphone permission is granted in System Settings</li>
-                    <li>No other app is exclusively using the microphone</li>
+                    <li>Mikrofonen er sluttet til og tændt</li>
+                    <li>Tingskriver har tilladelse til mikrofonen i systemindstillingerne</li>
+                    <li>Ingen anden app har eneadgang til mikrofonen</li>
                   </ul>
                 </div>
               </>
@@ -116,16 +116,16 @@ export function PermissionWarning({
               <>
                 <p className="mb-3">
                   {hasMicrophone
-                    ? 'System audio capture is not available. You can still record with your microphone, but computer audio won\'t be captured.'
-                    : 'System audio capture is also not available.'}
+                    ? 'Systemlyd kan ikke optages. Du kan stadig optage med mikrofonen, men lyd fra computeren kommer ikke med.'
+                    : 'Systemlyd kan heller ikke optages.'}
                 </p>
                 {isMacOS && (
                   <div className="space-y-2 text-sm mb-4">
-                    <p className="font-medium">To enable system audio on macOS:</p>
+                    <p className="font-medium">Sådan slår du systemlyd til på macOS:</p>
                     <ul className="list-disc list-inside ml-2 space-y-1">
-                      <li>Install a virtual audio device (e.g., BlackHole 2ch)</li>
-                      <li>Grant Screen Recording permission to Tingskriver</li>
-                      <li>Configure your audio routing in Audio MIDI Setup</li>
+                      <li>Installér en virtuel lydenhed, fx BlackHole 2ch</li>
+                      <li>Giv Tingskriver tilladelse til skærmoptagelse</li>
+                      <li>Sæt lydrouting op i Audio MIDI-opsætning</li>
                     </ul>
                   </div>
                 )}
