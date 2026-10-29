@@ -103,6 +103,16 @@ pub struct Evaluation {
     pub retry: bool,
 }
 
+/// Inputs that capture what the PC plays (Stereo Mix, virtual cables) rather
+/// than a microphone. Never picked as a fallback, or system audio would be
+/// recorded twice.
+fn is_loopback_like(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    ["stereo mix", "stereomix", "what u hear", "cable output", "loopback"]
+        .iter()
+        .any(|p| lower.contains(p))
+}
+
 /// Tracks one stream (microphone or system audio).
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct StreamTracker {
@@ -137,7 +147,7 @@ impl StreamTracker {
             default => snap
                 .present
                 .iter()
-                .find(|n| !self.is_dead(n))
+                .find(|n| !self.is_dead(n) && !is_loopback_like(n))
                 .cloned()
                 .or_else(|| default.clone()),
         }
@@ -931,6 +941,28 @@ mod tests {
         let eval = follower.evaluate(&fake);
         assert_eq!(eval.switches.len(), 1);
         assert_eq!(eval.switches[0].to, USB_MIC);
+    }
+
+    #[test]
+    fn fallback_skips_loopback_inputs() {
+        let fake = FakeDevices::new(
+            &["Stereo Mix (Realtek(R) Audio)", HEADSET_MIC, LAPTOP_MIC],
+            HEADSET_MIC,
+            &[SPEAKERS],
+            SPEAKERS,
+        );
+        let mut follower = DeviceFollower::new(
+            true,
+            None,
+            Some(HEADSET_MIC.into()),
+            true,
+            None,
+            Some(SPEAKERS.into()),
+        );
+        follower.mark_dead(StreamKind::Microphone, HEADSET_MIC);
+        let eval = follower.evaluate(&fake);
+        assert_eq!(eval.switches.len(), 1);
+        assert_eq!(eval.switches[0].to, LAPTOP_MIC);
     }
 
     #[test]

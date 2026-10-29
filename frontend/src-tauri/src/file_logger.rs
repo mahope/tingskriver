@@ -73,7 +73,12 @@ impl RotatingFile {
     pub fn write_line(&mut self, line: &str) -> std::io::Result<()> {
         let bytes = line.len() as u64 + 1;
         if self.size > 0 && self.size + bytes > self.max_bytes {
-            self.rotate()?;
+            if self.rotate().is_err() {
+                // Rotation can fail (antivirus, a reader holding the backup
+                // open). Keep writing to the current file and try again after
+                // another max_bytes instead of losing all further logging.
+                self.size = 0;
+            }
         }
         writeln!(self.file, "{}", line)?;
         self.size += bytes;
@@ -166,6 +171,26 @@ mod tests {
         for entry in fs::read_dir(&dir).unwrap() {
             assert!(entry.unwrap().metadata().unwrap().len() <= 100);
         }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn keeps_logging_when_rotation_fails() {
+        let dir = temp_dir("rotate-fails");
+        let mut log = RotatingFile::open(&dir, 100).unwrap();
+        // Non-empty directories in the way make every rename fail.
+        for i in 1..KEPT_FILES {
+            let blocker = dir.join(format!("{}.{}", LOG_NAME, i));
+            fs::create_dir_all(&blocker).unwrap();
+            fs::write(blocker.join("x"), "x").unwrap();
+        }
+        let line = "x".repeat(59);
+        for _ in 0..6 {
+            log.write_line(&line).unwrap();
+        }
+        let written = fs::read_to_string(dir.join(LOG_NAME)).unwrap();
+        assert_eq!(written.lines().count(), 6);
         let _ = fs::remove_dir_all(&dir);
     }
 

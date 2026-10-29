@@ -191,18 +191,27 @@ async fn open_on(
         },
     ));
 
-    let stream = tokio::time::timeout(
-        STREAM_OPEN_TIMEOUT,
-        AudioStream::create(
-            device.clone(),
-            session.clone(),
-            recording_device_type(kind),
+    // AudioStream::create has no await point that yields: cpal enumerates,
+    // configures and starts the WASAPI stream synchronously. Run it on a
+    // blocking thread so the timeout can actually fire and the follower loop
+    // (silence ticks, notifications) keeps running while a device hangs.
+    let handle = tokio::runtime::Handle::current();
+    let create_device = device.clone();
+    let create_session = session.clone();
+    let device_type = recording_device_type(kind);
+    let opening = tokio::task::spawn_blocking(move || {
+        handle.block_on(AudioStream::create(
+            create_device,
+            create_session,
+            device_type,
             None,
-        ),
-    )
-    .await
-    .map_err(|_| format!("opening stream timed out after {:?}", STREAM_OPEN_TIMEOUT))?
-    .map_err(|e| format!("failed to open stream: {}", e))?;
+        ))
+    });
+    let stream = tokio::time::timeout(STREAM_OPEN_TIMEOUT, opening)
+        .await
+        .map_err(|_| format!("opening stream timed out after {:?}", STREAM_OPEN_TIMEOUT))?
+        .map_err(|e| format!("opening stream panicked: {}", e))?
+        .map_err(|e| format!("failed to open stream: {}", e))?;
 
     let rejected = {
         let mut guard = RECORDING_MANAGER.lock().unwrap();
