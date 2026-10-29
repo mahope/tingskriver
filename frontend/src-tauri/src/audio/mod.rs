@@ -34,6 +34,11 @@ pub mod batch_processor;
 pub mod system_detector;
 pub mod system_audio_commands;
 pub mod device_monitor;  // NEW: Device disconnect/reconnect monitoring
+pub mod device_follow;   // Default-device following decisions (Windows hot-swap)
+#[cfg(target_os = "windows")]
+pub mod windows_endpoint_notifier;
+#[cfg(target_os = "windows")]
+pub mod windows_device_follower;
 pub mod playback_monitor; // NEW: Playback device detection for BT warnings
 
 // Transcription module (provider abstraction, engine management, worker pool)

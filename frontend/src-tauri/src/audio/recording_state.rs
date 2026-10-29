@@ -308,6 +308,22 @@ impl RecordingState {
         self.last_error.lock().unwrap().clone()
     }
 
+    /// Forget recoverable errors, e.g. those reported by a stream whose
+    /// device was removed and has since been replaced, so device switches
+    /// during a long meeting do not add up to the "too many errors" stop.
+    pub fn clear_recoverable_errors(&self) {
+        let last_is_recoverable = self
+            .last_error
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map_or(true, |e| e.is_recoverable());
+        if last_is_recoverable {
+            self.recoverable_error_count.store(0, Ordering::SeqCst);
+            self.error_count.store(0, Ordering::SeqCst);
+        }
+    }
+
     pub fn has_fatal_error(&self) -> bool {
         if let Some(error) = &*self.last_error.lock().unwrap() {
             !error.is_recoverable() && self.error_count.load(Ordering::SeqCst) > 0
