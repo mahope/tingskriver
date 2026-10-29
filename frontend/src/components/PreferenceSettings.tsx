@@ -109,7 +109,7 @@ export function PreferenceSettings() {
     handleUpdateNotificationSettings();
   }, [notificationsEnabled, notificationSettings, isInitialLoad, previousNotificationsEnabled, updateNotificationSettings])
 
-  const handleOpenFolder = async (folderType: 'database' | 'models' | 'recordings') => {
+  const handleOpenFolder = async (folderType: 'database' | 'models' | 'recordings' | 'logs') => {
     try {
       switch (folderType) {
         case 'database':
@@ -120,6 +120,9 @@ export function PreferenceSettings() {
           break;
         case 'recordings':
           await invoke('open_recordings_folder');
+          break;
+        case 'logs':
+          await invoke('open_log_folder');
           break;
       }
 
@@ -208,6 +211,21 @@ export function PreferenceSettings() {
             >
               <FolderOpen className="w-4 h-4" />
               Open Folder
+            </button>
+          </div>
+
+          {/* Log files */}
+          <div className="p-4 border rounded-lg bg-gray-50">
+            <div className="font-medium mb-2">Logfiler</div>
+            <div className="text-sm text-gray-600 mb-3">
+              Appens log (fx enhedsskift under optagelse). Send mappen, hvis noget fejler.
+            </div>
+            <button
+              onClick={() => handleOpenFolder('logs')}
+              className="flex items-center gap-2 px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-100 transition-colors"
+            >
+              <FolderOpen className="w-4 h-4" />
+              Åbn logmappe
             </button>
           </div>
         </div>

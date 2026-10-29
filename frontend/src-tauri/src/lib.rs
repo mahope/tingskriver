@@ -41,6 +41,7 @@ pub mod audio;
 pub mod config;
 pub mod console_utils;
 pub mod database;
+pub mod file_logger;
 pub mod notifications;
 pub mod ollama;
 pub mod onboarding;
@@ -444,6 +445,26 @@ pub fn get_language_preference_internal() -> Option<String> {
     LANGUAGE_PREFERENCE.lock().ok().map(|lang| lang.clone())
 }
 
+/// Open the folder with the application log files in the file manager.
+#[tauri::command]
+async fn open_log_folder() -> Result<(), String> {
+    let dir = file_logger::log_dir().ok_or("Could not determine the log folder")?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create log folder: {}", e))?;
+
+    #[cfg(target_os = "windows")]
+    let opener = "explorer";
+    #[cfg(target_os = "macos")]
+    let opener = "open";
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let opener = "xdg-open";
+
+    std::process::Command::new(opener)
+        .arg(&dir)
+        .spawn()
+        .map_err(|e| format!("Failed to open log folder: {}", e))?;
+    Ok(())
+}
+
 pub fn run() {
     log::set_max_level(log::LevelFilter::Info);
 
@@ -764,6 +785,7 @@ pub fn run() {
             audio::recording_preferences::set_recording_preferences,
             audio::recording_preferences::get_default_recordings_folder_path,
             audio::recording_preferences::open_recordings_folder,
+            open_log_folder,
             audio::recording_preferences::select_recording_folder,
             audio::recording_preferences::get_available_audio_backends,
             audio::recording_preferences::get_current_audio_backend,
