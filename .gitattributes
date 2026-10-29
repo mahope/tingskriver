@@ -1,0 +1,3 @@
+# sqlx stores checksums of migrations; CRLF conversion on Windows checkouts
+# changes them and breaks existing databases (upstream issue #843).
+*.sql text eol=lf

@@ -1,0 +1,188 @@
+name: Windows build (reusable)
+
+# Builds the Tingskriver NSIS installer (x64) with Tauri. Called by
+# release.yml (tags, publishes a GitHub Release with latest.json) and
+# branch-build.yml (other branches, uploads the installer as an artifact).
+
+on:
+  workflow_call:
+    inputs:
+      release:
+        description: Publish a GitHub Release for the pushed tag
+        type: boolean
+        default: false
+
+jobs:
+  build:
+    name: Windows x64 (NSIS)
+    runs-on: windows-latest
+    timeout-minutes: 150
+    steps:
+      # sqlx checks migration checksums; CRLF checkouts break them (upstream #843).
+      - name: Disable CRLF conversion
+        run: git config --global core.autocrlf false
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ inputs.release }}" = "true" ]; then
+            version="${GITHUB_REF_NAME#v}"
+            # tauri-action names assets and latest.json from tauri.conf.json.
+            node -e "const f='frontend/src-tauri/tauri.conf.json';const fs=require('fs');const c=JSON.parse(fs.readFileSync(f,'utf8'));c.version=process.argv[1];fs.writeFileSync(f,JSON.stringify(c,null,4)+'\n')" "$version"
+          else
+            version="$(node -p "require('./frontend/src-tauri/tauri.conf.json').version")"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Building version $version"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+          run_install: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Get pnpm store directory
+        shell: bash
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - name: Setup pnpm cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      # Same portable CPU baseline as upstream (no AVX-512/native tuning).
+      - name: Configure portable build and version
+        id: tauri-config
+        shell: pwsh
+        run: |
+          $cmakeHook = (Join-Path $env:GITHUB_WORKSPACE ".github/force-portable-ggml.cmake").Replace('\', '/')
+          "CMAKE_PROJECT_INCLUDE=$cmakeHook" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "RUSTFLAGS=-C target-cpu=x86-64-v2" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+          $buildDirectory = "target/x86_64-pc-windows-msvc/release"
+          $configPath = (Join-Path $env:RUNNER_TEMP "tauri.ci.conf.json").Replace('\', '/')
+          $json = @{
+            build = @{
+              beforeBundleCommand = @{
+                script = "node .github/verify-portable-ggml.cjs $buildDirectory"
+                cwd = $env:GITHUB_WORKSPACE
+              }
+            }
+          } | ConvertTo-Json -Depth 4
+          [IO.File]::WriteAllText($configPath, $json, (New-Object Text.UTF8Encoding $false))
+          Get-Content $configPath
+          "args=--config `"$configPath`"" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          prefix-key: tingskriver-windows-v1
+          key: windows-x64-vulkan
+
+      - name: Install Vulkan SDK
+        uses: humbletim/install-vulkan-sdk@v1.2
+        with:
+          version: 1.4.309.0
+          cache: true
+
+      - name: Configure Vulkan SDK
+        shell: pwsh
+        run: |
+          $vulkanSdk = $env:VULKAN_SDK
+          if (-not $vulkanSdk -or -not (Test-Path $vulkanSdk)) {
+            Write-Error "VULKAN_SDK not set or path does not exist"
+            exit 1
+          }
+          $binDir = Join-Path $vulkanSdk "Bin"
+          "PATH=$binDir;$env:PATH" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "Vulkan_LIBRARY=$vulkanSdk\Lib\vulkan-1.lib" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "Vulkan_INCLUDE_DIR=$vulkanSdk\Include" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "VK_SDK_PATH=$vulkanSdk" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Build llama-helper sidecar (CPU)
+        shell: pwsh
+        run: |
+          cargo build --release -p llama-helper
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Force -Path "frontend/src-tauri/binaries" | Out-Null
+          Copy-Item "target/release/llama-helper.exe" -Destination "frontend/src-tauri/binaries/llama-helper-x86_64-pc-windows-msvc.exe"
+
+      - name: Cache FFmpeg binary
+        uses: actions/cache@v4
+        with:
+          path: frontend/src-tauri/binaries/ffmpeg-*.exe
+          key: ${{ runner.os }}-ffmpeg-${{ hashFiles('frontend/src-tauri/build.rs', 'frontend/src-tauri/build/ffmpeg.rs') }}
+
+      - name: Cache Windows ONNX Runtime
+        uses: actions/cache@v4
+        with:
+          path: frontend/src-tauri/binaries/onnxruntime
+          key: ${{ runner.os }}-onnxruntime-x86_64-pc-windows-msvc-${{ hashFiles('frontend/src-tauri/build/onnxruntime.rs') }}
+
+      - name: Build installer and publish release
+        if: ${{ inputs.release }}
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: frontend
+          tagName: ${{ github.ref_name }}
+          releaseName: Tingskriver ${{ github.ref_name }}
+          releaseBody: |
+            Windows-installer til Tingskriver ${{ github.ref_name }}.
+            Hent `Tingskriver_${{ steps.version.outputs.version }}_x64-setup.exe` nedenfor. Installeren er ikke kodesigneret, så Windows SmartScreen advarer første gang ("Flere oplysninger" og derefter "Kør alligevel").
+            Installerede versioner opdaterer sig selv.
+          # Not draft and not prerelease: the updater reads
+          # releases/latest/download/latest.json, which skips both.
+          releaseDraft: false
+          prerelease: false
+          includeUpdaterJson: true
+          updaterJsonPreferNsis: true
+          args: --target x86_64-pc-windows-msvc --features vulkan --bundles nsis ${{ steps.tauri-config.outputs.args }}
+
+      - name: Build installer
+        if: ${{ !inputs.release }}
+        uses: tauri-apps/tauri-action@v0
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: frontend
+          args: --target x86_64-pc-windows-msvc --features vulkan --bundles nsis ${{ steps.tauri-config.outputs.args }}
+
+      - name: List artifacts
+        shell: bash
+        run: find target/x86_64-pc-windows-msvc/release/bundle -type f -exec ls -lh {} \;
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: tingskriver-windows-x64-${{ steps.version.outputs.version }}-${{ github.sha }}
+          path: |
+            target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+            target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe.sig
+          retention-days: 14

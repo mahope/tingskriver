@@ -2,7 +2,10 @@
   "bundle": {
     "resources": {
       "templates": "templates",
-      "binaries/onnxruntime": "."
+      "binaries/onnxruntime": ".",
+      "../../LICENSE.md": "licenses/LICENSE.md",
+      "../../NOTICE.md": "licenses/NOTICE.md",
+      "../../THIRD_PARTY_LICENSES.md": "licenses/THIRD_PARTY_LICENSES.md"
     }
   }
 }

@@ -1,8 +1,8 @@
 {
     "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-    "productName": "meetily",
-    "version": "0.4.1",
-    "identifier": "com.meetily.ai",
+    "productName": "Tingskriver",
+    "version": "0.5.0-dev.0",
+    "identifier": "dk.mahoje.tingskriver",
     "build": {
         "frontendDist": "../out",
         "devUrl": "http://localhost:3118",
@@ -12,7 +12,7 @@
     "app": {
         "windows": [
             {
-                "title": "meetily",
+                "title": "Tingskriver",
                 "width": 1100,
                 "height": 700,
                 "resizable": true,
@@ -105,16 +105,13 @@
             "entitlements": "entitlements.plist",
             "signingIdentity": "-",
             "hardenedRuntime": true
-        },
-        "windows": {
-            "signCommand": "powershell -ExecutionPolicy Bypass -File scripts/sign-windows.ps1 -FilePath %1"
         }
     },
     "plugins": {
         "updater": {
-            "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEVDQTYzMUQ3ODc5N0M4MkEKUldRcXlKZUgxekdtN09DRkVWSHNpZlJseEVOUmpNd1dDSTNaLzZ3MXJGTnY3WW1pdnlOYjBpbkIK",
+            "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IERGQTlFQTM1REYzRTY1NTUKUldSVlpUN2ZOZXFwMzFidklrakJNK2ROMlpLUWNrVXNIdDY4N2JhTWEzUEpsSjg1RGg2MTZ2TXIK",
             "endpoints": [
-                "https://github.com/Zackriya-Solutions/meeting-minutes/releases/latest/download/latest.json"
+                "https://github.com/mahope/tingskriver/releases/latest/download/latest.json"
             ]
         }
     }

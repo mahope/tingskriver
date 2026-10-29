@@ -1,0 +1,761 @@
+//! Platform-independent decision logic for following the OS default audio
+//! devices during a recording (used by the Windows hot-swap follower).
+//!
+//! Everything here is plain `std` so it can be unit tested without audio
+//! hardware: a [`DeviceSource`] reports which devices exist and which ones are
+//! the defaults, and [`DeviceFollower`] decides which stream must be reopened
+//! on which device. The platform layer performs the actual stream swap and
+//! reports the outcome back via [`DeviceFollower::swap_succeeded`] /
+//! [`DeviceFollower::swap_failed`].
+
+use std::fmt;
+use std::time::Duration;
+
+/// The two capture streams of a recording.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum StreamKind {
+    /// Capture endpoint (the user's microphone).
+    Microphone,
+    /// Render endpoint captured via loopback (what the PC plays).
+    System,
+}
+
+impl fmt::Display for StreamKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            StreamKind::Microphone => write!(f, "microphone"),
+            StreamKind::System => write!(f, "system audio"),
+        }
+    }
+}
+
+/// What the OS currently reports for one stream kind.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DeviceSnapshot {
+    /// Name of the current default device, if any.
+    pub default_name: Option<String>,
+    /// Names of all devices that are currently present/active.
+    pub present: Vec<String>,
+}
+
+impl DeviceSnapshot {
+    fn is_present(&self, name: &str) -> bool {
+        self.present.iter().any(|n| n == name)
+    }
+}
+
+/// Source of device information. Implemented with WASAPI on Windows and by a
+/// fake in the tests.
+pub trait DeviceSource {
+    fn snapshot(&self, kind: StreamKind) -> Result<DeviceSnapshot, String>;
+}
+
+/// Why a stream is being moved to another device.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SwitchReason {
+    /// The default device changed while we were following the default.
+    DefaultChanged,
+    /// The device we were recording from is gone.
+    ActiveDisappeared,
+    /// The device the user explicitly picked is back.
+    PreferredReturned,
+    /// The stream is not running (it failed to open earlier or a swap failed).
+    StreamMissing,
+}
+
+impl fmt::Display for SwitchReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let text = match self {
+            SwitchReason::DefaultChanged => "default device changed",
+            SwitchReason::ActiveDisappeared => "active device disappeared",
+            SwitchReason::PreferredReturned => "selected device returned",
+            SwitchReason::StreamMissing => "stream not running",
+        };
+        f.write_str(text)
+    }
+}
+
+/// A stream that must be (re)opened on another device.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SwitchAction {
+    pub kind: StreamKind,
+    /// Device the stream currently uses (`None` if no stream is running).
+    pub from: Option<String>,
+    pub to: String,
+    pub reason: SwitchReason,
+}
+
+/// Result of evaluating the device state.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Evaluation {
+    /// Streams to reopen now.
+    pub switches: Vec<SwitchAction>,
+    /// The active device is gone but the OS has not picked a new default yet
+    /// (or there is no device at all). The stream should be torn down and the
+    /// caller should evaluate again shortly.
+    pub lost: Vec<(StreamKind, Option<String>)>,
+    /// True if the caller should schedule another evaluation (something is
+    /// still unresolved: lost streams or failed swaps).
+    pub retry: bool,
+}
+
+/// Tracks one stream (microphone or system audio).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StreamTracker {
+    kind: StreamKind,
+    /// `None`: follow the OS default. `Some(name)`: the user explicitly picked
+    /// this device; use it whenever it is present, else fall back to default.
+    preferred: Option<String>,
+    /// Device the running stream is bound to (`None`: no stream running).
+    active: Option<String>,
+    /// Consecutive failed swap attempts (reset on success).
+    failures: u32,
+}
+
+impl StreamTracker {
+    fn target(&self, snap: &DeviceSnapshot) -> Option<String> {
+        if let Some(pref) = &self.preferred {
+            if snap.is_present(pref) {
+                return Some(pref.clone());
+            }
+        }
+        snap.default_name.clone()
+    }
+
+    fn evaluate(&self, snap: &DeviceSnapshot, eval: &mut Evaluation) {
+        let target = self.target(snap);
+        let active_present = self
+            .active
+            .as_deref()
+            .map(|a| snap.is_present(a))
+            .unwrap_or(false);
+
+        match (&self.active, target) {
+            // Running on the right device: nothing to do.
+            (Some(active), Some(target)) if *active == target && active_present => {}
+            // Windows can still report the vanished device as default for a
+            // moment after removal. Tear the dead stream down and look again.
+            (Some(active), Some(target)) if *active == target => {
+                eval.lost.push((self.kind, Some(active.clone())));
+                eval.retry = true;
+            }
+            (Some(active), Some(target)) => {
+                let reason = if !active_present {
+                    SwitchReason::ActiveDisappeared
+                } else if self.preferred.as_deref() == Some(target.as_str()) {
+                    SwitchReason::PreferredReturned
+                } else {
+                    SwitchReason::DefaultChanged
+                };
+                eval.switches.push(SwitchAction {
+                    kind: self.kind,
+                    from: Some(active.clone()),
+                    to: target,
+                    reason,
+                });
+            }
+            (None, Some(target)) => {
+                eval.switches.push(SwitchAction {
+                    kind: self.kind,
+                    from: None,
+                    to: target,
+                    reason: SwitchReason::StreamMissing,
+                });
+            }
+            // No device to switch to. Keep a live stream; drop a dead one.
+            (Some(active), None) => {
+                if !active_present {
+                    eval.lost.push((self.kind, Some(active.clone())));
+                    eval.retry = true;
+                }
+            }
+            (None, None) => {
+                eval.retry = true;
+            }
+        }
+    }
+}
+
+/// Decides which streams must move when devices or defaults change.
+#[derive(Debug, Clone)]
+pub struct DeviceFollower {
+    trackers: Vec<StreamTracker>,
+}
+
+impl DeviceFollower {
+    /// `mic_preferred` / `system_preferred`: `None` to follow the OS default,
+    /// `Some(name)` for a device the user explicitly selected.
+    /// `mic_active` / `system_active`: devices the streams were opened on, or
+    /// `None` if that stream is not running. A kind is only tracked if it is
+    /// part of the recording (`track_*`).
+    pub fn new(
+        track_mic: bool,
+        mic_preferred: Option<String>,
+        mic_active: Option<String>,
+        track_system: bool,
+        system_preferred: Option<String>,
+        system_active: Option<String>,
+    ) -> Self {
+        let mut trackers = Vec::new();
+        if track_mic {
+            trackers.push(StreamTracker {
+                kind: StreamKind::Microphone,
+                preferred: mic_preferred,
+                active: mic_active,
+                failures: 0,
+            });
+        }
+        if track_system {
+            trackers.push(StreamTracker {
+                kind: StreamKind::System,
+                preferred: system_preferred,
+                active: system_active,
+                failures: 0,
+            });
+        }
+        Self { trackers }
+    }
+
+    /// Kinds this follower manages.
+    pub fn kinds(&self) -> Vec<StreamKind> {
+        self.trackers.iter().map(|t| t.kind).collect()
+    }
+
+    /// Device the stream of `kind` is bound to, if a stream is running.
+    pub fn active(&self, kind: StreamKind) -> Option<&str> {
+        self.tracker(kind).and_then(|t| t.active.as_deref())
+    }
+
+    /// Evaluate the current device state. Snapshot errors for a kind are
+    /// treated as "try again later".
+    pub fn evaluate(&self, source: &dyn DeviceSource) -> Evaluation {
+        let mut eval = Evaluation::default();
+        for tracker in &self.trackers {
+            match source.snapshot(tracker.kind) {
+                Ok(snap) => tracker.evaluate(&snap, &mut eval),
+                Err(_) => eval.retry = true,
+            }
+        }
+        eval
+    }
+
+    /// The stream of `kind` was torn down (device lost, no replacement yet).
+    pub fn stream_lost(&mut self, kind: StreamKind) {
+        if let Some(t) = self.tracker_mut(kind) {
+            t.active = None;
+        }
+    }
+
+    pub fn swap_succeeded(&mut self, kind: StreamKind, device: &str) {
+        if let Some(t) = self.tracker_mut(kind) {
+            t.active = Some(device.to_string());
+            t.failures = 0;
+        }
+    }
+
+    /// A swap failed. The old stream is gone either way, so the kind is now
+    /// without a stream; the next evaluation retries. Returns the delay to
+    /// wait before retrying.
+    pub fn swap_failed(&mut self, kind: StreamKind) -> Duration {
+        match self.tracker_mut(kind) {
+            Some(t) => {
+                t.active = None;
+                t.failures = t.failures.saturating_add(1);
+                retry_delay(t.failures)
+            }
+            None => retry_delay(1),
+        }
+    }
+
+    /// Consecutive failed swap attempts for `kind` since the last success.
+    pub fn failures(&self, kind: StreamKind) -> u32 {
+        self.tracker(kind).map_or(0, |t| t.failures)
+    }
+
+    fn tracker(&self, kind: StreamKind) -> Option<&StreamTracker> {
+        self.trackers.iter().find(|t| t.kind == kind)
+    }
+
+    fn tracker_mut(&mut self, kind: StreamKind) -> Option<&mut StreamTracker> {
+        self.trackers.iter_mut().find(|t| t.kind == kind)
+    }
+}
+
+/// Failed attempts in a row after which the user is told the stream could
+/// not be recovered (retries continue in the background).
+pub const FAILURES_BEFORE_EXHAUSTED: u32 = 3;
+
+/// What to tell the user after a failed swap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FailureNotice {
+    /// Nothing new to say; retrying quietly.
+    None,
+    /// First failure in a row: the switch did not work.
+    SwapFailed,
+    /// Still failing after `FAILURES_BEFORE_EXHAUSTED` attempts.
+    RecoveryExhausted,
+}
+
+/// Notify once when switching starts failing and once when it keeps failing,
+/// not on every retry.
+pub fn failure_notice(failures: u32) -> FailureNotice {
+    match failures {
+        1 => FailureNotice::SwapFailed,
+        n if n == FAILURES_BEFORE_EXHAUSTED => FailureNotice::RecoveryExhausted,
+        _ => FailureNotice::None,
+    }
+}
+
+/// Backoff between failed swap attempts: 0.5 s, 1 s, 2 s, 4 s, then 5 s.
+pub fn retry_delay(failures: u32) -> Duration {
+    let ms = 500u64.saturating_mul(1u64 << failures.saturating_sub(1).min(4));
+    Duration::from_millis(ms.min(5_000))
+}
+
+/// Number of silence samples to emit so that a stream that has been missing
+/// for `elapsed` is filled up to real time, given `emitted` samples so far.
+/// Driven by elapsed wall-clock time, so timer jitter does not accumulate.
+pub fn silence_samples_due(elapsed: Duration, emitted: u64, sample_rate: u32) -> u64 {
+    let expected = (elapsed.as_secs_f64() * sample_rate as f64) as u64;
+    expected.saturating_sub(emitted)
+}
+
+/// One line describing a completed or failed switch, for the log.
+pub fn describe_switch(action: &SwitchAction, took: Duration, outcome: Result<(), &str>) -> String {
+    let from = action.from.as_deref().unwrap_or("<none>");
+    match outcome {
+        Ok(()) => format!(
+            "{} switched '{}' -> '{}' ({}), gap filled with silence, took {} ms",
+            action.kind,
+            from,
+            action.to,
+            action.reason,
+            took.as_millis()
+        ),
+        Err(e) => format!(
+            "{} switch '{}' -> '{}' ({}) FAILED after {} ms: {}",
+            action.kind,
+            from,
+            action.to,
+            action.reason,
+            took.as_millis(),
+            e
+        ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+
+    const LAPTOP_MIC: &str = "Microphone Array (Realtek(R) Audio)";
+    const SPEAKERS: &str = "Speakers (Realtek(R) Audio)";
+    const HEADSET_MIC: &str = "Headset Microphone (Jabra Evolve2 65)";
+    const HEADSET_OUT: &str = "Headset Earphone (Jabra Evolve2 65)";
+    const USB_MIC: &str = "Yeti Stereo Microphone";
+
+    /// Fake device source: a mutable view of what "Windows" reports.
+    #[derive(Default)]
+    struct FakeDevices {
+        state: RefCell<HashMap<StreamKind, DeviceSnapshot>>,
+        failing: RefCell<Vec<StreamKind>>,
+    }
+
+    impl FakeDevices {
+        fn new(mics: &[&str], mic_default: &str, outs: &[&str], out_default: &str) -> Self {
+            let fake = FakeDevices::default();
+            fake.set(StreamKind::Microphone, mics, Some(mic_default));
+            fake.set(StreamKind::System, outs, Some(out_default));
+            fake
+        }
+
+        fn set(&self, kind: StreamKind, present: &[&str], default: Option<&str>) {
+            self.state.borrow_mut().insert(
+                kind,
+                DeviceSnapshot {
+                    default_name: default.map(str::to_string),
+                    present: present.iter().map(|s| s.to_string()).collect(),
+                },
+            );
+        }
+
+        fn unplug_headset(&self) {
+            self.set(StreamKind::Microphone, &[LAPTOP_MIC], Some(LAPTOP_MIC));
+            self.set(StreamKind::System, &[SPEAKERS], Some(SPEAKERS));
+        }
+
+        fn plug_headset(&self) {
+            self.set(
+                StreamKind::Microphone,
+                &[LAPTOP_MIC, HEADSET_MIC],
+                Some(HEADSET_MIC),
+            );
+            self.set(
+                StreamKind::System,
+                &[SPEAKERS, HEADSET_OUT],
+                Some(HEADSET_OUT),
+            );
+        }
+    }
+
+    impl DeviceSource for FakeDevices {
+        fn snapshot(&self, kind: StreamKind) -> Result<DeviceSnapshot, String> {
+            if self.failing.borrow().contains(&kind) {
+                return Err("enumeration failed".into());
+            }
+            Ok(self.state.borrow().get(&kind).cloned().unwrap_or_default())
+        }
+    }
+
+    /// Applies an evaluation the way the platform layer does, assuming every
+    /// swap succeeds. Returns the switches that were performed.
+    fn apply(follower: &mut DeviceFollower, eval: &Evaluation) -> Vec<SwitchAction> {
+        for (kind, _) in &eval.lost {
+            follower.stream_lost(*kind);
+        }
+        for s in &eval.switches {
+            follower.swap_succeeded(s.kind, &s.to);
+        }
+        eval.switches.clone()
+    }
+
+    fn following_headset() -> (FakeDevices, DeviceFollower) {
+        let fake = FakeDevices::new(
+            &[LAPTOP_MIC, HEADSET_MIC],
+            HEADSET_MIC,
+            &[SPEAKERS, HEADSET_OUT],
+            HEADSET_OUT,
+        );
+        let follower = DeviceFollower::new(
+            true,
+            None,
+            Some(HEADSET_MIC.into()),
+            true,
+            None,
+            Some(HEADSET_OUT.into()),
+        );
+        (fake, follower)
+    }
+
+    #[test]
+    fn steady_state_does_nothing() {
+        let (fake, follower) = following_headset();
+        assert_eq!(follower.evaluate(&fake), Evaluation::default());
+    }
+
+    #[test]
+    fn headset_unplugged_moves_both_streams_to_new_defaults() {
+        let (fake, mut follower) = following_headset();
+        fake.unplug_headset();
+
+        let eval = follower.evaluate(&fake);
+        assert!(!eval.retry);
+        let switches = apply(&mut follower, &eval);
+        assert_eq!(
+            switches,
+            vec![
+                SwitchAction {
+                    kind: StreamKind::Microphone,
+                    from: Some(HEADSET_MIC.into()),
+                    to: LAPTOP_MIC.into(),
+                    reason: SwitchReason::ActiveDisappeared,
+                },
+                SwitchAction {
+                    kind: StreamKind::System,
+                    from: Some(HEADSET_OUT.into()),
+                    to: SPEAKERS.into(),
+                    reason: SwitchReason::ActiveDisappeared,
+                },
+            ]
+        );
+        assert_eq!(follower.active(StreamKind::Microphone), Some(LAPTOP_MIC));
+        assert_eq!(follower.active(StreamKind::System), Some(SPEAKERS));
+        // Settled: nothing more to do.
+        assert_eq!(follower.evaluate(&fake), Evaluation::default());
+    }
+
+    #[test]
+    fn headset_back_as_default_switches_back_no_sticky_fallback() {
+        let (fake, mut follower) = following_headset();
+        fake.unplug_headset();
+        let eval = follower.evaluate(&fake);
+        apply(&mut follower, &eval);
+
+        fake.plug_headset();
+        let eval = follower.evaluate(&fake);
+        let switches = apply(&mut follower, &eval);
+        assert_eq!(switches.len(), 2);
+        assert!(switches
+            .iter()
+            .all(|s| s.reason == SwitchReason::DefaultChanged));
+        assert_eq!(follower.active(StreamKind::Microphone), Some(HEADSET_MIC));
+        assert_eq!(follower.active(StreamKind::System), Some(HEADSET_OUT));
+    }
+
+    #[test]
+    fn two_unplug_replug_cycles() {
+        let (fake, mut follower) = following_headset();
+        let mut total = 0;
+        for _ in 0..2 {
+            fake.unplug_headset();
+            let eval = follower.evaluate(&fake);
+            total += apply(&mut follower, &eval).len();
+            fake.plug_headset();
+            let eval = follower.evaluate(&fake);
+            total += apply(&mut follower, &eval).len();
+        }
+        assert_eq!(total, 8);
+        assert_eq!(follower.evaluate(&fake), Evaluation::default());
+    }
+
+    #[test]
+    fn headset_present_but_no_longer_default_follows_default() {
+        // User switches default output to the speakers in Windows settings
+        // while the headset stays connected.
+        let (fake, mut follower) = following_headset();
+        fake.set(StreamKind::System, &[SPEAKERS, HEADSET_OUT], Some(SPEAKERS));
+        let eval = follower.evaluate(&fake);
+        let switches = apply(&mut follower, &eval);
+        assert_eq!(
+            switches,
+            vec![SwitchAction {
+                kind: StreamKind::System,
+                from: Some(HEADSET_OUT.into()),
+                to: SPEAKERS.into(),
+                reason: SwitchReason::DefaultChanged,
+            }]
+        );
+    }
+
+    #[test]
+    fn stale_default_waits_and_tears_down_dead_stream() {
+        // Device removed, but Windows still reports it as default.
+        let (fake, mut follower) = following_headset();
+        fake.set(StreamKind::Microphone, &[LAPTOP_MIC], Some(HEADSET_MIC));
+        let eval = follower.evaluate(&fake);
+        assert!(eval.switches.is_empty());
+        assert_eq!(
+            eval.lost,
+            vec![(StreamKind::Microphone, Some(HEADSET_MIC.into()))]
+        );
+        assert!(eval.retry);
+        apply(&mut follower, &eval);
+        assert_eq!(follower.active(StreamKind::Microphone), None);
+
+        // Windows catches up.
+        fake.set(StreamKind::Microphone, &[LAPTOP_MIC], Some(LAPTOP_MIC));
+        let eval = follower.evaluate(&fake);
+        assert_eq!(
+            eval.switches,
+            vec![SwitchAction {
+                kind: StreamKind::Microphone,
+                from: None,
+                to: LAPTOP_MIC.into(),
+                reason: SwitchReason::StreamMissing,
+            }]
+        );
+    }
+
+    #[test]
+    fn no_devices_left_keeps_retrying() {
+        let (fake, mut follower) = following_headset();
+        fake.set(StreamKind::Microphone, &[], None);
+        let eval = follower.evaluate(&fake);
+        assert_eq!(
+            eval.lost,
+            vec![(StreamKind::Microphone, Some(HEADSET_MIC.into()))]
+        );
+        assert!(eval.retry);
+        apply(&mut follower, &eval);
+        let eval = follower.evaluate(&fake);
+        assert!(eval.switches.is_empty() && eval.lost.is_empty() && eval.retry);
+    }
+
+    #[test]
+    fn pinned_device_is_kept_when_default_changes() {
+        let fake = FakeDevices::new(&[LAPTOP_MIC, USB_MIC], LAPTOP_MIC, &[SPEAKERS], SPEAKERS);
+        let mut follower = DeviceFollower::new(
+            true,
+            Some(USB_MIC.into()),
+            Some(USB_MIC.into()),
+            true,
+            None,
+            Some(SPEAKERS.into()),
+        );
+        fake.set(
+            StreamKind::Microphone,
+            &[LAPTOP_MIC, USB_MIC, HEADSET_MIC],
+            Some(HEADSET_MIC),
+        );
+        assert_eq!(follower.evaluate(&fake), Evaluation::default());
+
+        // The pinned mic disappears: fall back to the default.
+        fake.set(
+            StreamKind::Microphone,
+            &[LAPTOP_MIC, HEADSET_MIC],
+            Some(HEADSET_MIC),
+        );
+        let eval = follower.evaluate(&fake);
+        apply(&mut follower, &eval);
+        assert_eq!(follower.active(StreamKind::Microphone), Some(HEADSET_MIC));
+
+        // And it comes back: return to it even though it is not the default.
+        fake.set(
+            StreamKind::Microphone,
+            &[LAPTOP_MIC, USB_MIC, HEADSET_MIC],
+            Some(HEADSET_MIC),
+        );
+        let eval = follower.evaluate(&fake);
+        assert_eq!(
+            eval.switches,
+            vec![SwitchAction {
+                kind: StreamKind::Microphone,
+                from: Some(HEADSET_MIC.into()),
+                to: USB_MIC.into(),
+                reason: SwitchReason::PreferredReturned,
+            }]
+        );
+    }
+
+    #[test]
+    fn system_stream_that_failed_at_start_is_opened_later() {
+        let fake = FakeDevices::new(&[LAPTOP_MIC], LAPTOP_MIC, &[SPEAKERS], SPEAKERS);
+        let follower = DeviceFollower::new(true, None, Some(LAPTOP_MIC.into()), true, None, None);
+        let eval = follower.evaluate(&fake);
+        assert_eq!(
+            eval.switches,
+            vec![SwitchAction {
+                kind: StreamKind::System,
+                from: None,
+                to: SPEAKERS.into(),
+                reason: SwitchReason::StreamMissing,
+            }]
+        );
+    }
+
+    #[test]
+    fn untracked_kind_is_ignored() {
+        let fake = FakeDevices::new(&[LAPTOP_MIC], LAPTOP_MIC, &[SPEAKERS], SPEAKERS);
+        let follower = DeviceFollower::new(true, None, Some(LAPTOP_MIC.into()), false, None, None);
+        assert_eq!(follower.kinds(), vec![StreamKind::Microphone]);
+        assert_eq!(follower.evaluate(&fake), Evaluation::default());
+    }
+
+    #[test]
+    fn failed_swap_backs_off_and_retries() {
+        let (fake, mut follower) = following_headset();
+        fake.unplug_headset();
+        let eval = follower.evaluate(&fake);
+        let mic = eval.switches[0].clone();
+
+        assert_eq!(follower.swap_failed(mic.kind), Duration::from_millis(500));
+        assert_eq!(follower.active(StreamKind::Microphone), None);
+        // Next evaluation tries again (stream missing now).
+        let eval = follower.evaluate(&fake);
+        assert!(eval
+            .switches
+            .iter()
+            .any(|s| s.kind == StreamKind::Microphone && s.reason == SwitchReason::StreamMissing));
+        assert_eq!(follower.swap_failed(mic.kind), Duration::from_millis(1000));
+        assert_eq!(follower.swap_failed(mic.kind), Duration::from_millis(2000));
+        assert_eq!(follower.swap_failed(mic.kind), Duration::from_millis(4000));
+        assert_eq!(follower.swap_failed(mic.kind), Duration::from_millis(5000));
+        assert_eq!(follower.swap_failed(mic.kind), Duration::from_millis(5000));
+        follower.swap_succeeded(mic.kind, &mic.to);
+        assert_eq!(follower.swap_failed(mic.kind), Duration::from_millis(500));
+    }
+
+    #[test]
+    fn enumeration_error_requests_retry_without_switching() {
+        let (fake, follower) = following_headset();
+        fake.unplug_headset();
+        fake.failing.borrow_mut().push(StreamKind::System);
+        let eval = follower.evaluate(&fake);
+        assert!(eval.retry);
+        assert_eq!(eval.switches.len(), 1);
+        assert_eq!(eval.switches[0].kind, StreamKind::Microphone);
+    }
+
+    #[test]
+    fn silence_fill_tracks_wall_clock() {
+        let rate = 48_000;
+        assert_eq!(silence_samples_due(Duration::from_millis(0), 0, rate), 0);
+        assert_eq!(
+            silence_samples_due(Duration::from_millis(100), 0, rate),
+            4_800
+        );
+        // Late tick catches up exactly; nothing is double-counted.
+        assert_eq!(
+            silence_samples_due(Duration::from_millis(350), 4_800, rate),
+            12_000
+        );
+        assert_eq!(
+            silence_samples_due(Duration::from_millis(350), 16_800, rate),
+            0
+        );
+        // A 1.5 s gap is filled with 1.5 s of samples in total.
+        let mut emitted = 0;
+        for ms in (0..=1500).step_by(37) {
+            emitted += silence_samples_due(Duration::from_millis(ms), emitted, rate);
+        }
+        emitted += silence_samples_due(Duration::from_millis(1500), emitted, rate);
+        assert_eq!(emitted, 72_000);
+    }
+
+    #[test]
+    fn switch_description_names_devices_reason_and_duration() {
+        let action = SwitchAction {
+            kind: StreamKind::System,
+            from: Some(HEADSET_OUT.into()),
+            to: SPEAKERS.into(),
+            reason: SwitchReason::ActiveDisappeared,
+        };
+        let ok = describe_switch(&action, Duration::from_millis(412), Ok(()));
+        assert_eq!(
+            ok,
+            "system audio switched 'Headset Earphone (Jabra Evolve2 65)' -> 'Speakers (Realtek(R) Audio)' (active device disappeared), gap filled with silence, took 412 ms"
+        );
+        let err = describe_switch(&action, Duration::from_millis(80), Err("boom"));
+        assert!(err.contains("FAILED after 80 ms: boom"));
+    }
+
+    #[test]
+    fn failed_swaps_notify_once_then_once_more_when_exhausted() {
+        let mut follower = DeviceFollower::new(
+            true,
+            None,
+            Some(HEADSET_MIC.into()),
+            true,
+            None,
+            Some(HEADSET_OUT.into()),
+        );
+        let notices: Vec<FailureNotice> = (0..6)
+            .map(|_| {
+                follower.swap_failed(StreamKind::Microphone);
+                failure_notice(follower.failures(StreamKind::Microphone))
+            })
+            .collect();
+        assert_eq!(
+            notices,
+            vec![
+                FailureNotice::SwapFailed,
+                FailureNotice::None,
+                FailureNotice::RecoveryExhausted,
+                FailureNotice::None,
+                FailureNotice::None,
+                FailureNotice::None,
+            ]
+        );
+        // The other stream is unaffected, and a success starts over.
+        assert_eq!(follower.failures(StreamKind::System), 0);
+        follower.swap_succeeded(StreamKind::Microphone, LAPTOP_MIC);
+        assert_eq!(follower.failures(StreamKind::Microphone), 0);
+        follower.swap_failed(StreamKind::Microphone);
+        assert_eq!(
+            failure_notice(follower.failures(StreamKind::Microphone)),
+            FailureNotice::SwapFailed
+        );
+    }
+}
