@@ -29,31 +29,31 @@ interface CommandOption {
 const COMMANDS: CommandOption[] = [
   { 
     id: 'text', 
-    label: 'Text', 
+    label: 'Tekst', 
     type: 'text', 
     icon: 'T', 
-    description: 'Just start writing with plain text' 
+    description: 'Skriv almindelig tekst' 
   },
   { 
     id: 'bullet', 
-    label: 'Bullet List', 
+    label: 'Punktliste', 
     type: 'bullet', 
     icon: '•', 
-    description: 'Create a bulleted list' 
+    description: 'Lav en punktliste' 
   },
   { 
     id: 'h1', 
-    label: 'Heading 1', 
+    label: 'Overskrift 1', 
     type: 'heading1', 
     icon: 'H1', 
-    description: 'Big section heading' 
+    description: 'Stor overskrift' 
   },
   { 
     id: 'h2', 
-    label: 'Heading 2', 
+    label: 'Overskrift 2', 
     type: 'heading2', 
     icon: 'H2', 
-    description: 'Medium section heading' 
+    description: 'Mellemstor overskrift' 
   },
 ];
 
@@ -221,7 +221,7 @@ export const BlockComponent: React.FC<BlockProps> = ({
   return (
     <div 
       className={`group relative min-h-[24px] flex items-start rounded transition-all duration-150 ease-in-out
-        ${isSelected ? 'bg-primary/10 ring-1 ring-blue-200 shadow-sm' : 'hover:bg-accent'}`}
+        ${isSelected ? 'bg-primary/10 ring-1 ring-primary/30' : 'hover:bg-accent'}`}
       onMouseDown={onMouseDown}
       onMouseEnter={onMouseEnter}
       onMouseUp={onMouseUp}
@@ -244,32 +244,32 @@ export const BlockComponent: React.FC<BlockProps> = ({
           onContextMenu={onContextMenu}
           rows={1}
           className={`
-            w-full resize-none overflow-hidden bg-transparent border-none p-0 focus:outline-none focus:ring-0
+            w-full resize-none overflow-hidden bg-transparent border-none p-0 focus:outline-none focus:ring-0 text-[1.0625rem] leading-[1.65]
             transition-all duration-150 ease-in-out
             ${block.color === 'gray' ? 'text-muted-foreground' : ''}
-            ${block.type === 'heading1' ? 'text-xl font-bold' : ''}
-            ${block.type === 'heading2' ? 'text-lg font-semibold' : ''}
+            ${block.type === 'heading1' ? 'font-serif text-xl font-semibold' : ''}
+            ${block.type === 'heading2' ? 'font-serif text-lg font-semibold' : ''}
           `}
-          placeholder="Type '/' for commands..."
+          placeholder="Skriv '/' for kommandoer …" aria-label="Indhold"
         />
 
         {showCommands && (
           <div 
             ref={commandsRef}
-            className="absolute left-0 top-full mt-1 w-64 bg-white rounded-lg shadow-lg border border-gray-200 py-2 z-50
+            className="absolute left-0 top-full mt-1 w-64 bg-card rounded-lg shadow-md border border-border py-2 z-50
                        animate-in fade-in slide-in-from-top-2 duration-150"
           >
             {filteredCommands.map((cmd, index) => (
               <button
                 key={cmd.id}
                 className={`
-                  w-full text-left px-3 py-2 flex items-center space-x-3 hover:bg-gray-50
-                  ${index === selectedCommandIndex ? 'bg-background' : ''}
+                  w-full text-left px-3 py-2 flex items-center space-x-3 hover:bg-accent
+                  ${index === selectedCommandIndex ? 'bg-accent' : ''}
                 `}
                 onClick={() => handleCommandSelect(cmd)}
                 onMouseEnter={() => setSelectedCommandIndex(index)}
               >
-                <span className="flex-shrink-0 w-6 h-6 flex items-center justify-center bg-secondary rounded text-muted-foreground">
+                <span className="flex-shrink-0 w-6 h-6 flex items-center justify-center bg-secondary rounded text-muted-foreground" aria-hidden="true">
                   {cmd.icon}
                 </span>
                 <div className="flex-1">
