@@ -598,6 +598,27 @@ impl RecordingManager {
         self.state.set_microphone_device(device);
     }
 
+    /// Take the system audio stream OUT for hot-swap so the caller can tear it
+    /// down without holding RECORDING_MANAGER. The microphone keeps running.
+    pub fn take_system_stream_for_swap(&mut self) -> Option<super::stream::AudioStream> {
+        self.stream_manager.take_system_stream()
+    }
+
+    /// Set new system audio stream and update device state after hot-swap.
+    pub fn set_system_stream_after_swap(
+        &mut self,
+        stream: super::stream::AudioStream,
+        device: Arc<AudioDevice>,
+    ) {
+        self.stream_manager.set_system_stream(stream);
+        // Keep the device monitor tracking the live devices (see
+        // set_mic_stream_after_swap).
+        if let (Some(monitor), Some(mic)) = (self.device_monitor.as_ref(), self.state.get_microphone_device()) {
+            monitor.notify_mic_swapped(mic.name.clone(), Some(device.name.clone()));
+        }
+        self.state.set_system_device(device);
+    }
+
     /// Get reference to recording state for external access
     pub fn get_state(&self) -> &Arc<RecordingState> {
         &self.state

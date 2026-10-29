@@ -59,7 +59,7 @@ fn recording_live() -> bool {
 /// that lock (e.g. inside a `RECORDING_MANAGER.lock()` scope) — the std Mutex
 /// is non-reentrant and it would self-deadlock. All current callers invoke it
 /// outside any held lock; keep it that way.
-fn session_live(s: &Arc<super::RecordingState>) -> bool {
+pub(super) fn session_live(s: &Arc<super::RecordingState>) -> bool {
     recording_live()
         && RECORDING_MANAGER
             .lock()
@@ -100,7 +100,7 @@ fn finalize_recording_start() {
 }
 
 // Global recording manager and transcription task to keep them alive during recording
-static RECORDING_MANAGER: Mutex<Option<RecordingManager>> = Mutex::new(None);
+pub(super) static RECORDING_MANAGER: Mutex<Option<RecordingManager>> = Mutex::new(None);
 static TRANSCRIPTION_TASK: Mutex<Option<JoinHandle<()>>> = Mutex::new(None);
 
 // Listener ID for proper cleanup - prevents microphone from staying active after recording stops
@@ -418,6 +418,10 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
     }
 
     // Spawn background device event processor (mic-disconnect fallback).
+    // Windows follows the default devices instead (mic and loopback).
+    #[cfg(target_os = "windows")]
+    super::windows_device_follower::spawn(app.clone(), session, device_event_receiver, preferred_mic_name, preferred_system_name);
+    #[cfg(not(target_os = "windows"))]
     if let Some(receiver) = device_event_receiver {
         spawn_device_event_processor(app.clone(), receiver, session);
     }
@@ -605,6 +609,10 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
     }
 
     // Spawn background device event processor (mic-disconnect fallback).
+    // Windows follows the default devices instead (mic and loopback).
+    #[cfg(target_os = "windows")]
+    super::windows_device_follower::spawn(app.clone(), session, device_event_receiver, mic_device_name.clone(), system_device_name.clone());
+    #[cfg(not(target_os = "windows"))]
     if let Some(receiver) = device_event_receiver {
         spawn_device_event_processor(app.clone(), receiver, session);
     }
@@ -1288,6 +1296,7 @@ const MAX_MIC_FALLBACK_ATTEMPTS: u32 = 3;
 /// Perform mic hot-swap using phased locking — never holds RECORDING_MANAGER during I/O
 /// except the brief mic-stream stop in Phase 1.
 /// If CPAL hangs during stream creation, only this task blocks; stop flow stays unblocked.
+#[cfg_attr(target_os = "windows", allow(dead_code))]
 async fn perform_mic_hot_swap_task<R: Runtime>(
     new_device_name: String,
     session: &Arc<super::RecordingState>,
@@ -1334,6 +1343,7 @@ async fn perform_mic_hot_swap_task<R: Runtime>(
 }
 
 /// Phased mic swap — lock is never held during async I/O.
+#[cfg_attr(target_os = "windows", allow(dead_code))]
 async fn do_mic_swap(device_name: &str, session: &Arc<super::RecordingState>) -> Result<(), String> {
     // Phase 1: Lock briefly — verify identity, take old stream OUT (no teardown under lock)
     let old_mic = {
@@ -1421,6 +1431,7 @@ async fn do_mic_swap(device_name: &str, session: &Arc<super::RecordingState>) ->
 ///
 /// The task stops automatically when the receiver is dropped (recording
 /// ends / monitor stops).
+#[cfg_attr(target_os = "windows", allow(dead_code))]
 fn spawn_device_event_processor<R: Runtime>(
     app: AppHandle<R>,
     mut receiver: tokio::sync::mpsc::UnboundedReceiver<DeviceEvent>,
@@ -1480,6 +1491,7 @@ fn spawn_device_event_processor<R: Runtime>(
 /// This function takes the MIC_SWAP_IN_PROGRESS guard itself; the caller
 /// must NOT already hold it. If a swap is somehow already running this
 /// returns immediately.
+#[cfg_attr(target_os = "windows", allow(dead_code))]
 async fn trigger_mic_fallback_to_default<R: Runtime>(
     app: AppHandle<R>,
     disconnected_name: String,
