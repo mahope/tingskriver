@@ -30,12 +30,18 @@ export interface SummaryLanguageDetectionResult {
   reason: SummaryLanguageDetectionReason;
 }
 
+/** Summaries are Danish unless the user pins another language. */
+export const DEFAULT_SUMMARY_LANGUAGE = 'da';
+
 export function readPinnedSummaryLanguageDefault(): string | null {
-  if (typeof window === 'undefined') return null;
+  if (typeof window === 'undefined') return DEFAULT_SUMMARY_LANGUAGE;
   try {
-    return normaliseLanguageCode(window.localStorage.getItem(SUMMARY_LANGUAGE_DEFAULT_KEY));
+    return (
+      normaliseLanguageCode(window.localStorage.getItem(SUMMARY_LANGUAGE_DEFAULT_KEY)) ??
+      DEFAULT_SUMMARY_LANGUAGE
+    );
   } catch {
-    return null;
+    return DEFAULT_SUMMARY_LANGUAGE;
   }
 }
 

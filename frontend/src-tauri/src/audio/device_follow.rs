@@ -373,6 +373,41 @@ pub fn endpoint_is_dead(silent_for: Duration) -> bool {
     silent_for >= DEAD_ENDPOINT_AFTER
 }
 
+/// Windows-1252 characters for the bytes 0x80..=0x9F (0 = undefined).
+const CP1252_HIGH: [u16; 32] = [
+    0x20AC, 0, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, 0x02C6, 0x2030, 0x0160, 0x2039,
+    0x0152, 0, 0x017D, 0, 0, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, 0x02DC,
+    0x2122, 0x0161, 0x203A, 0x0153, 0, 0x017E, 0x0178,
+];
+
+/// Undo UTF-8 text that was decoded as Windows-1252/Latin-1 and encoded as
+/// UTF-8 again ("pÃ¥" -> "på"). Text that is not such a double encoding is
+/// returned unchanged.
+pub fn repair_double_utf8(text: &str) -> String {
+    if text.is_ascii() {
+        return text.to_string();
+    }
+    let mut bytes = Vec::with_capacity(text.len());
+    for c in text.chars() {
+        let code = c as u32;
+        let byte = if code < 0x80 || (0xA0..=0xFF).contains(&code) {
+            code as u8
+        } else if let Some(i) = CP1252_HIGH.iter().position(|&h| h as u32 == code && h != 0) {
+            0x80 + i as u8
+        } else if (0x80..=0x9F).contains(&code) {
+            code as u8
+        } else {
+            return text.to_string();
+        };
+        bytes.push(byte);
+    }
+    match String::from_utf8(bytes) {
+        // Only a real repair if it actually shortened the text.
+        Ok(fixed) if fixed.chars().count() < text.chars().count() => fixed,
+        _ => text.to_string(),
+    }
+}
+
 /// Number of silence samples to emit so that a stream that has been missing
 /// for `elapsed` is filled up to real time, given `emitted` samples so far.
 /// Driven by elapsed wall-clock time, so timer jitter does not accumulate.
@@ -903,5 +938,23 @@ mod tests {
         assert!(!endpoint_is_dead(Duration::from_millis(900)));
         assert!(endpoint_is_dead(Duration::from_secs(1)));
         assert!(endpoint_is_dead(Duration::from_secs(20)));
+    }
+
+    #[test]
+    fn repairs_double_encoded_danish_device_names() {
+        assert_eq!(
+            repair_double_utf8("Mikrofon pÃ¥ headset (Jabra Link 390)"),
+            "Mikrofon på headset (Jabra Link 390)"
+        );
+        assert_eq!(repair_double_utf8("HÃ¸jttalere (Senary Audio)"), "Højttalere (Senary Audio)");
+        // Uppercase Ø is byte 0x98 in the second position: a cp1252 character.
+        assert_eq!(repair_double_utf8("Ã˜ret"), "Øret");
+    }
+
+    #[test]
+    fn leaves_correct_names_alone() {
+        for name in ["Mikrofon på headset", "Højttalere", "Speakers (Realtek(R) Audio)", "マイク"] {
+            assert_eq!(repair_double_utf8(name), name);
+        }
     }
 }

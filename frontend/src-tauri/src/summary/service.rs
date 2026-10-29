@@ -134,6 +134,9 @@ fn template_cache_fingerprint(template: &Template) -> String {
     stable_text_fingerprint(&rendered_template)
 }
 
+/// Summary language when the meeting has no explicit choice.
+const DEFAULT_SUMMARY_LANGUAGE: &str = "da";
+
 fn normalise_summary_language_for_cache(summary_language: Option<&str>) -> Option<String> {
     language_name_from_code(summary_language?.trim()).map(str::to_string)
 }
@@ -349,6 +352,8 @@ impl SummaryService {
             "Starting background processing for meeting_id: {}",
             meeting_id
         );
+        // Summaries are Danish unless the meeting says otherwise.
+        let summary_language = summary_language.or_else(|| Some(DEFAULT_SUMMARY_LANGUAGE.to_string()));
 
         // Parse provider
         let provider = match LLMProvider::from_str(&model_provider) {

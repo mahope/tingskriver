@@ -76,8 +76,8 @@ impl RecordingSaver {
     /// Set device information in metadata
     pub fn set_device_info(&mut self, mic_name: Option<String>, sys_name: Option<String>) {
         if let Some(ref mut metadata) = self.metadata {
-            metadata.devices.microphone = mic_name;
-            metadata.devices.system_audio = sys_name;
+            metadata.devices.microphone = mic_name.map(|n| super::device_follow::repair_double_utf8(&n));
+            metadata.devices.system_audio = sys_name.map(|n| super::device_follow::repair_double_utf8(&n));
 
             // Write updated metadata to disk if folder exists
             if let Some(folder) = &self.meeting_folder {
@@ -374,12 +374,12 @@ impl RecordingSaver {
         }
 
         // Finalize incremental saver (merge checkpoints into final audio.mp4)
-        let final_audio_path = if let Some(saver_arc) = &self.incremental_saver {
+        let (final_audio_path, audio_duration) = if let Some(saver_arc) = &self.incremental_saver {
             let mut saver = saver_arc.lock().await;
             match saver.finalize().await {
                 Ok(path) => {
                     info!("✅ Successfully finalized audio: {}", path.display());
-                    path
+                    (path, saver.recorded_duration_seconds())
                 }
                 Err(e) => {
                     error!("❌ Failed to finalize incremental saver: {}", e);
@@ -412,15 +412,25 @@ impl RecordingSaver {
             metadata.status = "completed".to_string();
             metadata.completed_at = Some(chrono::Utc::now().to_rfc3339());
 
-            // Use actual recording duration from RecordingState (more accurate than transcript segments)
-            // Falls back to last transcript segment if duration not provided
-            metadata.duration_seconds = recording_duration.or_else(|| {
-                if let Ok(segments) = self.transcript_segments.lock() {
-                    segments.last().map(|seg| seg.audio_end_time)
-                } else {
-                    None
+            // The duration is the length of the saved audio, so metadata and
+            // audio.mp4 agree (the wall-clock duration drifts from it when a
+            // device switch feeds more or less audio than real time).
+            // Falls back to the wall-clock duration, then the last transcript segment.
+            if let Some(clock) = recording_duration {
+                if (clock - audio_duration).abs() > 1.0 {
+                    warn!("Recording clock says {:.1}s but the saved audio is {:.1}s; using the audio length", clock, audio_duration);
                 }
-            });
+            }
+            metadata.duration_seconds = Some(audio_duration)
+                .filter(|d| *d > 0.0)
+                .or(recording_duration)
+                .or_else(|| {
+                    if let Ok(segments) = self.transcript_segments.lock() {
+                        segments.last().map(|seg| seg.audio_end_time)
+                    } else {
+                        None
+                    }
+                });
 
             if let Err(e) = self.write_metadata(folder, &metadata) {
                 error!("❌ Failed to update metadata to completed: {}", e);

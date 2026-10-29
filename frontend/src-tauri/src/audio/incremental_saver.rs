@@ -23,6 +23,8 @@ pub struct IncrementalAudioSaver {
     checkpoints_dir: PathBuf,
     meeting_folder: PathBuf,
     sample_rate: u32,
+    /// Samples written to checkpoints so far; the final file is exactly this long.
+    saved_samples: u64,
 }
 
 impl IncrementalAudioSaver {
@@ -46,6 +48,7 @@ impl IncrementalAudioSaver {
             checkpoints_dir,
             meeting_folder,
             sample_rate,
+            saved_samples: 0,
         })
     }
 
@@ -102,6 +105,7 @@ impl IncrementalAudioSaver {
 
         let duration_seconds = audio_data.len() as f32 / self.sample_rate as f32;
         self.checkpoint_count += 1;
+        self.saved_samples += audio_data.len() as u64;
 
         info!("Saved checkpoint {}: {:.2}s of audio ({} samples)",
               self.checkpoint_count,
@@ -109,6 +113,11 @@ impl IncrementalAudioSaver {
               audio_data.len());
 
         Ok(())
+    }
+
+    /// Length of the audio written so far (after `finalize`: of audio.mp4).
+    pub fn recorded_duration_seconds(&self) -> f64 {
+        self.saved_samples as f64 / self.sample_rate as f64
     }
 
     /// Finalize the recording: save final checkpoint, merge all checkpoints, cleanup
