@@ -30,20 +30,28 @@ export interface SummaryLanguageDetectionResult {
   reason: SummaryLanguageDetectionReason;
 }
 
+/** Summaries are Danish unless the user pins another language or unpins. */
+export const DEFAULT_SUMMARY_LANGUAGE = 'da';
+
+/**
+ * Pinned default for new meetings. A key that was never written means Danish;
+ * an empty string means the user explicitly unpinned (detect automatically).
+ */
 export function readPinnedSummaryLanguageDefault(): string | null {
-  if (typeof window === 'undefined') return null;
+  if (typeof window === 'undefined') return DEFAULT_SUMMARY_LANGUAGE;
   try {
-    return normaliseLanguageCode(window.localStorage.getItem(SUMMARY_LANGUAGE_DEFAULT_KEY));
+    const raw = window.localStorage.getItem(SUMMARY_LANGUAGE_DEFAULT_KEY);
+    if (raw === null) return DEFAULT_SUMMARY_LANGUAGE;
+    return normaliseLanguageCode(raw);
   } catch {
-    return null;
+    return DEFAULT_SUMMARY_LANGUAGE;
   }
 }
 
 export function writePinnedSummaryLanguageDefault(value: string | null): void {
   if (typeof window === 'undefined') return;
   try {
-    if (value) window.localStorage.setItem(SUMMARY_LANGUAGE_DEFAULT_KEY, value);
-    else window.localStorage.removeItem(SUMMARY_LANGUAGE_DEFAULT_KEY);
+    window.localStorage.setItem(SUMMARY_LANGUAGE_DEFAULT_KEY, value ?? '');
   } catch {
     // Preference writes are non-critical; meeting-specific persistence happens separately.
   }

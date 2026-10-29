@@ -1,11 +1,17 @@
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use anyhow::Result;
 
 use super::devices::AudioDevice;
 use super::buffer_pool::AudioBufferPool;
+
+/// Reference point for the millisecond timestamps kept in atomics.
+fn clock_ms() -> u64 {
+    static EPOCH: OnceLock<Instant> = OnceLock::new();
+    EPOCH.get_or_init(Instant::now).elapsed().as_millis() as u64
+}
 
 /// Device type for audio chunks
 #[derive(Debug, Clone, PartialEq)]
@@ -121,6 +127,11 @@ pub struct RecordingState {
     // Pause time tracking
     pause_start: Mutex<Option<Instant>>,
     total_pause_duration: Mutex<std::time::Duration>,
+
+    // Last time the microphone delivered a non-silent sample, as
+    // `clock_ms() + 1` (0: no data seen yet). Used to detect an endpoint that
+    // is still "present" but dead (e.g. a USB dongle whose headset is off).
+    mic_last_signal_ms: AtomicU64,
 }
 
 impl RecordingState {
@@ -140,7 +151,34 @@ impl RecordingState {
             recording_start: Mutex::new(None),
             pause_start: Mutex::new(None),
             total_pause_duration: Mutex::new(std::time::Duration::ZERO),
+            mic_last_signal_ms: AtomicU64::new(0),
         })
+    }
+
+    /// Called from the capture callback with the peak level of each buffer.
+    pub fn note_input_level(&self, device_type: &DeviceType, peak: f32) {
+        if *device_type != DeviceType::Microphone {
+            return;
+        }
+        if peak > super::device_follow::SILENCE_PEAK
+            || self.mic_last_signal_ms.load(Ordering::Relaxed) == 0
+        {
+            self.mic_last_signal_ms.store(clock_ms() + 1, Ordering::Relaxed);
+        }
+    }
+
+    /// Start counting microphone silence from now (a new stream was opened).
+    pub fn reset_mic_signal(&self) {
+        self.mic_last_signal_ms.store(clock_ms() + 1, Ordering::Relaxed);
+    }
+
+    /// How long the microphone has delivered nothing but silence (or nothing
+    /// at all). `None` until the first buffer arrived.
+    pub fn mic_silent_for(&self) -> Option<Duration> {
+        match self.mic_last_signal_ms.load(Ordering::Relaxed) {
+            0 => None,
+            last => Some(Duration::from_millis(clock_ms().saturating_sub(last - 1))),
+        }
     }
 
     // Recording control
@@ -418,6 +456,7 @@ impl Default for RecordingState {
             recording_start: Mutex::new(None),
             pause_start: Mutex::new(None),
             total_pause_duration: Mutex::new(std::time::Duration::ZERO),
+            mic_last_signal_ms: AtomicU64::new(0),
         }
     }
 }
