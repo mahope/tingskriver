@@ -267,12 +267,42 @@ impl DeviceFollower {
         }
     }
 
+    /// Consecutive failed swap attempts for `kind` since the last success.
+    pub fn failures(&self, kind: StreamKind) -> u32 {
+        self.tracker(kind).map_or(0, |t| t.failures)
+    }
+
     fn tracker(&self, kind: StreamKind) -> Option<&StreamTracker> {
         self.trackers.iter().find(|t| t.kind == kind)
     }
 
     fn tracker_mut(&mut self, kind: StreamKind) -> Option<&mut StreamTracker> {
         self.trackers.iter_mut().find(|t| t.kind == kind)
+    }
+}
+
+/// Failed attempts in a row after which the user is told the stream could
+/// not be recovered (retries continue in the background).
+pub const FAILURES_BEFORE_EXHAUSTED: u32 = 3;
+
+/// What to tell the user after a failed swap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FailureNotice {
+    /// Nothing new to say; retrying quietly.
+    None,
+    /// First failure in a row: the switch did not work.
+    SwapFailed,
+    /// Still failing after `FAILURES_BEFORE_EXHAUSTED` attempts.
+    RecoveryExhausted,
+}
+
+/// Notify once when switching starts failing and once when it keeps failing,
+/// not on every retry.
+pub fn failure_notice(failures: u32) -> FailureNotice {
+    match failures {
+        1 => FailureNotice::SwapFailed,
+        n if n == FAILURES_BEFORE_EXHAUSTED => FailureNotice::RecoveryExhausted,
+        _ => FailureNotice::None,
     }
 }
 
@@ -689,5 +719,43 @@ mod tests {
         );
         let err = describe_switch(&action, Duration::from_millis(80), Err("boom"));
         assert!(err.contains("FAILED after 80 ms: boom"));
+    }
+
+    #[test]
+    fn failed_swaps_notify_once_then_once_more_when_exhausted() {
+        let mut follower = DeviceFollower::new(
+            true,
+            None,
+            Some(HEADSET_MIC.into()),
+            true,
+            None,
+            Some(HEADSET_OUT.into()),
+        );
+        let notices: Vec<FailureNotice> = (0..6)
+            .map(|_| {
+                follower.swap_failed(StreamKind::Microphone);
+                failure_notice(follower.failures(StreamKind::Microphone))
+            })
+            .collect();
+        assert_eq!(
+            notices,
+            vec![
+                FailureNotice::SwapFailed,
+                FailureNotice::None,
+                FailureNotice::RecoveryExhausted,
+                FailureNotice::None,
+                FailureNotice::None,
+                FailureNotice::None,
+            ]
+        );
+        // The other stream is unaffected, and a success starts over.
+        assert_eq!(follower.failures(StreamKind::System), 0);
+        follower.swap_succeeded(StreamKind::Microphone, LAPTOP_MIC);
+        assert_eq!(follower.failures(StreamKind::Microphone), 0);
+        follower.swap_failed(StreamKind::Microphone);
+        assert_eq!(
+            failure_notice(follower.failures(StreamKind::Microphone)),
+            FailureNotice::SwapFailed
+        );
     }
 }

@@ -24,8 +24,8 @@ use tauri::{AppHandle, Emitter, Runtime};
 use tokio::sync::mpsc;
 
 use super::device_follow::{
-    describe_switch, silence_samples_due, DeviceFollower, DeviceSnapshot, DeviceSource, StreamKind,
-    SwitchAction, SwitchReason,
+    describe_switch, failure_notice, silence_samples_due, DeviceFollower, DeviceSnapshot,
+    DeviceSource, FailureNotice, StreamKind, SwitchAction, SwitchReason,
 };
 use super::device_monitor::DeviceEvent;
 use super::recording_commands::{session_live, RECORDING_MANAGER};
@@ -99,7 +99,9 @@ impl SilenceKeeper {
             let mut ticker = tokio::time::interval(KEEPER_TICK);
             loop {
                 ticker.tick().await;
-                if stop_flag.load(Ordering::SeqCst) {
+                // Stop as soon as Stop takes the manager, so no silence is
+                // fed into the pipeline after its final flush.
+                if stop_flag.load(Ordering::SeqCst) || !session_live(&session) {
                     break;
                 }
                 let due = silence_samples_due(started.elapsed(), emitted, PIPELINE_SAMPLE_RATE);
@@ -280,9 +282,10 @@ impl<R: Runtime> Follower<R> {
             action.reason
         );
         let started = Instant::now();
-        // Fill the gap with silence from the moment the old stream stops
-        // delivering: right away if its device is already gone, otherwise
-        // once the still-working old stream has been stopped.
+        // Fill the gap with silence: right away if the old device is already
+        // gone, otherwise once the still-working old stream has been stopped.
+        // Audio between the device vanishing and this evaluation (debounce
+        // plus enumeration, a few hundred ms) is not filled.
         let old_stream_dead = matches!(
             action.reason,
             SwitchReason::ActiveDisappeared | SwitchReason::StreamMissing
@@ -332,6 +335,29 @@ impl<R: Runtime> Follower<R> {
                     describe_switch(&action, started.elapsed(), Err(e.as_str())),
                     delay
                 );
+                // Tell the user (the UI only listens for the microphone; a
+                // system-audio failure is in the log).
+                if kind == StreamKind::Microphone {
+                    let device_name = action.from.as_deref().unwrap_or(&action.to);
+                    match failure_notice(self.follower.failures(kind)) {
+                        FailureNotice::SwapFailed => {
+                            let _ = self.app.emit(
+                                "mic-swap-failed",
+                                serde_json::json!({
+                                    "error": format!("could not open '{}': {}", action.to, e),
+                                    "device_name": device_name,
+                                }),
+                            );
+                        }
+                        FailureNotice::RecoveryExhausted => {
+                            let _ = self.app.emit(
+                                "mic-recovery-exhausted",
+                                serde_json::json!({ "device_name": device_name }),
+                            );
+                        }
+                        FailureNotice::None => {}
+                    }
+                }
                 Some(delay)
             }
         }
