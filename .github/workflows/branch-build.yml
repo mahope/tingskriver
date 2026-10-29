@@ -21,3 +21,20 @@ jobs:
     with:
       release: false
     secrets: inherit
+
+  # The full crate only builds on Windows; the device switching logic is
+  # plain std and is tested on its own here.
+  device-follow-tests:
+    name: Device switching unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run tests
+        run: |
+          rustc --edition 2021 --test frontend/src-tauri/src/audio/device_follow.rs -o "$RUNNER_TEMP/device_follow_tests"
+          "$RUNNER_TEMP/device_follow_tests"
