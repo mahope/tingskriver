@@ -221,7 +221,7 @@ export const BlockComponent: React.FC<BlockProps> = ({
   return (
     <div 
       className={`group relative min-h-[24px] flex items-start rounded transition-all duration-150 ease-in-out
-        ${isSelected ? 'bg-blue-50 ring-1 ring-blue-200 shadow-sm' : 'hover:bg-gray-50'}`}
+        ${isSelected ? 'bg-primary/10 ring-1 ring-blue-200 shadow-sm' : 'hover:bg-accent'}`}
       onMouseDown={onMouseDown}
       onMouseEnter={onMouseEnter}
       onMouseUp={onMouseUp}
@@ -246,7 +246,7 @@ export const BlockComponent: React.FC<BlockProps> = ({
           className={`
             w-full resize-none overflow-hidden bg-transparent border-none p-0 focus:outline-none focus:ring-0
             transition-all duration-150 ease-in-out
-            ${block.color === 'gray' ? 'text-gray-500' : ''}
+            ${block.color === 'gray' ? 'text-muted-foreground' : ''}
             ${block.type === 'heading1' ? 'text-xl font-bold' : ''}
             ${block.type === 'heading2' ? 'text-lg font-semibold' : ''}
           `}
@@ -264,17 +264,17 @@ export const BlockComponent: React.FC<BlockProps> = ({
                 key={cmd.id}
                 className={`
                   w-full text-left px-3 py-2 flex items-center space-x-3 hover:bg-gray-50
-                  ${index === selectedCommandIndex ? 'bg-gray-50' : ''}
+                  ${index === selectedCommandIndex ? 'bg-background' : ''}
                 `}
                 onClick={() => handleCommandSelect(cmd)}
                 onMouseEnter={() => setSelectedCommandIndex(index)}
               >
-                <span className="flex-shrink-0 w-6 h-6 flex items-center justify-center bg-gray-100 rounded text-gray-600">
+                <span className="flex-shrink-0 w-6 h-6 flex items-center justify-center bg-secondary rounded text-muted-foreground">
                   {cmd.icon}
                 </span>
                 <div className="flex-1">
                   <div className="font-medium">{cmd.label}</div>
-                  <div className="text-sm text-gray-500">{cmd.description}</div>
+                  <div className="text-sm text-muted-foreground">{cmd.description}</div>
                 </div>
               </button>
             ))}

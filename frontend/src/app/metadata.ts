@@ -2,5 +2,5 @@ import { Metadata } from 'next'
 
 export const metadata: Metadata = {
   title: 'Tingskriver',
-  description: 'AI-powered meeting assistant',
+  description: 'Dansk mødeassistent der skriver referat lokalt på din computer',
 }
