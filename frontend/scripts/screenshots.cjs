@@ -86,6 +86,18 @@ const TRANSCRIPTS = TRANSCRIPT_LINES.map((text, i) => ({
   confidence: i === 4 ? 0.3 : 0.9,
 }));
 const LIVE_LINES = TRANSCRIPTS.slice(0, 5);
+const DICTATIONS = [
+  { id: 6, createdAt: Date.parse(at(0, 14, 2)), text: 'Hej Anna, tak for i dag. Jeg sender tilbuddet i morgen formiddag.', app: 'Spark.exe', style: 'normal', engine: 'syv', fallbackReason: null, latencyMs: 940, audioMs: 5200, insertMethod: 'paste', hasAudio: true },
+  { id: 5, createdAt: Date.parse(at(0, 13, 48)), text: 'git commit -m "ret hotswap"', app: 'WindowsTerminal.exe', style: 'raw', engine: 'syv', fallbackReason: null, latencyMs: 710, audioMs: 2600, insertMethod: 'paste', hasAudio: true },
+  { id: 4, createdAt: Date.parse(at(0, 11, 15)), text: 'Kan vi rykke mødet til torsdag kl. 10? Jeg har en kunde om onsdagen.', app: 'ms-teams.exe', style: 'normal', engine: 'local', fallbackReason: 'Syv.ai svarede ikke inden for 2000 ms', latencyMs: 2380, audioMs: 4100, insertMethod: 'paste', hasAudio: true },
+  { id: 3, createdAt: Date.parse(at(1, 16, 30)), text: 'Husk at opdatere prislisten.\nSend den til Mahoje bagefter.', app: 'chrome.exe', style: 'normal', engine: 'syv', fallbackReason: null, latencyMs: 1120, audioMs: 6800, insertMethod: 'paste', hasAudio: false },
+];
+const DICTATION_SETTINGS = {
+  enabled: true, shortcut: 'Ctrl+Win', engine: 'auto', syvEndpoint: 'https://platform.syv.ai/v1', syvModel: 'syv-transcribe',
+  fallbackAfterMs: 2000, polishEnabled: false, polishProvider: 'builtin-ai', polishModel: '', polishEndpoint: '', polishBudgetMs: 2000,
+  historyEnabled: true, keepAudio: true, restoreClipboardMs: 300,
+  appStyles: ['Code.exe', 'WindowsTerminal.exe', 'pwsh.exe', 'cmd.exe', 'idea64.exe'].map((process) => ({ process, style: 'raw' })),
+};
 
 function mockScript(scene) {
   return `(() => {
@@ -93,6 +105,8 @@ function mockScript(scene) {
   const MEETINGS = ${JSON.stringify(MEETINGS)};
   const TRANSCRIPTS = ${JSON.stringify(TRANSCRIPTS)};
   const LIVE = ${JSON.stringify(LIVE_LINES)};
+  const DICTATIONS = ${JSON.stringify(DICTATIONS)};
+  const DICTATION_SETTINGS = ${JSON.stringify(DICTATION_SETTINGS)};
   const SUMMARY = ${JSON.stringify({ markdown: SUMMARY_MD })};
   const callbacks = {}; let nextId = 1; const listeners = {};
   window.__calls = [];
@@ -126,6 +140,11 @@ function mockScript(scene) {
     'plugin:store|get_store': () => 1,
     check_audio_permissions: () => ({ hasMicrophone: true, hasSystemAudio: true }),
     get_transcript_history: () => [],
+    dictation_get_settings: () => DICTATION_SETTINGS,
+    dictation_get_status: () => ({ platformSupported: true, shortcutActive: true, hasSyvKey: true, localModelAvailable: true, lastError: null }),
+    dictation_list_history: () => scene.emptyList ? [] : DICTATIONS,
+    dictation_list_dictionary: () => [{ id: 1, word: 'Mahoje', aliases: 'maho je, mahoye' }, { id: 2, word: 'Syv.ai', aliases: 'syv ai' }, { id: 3, word: 'Tingskriver', aliases: '' }],
+    dictation_list_snippets: () => [{ id: 1, phrase: 'mit cvr', text: 'CVR 39413892' }, { id: 2, phrase: 'booking-link', text: 'Book et møde her: https://mahoje.dk/book' }],
   };
   window.__TAURI_INTERNALS__ = {
     metadata: { currentWindow: { label: 'main' }, currentWebview: { label: 'main', windowLabel: 'main' } },
@@ -164,6 +183,11 @@ const SCENES = [
   { name: 'onboarding', path: '/', onboarding: true, onboardingStep: 1 },
   { name: 'onboarding-model', path: '/', onboarding: true, onboardingStep: 3 },
   { name: 'tom-tilstand', path: '/', emptyList: true },
+  { name: 'diktering', path: '/diktering' },
+  { name: 'diktering-tom', path: '/diktering', emptyList: true },
+  { name: 'indstillinger-diktering', path: '/settings?tab=diktering', viewport: { width: 1280, height: 2850 } },
+  { name: 'diktering-pille', path: '/dictation-overlay.html?state=recording&demo=1', viewport: { width: 220, height: 52 }, overlay: true },
+  { name: 'diktering-pille-skriver', path: '/dictation-overlay.html?state=processing', viewport: { width: 220, height: 52 }, overlay: true },
 ];
 
 (async () => {
@@ -174,7 +198,9 @@ const SCENES = [
   for (const theme of ['light', 'dark']) {
     for (const scene of SCENES) {
       if (only && !only.includes(scene.name)) continue;
-      const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, colorScheme: theme, deviceScaleFactor: 1, locale: 'da-DK' });
+      // The overlay pill is always dark; one screenshot is enough.
+      if (scene.overlay && theme === 'dark') continue;
+      const ctx = await browser.newContext({ viewport: scene.viewport || { width: 1280, height: 800 }, colorScheme: theme, deviceScaleFactor: scene.overlay ? 2 : 1, locale: 'da-DK' });
       await ctx.addInitScript(mockScript({ ...scene, theme }));
       const page = await ctx.newPage();
       const errors = [];
@@ -187,8 +213,8 @@ const SCENES = [
         await page.waitForTimeout(600);
         await page.getByRole('button', { name: /Transskript/ }).first().scrollIntoViewIfNeeded();
       }
-      const file = path.join(outDir, `${scene.name}-${theme === 'light' ? 'lys' : 'moerk'}.png`);
-      await page.screenshot({ path: file });
+      const file = path.join(outDir, scene.overlay ? `${scene.name}.png` : `${scene.name}-${theme === 'light' ? 'lys' : 'moerk'}.png`);
+      await page.screenshot({ path: file, omitBackground: !!scene.overlay });
       console.log('✔', path.basename(file), errors.length ? `(${errors.length} sidefejl: ${errors[0].slice(0, 120)})` : '');
       await ctx.close();
     }

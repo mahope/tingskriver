@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="da">
+<head>
+<meta charset="utf-8">
+<title>Tingskriver diktering</title>
+<style>
+  /* Standalone page (no app layout), so the dark theme tokens from
+     src/app/globals.css (.dark) are mirrored here under the same names. */
+  :root {
+    --card: 222 15% 12%;
+    --card-foreground: 40 12% 91%;
+    --muted-foreground: 222 8% 67%;
+    --border: 222 12% 22%;
+    --recording: 4 75% 62%;
+    --primary: 214 75% 72%;
+    --destructive: 4 75% 62%;
+  }
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: transparent;
+    overflow: hidden;
+    user-select: none;
+    cursor: default;
+  }
+  body {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font: 500 14px/1 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  }
+  .pill {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: 40px;
+    padding: 0 16px 0 14px;
+    border-radius: 999px;
+    background: hsl(var(--card) / 0.96);
+    border: 1px solid hsl(var(--border));
+    color: hsl(var(--card-foreground));
+    opacity: 0;
+    transform: translateY(6px);
+    transition: opacity 120ms ease-out, transform 120ms ease-out;
+  }
+  .pill.visible { opacity: 1; transform: none; }
+  .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: hsl(var(--recording));
+    flex: none;
+  }
+  .locked .dot { background: hsl(var(--primary)); }
+  .error .dot { background: hsl(var(--destructive)); }
+  .bars { display: flex; align-items: center; gap: 3px; height: 22px; }
+  .bars span {
+    width: 3px;
+    height: 4px;
+    border-radius: 2px;
+    background: hsl(var(--card-foreground));
+    transition: height 60ms linear;
+  }
+  .processing .bars, .error .bars { display: none; }
+  .spinner {
+    display: none;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    border: 2px solid hsl(var(--muted-foreground) / 0.4);
+    border-top-color: hsl(var(--card-foreground));
+    animation: spin 0.8s linear infinite;
+  }
+  .processing .spinner { display: block; }
+  .processing .dot { display: none; }
+  .label { white-space: nowrap; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) {
+    .pill, .bars span { transition: none; }
+    .spinner { animation: none; }
+  }
+</style>
+</head>
+<body>
+  <div id="pill" class="pill" role="status" aria-live="polite">
+    <span class="dot" aria-hidden="true"></span>
+    <span class="spinner" aria-hidden="true"></span>
+    <span class="bars" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span>
+    <span id="label" class="label">Lytter</span>
+  </div>
+<script>
+  (function () {
+    var pill = document.getElementById('pill');
+    var label = document.getElementById('label');
+    var bars = Array.prototype.slice.call(document.querySelectorAll('.bars span'));
+    var history = bars.map(function () { return 0; });
+    var LABELS = { recording: 'Lytter', locked: 'Håndfri', processing: 'Skriver …', error: 'Kunne ikke skrive' };
+
+    window.__tingskriverDictation = function (update) {
+      var state = update && update.state;
+      if (state === 'hidden') {
+        pill.className = 'pill';
+        history = history.map(function () { return 0; });
+        return;
+      }
+      pill.className = 'pill visible ' + state;
+      label.textContent = LABELS[state] || '';
+      if (typeof update.level === 'number') {
+        history.shift();
+        history.push(update.level);
+        bars.forEach(function (bar, i) {
+          // Middle bars a little taller, so it reads as a voice meter.
+          var shape = 1 - Math.abs(i - (bars.length - 1) / 2) / bars.length;
+          bar.style.height = Math.max(4, Math.round(22 * history[i] * (0.6 + shape * 0.6))) + 'px';
+        });
+      }
+    };
+
+    var initial = new URLSearchParams(location.search);
+    if (initial.get('state')) {
+      window.__tingskriverDictation({ state: initial.get('state'), level: Number(initial.get('level') || 0) });
+      if (initial.get('demo')) {
+        history = [0.35, 0.6, 0.8, 0.95, 0.7, 0.5, 0.3];
+        window.__tingskriverDictation({ state: initial.get('state'), level: 0.4 });
+      }
+    }
+  })();
+</script>
+</body>
+</html>

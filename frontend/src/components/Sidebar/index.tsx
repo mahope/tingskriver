@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
-import { ChevronLeft, ChevronRight, Settings, Trash2, Mic, Square, Pencil, NotebookPen, SearchIcon, X, Upload } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Settings, Trash2, Mic, Square, Pencil, NotebookPen, SearchIcon, X, Upload, AudioLines } from 'lucide-react';
 import { formatDayLong, formatTime } from '@/lib/format';
 import { useRouter, usePathname } from 'next/navigation';
 import { useSidebar } from './SidebarProvider';
@@ -581,6 +581,19 @@ const Sidebar: React.FC = () => {
             <TooltipTrigger asChild>
               <button
                 type="button"
+                onClick={() => router.push('/diktering')}
+                aria-label="Diktering"
+                className={`h-11 w-11 inline-flex items-center justify-center rounded-lg ${pathname === '/diktering' ? 'bg-accent' : 'hover:bg-accent'}`}
+              >
+                <AudioLines className="w-5 h-5 text-muted-foreground" aria-hidden="true" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="right"><p>Diktering</p></TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
                 onClick={() => router.push('/settings')}
                 aria-label="Indstillinger"
                 className={`h-11 w-11 inline-flex items-center justify-center rounded-lg ${isSettingsPage ? 'bg-accent' : 'hover:bg-accent'}`}
@@ -689,6 +702,15 @@ const Sidebar: React.FC = () => {
             </div>
 
             <div className="flex-shrink-0 border-t border-border p-2 flex flex-col gap-0.5">
+              <button
+                type="button"
+                onClick={() => router.push('/diktering')}
+                aria-current={pathname === '/diktering' ? 'page' : undefined}
+                className={`flex items-center gap-2 min-h-[44px] px-3 rounded-lg text-sm text-foreground hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring ${pathname === '/diktering' ? 'bg-accent' : ''}`}
+              >
+                <AudioLines className="w-4 h-4" aria-hidden="true" />
+                Diktering
+              </button>
               {betaFeatures.importAndRetranscribe && (
                 <button
                   type="button"

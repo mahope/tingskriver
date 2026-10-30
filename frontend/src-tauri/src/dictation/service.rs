@@ -465,10 +465,19 @@ impl Service {
         let endpoint = Some(settings.polish_endpoint.trim()).filter(|e| !e.is_empty());
         let budget = settings.polish_budget_ms;
         let start = Instant::now();
+        let mut model = settings.polish_model.trim().to_string();
+        if model.is_empty() && provider == LLMProvider::BuiltInAI {
+            // Use the built-in model chosen for summaries.
+            model = self.summary_builtin_model().await.unwrap_or_default();
+        }
+        if model.is_empty() {
+            log::info!("Dictation polishing skipped: no model chosen");
+            return text;
+        }
         let request = generate_summary(
             &self.http,
             &provider,
-            &settings.polish_model,
+            &model,
             "",
             POLISH_PROMPT,
             &text,
@@ -492,6 +501,13 @@ impl Service {
             }
         };
         engine::choose_polished(&text, polished.as_deref(), start.elapsed().as_millis() as u64, budget)
+    }
+
+    async fn summary_builtin_model(&self) -> Option<String> {
+        use crate::database::repositories::setting::SettingsRepository;
+        let state = self.app.try_state::<crate::state::AppState>()?;
+        let config = SettingsRepository::get_model_config(state.db_manager.pool()).await.ok()??;
+        (config.provider == "builtin-ai").then_some(config.model)
     }
 
     async fn process(self: Arc<Self>, samples: Vec<f32>, target_app: Option<String>, released_at: Instant) {
