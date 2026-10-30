@@ -481,6 +481,20 @@ impl RecordingState {
     }
 }
 
+impl super::device_follow::MicSignal for RecordingState {
+    fn since_frame(&self) -> Option<Duration> {
+        self.mic_since_frame()
+    }
+
+    fn since_sound(&self) -> Option<Duration> {
+        self.mic_since_sound()
+    }
+
+    fn reset(&self) {
+        self.reset_mic_signal();
+    }
+}
+
 impl Default for RecordingState {
     fn default() -> Self {
         Self {

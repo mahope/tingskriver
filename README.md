@@ -34,7 +34,7 @@ Under en optagelse følger Tingskriver Windows' standardenheder. Optagelsen skif
 - lydstrømmen melder en fejl (fx `AUDCLNT_E_DEVICE_INVALIDATED`),
 - lydstrømmen leverer slet ingen lyd-frames i 2 sekunder.
 
-Mute skifter aldrig mikrofon. Det gælder både mute-knappen på headsettet, mute i Windows og lav lydstyrke: en muted mikrofon leverer stadig frames, bare med stilhed, og optagelsen bliver på den. Loggen skriver én linje med "silent frames ignored". Når headsettet kommer igen efter en reel fejl, skifter optagelsen tilbage til det.
+Mute skifter aldrig mikrofon. Det gælder både mute-knappen på headsettet, mute i Windows og lav lydstyrke: en muted mikrofon leverer stadig frames, bare med stilhed, og optagelsen bliver på den. Loggen skriver én linje med "silent frames ignored", hver gang en stille periode begynder, og "delivers sound again", når der er lyd igen. Når headsettet kommer igen efter en reel fejl, skifter optagelsen tilbage til det.
 
 ### Om projektet
 
@@ -80,7 +80,7 @@ During a recording Tingskriver follows the Windows default devices. It only swit
 - the audio stream reports an error (e.g. `AUDCLNT_E_DEVICE_INVALIDATED`),
 - the audio stream delivers no audio frames at all for 2 seconds.
 
-Mute never switches microphone. That covers the mute button on the headset, mute in Windows and low volume: a muted microphone still delivers frames, they just contain silence, and the recording stays on it. The log writes a single "silent frames ignored" line. When the headset comes back after a real failure, the recording switches back to it.
+Mute never switches microphone. That covers the mute button on the headset, mute in Windows and low volume: a muted microphone still delivers frames, they just contain silence, and the recording stays on it. The log writes one "silent frames ignored" line each time a silent stretch begins, and "delivers sound again" when sound returns. When the headset comes back after a real failure, the recording switches back to it.
 
 ### About
 

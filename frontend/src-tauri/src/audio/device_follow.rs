@@ -9,7 +9,7 @@
 //! [`DeviceFollower::swap_failed`].
 
 use std::fmt;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// The two capture streams of a recording.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -459,10 +459,127 @@ pub enum MicHealth {
 pub fn assess_microphone(since_frame: Duration, since_sound: Option<Duration>) -> MicHealth {
     if since_frame >= NO_FRAMES_FAILOVER_AFTER {
         MicHealth::NoFrames
-    } else if since_sound.is_some_and(|s| s >= SILENT_LOG_AFTER) {
+    } else if since_frame < SILENT_LOG_AFTER && since_sound.is_some_and(|s| s >= SILENT_LOG_AFTER) {
+        // Silent frames are still arriving; a stream that has stopped
+        // delivering is not "muted".
         MicHealth::SilentFrames
     } else {
         MicHealth::Ok
+    }
+}
+
+/// Where the microphone watchdog reads the running stream's frames from
+/// (the recording state, fed by the capture callback).
+pub trait MicSignal {
+    /// Time since the stream last delivered any frame (`None`: none yet).
+    fn since_frame(&self) -> Option<Duration>;
+    /// Time since the stream last delivered sound (`None`: no frame yet).
+    fn since_sound(&self) -> Option<Duration>;
+    /// A new stream was opened: forget the old stream's frames.
+    fn reset(&self);
+}
+
+/// What [`MicWatchdog::check`] found, for the platform layer to log.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MicCheck {
+    /// Nothing new.
+    Quiet,
+    /// The stream on `device` delivered no frames for `since_frame` and was
+    /// marked failed: evaluate now.
+    Failover {
+        device: String,
+        since_frame: Duration,
+    },
+    /// A silent stretch started on `device` (muted or quiet). Ignored.
+    SilenceStarted {
+        device: String,
+        silent_for: Duration,
+    },
+    /// `device` delivers sound again after a silent stretch.
+    SoundResumed { device: String },
+}
+
+/// Watches the active microphone stream for missing frames. Silent frames
+/// (mute) are reported once per silent stretch and never fail the stream.
+#[derive(Debug)]
+pub struct MicWatchdog {
+    /// When the current stream started counting frames.
+    opened_at: Instant,
+    /// A silent stretch was reported and has not ended yet.
+    silence_logged: bool,
+}
+
+impl MicWatchdog {
+    pub fn new(now: Instant) -> Self {
+        Self {
+            opened_at: now,
+            silence_logged: false,
+        }
+    }
+
+    /// Start the no-frames clock from `now` (the recording went live).
+    pub fn start_clock(&mut self, now: Instant) {
+        self.opened_at = now;
+    }
+
+    /// A swap of `kind` to `device` succeeded. For the microphone, the new
+    /// stream is judged on its own frames from `now`, not the old one's.
+    pub fn swap_succeeded(
+        &mut self,
+        follower: &mut DeviceFollower,
+        kind: StreamKind,
+        device: &str,
+        signal: &dyn MicSignal,
+        now: Instant,
+    ) {
+        follower.swap_succeeded(kind, device);
+        if kind == StreamKind::Microphone {
+            signal.reset();
+            self.opened_at = now;
+            self.silence_logged = false;
+        }
+    }
+
+    /// Judge the active microphone stream. Only missing frames mark it as
+    /// failed; what the frames contain never does.
+    pub fn check(
+        &mut self,
+        follower: &mut DeviceFollower,
+        signal: &dyn MicSignal,
+        now: Instant,
+    ) -> MicCheck {
+        let Some(active) = follower.active(StreamKind::Microphone).map(str::to_string) else {
+            return MicCheck::Quiet;
+        };
+        let since_frame = signal
+            .since_frame()
+            .unwrap_or_else(|| now.saturating_duration_since(self.opened_at));
+        let since_sound = signal.since_sound();
+        match assess_microphone(since_frame, since_sound) {
+            MicHealth::NoFrames => {
+                if follower.stream_failed(StreamKind::Microphone, &active, StreamFailure::NoFrames)
+                {
+                    MicCheck::Failover {
+                        device: active,
+                        since_frame,
+                    }
+                } else {
+                    MicCheck::Quiet
+                }
+            }
+            MicHealth::SilentFrames if !self.silence_logged => {
+                self.silence_logged = true;
+                MicCheck::SilenceStarted {
+                    device: active,
+                    silent_for: since_sound.unwrap_or_default(),
+                }
+            }
+            MicHealth::Ok if self.silence_logged => {
+                self.silence_logged = false;
+                MicCheck::SoundResumed { device: active }
+            }
+            _ => MicCheck::Quiet,
+        }
     }
 }
 
@@ -536,7 +653,7 @@ pub fn describe_switch(action: &SwitchAction, took: Duration, outcome: Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
     use std::collections::HashMap;
 
     const LAPTOP_MIC: &str = "Microphone Array (Realtek(R) Audio)";
@@ -950,50 +1067,91 @@ mod tests {
 
     // --- Mute is never a failure; only a failed stream is ----------------------
 
-    /// Drives the microphone watchdog the way the platform layer does: every
-    /// `step` the stream may deliver a buffer (`Some(peak)`) or nothing
-    /// (`None`). A `NoFrames` verdict marks the stream as failed. Returns the
-    /// switches performed during `duration`.
+    /// A capture stream on a fake clock, recording frames the way
+    /// `RecordingState::note_input_buffer` does.
+    struct FakeSignal {
+        now: Cell<Instant>,
+        last_frame: Cell<Option<Instant>>,
+        last_sound: Cell<Option<Instant>>,
+    }
+
+    impl FakeSignal {
+        fn new(now: Instant) -> Self {
+            Self {
+                now: Cell::new(now),
+                last_frame: Cell::new(None),
+                last_sound: Cell::new(None),
+            }
+        }
+
+        fn buffer(&self, peak: f32) {
+            let now = self.now.get();
+            self.last_frame.set(Some(now));
+            if peak > SILENCE_PEAK || self.last_sound.get().is_none() {
+                self.last_sound.set(Some(now));
+            }
+        }
+    }
+
+    impl MicSignal for FakeSignal {
+        fn since_frame(&self) -> Option<Duration> {
+            self.last_frame.get().map(|t| self.now.get() - t)
+        }
+        fn since_sound(&self) -> Option<Duration> {
+            self.last_sound.get().map(|t| self.now.get() - t)
+        }
+        fn reset(&self) {
+            self.last_frame.set(None);
+            self.last_sound.set(None);
+        }
+    }
+
+    /// Drives the microphone watchdog the way the Windows follower does:
+    /// every `step` the stream may deliver a buffer (`Some(peak)`) or nothing
+    /// (`None`), then the watchdog checks and the follower evaluates; switches
+    /// go through [`MicWatchdog::swap_succeeded`]. Returns the switches
+    /// performed and the watchdog reports during `duration`.
     fn run_mic(
         fake: &FakeDevices,
         follower: &mut DeviceFollower,
         duration: Duration,
         step: Duration,
         buffer: impl Fn(Duration) -> Option<f32>,
-    ) -> Vec<SwitchAction> {
+    ) -> (Vec<SwitchAction>, Vec<MicCheck>) {
+        let t0 = Instant::now();
+        let signal = FakeSignal::new(t0);
+        let mut watchdog = MicWatchdog::new(t0); // stream opened at t = 0
         let mut performed = Vec::new();
-        let mut now = Duration::ZERO;
-        let mut last_frame = Duration::ZERO; // stream opened at t = 0
-        let mut last_sound: Option<Duration> = None;
-        while now <= duration {
-            if let Some(peak) = buffer(now) {
-                last_frame = now;
-                if peak > SILENCE_PEAK || last_sound.is_none() {
-                    last_sound = Some(now);
-                }
+        let mut checks = Vec::new();
+        let mut elapsed = Duration::ZERO;
+        while elapsed <= duration {
+            let now = t0 + elapsed;
+            signal.now.set(now);
+            if let Some(peak) = buffer(elapsed) {
+                signal.buffer(peak);
             }
-            let health = assess_microphone(now - last_frame, last_sound.map(|s| now - s));
-            if health == MicHealth::NoFrames {
-                let active = follower.active(StreamKind::Microphone).unwrap().to_string();
-                follower.stream_failed(StreamKind::Microphone, &active, StreamFailure::NoFrames);
+            let check = watchdog.check(follower, &signal, now);
+            if check != MicCheck::Quiet {
+                checks.push(check);
             }
             let eval = follower.evaluate(fake);
-            if !eval.switches.is_empty() {
-                // The new stream starts its own clock.
-                last_frame = now;
-                last_sound = None;
+            for (kind, _) in &eval.lost {
+                follower.stream_lost(*kind);
             }
-            performed.extend(apply(follower, &eval));
-            now += step;
+            for s in &eval.switches {
+                watchdog.swap_succeeded(follower, s.kind, &s.to, &signal, now);
+            }
+            performed.extend(eval.switches.iter().cloned());
+            elapsed += step;
         }
-        performed
+        (performed, checks)
     }
 
     #[test]
     fn thirty_seconds_of_muted_zero_frames_never_switch() {
         let (fake, mut follower) = following_headset();
         // Headset muted: WASAPI keeps delivering 10 ms buffers of exact zeros.
-        let switches = run_mic(
+        let (switches, checks) = run_mic(
             &fake,
             &mut follower,
             Duration::from_secs(30),
@@ -1003,6 +1161,14 @@ mod tests {
         assert_eq!(switches, vec![]);
         assert_eq!(follower.active(StreamKind::Microphone), Some(HEADSET_MIC));
         assert_eq!(follower.failed(StreamKind::Microphone), None);
+        // Reported once as ignored silence, after one second.
+        assert_eq!(
+            checks,
+            vec![MicCheck::SilenceStarted {
+                device: HEADSET_MIC.into(),
+                silent_for: SILENT_LOG_AFTER,
+            }]
+        );
     }
 
     #[test]
@@ -1027,7 +1193,7 @@ mod tests {
     fn low_volume_mute_and_unmute_cycles_never_switch() {
         let (fake, mut follower) = following_headset();
         // Quiet speech, then mute, then speech again, for a minute.
-        let switches = run_mic(
+        let (switches, checks) = run_mic(
             &fake,
             &mut follower,
             Duration::from_secs(60),
@@ -1041,18 +1207,33 @@ mod tests {
             },
         );
         assert_eq!(switches, vec![]);
+        assert!(checks
+            .iter()
+            .all(|c| !matches!(c, MicCheck::Failover { .. })));
+        // Each mute is reported once, each unmute once.
+        assert!(checks.contains(&MicCheck::SoundResumed {
+            device: HEADSET_MIC.into()
+        }));
     }
 
     #[test]
     fn two_seconds_without_frames_fails_over() {
         let (fake, mut follower) = following_headset();
         // Frames for 5 s, then the stream stops delivering anything.
-        let switches = run_mic(
+        let (switches, checks) = run_mic(
             &fake,
             &mut follower,
             Duration::from_millis(7_500),
             Duration::from_millis(10),
             |t| (t < Duration::from_secs(5)).then_some(0.2),
+        );
+        // The new laptop stream gets its own two seconds: one failover only.
+        assert_eq!(
+            checks,
+            vec![MicCheck::Failover {
+                device: HEADSET_MIC.into(),
+                since_frame: NO_FRAMES_FAILOVER_AFTER,
+            }]
         );
         assert_eq!(
             switches,
@@ -1066,6 +1247,27 @@ mod tests {
         assert_eq!(follower.active(StreamKind::Microphone), Some(LAPTOP_MIC));
         // No ping-pong back to the failed headset while it stays excluded.
         assert_eq!(follower.evaluate(&fake), Evaluation::default());
+    }
+
+    #[test]
+    fn stream_that_never_delivers_frames_fails_over_after_two_seconds() {
+        let (fake, mut follower) = following_headset();
+        let (switches, checks) = run_mic(
+            &fake,
+            &mut follower,
+            Duration::from_millis(2_500),
+            Duration::from_millis(10),
+            |_| None,
+        );
+        assert_eq!(switches.len(), 1);
+        assert_eq!(switches[0].reason, SwitchReason::NoFrames);
+        assert_eq!(
+            checks,
+            vec![MicCheck::Failover {
+                device: HEADSET_MIC.into(),
+                since_frame: NO_FRAMES_FAILOVER_AFTER,
+            }]
+        );
     }
 
     #[test]
@@ -1214,22 +1416,14 @@ mod tests {
             repair_double_utf8("Mikrofon pÃ¥ headset (Jabra Link 390)"),
             "Mikrofon på headset (Jabra Link 390)"
         );
-        assert_eq!(
-            repair_double_utf8("HÃ¸jttalere (Senary Audio)"),
-            "Højttalere (Senary Audio)"
-        );
+        assert_eq!(repair_double_utf8("HÃ¸jttalere (Senary Audio)"), "Højttalere (Senary Audio)");
         // Uppercase Ø is byte 0x98 in the second position: a cp1252 character.
         assert_eq!(repair_double_utf8("Ã˜ret"), "Øret");
     }
 
     #[test]
     fn leaves_correct_names_alone() {
-        for name in [
-            "Mikrofon på headset",
-            "Højttalere",
-            "Speakers (Realtek(R) Audio)",
-            "マイク",
-        ] {
+        for name in ["Mikrofon på headset", "Højttalere", "Speakers (Realtek(R) Audio)", "マイク"] {
             assert_eq!(repair_double_utf8(name), name);
         }
     }
