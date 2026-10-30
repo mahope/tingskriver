@@ -402,12 +402,14 @@ impl AudioCapture {
             return;
         }
 
-        // Track whether the input carries any signal at all (dead endpoints
-        // deliver exact zeros) before any processing.
-        self.state.note_input_level(
-            &self.device_type,
-            data.iter().fold(0.0f32, |peak, &x| peak.max(x.abs())),
-        );
+        // Frames arriving keep the device follower's no-frames watchdog
+        // quiet; the peak is only logged (silence never triggers a switch).
+        if !data.is_empty() {
+            self.state.note_input_buffer(
+                &self.device_type,
+                data.iter().fold(0.0f32, |peak, &x| peak.max(x.abs())),
+            );
+        }
 
         // Convert to mono if needed
         let mut mono_data = if self.channels > 1 {
@@ -697,6 +699,7 @@ impl AudioCapture {
             AudioError::StreamFailed
         };
 
+        self.state.note_stream_error(&self.device_type, &self.device.name);
         self.state.report_error(audio_error);
     }
 }
