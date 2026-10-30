@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tingskriver: Danish dictation and meeting notes on your own computer</title>
+<meta name="description" content="Tingskriver is a free, open source Windows app. It records your meetings, writes Danish notes and lets you dictate straight into any app.">
+<link rel="canonical" href="https://tingskriver.mahoje.dk/en/">
+<link rel="alternate" hreflang="da" href="https://tingskriver.mahoje.dk/">
+<link rel="alternate" hreflang="en" href="https://tingskriver.mahoje.dk/en/">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/literata-600.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/hanken-grotesk-400.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/style.css">
+<meta property="og:title" content="Tingskriver">
+<meta property="og:description" content="Danish dictation and meeting notes on your own computer. Free and open source.">
+<meta property="og:image" content="https://tingskriver.mahoje.dk/billeder/moedeside-lys.webp">
+<meta property="og:url" content="https://tingskriver.mahoje.dk/en/">
+<meta property="og:locale" content="en_GB">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="/en/" aria-label="Tingskriver, home">
+      <svg viewBox="0 0 32 32" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.5 25.5C6 14 14 6 26 6c0 12-8 19.5-19.5 19.5Z"/><path d="M4 28 18 14"/><path d="M19 28h9"/></svg>
+      Tingskriver
+    </a>
+    <nav aria-label="Main menu">
+      <a href="#features">Features</a>
+      <a href="#name">The name</a>
+      <a href="#why">Why</a>
+      <a href="#open">Open source</a>
+      <a href="#about">About</a>
+      <a class="lang" href="/" hreflang="da" lang="da">Dansk</a>
+    </nav>
+  </div>
+</header>
+
+<main id="content">
+  <section class="hero">
+    <div class="wrap">
+      <h1>Speak Danish.<br>Tingskriver writes it down.</h1>
+      <p class="lede">A free Windows app that records your meetings, writes Danish meeting notes and lets you dictate straight into whatever app you are working in. Your audio and notes stay on your own computer.</p>
+      <div class="actions">
+        <a class="btn" href="https://github.com/mahope/tingskriver/releases/latest">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/></svg>
+          Get the test version
+        </a>
+        <a href="https://github.com/mahope/tingskriver">View the code on GitHub</a>
+      </div>
+      <p class="note">Tingskriver is in early testing and only runs on Windows 11 for now. It is not code signed yet, so Windows shows a warning the first time. Choose "More info" and then "Run anyway". The app itself is in Danish.</p>
+      <div class="shot">
+        <div class="shot-bar" aria-hidden="true"><span></span><span></span><span></span></div>
+        <picture>
+          <source srcset="/billeder/moedeside-moerk.webp" media="(prefers-color-scheme: dark)">
+          <img src="/billeder/moedeside-lys.webp" width="1280" height="800" alt="Tingskriver showing notes from a status meeting: a short summary, decisions and action items, with the list of meetings on the left.">
+        </picture>
+      </div>
+    </div>
+  </section>
+
+  <section class="ch" id="features">
+    <div class="wrap">
+      <h2>What it does</h2>
+      <p class="lead">I am building Tingskriver for two things I do every day: writing with my voice and keeping track of my meetings. Below is an honest account of what works today and what is on the way.</p>
+
+      <div class="feature">
+        <div>
+          <span class="status">Built, coming in the next test version</span>
+          <h3>Dictation in every app</h3>
+          <p>Hold <kbd>Ctrl</kbd> + <kbd>Win</kbd>, speak, and let go. The text is cleaned up and inserted where your cursor is, whether that is an email, a chat or a document.</p>
+          <ul>
+            <li>Say the Danish words for full stop, comma or new line, and the character appears.</li>
+            <li>Filler words disappear on their own.</li>
+            <li>Your own dictionary makes sure names and terms are spelled right.</li>
+            <li>Your clipboard is left untouched.</li>
+          </ul>
+          <img class="pill" src="/billeder/diktering-pille-skriver.webp" width="420" height="100" alt="The small pill at the bottom of the screen showing that the text is being written.">
+        </div>
+        <figure>
+          <img src="/billeder/diktering-lys.webp" width="1280" height="800" loading="lazy" alt="The Dictation page listing recent dictations, which app they went into and how fast the text arrived.">
+        </figure>
+      </div>
+
+      <div class="feature flip">
+        <div>
+          <span class="status">In the test version now</span>
+          <h3>Meetings with notes</h3>
+          <p>Tingskriver records both your microphone and the meeting audio. Afterwards you get Danish notes with decisions and action items.</p>
+          <ul>
+            <li>Recording continues if your headset drops out, and switches back when it returns.</li>
+            <li>From the next version, muting never makes the recording switch microphone.</li>
+            <li>The notes are written by a language model running on your own computer.</li>
+          </ul>
+          <p>On the way: starting automatically when you join a meeting in Teams, Meet or Zoom, your own notes during the meeting, and search across all meetings.</p>
+        </div>
+        <figure>
+          <img src="/billeder/optagelse-enhed-skiftet-lys.webp" width="1280" height="800" loading="lazy" alt="A recording in progress where Tingskriver shows that the microphone switched to a USB headset while the transcript continues.">
+        </figure>
+      </div>
+
+      <div class="later">
+        <h3>Later: an assistant you can ask</h3>
+        <p>Press a shortcut and ask about what is on your screen or about something from an earlier meeting. That part comes once dictation and meetings work as they should.</p>
+        <p>You choose who turns speech into text: the built-in local model, Syv.ai, OpenAI, OdinCore or another service with the same kind of API. Without any setup, everything runs locally.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="ch sheet" id="name">
+    <div class="wrap name">
+      <h2>The name</h2>
+      <div>
+        <p class="quote">The tingskriver was the clerk who sat at the ting and wrote down what was said and decided.</p>
+        <p style="margin-top:1.4rem">In old Denmark, people met at the ting, the local assembly and court, to settle cases and make decisions together, and the tingskriver kept the record. That is exactly the job of this app: to listen in and write it down, so you can focus on the conversation.</p>
+        <p>I wanted an old Danish word rather than yet another English product name. Tingskriver sounds a little dusty, and I like that.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="ch" id="why">
+    <div class="wrap">
+      <h2>Why I am building it</h2>
+      <p class="lead">I have paid for several meeting and video tools and tried many more. None of them quite fit the way I work.</p>
+      <p>The open meeting recorder I used broke every time my headset dropped out in the middle of a meeting. Its transcription was weak in Danish. And the most polished apps send everything that is said to a service abroad that I have no agreement with.</p>
+      <p>I talk to clients all day, and I have promised them that what they tell me does not end up in random AI services. So I want an app where the audio and notes stay on my computer, and where I decide whether anything is sent on, and to whom.</p>
+      <p>I also write a lot. Emails, messages, proposals. Saying it is faster than typing it, but only if the text comes out in proper Danish right away.</p>
+      <p>So I took a good open meeting recorder and started making it my own: Danish first, robust with headsets and with dictation built in. If it works for me, hopefully it works for others too.</p>
+    </div>
+  </section>
+
+  <section class="ch sheet" id="open">
+    <div class="wrap">
+      <h2>Open source</h2>
+      <p class="lead">Tingskriver is not a product for sale. It is a project I build in my own time, and anyone may use it.</p>
+      <ul class="ideals">
+        <li><strong>Free</strong><span>No subscription, no trial and no paid features. If you use an external service like Syv.ai, you only pay them for what you use.</span></li>
+        <li><strong>MIT licence</strong><span>All the code is on GitHub. You may read it, change it and build on it.</span></li>
+        <li><strong>Your data</strong><span>Recordings, transcripts and notes are files on your computer. There is no account and no cloud to sign in to.</span></li>
+        <li><strong>No tracking</strong><span>The app sends no statistics about how you use it.</span></li>
+        <li><strong>Your choice</strong><span>A local model or a service of your choosing. The app says clearly when something leaves your computer.</span></li>
+        <li><strong>Standing on shoulders</strong><span>Tingskriver started as a fork of <a href="https://github.com/Zackriya-Solutions/meetily">Meetily</a> by Zackriya Solutions, which is also MIT licensed. Thank you. Tingskriver is an independent project with no affiliation to Zackriya.</span></li>
+      </ul>
+      <p style="margin-top:2rem">Contributions are welcome. Bugs and ideas can be filed as <a href="https://github.com/mahope/tingskriver/issues">issues on GitHub</a>. The app is Windows only for now. Mac and Linux may follow later.</p>
+    </div>
+  </section>
+
+  <section class="ch" id="about">
+    <div class="wrap">
+      <div class="about">
+        <figure class="portrait">
+          <img src="/billeder/mads.jpg" width="480" height="480" loading="lazy" alt="Portrait of Mads Holst Jensen in front of a brick wall.">
+        </figure>
+        <div>
+          <h2>About me</h2>
+          <p>My name is Mads Holst Jensen, a freelance developer on Funen, Denmark. Day to day I build websites, automations and AI tools for small and medium-sized Danish businesses.</p>
+          <p>Tingskriver started as a tool for myself. I use it every day, so bugs get found quickly and fixed when I run into them myself.</p>
+          <h3 style="margin-top:2.2rem">About Mahoje</h3>
+          <p>Mahoje is my company. I am the technical partner for businesses that want one person to take responsibility for their website, AI and operations. Mahoje is behind Tingskriver and pays for it with time, but the app is not part of what I sell.</p>
+          <p><a href="https://mahoje.dk" hreflang="da">Read more at mahoje.dk (in Danish)</a></p>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>Tingskriver is released under the MIT licence. Made by <a href="https://mahoje.dk">Mads Holst Jensen, Mahoje</a>.</p>
+    <p class="links"><a href="https://github.com/mahope/tingskriver">GitHub</a> <a href="https://github.com/mahope/tingskriver/releases">Releases</a> <a href="/" hreflang="da" lang="da">Dansk</a></p>
+  </div>
+</footer>
+</body>
+</html>
