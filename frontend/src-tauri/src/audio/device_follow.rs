@@ -198,7 +198,9 @@ impl StreamTracker {
                     kind: self.kind,
                     from: Some(active.clone()),
                     to: target,
-                    reason: self.broken.map_or(SwitchReason::StreamMissing, StreamFailure::reason),
+                    reason: self
+                        .broken
+                        .map_or(SwitchReason::StreamMissing, StreamFailure::reason),
                 });
             }
             // Windows can still report the vanished device as default for a
@@ -328,7 +330,12 @@ impl DeviceFollower {
     /// true if the failure was recorded.
     ///
     /// Silence is never a failure: a muted microphone keeps delivering frames.
-    pub fn stream_failed(&mut self, kind: StreamKind, device: &str, failure: StreamFailure) -> bool {
+    pub fn stream_failed(
+        &mut self,
+        kind: StreamKind,
+        device: &str,
+        failure: StreamFailure,
+    ) -> bool {
         match self.tracker_mut(kind) {
             Some(t) if t.active.as_deref() == Some(device) => {
                 t.broken = Some(failure);
@@ -1001,7 +1008,10 @@ mod tests {
     #[test]
     fn muted_microphone_is_reported_as_silent_frames_not_failure() {
         let thirty = Some(Duration::from_secs(30));
-        assert_eq!(assess_microphone(Duration::from_millis(10), thirty), MicHealth::SilentFrames);
+        assert_eq!(
+            assess_microphone(Duration::from_millis(10), thirty),
+            MicHealth::SilentFrames
+        );
         assert_eq!(
             assess_microphone(Duration::from_millis(10), Some(Duration::from_millis(900))),
             MicHealth::Ok
@@ -1022,7 +1032,13 @@ mod tests {
             &mut follower,
             Duration::from_secs(60),
             Duration::from_millis(10),
-            |t| Some(if (t.as_secs() / 7) % 2 == 0 { 0.0 } else { 3.0e-5 }),
+            |t| {
+                Some(if (t.as_secs() / 7) % 2 == 0 {
+                    0.0
+                } else {
+                    3.0e-5
+                })
+            },
         );
         assert_eq!(switches, vec![]);
     }
@@ -1054,8 +1070,14 @@ mod tests {
 
     #[test]
     fn no_frames_threshold_is_two_seconds() {
-        assert_eq!(assess_microphone(Duration::from_millis(1_990), None), MicHealth::Ok);
-        assert_eq!(assess_microphone(Duration::from_secs(2), None), MicHealth::NoFrames);
+        assert_eq!(
+            assess_microphone(Duration::from_millis(1_990), None),
+            MicHealth::Ok
+        );
+        assert_eq!(
+            assess_microphone(Duration::from_secs(2), None),
+            MicHealth::NoFrames
+        );
         // Not even recent sound keeps a stream alive that delivers nothing.
         assert_eq!(
             assess_microphone(Duration::from_secs(2), Some(Duration::from_secs(2))),
@@ -1192,14 +1214,22 @@ mod tests {
             repair_double_utf8("Mikrofon pÃ¥ headset (Jabra Link 390)"),
             "Mikrofon på headset (Jabra Link 390)"
         );
-        assert_eq!(repair_double_utf8("HÃ¸jttalere (Senary Audio)"), "Højttalere (Senary Audio)");
+        assert_eq!(
+            repair_double_utf8("HÃ¸jttalere (Senary Audio)"),
+            "Højttalere (Senary Audio)"
+        );
         // Uppercase Ø is byte 0x98 in the second position: a cp1252 character.
         assert_eq!(repair_double_utf8("Ã˜ret"), "Øret");
     }
 
     #[test]
     fn leaves_correct_names_alone() {
-        for name in ["Mikrofon på headset", "Højttalere", "Speakers (Realtek(R) Audio)", "マイク"] {
+        for name in [
+            "Mikrofon på headset",
+            "Højttalere",
+            "Speakers (Realtek(R) Audio)",
+            "マイク",
+        ] {
             assert_eq!(repair_double_utf8(name), name);
         }
     }

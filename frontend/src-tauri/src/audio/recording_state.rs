@@ -13,6 +13,14 @@ fn clock_ms() -> u64 {
     EPOCH.get_or_init(Instant::now).elapsed().as_millis() as u64
 }
 
+/// Time since a `clock_ms() + 1` stamp (0: never).
+fn since(stamp: u64) -> Option<Duration> {
+    match stamp {
+        0 => None,
+        last => Some(Duration::from_millis(clock_ms().saturating_sub(last - 1))),
+    }
+}
+
 /// Device type for audio chunks
 #[derive(Debug, Clone, PartialEq)]
 pub enum DeviceType {
@@ -128,10 +136,16 @@ pub struct RecordingState {
     pause_start: Mutex<Option<Instant>>,
     total_pause_duration: Mutex<std::time::Duration>,
 
-    // Last time the microphone delivered a non-silent sample, as
-    // `clock_ms() + 1` (0: no data seen yet). Used to detect an endpoint that
-    // is still "present" but dead (e.g. a USB dongle whose headset is off).
-    mic_last_signal_ms: AtomicU64,
+    // Last time the microphone stream delivered any frames, and last time it
+    // delivered sound (above SILENCE_PEAK), as `clock_ms() + 1` (0: none yet).
+    // Only missing frames can make the device follower switch; silence (mute)
+    // is merely logged.
+    mic_last_frame_ms: AtomicU64,
+    mic_last_sound_ms: AtomicU64,
+    // Device names whose capture stream reported an error, per stream kind,
+    // until the device follower takes them.
+    mic_stream_error: Mutex<Option<String>>,
+    system_stream_error: Mutex<Option<String>>,
 }
 
 impl RecordingState {
@@ -151,33 +165,61 @@ impl RecordingState {
             recording_start: Mutex::new(None),
             pause_start: Mutex::new(None),
             total_pause_duration: Mutex::new(std::time::Duration::ZERO),
-            mic_last_signal_ms: AtomicU64::new(0),
+            mic_last_frame_ms: AtomicU64::new(0),
+            mic_last_sound_ms: AtomicU64::new(0),
+            mic_stream_error: Mutex::new(None),
+            system_stream_error: Mutex::new(None),
         })
     }
 
-    /// Called from the capture callback with the peak level of each buffer.
-    pub fn note_input_level(&self, device_type: &DeviceType, peak: f32) {
+    /// Called from the capture callback for every non-empty buffer, with its
+    /// peak level.
+    pub fn note_input_buffer(&self, device_type: &DeviceType, peak: f32) {
         if *device_type != DeviceType::Microphone {
             return;
         }
+        let now = clock_ms() + 1;
+        self.mic_last_frame_ms.store(now, Ordering::Relaxed);
         if peak > super::device_follow::SILENCE_PEAK
-            || self.mic_last_signal_ms.load(Ordering::Relaxed) == 0
+            || self.mic_last_sound_ms.load(Ordering::Relaxed) == 0
         {
-            self.mic_last_signal_ms.store(clock_ms() + 1, Ordering::Relaxed);
+            self.mic_last_sound_ms.store(now, Ordering::Relaxed);
         }
     }
 
-    /// Start counting microphone silence from now (a new stream was opened).
+    /// A new microphone stream was opened: forget the old stream's frames.
     pub fn reset_mic_signal(&self) {
-        self.mic_last_signal_ms.store(clock_ms() + 1, Ordering::Relaxed);
+        self.mic_last_frame_ms.store(0, Ordering::Relaxed);
+        self.mic_last_sound_ms.store(0, Ordering::Relaxed);
     }
 
-    /// How long the microphone has delivered nothing but silence (or nothing
-    /// at all). `None` until the first buffer arrived.
-    pub fn mic_silent_for(&self) -> Option<Duration> {
-        match self.mic_last_signal_ms.load(Ordering::Relaxed) {
-            0 => None,
-            last => Some(Duration::from_millis(clock_ms().saturating_sub(last - 1))),
+    /// Time since the microphone stream last delivered any frames. `None`
+    /// until the first buffer arrived.
+    pub fn mic_since_frame(&self) -> Option<Duration> {
+        since(self.mic_last_frame_ms.load(Ordering::Relaxed))
+    }
+
+    /// Time since the microphone last delivered sound rather than silent
+    /// frames. `None` until the first buffer arrived.
+    pub fn mic_since_sound(&self) -> Option<Duration> {
+        since(self.mic_last_sound_ms.load(Ordering::Relaxed))
+    }
+
+    /// Called from the stream error callback. cpal ends a WASAPI stream after
+    /// any error, so the stream on `device_name` delivers nothing more.
+    pub fn note_stream_error(&self, device_type: &DeviceType, device_name: &str) {
+        *self.stream_error_slot(device_type).lock().unwrap() = Some(device_name.to_string());
+    }
+
+    /// Take the device name of the last stream error for `device_type`.
+    pub fn take_stream_error(&self, device_type: &DeviceType) -> Option<String> {
+        self.stream_error_slot(device_type).lock().unwrap().take()
+    }
+
+    fn stream_error_slot(&self, device_type: &DeviceType) -> &Mutex<Option<String>> {
+        match device_type {
+            DeviceType::Microphone => &self.mic_stream_error,
+            DeviceType::System => &self.system_stream_error,
         }
     }
 
@@ -456,7 +498,10 @@ impl Default for RecordingState {
             recording_start: Mutex::new(None),
             pause_start: Mutex::new(None),
             total_pause_duration: Mutex::new(std::time::Duration::ZERO),
-            mic_last_signal_ms: AtomicU64::new(0),
+            mic_last_frame_ms: AtomicU64::new(0),
+            mic_last_sound_ms: AtomicU64::new(0),
+            mic_stream_error: Mutex::new(None),
+            system_stream_error: Mutex::new(None),
         }
     }
 }
