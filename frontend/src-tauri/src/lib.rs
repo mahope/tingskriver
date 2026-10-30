@@ -385,8 +385,6 @@ async fn set_language_preference(language: String) -> Result<(), String> {
     tingskriver_core::set_language_preference(language)
 }
 
-pub use tingskriver_core::{ensure_onnx_runtime_available, get_language_preference_internal};
-
 /// Open the folder with the application log files in the file manager.
 #[tauri::command]
 async fn open_log_folder() -> Result<(), String> {
