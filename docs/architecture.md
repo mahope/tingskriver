@@ -25,6 +25,8 @@ graph TD
     B -- Manages --> F
 ```
 
+Crate boundaries and the dependency direction between core and the UIs are described in [arkitektur.md](arkitektur.md).
+
 ## Component Details
 
 ### Frontend (Next.js)

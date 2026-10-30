@@ -18,6 +18,48 @@ Frozen installation keeps the lockfile and installed dependency set aligned. Whe
 - **Windows packages:** Distribution builds use Vulkan-enabled Whisper and require an AVX2-capable x64 CPU. AVX-512 is not required.
 - **CUDA:** NVIDIA CUDA support requires a compatible source build and CUDA toolchain; the standard Windows installer does not select it automatically.
 
+## Workspace, tests and CI for agents
+
+The repository is a Cargo workspace (see [arkitektur.md](arkitektur.md)): `crates/tingskriver-core` holds the logic, `crates/tingskriver-app` the GPUI app, `crates/tingskriver-overlay` the Windows overlay and `frontend/src-tauri` the current Tauri app.
+
+```bash
+cargo test -p tingskriver-core          # platform independent tests, runs on Linux
+cargo test -p tingskriver-core dictation
+cargo test --workspace                  # everything; the Tauri crate needs the Linux Tauri libraries
+```
+
+The Tauri crate's build script checks that its sidecars exist. For a local `cargo check`/`cargo test` outside a full build, create an empty placeholder: `touch frontend/src-tauri/binaries/llama-helper-$(rustc -vV | sed -n 's/host: //p')`.
+
+### Checking Windows code from Linux (cargo xwin)
+
+Most new Rust code is Windows-only (`#[cfg(windows)]`), and Linux `cargo check` skips it. [cargo-xwin](https://github.com/rust-cross/cargo-xwin) type-checks it against the MSVC target with the Windows SDK it downloads on first use (accepting Microsoft's licence):
+
+```bash
+rustup target add x86_64-pc-windows-msvc
+cargo install cargo-xwin --locked
+sudo apt-get install clang llvm lld ninja-build cmake   # Debian: llvm-19 lld-19, then add /usr/lib/llvm-19/bin to PATH
+cargo xwin check --target x86_64-pc-windows-msvc -p tingskriver-core -p tingskriver-overlay -p tingskriver-app
+```
+
+whisper.cpp builds fine this way. The Tauri crate itself does not: its build script verifies the downloaded `ffmpeg.exe` by running it. For a local check only, a stub that answers `-version` gets past that:
+
+```bash
+printf '#!/bin/sh\necho "ffmpeg version stub"\n' > frontend/src-tauri/binaries/ffmpeg-x86_64-pc-windows-msvc.exe
+chmod +x frontend/src-tauri/binaries/ffmpeg-x86_64-pc-windows-msvc.exe
+touch frontend/src-tauri/binaries/llama-helper-x86_64-pc-windows-msvc.exe
+cargo xwin check --target x86_64-pc-windows-msvc -p tingskriver
+```
+
+Delete the stub before building an installer on that machine. CI runs the same xwin check (without the Tauri crate) in `.github/workflows/rust.yml`.
+
+### Reading CI results without a token
+
+`scripts/ci-status.sh <branch> [sha]` waits for the GitHub Actions runs of the newest commit on a branch (or the given commit, short SHA allowed) through the public API, then prints each workflow's result. When something failed it lists the failed jobs and steps and the job annotations; cargo errors and test panics show up there because the workflow steps run through `.github/scripts/annotate-errors.sh` (job logs need admin rights, annotations do not). Exit code 0 means green, 1 a failure, 2 a timeout or API problem. Without a token GitHub allows 60 requests an hour; the script polls every 60 s with ETags, and answers that did not change do not count. `GITHUB_TOKEN` raises the limit, `CI_POLL_SECONDS` and `CI_TIMEOUT_MINUTES` tune the wait.
+
+```bash
+git push && scripts/ci-status.sh "$(git branch --show-current)"
+```
+
 <details>
 <summary>Linux</summary>
 

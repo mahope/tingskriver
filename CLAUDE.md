@@ -83,7 +83,7 @@ Raw Audio (Mic + System)
          ↓
 ┌────────────────────────────────────────────────────────────┐
 │              Audio Pipeline Manager                         │
-│  (frontend/src-tauri/src/audio/pipeline.rs)                │
+│  (crates/tingskriver-core/src/audio/pipeline.rs)           │
 └─────────────┬──────────────────────────┬───────────────────┘
               ↓                          ↓
     ┌─────────────────┐        ┌─────────────────────┐
@@ -101,7 +101,7 @@ Raw Audio (Mic + System)
 **Context**: The audio system was refactored from a monolithic 1028-line `core.rs` file into focused modules. See [AUDIO_MODULARIZATION_PLAN.md](AUDIO_MODULARIZATION_PLAN.md) for details.
 
 ```
-audio/
+crates/tingskriver-core/src/audio/
 ├── devices/                    # Device discovery and configuration
 │   ├── discovery.rs           # list_audio_devices, trigger_audio_permission
 │   ├── microphone.rs          # default_input_device
@@ -117,7 +117,7 @@ audio/
 │   └── core_audio.rs          # macOS ScreenCaptureKit integration
 ├── pipeline.rs                # Audio mixing and VAD processing
 ├── recording_manager.rs       # High-level recording coordination
-├── recording_commands.rs      # Tauri command interface
+├── recording_commands.rs      # Start/stop orchestration (Tauri wrappers in frontend/src-tauri/src/audio/)
 └── recording_saver.rs         # Audio file writing
 ```
 
@@ -177,7 +177,7 @@ await listen<TranscriptUpdate>('transcript-update', (event) => {
 - **Production (macOS)**: `~/Library/Application Support/Tingskriver/models/`
 - **Production (Windows)**: `%APPDATA%\Tingskriver\models\`
 
-**Model Loading** (frontend/src-tauri/src/whisper_engine/whisper_engine.rs):
+**Model Loading** (crates/tingskriver-core/src/whisper_engine/whisper_engine.rs):
 ```rust
 pub async fn load_model(&self, model_name: &str) -> Result<()> {
     // Automatically detects GPU capabilities (Metal/CUDA/Vulkan)
@@ -251,26 +251,32 @@ macro_rules! perf_debug {
 
 ### Adding a New Tauri Command
 
-1. Define command in `src/lib.rs`:
+1. Put the logic in `crates/tingskriver-core` as a plain function (take a `HostHandle` instead of an `AppHandle` if it emits events):
+   ```rust
+   pub async fn my_command(arg: String) -> Result<String, String> { /* ... */ }
+   ```
+2. Add a thin wrapper in `frontend/src-tauri/src` with the same name and arguments:
    ```rust
    #[tauri::command]
-   async fn my_command(arg: String) -> Result<String, String> { /* ... */ }
+   async fn my_command(arg: String) -> Result<String, String> {
+       tingskriver_core::my_module::my_command(arg).await
+   }
    ```
-2. Register in `tauri::Builder`:
+3. Register in `tauri::Builder`:
    ```rust
    .invoke_handler(tauri::generate_handler![
        start_recording,
        my_command,  // Add here
    ])
    ```
-3. Call from frontend:
+4. Call from frontend:
    ```typescript
    const result = await invoke<string>('my_command', { arg: 'value' });
    ```
 
 ### Modifying Audio Pipeline Behavior
 
-**Location**: `frontend/src-tauri/src/audio/pipeline.rs`
+**Location**: `crates/tingskriver-core/src/audio/pipeline.rs`
 
 Key components:
 - `AudioMixerRingBuffer`: Manages mic + system audio synchronization
@@ -280,7 +286,7 @@ Key components:
 **Testing Audio Changes**:
 ```bash
 # Enable verbose audio logging
-RUST_LOG=app_lib::audio=debug ./clean_run.sh
+RUST_LOG=tingskriver_core::audio=debug ./clean_run.sh
 
 # Monitor audio metrics in real-time
 # Check Developer Console in the app (Cmd+Shift+I on macOS)
@@ -288,7 +294,7 @@ RUST_LOG=app_lib::audio=debug ./clean_run.sh
 
 ### Tauri Backend Development
 
-Current app behavior should be implemented in the Rust/Tauri core, not in the archived Python backend. Add new frontend-facing behavior through Tauri commands/events and existing Rust services under `frontend/src-tauri/src`.
+Current app behavior should be implemented in the Rust core, not in the archived Python backend. The logic lives in `crates/tingskriver-core` (no Tauri or GPUI dependencies); `frontend/src-tauri/src` holds thin `#[tauri::command]` wrappers and Tauri-only code (windows, tray, notifications, dialogs). Core reaches the UI through the `AppHost` trait (`tingskriver_core::host`), which `frontend/src-tauri/src/core_bridge.rs` implements. See [docs/arkitektur.md](docs/arkitektur.md).
 
 Do not add new endpoints to `backend/app/main.py`; that FastAPI code is legacy archive material only.
 
@@ -393,17 +399,20 @@ $env:RUST_LOG="debug"; ./clean_run_windows.bat
 
 **Core Coordination**:
 - [frontend/src-tauri/src/lib.rs](frontend/src-tauri/src/lib.rs) - Main Tauri entry point, command registration
-- [frontend/src-tauri/src/audio/mod.rs](frontend/src-tauri/src/audio/mod.rs) - Audio module exports
-- [frontend/src-tauri/src/database/mod.rs](frontend/src-tauri/src/database/mod.rs) - Local database module
+- [frontend/src-tauri/src/core_bridge.rs](frontend/src-tauri/src/core_bridge.rs) - Tauri implementation of core's `AppHost`
+- [crates/tingskriver-core/src/host.rs](crates/tingskriver-core/src/host.rs) - What core needs from the UI (events, database, settings)
+- [crates/tingskriver-core/src/audio/mod.rs](crates/tingskriver-core/src/audio/mod.rs) - Audio module exports
+- [crates/tingskriver-core/src/database/mod.rs](crates/tingskriver-core/src/database/mod.rs) - Local database module
 
 **Audio System**:
-- [frontend/src-tauri/src/audio/recording_manager.rs](frontend/src-tauri/src/audio/recording_manager.rs) - Recording orchestration
-- [frontend/src-tauri/src/audio/pipeline.rs](frontend/src-tauri/src/audio/pipeline.rs) - Audio mixing and VAD
-- [frontend/src-tauri/src/audio/recording_saver.rs](frontend/src-tauri/src/audio/recording_saver.rs) - Audio file writing
+- [crates/tingskriver-core/src/audio/recording_commands.rs](crates/tingskriver-core/src/audio/recording_commands.rs) - Start/stop recording orchestration
+- [crates/tingskriver-core/src/audio/recording_manager.rs](crates/tingskriver-core/src/audio/recording_manager.rs) - Recording orchestration
+- [crates/tingskriver-core/src/audio/pipeline.rs](crates/tingskriver-core/src/audio/pipeline.rs) - Audio mixing and VAD
+- [crates/tingskriver-core/src/audio/recording_saver.rs](crates/tingskriver-core/src/audio/recording_saver.rs) - Audio file writing
 
 **UI Components**:
 - [frontend/src/app/page.tsx](frontend/src/app/page.tsx) - Main recording interface
 - [frontend/src/components/Sidebar/SidebarProvider.tsx](frontend/src/components/Sidebar/SidebarProvider.tsx) - Global state management
 
 **Whisper Integration**:
-- [frontend/src-tauri/src/whisper_engine/whisper_engine.rs](frontend/src-tauri/src/whisper_engine/whisper_engine.rs) - Whisper model management and transcription
+- [crates/tingskriver-core/src/whisper_engine/whisper_engine.rs](crates/tingskriver-core/src/whisper_engine/whisper_engine.rs) - Whisper model management and transcription
