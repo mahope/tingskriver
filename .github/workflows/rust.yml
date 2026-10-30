@@ -1,0 +1,178 @@
+name: Rust
+
+# Builds and tests the Cargo workspace on every push. Windows builds the
+# whole workspace (core, GPUI app, overlay, Tauri crate); Linux runs the
+# platform independent tests in tingskriver-core and checks the crate
+# boundaries. Agents read the result with scripts/ci-status.sh.
+# clippy -D warnings and fmt --check are deferred until the fork code is
+# cleaned up (docs/agenter.md).
+
+on:
+  push:
+  workflow_dispatch:
+
+concurrency:
+  group: rust-${{ github.ref }}
+  # Queue instead of cancel: every push gets a finished result for agents.
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  windows:
+    name: Windows workspace build and tests
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      # sqlx checks migration checksums; CRLF checkouts break them (upstream #843).
+      - name: Disable CRLF conversion
+        run: git config --global core.autocrlf false
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          prefix-key: tingskriver-windows-test-v1
+
+      - name: Cache FFmpeg binary
+        uses: actions/cache@v4
+        with:
+          path: frontend/src-tauri/binaries/ffmpeg-*.exe
+          key: ${{ runner.os }}-ffmpeg-${{ hashFiles('frontend/src-tauri/build.rs', 'frontend/src-tauri/build/ffmpeg.rs') }}
+
+      - name: Cache Windows ONNX Runtime
+        uses: actions/cache@v4
+        with:
+          path: frontend/src-tauri/binaries/onnxruntime
+          key: ${{ runner.os }}-onnxruntime-x86_64-pc-windows-msvc-${{ hashFiles('frontend/src-tauri/build/onnxruntime.rs') }}
+
+      # tauri-build checks that every externalBin exists. The real sidecar is
+      # only needed in the installer, so an empty placeholder is enough here.
+      - name: Placeholder llama-helper sidecar
+        shell: bash
+        run: |
+          mkdir -p frontend/src-tauri/binaries
+          touch frontend/src-tauri/binaries/llama-helper-x86_64-pc-windows-msvc.exe
+
+      - name: Build workspace
+        shell: bash
+        run: .github/scripts/annotate-errors.sh cargo build --workspace --locked
+
+      # ort loads ONNX Runtime dynamically on Windows. The app points it at the
+      # bundled DLL at startup; tests use the DLL the Tauri build script
+      # downloaded instead of an older one from System32. The runner has no
+      # audio output device, so the playback device test only runs on Linux
+      # and on real machines.
+      - name: Test workspace
+        shell: bash
+        env:
+          ORT_DYLIB_PATH: ${{ github.workspace }}\frontend\src-tauri\binaries\onnxruntime\onnxruntime.dll
+        run: >-
+          .github/scripts/annotate-errors.sh cargo test --workspace --locked --no-fail-fast --
+          --skip audio::playback_monitor::tests::test_get_output_device
+
+  linux-core:
+    name: Core tests and crate boundaries (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libasound2-dev cmake clang
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          prefix-key: tingskriver-linux-core-v1
+
+      # tingskriver-core must stay free of UI crates (docs/arkitektur.md).
+      - name: Core has no UI dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          tree="$(cargo tree --locked -p tingskriver-core -e normal,build --prefix none --target all)"
+          if echo "$tree" | grep -E '^(tauri|tauri-[a-z-]+|gpui|gpui-[a-z-]+|wry|webview2[a-z-]*) v'; then
+            echo "::error::tingskriver-core depends on a UI crate (see the lines above)"
+            exit 1
+          fi
+          echo "tingskriver-core has no tauri, gpui, wry or webview2 dependency"
+
+      - name: Test tingskriver-core
+        run: .github/scripts/annotate-errors.sh cargo test --locked -p tingskriver-core
+
+  # Licence and ban rules for every Cargo dependency (deny.toml). A GPL or
+  # LGPL crate anywhere in the tree fails this job.
+  cargo-deny:
+    name: Dependency licences (cargo deny)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny@0.20.2
+
+      - name: cargo deny check
+        run: cargo deny --locked check licenses bans
+
+  # The same Windows type-check agents run on Linux (docs/BUILDING.md). The
+  # Tauri crate is left out: its build script runs the downloaded ffmpeg.exe.
+  xwin-check:
+    name: Windows check from Linux (cargo xwin)
+    # Pinned so the LLVM 19 packages below exist.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      # The MSVC STL that cargo-xwin downloads needs Clang 19 or newer.
+      - name: Install LLVM 19, lld and Ninja
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang-19 llvm-19 lld-19 ninja-build cmake
+          echo "/usr/lib/llvm-19/bin" >> "$GITHUB_PATH"
+
+      - name: Install cargo-xwin
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-xwin
+
+      - name: Cache Windows SDK and CRT
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/cargo-xwin
+          key: cargo-xwin-sdk-v1
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          prefix-key: tingskriver-xwin-v1
+
+      - name: cargo xwin check
+        run: .github/scripts/annotate-errors.sh cargo xwin check --locked --target x86_64-pc-windows-msvc -p tingskriver-core -p tingskriver-overlay -p tingskriver-app

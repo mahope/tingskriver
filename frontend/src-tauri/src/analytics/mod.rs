@@ -1,5 +1,5 @@
-pub mod analytics;
-pub mod commands;
+//! Analytics Tauri commands; the client lives in `tingskriver_core::analytics`.
 
-pub use analytics::*;
-// Don't re-export commands to avoid conflicts - lib.rs will import directly
+pub use tingskriver_core::analytics::*;
+
+pub mod commands;

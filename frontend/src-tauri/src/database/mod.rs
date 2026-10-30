@@ -1,5 +1,7 @@
+//! Database commands and startup; the repositories live in
+//! `tingskriver_core::database`.
+
+pub use tingskriver_core::database::*;
+
 pub mod commands;
-pub mod manager;
-pub mod models;
-pub mod repositories;
 pub mod setup;

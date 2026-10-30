@@ -23,7 +23,7 @@ The models are downloaded from the model hosts when the user chooses them in the
 
 ## Summary models (downloaded at runtime, not bundled)
 
-The models offered in `frontend/src-tauri/src/summary/summary_engine/models.rs` are downloaded from Hugging Face on request:
+The models offered in `crates/tingskriver-core/src/summary/summary_engine/models.rs` are downloaded from Hugging Face on request:
 
 - **Qwen3.5 2B and 4B** (GGUF quantizations by unsloth), Apache License 2.0. Base models: <https://huggingface.co/Qwen/Qwen3.5-2B>, <https://huggingface.co/Qwen/Qwen3.5-4B>. GGUF repositories: <https://huggingface.co/unsloth/Qwen3.5-2B-GGUF>, <https://huggingface.co/unsloth/Qwen3.5-4B-GGUF>.
 - **Gemma 3 1B and 4B** (GGUF quantizations by bartowski), subject to the Gemma Terms of Use, <https://ai.google.dev/gemma/terms>, and the Gemma Prohibited Use Policy, <https://ai.google.dev/gemma/prohibited_use_policy>. Repositories: <https://huggingface.co/bartowski/google_gemma-3-4b-it-GGUF>, <https://huggingface.co/bartowski/google_gemma-3-1b-it-GGUF>. Gemma is provided under and subject to the Gemma Terms of Use. The user accepts these terms by downloading the model.

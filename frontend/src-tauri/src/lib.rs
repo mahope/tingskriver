@@ -1,36 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex as StdMutex;
 // Removed unused import
-
-// Performance optimization: Conditional logging macros for hot paths
-#[cfg(debug_assertions)]
-macro_rules! perf_debug {
-    ($($arg:tt)*) => {
-        log::debug!($($arg)*)
-    };
-}
-
-#[cfg(not(debug_assertions))]
-macro_rules! perf_debug {
-    ($($arg:tt)*) => {};
-}
-
-#[cfg(debug_assertions)]
-macro_rules! perf_trace {
-    ($($arg:tt)*) => {
-        log::trace!($($arg)*)
-    };
-}
-
-#[cfg(not(debug_assertions))]
-macro_rules! perf_trace {
-    ($($arg:tt)*) => {};
-}
-
-// Make these macros available to other modules
-pub(crate) use perf_debug;
-pub(crate) use perf_trace;
 
 // Re-export async logging macros for external use (removed due to macro conflicts)
 
@@ -38,7 +8,8 @@ pub(crate) use perf_trace;
 pub mod analytics;
 pub mod api;
 pub mod audio;
-pub mod config;
+pub use tingskriver_core::config;
+pub mod core_bridge;
 pub mod console_utils;
 pub mod database;
 pub mod dictation;
@@ -51,7 +22,7 @@ pub mod anthropic;
 pub mod groq;
 pub mod openrouter;
 pub mod parakeet_engine;
-pub mod state;
+pub use tingskriver_core::state;
 pub mod summary;
 pub mod tray;
 pub mod utils;
@@ -65,18 +36,6 @@ use tauri::{AppHandle, Manager, Runtime};
 use tokio::sync::RwLock;
 
 static RECORDING_FLAG: AtomicBool = AtomicBool::new(false);
-
-#[cfg(target_os = "windows")]
-static ONNX_RUNTIME_INIT_ERROR: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-
-pub(crate) fn ensure_onnx_runtime_available() -> anyhow::Result<()> {
-    #[cfg(target_os = "windows")]
-    if let Some(error) = ONNX_RUNTIME_INIT_ERROR.get() {
-        anyhow::bail!("{error}");
-    }
-
-    Ok(())
-}
 
 #[cfg(target_os = "windows")]
 fn catch_onnx_runtime_init<F, E>(init: F) -> Result<(), String>
@@ -95,12 +54,6 @@ where
             Err(format!("ONNX Runtime initialization panicked: {message}"))
         }
     }
-}
-
-#[cfg(target_os = "windows")]
-fn record_onnx_runtime_failure(error: String) {
-    log::error!("{error}");
-    let _ = ONNX_RUNTIME_INIT_ERROR.set(error);
 }
 
 #[cfg(all(test, target_os = "windows"))]
@@ -122,10 +75,6 @@ mod onnx_runtime_tests {
         assert!(error.contains("synthetic loader panic"));
     }
 }
-
-// Global language preference storage (default to "auto-translate" for automatic translation to English)
-static LANGUAGE_PREFERENCE: std::sync::LazyLock<StdMutex<String>> =
-    std::sync::LazyLock::new(|| StdMutex::new("auto-translate".to_string()));
 
 #[derive(Debug, Deserialize)]
 struct RecordingArgs {
@@ -160,7 +109,7 @@ async fn start_recording<R: Runtime>(
 
     // Call the actual audio recording system with meeting name
     match audio::recording_commands::start_recording_with_devices_and_meeting(
-        app.clone(),
+        crate::core_bridge::host(&app),
         mic_device_name,
         system_device_name,
         meeting_name.clone(),
@@ -212,7 +161,7 @@ async fn stop_recording<R: Runtime>(app: AppHandle<R>, args: RecordingArgs) -> R
 
     // Call the actual audio recording system to stop
     match audio::recording_commands::stop_recording(
-        app.clone(),
+        crate::core_bridge::host(&app),
         audio::recording_commands::RecordingArgs {
             save_path: args.save_path.clone(),
         },
@@ -317,7 +266,7 @@ async fn start_audio_level_monitoring<R: Runtime>(
         device_names
     );
 
-    audio::simple_level_monitor::start_monitoring(app, device_names)
+    audio::simple_level_monitor::start_monitoring(crate::core_bridge::host(&app), device_names)
         .await
         .map_err(|e| format!("Failed to start audio level monitoring: {}", e))
 }
@@ -382,7 +331,7 @@ async fn start_recording_with_devices_and_meeting<R: Runtime>(
                 "No devices specified, starting with defaults and meeting: {:?}",
                 meeting_name
             );
-            audio::recording_commands::start_recording_with_meeting_name(app.clone(), meeting_name)
+            audio::recording_commands::start_recording_with_meeting_name(crate::core_bridge::host(&app), meeting_name)
                 .await
         }
         _ => {
@@ -393,7 +342,7 @@ async fn start_recording_with_devices_and_meeting<R: Runtime>(
                 meeting_name
             );
             audio::recording_commands::start_recording_with_devices_and_meeting(
-                app.clone(),
+                crate::core_bridge::host(&app),
                 mic_device_name,
                 system_device_name,
                 meeting_name,
@@ -433,17 +382,7 @@ async fn start_recording_with_devices_and_meeting<R: Runtime>(
 
 #[tauri::command]
 async fn set_language_preference(language: String) -> Result<(), String> {
-    let mut lang_pref = LANGUAGE_PREFERENCE
-        .lock()
-        .map_err(|e| format!("Failed to set language preference: {}", e))?;
-    log_info!("Setting language preference to: {}", language);
-    *lang_pref = language;
-    Ok(())
-}
-
-// Internal helper function to get language preference (for use within Rust code)
-pub fn get_language_preference_internal() -> Option<String> {
-    LANGUAGE_PREFERENCE.lock().ok().map(|lang| lang.clone())
+    tingskriver_core::set_language_preference(language)
 }
 
 /// Open the folder with the application log files in the file manager.
@@ -497,6 +436,9 @@ pub fn run() {
         .manage(audio::init_system_audio_state())
         .manage(summary::summary_engine::ModelManagerState(Arc::new(tokio::sync::Mutex::new(None))))
         .setup(|_app| {
+            // Core spawns async work from audio and hook threads on Tauri's runtime.
+            tingskriver_core::runtime::set_handle(tauri::async_runtime::handle().inner().clone());
+
             #[cfg(target_os = "windows")]
             match _app.path().resolve(
                 "onnxruntime.dll",
@@ -513,14 +455,14 @@ pub fn run() {
                             "Initialized bundled ONNX Runtime from {}",
                             runtime_path.display()
                         ),
-                        Err(error) => record_onnx_runtime_failure(format!(
+                        Err(error) => tingskriver_core::record_onnx_runtime_failure(format!(
                             "Failed to initialize bundled ONNX Runtime from {}: {}",
                             runtime_path.display(),
                             error
                         )),
                     }
                 }
-                Err(error) => record_onnx_runtime_failure(format!(
+                Err(error) => tingskriver_core::record_onnx_runtime_failure(format!(
                     "Failed to resolve bundled ONNX Runtime resource: {}",
                     error
                 )),
