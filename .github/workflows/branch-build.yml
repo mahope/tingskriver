@@ -38,3 +38,19 @@ jobs:
         run: |
           rustc --edition 2021 --test frontend/src-tauri/src/audio/device_follow.rs -o "$RUNNER_TEMP/device_follow_tests"
           "$RUNNER_TEMP/device_follow_tests"
+
+  # Dictation decisions (cleanup, shortcut, gesture, fallback) are plain std.
+  dictation-logic-tests:
+    name: Dictation logic unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run tests
+        run: |
+          rustc --edition 2021 --test frontend/src-tauri/src/dictation/logic/mod.rs -o "$RUNNER_TEMP/dictation_logic_tests"
+          "$RUNNER_TEMP/dictation_logic_tests"
