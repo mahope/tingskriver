@@ -1,4 +1,4 @@
-# Tingskriver 1.0: møder, diktering og assistent i ét program
+# Tingskriver: samlet plan for møder, diktering og assistent
 
 > Afløser scope-afsnittene i `2026-10-29-meetily-fork.md`. Projektformen derfra gælder stadig: gratis open source (MIT), Windows først, intet Mahope-specifikt hardkodet, ingen Pro-kode, ingen betalte tjenester ud over dem brugeren selv slår til.
 
@@ -21,7 +21,7 @@ Det skal kunne bruges af andre danskere uden Mahopes servere: alt eksternt (Syv.
 - **Dansk først.** UI, standardsprog `da`, skabeloner, datoformater, talte kommandoer.
 - **Rolig UI.** Noterne er i fokus; status vises diskret; aldrig modale dialoger midt i et møde.
 
-## Scope 1.0
+## Scope (hele planen)
 
 ### A. Møder (Granola-niveau)
 A1. **To lydspor** (mikrofon og system) gemmes hver for sig plus mixet spor til afspilning. Løbende skrivning (segmenterede filer eller fragmenteret mp4), genopretning efter nedbrud ved næste start.
@@ -59,12 +59,12 @@ C1. **Genvej:** `Ctrl+Win+Space` åbner et lille spørgevindue og lytter; slip/s
 C2. **Skærmkontekst:** valgfri "se skærmen": aktivt vindue fanges og læses med Windows' indbyggede OCR (`Windows.Media.Ocr`, dansk, lokalt, gratis). Teksten sendes til LLM, ikke billedet. Synligt øje-ikon når skærmen er med.
 C3. **Kendskab til møder:** svar kan bruge egne møder via FTS-søgning (A7) som kontekst ("hvad lovede jeg Anna i går?"), med kilde-links til mødet.
 C4. **Svar** streames i vinduet; knapper: kopiér, indsæt i aktivt program, læs højt (Windows' danske stemme via SAPI/`Windows.Media.SpeechSynthesis`, valgfrit).
-C5. **Handlinger (begrænset 1.0):** "skriv et svar på denne mail" (skærm + diktering → udkast indsættes), "lav en opgave" (via aflevering A11), "start optagelse". Ingen autonome klik i andre programmer.
-C6. **Wake word "Hej Tingskriver":** ikke i 1.0 (se Ikke i scope).
+C5. **Handlinger (begrænset):** "skriv et svar på denne mail" (skærm + diktering → udkast indsættes), "lav en opgave" (via aflevering A11), "start optagelse". Ingen autonome klik i andre programmer.
+C6. **Wake word "Hej Tingskriver":** ikke i denne plan (se Ikke i scope).
 
 ### D. Fælles
 D1. **AI-udbydere** i indstillinger med rolle pr. funktion: transskription (Syv.ai / lokal), referat og assistent (Ollama / OpenAI-kompatibelt endpoint / indbygget lokal model), diktering-polering (hurtig udbyder / fra). Test-knap pr. udbyder med målt svartid.
-D2. **Mads' opsætning:** Ollama på netcup via Tailscale (kræver at Ollama også lytter på tailnet-IP; se Risici), Syv.ai-nøgle fra Bitwarden, aflevering via SSH.
+D2. **Mads' opsætning (besluttet 30/10):** referat, talernavne, spørg-mødet og assistent bruger den **indbyggede lokale model** (llama-helper) på PC'en. Ollama på netcup åbnes ikke for PC'en; Ollama/OpenAI-kompatibel udbyder findes kun som valgfri indstilling for andre brugere. Diktering bruger Syv.ai som standard med lokal Parakeet som reserve (automatisk, hvis Syv.ai fejler eller er over 2 s). Syv.ai-nøgle fra Bitwarden, aflevering via SSH.
 D3. **Hurtigtaster** samlet under Indstillinger → Genveje, med konfliktvarsel.
 D4. **Start med Windows** (minimeret til tray), et klik til "Ny optagelse", "Diktér", "Spørg".
 D5. **Onboarding** i 3 trin: mikrofon og systemlyd, transskription (Syv.ai-nøgle eller lokal model), genveje. Alt andet har gode standarder.
@@ -72,9 +72,9 @@ D6. **Opdatering** via GitHub Releases (findes). NSIS-hook der rydder rester eft
 D7. **Projektside** på `tingskriver.mahoje.dk`: én statisk side med skærmbilleder, download-link til seneste release, privatliv i klartekst.
 D8. **Upstream:** enhedsskift-rettelsen sendes som PR til Zackriya-Solutions/meetily, når Mads har bekræftet den på rigtigt udstyr.
 
-## Ikke i scope (1.0)
+## Ikke i scope
 - macOS og Linux (koden må ikke ødelægge upstreams stier, men vi tester dem ikke).
-- Wake word / altid-lyttende mikrofon. Kommer måske i 1.x med lokal model (openWakeWord) og tydelig indikator.
+- Wake word / altid-lyttende mikrofon. Kommer måske senere med lokal model (openWakeWord) og tydelig indikator.
 - Mødebot, der deltager i mødet; automatisk besked i mødechatten.
 - Live-transskript under mødet (efter mødet er nok; noter skrives selv undervejs).
 - Billedforståelse (vision-model); vi bruger OCR-tekst.
@@ -101,9 +101,9 @@ D8. **Upstream:** enhedsskift-rettelsen sendes som PR til Zackriya-Solutions/mee
 | 6 | A6 spørg mødet, A7 søgning (FTS5), A11 aflevering + ingest-PR i mahope-automation | 4 | 8 |
 | 7 | B1-B8, B10 diktering | mute-fix | 3, 4, 5 |
 | 8 | B9 kommandotilstand, C1-C5 assistent | 6, 7 | |
-| 9 | D3-D8 finpudsning, genveje, onboarding, projektside, NSIS-oprydning, upstream-PR, ydeevne og fejltilstande, release 1.0.0 | alle | |
+| 9 | D3-D8 finpudsning, genveje, onboarding, projektside, NSIS-oprydning, upstream-PR, ydeevne og fejltilstande | alle | |
 
-Releases: `0.6.0-dev.N` efter fase 3-5, `0.7.0-dev.N` efter 6-7, `0.8.0-dev.N` efter 8, `1.0.0` efter Mads' accepttest.
+Releases (besluttet 30/10): vi er i starten, ikke på 1.0-niveau. Versionerne fortsætter i små PATCH-skridt fra den udgivne 0.5.0-dev.2: `0.5.1`, `0.5.2` osv., én pr. færdig og testet delleverance (dev-suffiks kun til prøvebyg). Auto-opdateringen kræver altid et højere nummer. `1.0.0` kommer først, når Mads selv siger, at programmet er klar.
 
 ## Færdig-kriterier
 - [ ] 10-minutters testmøde: headsettet af og på to gange, mute i 1 minut. Ingen huller over 2 s, ingen skift under mute, begge spor komplette.
@@ -118,8 +118,7 @@ Releases: `0.6.0-dev.N` efter fase 3-5, `0.7.0-dev.N` efter 6-7, `0.8.0-dev.N` e
 - [ ] CI grøn, unit-tests for alle beslutningsfunktioner (enhedsskift, mødedetektor, fletning, renskrivning, snippets).
 
 ## Risici og åbne spørgsmål
-- **Ollama-adgang fra PC'en:** netcup lytter kun lokalt. Plan: Ollama også på tailnet-IP med ufw-regel kun for tailscale0 (ændring på netcup = intern drift; laves additivt med rollback). Alternativ: Tailscale Serve.
-- **Hastighed:** `qwen2.5:7b` på CPU giver ca. 5-10 tokens/s. Referat på 600 tokens ≈ 1-2 min, acceptabelt efter mødet. For langsomt til diktering-polering og kommandotilstand; derfor er lag 1 deterministisk og LLM-polering valgfri. Plan B: mindre model (qwen2.5:3b) til polering, eller en GPU-boks senere.
+- **Lokal model på PC'en (besluttet):** referat og assistent kører på den indbyggede model (Qwen3.5-4B via llama-helper). Hastighed og dansk kvalitet på Mads' PC er ikke målt; måles i fase 4 på et rigtigt møde. Referatet laves i baggrunden efter mødet, så minutter er acceptabelt. For lange møder: opdel transskriptet i bidder og flet (map-reduce). Kommandotilstand og LLM-polering ved diktering bliver nok for langsomme lokalt; derfor er lag 1 deterministisk, og polering er valgfri. Plan B, hvis kvaliteten er for svag: større lokal model som valgfri download, eller Mads beslutter senere at åbne Ollama via Tailscale.
 - **Syv.ai-latens for diktering** er ikke målt. Måles i fase 7 som det første (prototype). Er den over 2 s, bliver lokal Parakeet standard for diktering.
 - **Mødegenkendelse i browseren** (fane-titel kun når fanen er aktiv). Mikrofonbrug pr. browserproces + titel + kalender skal kombineres. Plan B: lille browserudvidelse.
 - **Globale genveje og indsættelse** kan blokeres af programmer kørt som administrator (UIPI). Dokumentér; kør ikke Tingskriver som admin.
@@ -127,7 +126,7 @@ Releases: `0.6.0-dev.N` efter fase 3-5, `0.7.0-dev.N` efter 6-7, `0.8.0-dev.N` e
 - **Ingen Windows-compile-løkke for agenter:** `cargo check` stopper på agent-worker (mangler gdk-3.0), og agenter kan ikke se CI. Før fase 5, 7 og 8 (næsten ren Windows-Rust) skal agenterne have en løkke: Linux-Tauri-afhængigheder + `cargo xwin check --target x86_64-pc-windows-msvc` på agent-worker, eller læseadgang til branch-build. "Branch-build grøn" er en del af hver fases færdig-kriterium.
 - **Mute-rettelsen kan bringe dongle-hullet tilbage:** når stilheds-skift fjernes, kan Jabra-donglen igen levere nul-frames i 14-21 s, når headsettet slukkes. Løsningen må ikke være indholdsbaseret; der skal findes et signal fra endpoint/jack-tilstand (fx `IAudioEndpointVolume`/`KSJACK_DESCRIPTION`, Jabra-dongle-status) eller accepteres som kendt begrænsning.
 - **Fletning med upstream** bliver sværere for hver fase. Accepteret: Tingskriver er nu sit eget produkt; upstream-rettelser plukkes manuelt.
-- **Samtykke:** automatisk optagelse optager andre. Indikator + Mads' egen oplysning dækker 1.0.
+- **Samtykke:** automatisk optagelse optager andre. Indikator + Mads' egen oplysning dækker indtil videre.
 
 ## Test-seams
 - **Enhedsbeslutninger:** ren funktion (hændelser + buffertilstand → skift/ikke skift). Fanger mute-regressionen.
