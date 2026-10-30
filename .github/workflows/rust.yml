@@ -4,6 +4,8 @@ name: Rust
 # whole workspace (core, GPUI app, overlay, Tauri crate); Linux runs the
 # platform independent tests in tingskriver-core and checks the crate
 # boundaries. Agents read the result with scripts/ci-status.sh.
+# clippy -D warnings and fmt --check are deferred until the fork code is
+# cleaned up (docs/agenter.md).
 
 on:
   push:
