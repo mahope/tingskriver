@@ -111,6 +111,10 @@ jobs:
       - name: Test tingskriver-core
         run: .github/scripts/annotate-errors.sh cargo test --locked -p tingskriver-core
 
+      # The overlay's state model, layout and renderer are platform independent.
+      - name: Test tingskriver-overlay
+        run: .github/scripts/annotate-errors.sh cargo test --locked -p tingskriver-overlay
+
   # The same Windows type-check agents run on Linux (docs/BUILDING.md). The
   # Tauri crate is left out: its build script runs the downloaded ffmpeg.exe.
   xwin-check:
