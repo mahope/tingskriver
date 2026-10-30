@@ -2,7 +2,7 @@
     "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
     "productName": "Tingskriver",
     "mainBinaryName": "tingskriver",
-    "version": "0.5.0-dev.0",
+    "version": "0.5.0-dev.2",
     "identifier": "dk.mahoje.tingskriver",
     "build": {
         "frontendDist": "../out",

@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="da">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tingskriver: dansk diktering og mødereferater på din egen computer</title>
+<meta name="description" content="Tingskriver er et gratis open source-program til Windows. Det optager dine møder, skriver dansk referat og lader dig diktere direkte ind i alle programmer.">
+<link rel="canonical" href="https://tingskriver.mahoje.dk/">
+<link rel="alternate" hreflang="da" href="https://tingskriver.mahoje.dk/">
+<link rel="alternate" hreflang="en" href="https://tingskriver.mahoje.dk/en/">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/literata-600.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/hanken-grotesk-400.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/style.css">
+<meta property="og:title" content="Tingskriver">
+<meta property="og:description" content="Dansk diktering og mødereferater på din egen computer. Gratis og åben kildekode.">
+<meta property="og:image" content="https://tingskriver.mahoje.dk/billeder/moedeside-lys.webp">
+<meta property="og:url" content="https://tingskriver.mahoje.dk/">
+<meta property="og:locale" content="da_DK">
+</head>
+<body>
+<a class="skip" href="#indhold">Spring til indhold</a>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="/" aria-label="Tingskriver, forside">
+      <svg viewBox="0 0 32 32" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.5 25.5C6 14 14 6 26 6c0 12-8 19.5-19.5 19.5Z"/><path d="M4 28 18 14"/><path d="M19 28h9"/></svg>
+      Tingskriver
+    </a>
+    <nav aria-label="Hovedmenu">
+      <a href="#funktioner">Funktioner</a>
+      <a href="#navnet">Navnet</a>
+      <a href="#hvorfor">Hvorfor</a>
+      <a href="#aaben">Åben kildekode</a>
+      <a href="#om">Om</a>
+      <a class="lang" href="/en/" hreflang="en" lang="en">English</a>
+    </nav>
+  </div>
+</header>
+
+<main id="indhold">
+  <section class="hero">
+    <div class="wrap">
+      <h1>Tal dansk.<br>Tingskriver skriver det ned.</h1>
+      <p class="lede">Et gratis program til Windows, der optager dine møder, skriver et dansk referat og lader dig diktere direkte ind i det program, du arbejder i. Lyden og noterne bliver på din egen computer.</p>
+      <div class="actions">
+        <a class="btn" href="https://github.com/mahope/tingskriver/releases/latest">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/></svg>
+          Hent testversionen
+        </a>
+        <a href="https://github.com/mahope/tingskriver">Se koden på GitHub</a>
+      </div>
+      <p class="note">Tingskriver er i en tidlig testfase og findes kun til Windows 11 indtil videre. Programmet er ikke kodesigneret endnu, så Windows viser en advarsel første gang. Vælg "Flere oplysninger" og derefter "Kør alligevel".</p>
+      <div class="shot">
+        <div class="shot-bar" aria-hidden="true"><span></span><span></span><span></span></div>
+        <picture>
+          <source srcset="/billeder/moedeside-moerk.webp" media="(prefers-color-scheme: dark)">
+          <img src="/billeder/moedeside-lys.webp" width="1280" height="800" alt="Tingskriver med et referat af et statusmøde: kort resumé, beslutninger og handlepunkter, og mødelisten i venstre side.">
+        </picture>
+      </div>
+    </div>
+  </section>
+
+  <section class="ch" id="funktioner">
+    <div class="wrap">
+      <h2>Det kan den</h2>
+      <p class="lead">Jeg bygger Tingskriver til to ting, jeg bruger hver dag: at skrive med stemmen og at få styr på mine møder. Herunder står ærligt, hvad der virker i dag, og hvad der er på vej.</p>
+
+      <div class="feature">
+        <div>
+          <span class="status">Bygget, kommer i næste testversion</span>
+          <h3>Diktering i alle programmer</h3>
+          <p>Hold <kbd>Ctrl</kbd> + <kbd>Win</kbd>, tal, og slip. Teksten bliver renskrevet og sat ind dér, hvor markøren står, uanset om det er en mail, et chatvindue eller et dokument.</p>
+          <ul>
+            <li>Sig "punktum", "komma" eller "ny linje", så kommer tegnet.</li>
+            <li>"Øh" og "altså" forsvinder af sig selv.</li>
+            <li>Din egen ordbog sørger for, at navne og fagord staves rigtigt.</li>
+            <li>Din udklipsholder bliver ikke rørt.</li>
+          </ul>
+          <img class="pill" src="/billeder/diktering-pille-skriver.webp" width="420" height="100" alt="Den lille pille nederst på skærmen, der viser 'Skriver ...' mens teksten bliver lavet.">
+        </div>
+        <figure>
+          <img src="/billeder/diktering-lys.webp" width="1280" height="800" loading="lazy" alt="Siden Diktering med de seneste dikteringer, hvilket program de blev skrevet i, og hvor hurtigt teksten kom.">
+        </figure>
+      </div>
+
+      <div class="feature flip">
+        <div>
+          <span class="status">I testversionen nu</span>
+          <h3>Møder med referat</h3>
+          <p>Tingskriver optager både din mikrofon og lyden fra mødet. Bagefter får du et dansk referat med beslutninger og handlepunkter.</p>
+          <ul>
+            <li>Optagelsen fortsætter, hvis headsettet falder ud, og skifter tilbage, når det kommer igen.</li>
+            <li>Fra næste version får mute aldrig optagelsen til at skifte mikrofon.</li>
+            <li>Referatet laves af en sprogmodel, der kører på din egen computer.</li>
+          </ul>
+          <p>På vej: automatisk start, når du går ind i et møde i Teams, Meet eller Zoom, egne noter under mødet og søgning på tværs af alle møder.</p>
+        </div>
+        <figure>
+          <img src="/billeder/optagelse-enhed-skiftet-lys.webp" width="1280" height="800" loading="lazy" alt="En optagelse i gang, hvor Tingskriver viser, at mikrofonen er skiftet til et USB-headset, mens transskriptionen fortsætter.">
+        </figure>
+      </div>
+
+      <div class="later">
+        <h3>Senere: en assistent, du kan spørge</h3>
+        <p>Tryk på en genvej og spørg om det, der står på skærmen, eller om noget fra et tidligere møde. Den del kommer, når diktering og møder fungerer, som de skal.</p>
+        <p>Du vælger selv, hvem der laver tale om til tekst: den indbyggede lokale model, Syv.ai, OpenAI, OdinCore eller en anden tjeneste med samme slags API. Uden opsætning kører alt lokalt.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="ch sheet" id="navnet">
+    <div class="wrap name">
+      <h2>Navnet</h2>
+      <div>
+        <p class="quote">Tingskriveren var den, der sad ved tinget og skrev ned, hvad der blev sagt og besluttet.</p>
+        <p style="margin-top:1.4rem">Før i tiden mødtes man til ting for at afgøre sager og træffe fælles beslutninger, og tingskriveren førte protokollen. Det er præcis det job, programmet har: at lytte med og skrive ned, så du kan koncentrere dig om samtalen.</p>
+        <p>Jeg ville have et gammelt dansk ord frem for endnu et engelsk produktnavn. Tingskriver lyder lidt støvet, og det kan jeg godt lide.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="ch" id="hvorfor">
+    <div class="wrap">
+      <h2>Hvorfor jeg bygger den</h2>
+      <p class="lead">Jeg har betalt for flere værktøjer til møder og video og prøvet endnu flere. Ingen af dem passede helt til, hvordan jeg arbejder.</p>
+      <p>Den åbne mødeoptager, jeg brugte, gik i stykker, hver gang mit headset faldt ud midt i et møde. Transskriptionen var svag på dansk. Og de pæneste programmer sender alt, hvad der bliver sagt, til en tjeneste i udlandet, som jeg ikke har nogen aftale med.</p>
+      <p>Jeg taler med kunder hele dagen, og jeg har lovet dem, at det, de fortæller mig, ikke ender i tilfældige AI-tjenester. Derfor vil jeg have et program, hvor lyden og noterne bliver på min computer, og hvor jeg selv vælger, om noget skal sendes videre, og til hvem.</p>
+      <p>Samtidig skriver jeg meget. Mails, beskeder, tilbud. Det går hurtigere at sige det end at taste det, men kun hvis teksten kommer ud på ordentligt dansk med det samme.</p>
+      <p>Så jeg tog en god, åben mødeoptager og begyndte at gøre den til min egen: dansk først, robust over for headsets og med diktering bygget ind. Når den kan bruges af mig, kan den forhåbentlig også bruges af andre.</p>
+    </div>
+  </section>
+
+  <section class="ch sheet" id="aaben">
+    <div class="wrap">
+      <h2>Åben kildekode</h2>
+      <p class="lead">Tingskriver er ikke et produkt, der skal sælges. Det er et projekt, jeg laver i min egen tid, og som alle må bruge.</p>
+      <ul class="ideals">
+        <li><strong>Gratis</strong><span>Ingen abonnement, ingen prøveperiode og ingen betalte funktioner. Bruger du en ekstern tjeneste som Syv.ai, betaler du kun dem for det, du selv bruger.</span></li>
+        <li><strong>MIT-licens</strong><span>Al koden ligger på GitHub. Du må læse den, ændre den og bygge videre på den.</span></li>
+        <li><strong>Dine data</strong><span>Optagelser, transskripter og noter ligger som filer på din computer. Der er ingen konto og ingen sky, du skal logge ind i.</span></li>
+        <li><strong>Ingen sporing</strong><span>Programmet sender ingen statistik om, hvordan du bruger det.</span></li>
+        <li><strong>Du vælger</strong><span>Lokal model eller en tjeneste efter eget valg. Programmet siger tydeligt, hvornår noget forlader din computer.</span></li>
+        <li><strong>Bygget på skuldre</strong><span>Tingskriver startede som en fork af <a href="https://github.com/Zackriya-Solutions/meetily">Meetily</a> fra Zackriya Solutions, som også er MIT-licenseret. Tak til dem. Tingskriver er et selvstændigt projekt uden tilknytning til Zackriya.</span></li>
+      </ul>
+      <p style="margin-top:2rem">Bidrag er velkomne. Fejl og idéer kan skrives som <a href="https://github.com/mahope/tingskriver/issues">issues på GitHub</a>. Programmet er kun til Windows lige nu. Mac og Linux kommer måske senere.</p>
+    </div>
+  </section>
+
+  <section class="ch" id="om">
+    <div class="wrap">
+      <div class="about">
+        <figure class="portrait">
+          <img src="/billeder/mads.jpg" width="480" height="480" alt="Portræt af Mads Holst Jensen foran en murstensvæg.">
+        </figure>
+        <div>
+          <h2>Om mig</h2>
+          <p>Jeg hedder Mads Holst Jensen og er freelanceudvikler på Fyn. Til daglig bygger jeg hjemmesider, automatiseringer og AI-værktøjer for små og mellemstore danske virksomheder.</p>
+          <p>Tingskriver startede som et værktøj til mig selv. Jeg bruger det hver dag, så fejl bliver fundet hurtigt og rettet, når jeg selv falder over dem.</p>
+          <h3 style="margin-top:2.2rem">Om Mahoje</h3>
+          <p>Mahoje er min virksomhed. Jeg er teknisk partner for virksomheder, der gerne vil have én person til at tage ansvaret for deres hjemmeside, AI og drift. Mahoje står bag Tingskriver og betaler for det med tid, men programmet er ikke en del af det, jeg sælger.</p>
+          <p><a href="https://mahoje.dk">Læs mere på mahoje.dk</a></p>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>Tingskriver er udgivet under MIT-licensen. Lavet af <a href="https://mahoje.dk">Mads Holst Jensen, Mahoje</a>.</p>
+    <p class="links"><a href="https://github.com/mahope/tingskriver">GitHub</a> <a href="https://github.com/mahope/tingskriver/releases">Udgivelser</a> <a href="/en/" hreflang="en" lang="en">English</a></p>
+  </div>
+</footer>
+</body>
+</html>

@@ -1,0 +1,51 @@
+# cargo-deny configuration, checked in CI (.github/workflows/rust.yml).
+#
+#   cargo deny check licenses bans
+#
+# Tingskriver is MIT licensed and ships as one binary, so every linked crate
+# must have a permissive licence (or a weak copyleft one that applies to the
+# crate's own files only, MPL-2.0). GPL, LGPL and AGPL crates fail the check.
+# Bundled executables and models (ffmpeg, Whisper, Parakeet) are not Cargo
+# dependencies; their licences are listed in THIRD_PARTY_LICENSES.md.
+
+[graph]
+# The app is released for Windows and macOS; Linux is the agent and CI host.
+targets = [
+    "x86_64-pc-windows-msvc",
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "x86_64-unknown-linux-gnu",
+]
+all-features = false
+
+[licenses]
+confidence-threshold = 0.9
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BlueOak-1.0.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+
+[licenses.private]
+# Workspace crates are checked through their own `license` field.
+ignore = false
+
+[bans]
+# Duplicate versions are common in the Tauri and GPUI trees; they are not
+# a licence problem, so they are allowed.
+multiple-versions = "allow"
+# Workspace path and pinned git dependencies have no version requirement.
+wildcards = "allow"
