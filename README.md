@@ -60,7 +60,7 @@ Tingskriver er en fork af [Meetily](https://github.com/Zackriya-Solutions/meetil
 
 ### Udvikling
 
-- Udviklingen foregår på Forgejo: `git.mahoje.dk/mahope/tingskriver`. GitHub-repoet [mahope/tingskriver](https://github.com/mahope/tingskriver) er et spejl.
+- Udviklingen foregår her på GitHub: [mahope/tingskriver](https://github.com/mahope/tingskriver). Issues og pull requests er velkomne.
 - Et tag på formen `v*` bygger en udgivelse på GitHub Actions og lægger installationsfilen på GitHub Releases.
 - Pushes til andre grene end `main` bygger uden at lave en udgivelse.
 - Byggevejledning: [docs/BUILDING.md](docs/BUILDING.md). Frontenden ligger i `frontend/` (Tauri 2, Next.js, Rust).
@@ -120,7 +120,7 @@ Tingskriver is a fork of [Meetily](https://github.com/Zackriya-Solutions/meetily
 
 ### Development
 
-- Development happens on Forgejo: `git.mahoje.dk/mahope/tingskriver`. The GitHub repository [mahope/tingskriver](https://github.com/mahope/tingskriver) is a mirror.
+- Development happens here on GitHub: [mahope/tingskriver](https://github.com/mahope/tingskriver). Issues and pull requests are welcome.
 - Pushing a `v*` tag builds a release on GitHub Actions and publishes the installer on GitHub Releases.
 - Pushes to branches other than `main` build without creating a release.
 - Build instructions: [docs/BUILDING.md](docs/BUILDING.md). The app lives in `frontend/` (Tauri 2, Next.js, Rust).

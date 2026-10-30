@@ -17,7 +17,7 @@ Det skal kunne bruges af andre danskere uden Mahopes servere: alt eksternt (Syv.
 ## Bærende principper
 - **Optagelsen må aldrig gå tabt.** Lyden skrives løbende til disk (to spor), så et nedbrud koster højst få sekunder. Alt efterbehandling kan køres igen fra lydfilerne.
 - **Mute er ikke en fejl.** Enhedsskift sker kun ved fjernet/ugyldig enhed, Windows-default-skift eller manglende buffere. Aldrig på grund af lydindhold.
-- **Data bliver hos brugeren.** Lokal SQLite + filer. Eksterne kald kun til tjenester brugeren selv har sat op. Ingen telemetri. For Mads: mødedata og diktering går kun til Syv.ai og egen Ollama, aldrig Claude/OpenAI.
+- **Data bliver hos brugeren.** Lokal SQLite + filer. Eksterne kald kun til tjenester brugeren selv har sat op. Ingen telemetri. For Mads: mødedata og diktering går kun til Syv.ai og den lokale model, aldrig Claude/OpenAI.
 - **Dansk først.** UI, standardsprog `da`, skabeloner, datoformater, talte kommandoer.
 - **Rolig UI.** Noterne er i fokus; status vises diskret; aldrig modale dialoger midt i et møde.
 
@@ -63,12 +63,12 @@ C5. **Handlinger (begrænset):** "skriv et svar på denne mail" (skærm + dikter
 C6. **Wake word "Hej Tingskriver":** ikke i denne plan (se Ikke i scope).
 
 ### D. Fælles
-D1. **AI-udbydere** i indstillinger med rolle pr. funktion: transskription (Syv.ai / lokal), referat og assistent (Ollama / OpenAI-kompatibelt endpoint / indbygget lokal model), diktering-polering (hurtig udbyder / fra). Test-knap pr. udbyder med målt svartid.
+D1. **AI-udbydere** (Mads 30/10: "gør det muligt at bruge OpenAI eller fx odincore.dk som andre modeller end Syv.ai"; tjenesten hedder OdinCore og ligger på odincore.ai, base `https://api.odincore.ai/v1`, med OpenAI-kompatibel transskription `ordbogen/whisper` uden diarisering og chat `odin-2`). Én fælles udbyder-model: navn, base-URL, API-nøgle (Credential Manager), model-id og type (Syv.ai, OpenAI, OdinCore, generisk OpenAI-kompatibel, lokal). Færdige forvalg for Syv.ai, OpenAI og OdinCore; alle andre via "brugerdefineret OpenAI-kompatibel". Hver funktion vælger udbyder og model: transskription (Syv.ai / lokal), referat og assistent (Ollama / OpenAI-kompatibelt endpoint / indbygget lokal model), diktering-polering (hurtig udbyder / fra). Test-knap pr. udbyder med målt svartid.
 D2. **Mads' opsætning (besluttet 30/10):** referat, talernavne, spørg-mødet og assistent bruger den **indbyggede lokale model** (llama-helper) på PC'en. Ollama på netcup åbnes ikke for PC'en; Ollama/OpenAI-kompatibel udbyder findes kun som valgfri indstilling for andre brugere. Diktering bruger Syv.ai som standard med lokal Parakeet som reserve (automatisk, hvis Syv.ai fejler eller er over 2 s). Syv.ai-nøgle fra Bitwarden, aflevering via SSH.
 D3. **Hurtigtaster** samlet under Indstillinger → Genveje, med konfliktvarsel.
 D4. **Start med Windows** (minimeret til tray), et klik til "Ny optagelse", "Diktér", "Spørg".
 D5. **Onboarding** i 3 trin: mikrofon og systemlyd, transskription (Syv.ai-nøgle eller lokal model), genveje. Alt andet har gode standarder.
-D6. **Opdatering** via GitHub Releases (findes). NSIS-hook der rydder rester efter tidligere binærnavne (`meetily.exe`).
+D6. **Opdatering og installer** via Velopack med GitHub Releases som kilde (erstatter Tauri-updater og NSIS). Den sidste Tauri-release flytter eksisterende installationer over; installeren rydder rester efter tidligere binærnavne (`meetily.exe`).
 D7. **Projektside** på `tingskriver.mahoje.dk`: én statisk side med skærmbilleder, download-link til seneste release, privatliv i klartekst.
 D8. **Upstream:** enhedsskift-rettelsen sendes som PR til Zackriya-Solutions/meetily, når Mads har bekræftet den på rigtigt udstyr.
 
@@ -85,12 +85,12 @@ D8. **Upstream:** enhedsskift-rettelsen sendes som PR til Zackriya-Solutions/mee
 | System | Bruges til | Bemærkning |
 |---|---|---|
 | Syv.ai (`platform.syv.ai/v1`) | Transskription af møder og diktering | OpenAI-kompatibel, `diarize`, `da`. Nøgle i Credential Manager; Mads' nøgle i Bitwarden "Syv.ai - Api key". |
-| Ollama på netcup | Referat, talernavne, spørg-mødet, assistent | `qwen2.5:7b` på 8 CPU-kerner uden GPU: fint til referat, for langsom til diktering. Lytter i dag kun på 127.0.0.1. |
+| Ollama (valgfri udbyder) | Referat, talernavne, spørg-mødet, assistent for brugere, der selv har Ollama | Ikke i Mads' opsætning (besluttet 30/10); han bruger den lokale model. |
 | Indbygget lokal model (llama-helper, Qwen3.5-4B) | Fallback | Ligger allerede i appen. |
 | Windows-API'er | Enhedsskift, mikrofonbrug, vinduer, OCR, TTS, globale genveje, SendInput | Alt i Rust (`windows`-crate). |
 | Kalender-ICS | Titler, deltagere | Privat URL, gemt i Credential Manager. |
 | Ingest på netcup (mahope-automation) | Wiki + HQ | Ny kilde `tingskriver` med færdigt transskript. Separat PR i mahope-automation. |
-| GitHub Releases / Forgejo | Kode, CI, opdatering | Findes. |
+| GitHub (repo, Actions, Releases) | Kode, issues, CI, opdatering | Findes. |
 
 ## Faser (hver fase = egen gren, review, release)
 | Fase | Indhold | Afhænger af | Kan køre parallelt med |
@@ -101,7 +101,11 @@ D8. **Upstream:** enhedsskift-rettelsen sendes som PR til Zackriya-Solutions/mee
 | 6 | A6 spørg mødet, A7 søgning (FTS5), A11 aflevering + ingest-PR i mahope-automation | 4 | 8 |
 | 7 | B1-B8, B10 diktering | mute-fix | 3, 4, 5 |
 | 8 | B9 kommandotilstand, C1-C5 assistent | 6, 7 | |
-| 9 | D3-D8 finpudsning, genveje, onboarding, projektside, NSIS-oprydning, upstream-PR, ydeevne og fejltilstande | alle | |
+| 9 | D3-D8 finpudsning, genveje, onboarding, projektside, Velopack-overgang, upstream-PR, ydeevne og fejltilstande | alle | |
+
+**Repo og arkitektur (Mads 30/10):** ét offentligt repo, `github.com/mahope/tingskriver`, som monorepo. Forgejo-kopien arkiveres. Brugerfladen bygges i GPUI, hele vejen. Cargo-workspace med `crates/tingskriver-core` (lyd, transskription, database, udbydere og diktering uden UI), `crates/tingskriver-app` (GPUI med gpui-component; GPUI-versionen låses til gpui-components), `crates/tingskriver-overlay` (pille og indikator), samt `site/` (projektsiden) og `installer/` (Velopack). Tauri-appen bliver liggende, indtil GPUI-appen kan det samme, og slettes derefter. Den sidste Tauri-release flytter brugerne over på Velopack-installeren.
+
+**Byggerækkefølge (Mads 30/10): byg det hele på én gang, uden udgivelser imellem.** Faserne bygges parallelt på egne grene med klart filejerskab, flettes i en samlegren `integration/samlet`, og der udgives én version, når helheden er grøn og testet. Prioritet: diktering (B) er vigtigst, så møder (A), så stabilitet og hastighed; assistenten (C) er en "fed feature", men lavest prioritet. UI-teknologi (Tauri eller GPUI) afgøres af research 30/10, før der bygges mere UI.
 
 Releases (besluttet 30/10): vi er i starten, ikke på 1.0-niveau. Versionerne fortsætter i små PATCH-skridt fra den udgivne 0.5.0-dev.2: `0.5.1`, `0.5.2` osv., én pr. færdig og testet delleverance (dev-suffiks kun til prøvebyg). Auto-opdateringen kræver altid et højere nummer. `1.0.0` kommer først, når Mads selv siger, at programmet er klar.
 
@@ -109,7 +113,7 @@ Releases (besluttet 30/10): vi er i starten, ikke på 1.0-niveau. Versionerne fo
 - [ ] 10-minutters testmøde: headsettet af og på to gange, mute i 1 minut. Ingen huller over 2 s, ingen skift under mute, begge spor komplette.
 - [ ] Nedbrud midt i optagelse (dræb processen): ved næste start tilbydes mødet genoprettet med højst 5 s tab.
 - [ ] Dansk møde med to andre: Mads står som "Mads", de andre adskilt og navngivet efter én bekræftelse.
-- [ ] Referatet indeholder Mads' egne noter + beslutninger og opgaver, på dansk, lavet af Ollama, og er i wikien med opgaver i HQ inden for 10 min.
+- [ ] Referatet indeholder Mads' egne noter + beslutninger og opgaver, på dansk, lavet af den lokale model, og er i wikien med opgaver i HQ inden for 10 min.
 - [ ] Automatisk start og stop for Teams-app, Teams i browser, Meet i browser, Meet-app og Zoom; ingen start ved Discord-talebesked eller diktering.
 - [ ] Diktering i Spark, Teams-chat, VS Code og en browser-tekstboks: tekst inde under 1,5 s (Syv.ai, 15 s tale), udklipsholderen uændret bagefter.
 - [ ] Snippets, ordbog og talte tegn virker; kommandotilstand omskriver markeret tekst.
@@ -139,7 +143,7 @@ Releases (besluttet 30/10): vi er i starten, ikke på 1.0-niveau. Versionerne fo
 - **Manuelt hos Mads:** headset/mute-test, ét rigtigt møde pr. mødetype, diktering i fire programmer.
 
 ## Estimat
-Cirka 80-120 timers agentarbejde over fase 3-9, plus Mads' tests efter hver release. Største usikkerheder: mødegenkendelse i browser (+10 t ved plan B), diktering-latens (+5 t), Ollama-hastighed (kan kræve ny maskine, uden for budget).
+Cirka 80-120 timers agentarbejde over fase 3-9, plus Mads' tests efter hver release. Største usikkerheder: mødegenkendelse i browser (+10 t ved plan B), diktering-latens (+5 t), den lokale models hastighed og danske kvalitet, GPUI-migreringen (250-450 t ifølge research 30/10; tallet ovenfor dækker ikke migreringen).
 
 ## Ordliste
 - **Mikrofonspor / systemspor:** Mads' egen stemme / det PC'en afspiller.
