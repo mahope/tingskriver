@@ -1,7 +1,7 @@
 {
   "bundle": {
     "resources": {
-      "templates": "templates",
+      "../../crates/tingskriver-core/templates/*.json": "templates/",
       "binaries/onnxruntime": ".",
       "../../LICENSE.md": "licenses/LICENSE.md",
       "../../NOTICE.md": "licenses/NOTICE.md",
