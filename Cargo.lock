@@ -5523,7 +5523,7 @@ dependencies = [
 
 [[package]]
 name = "llama-helper"
-version = "0.1.0"
+version = "0.5.0-dev.2"
 dependencies = [
  "anyhow",
  "encoding_rs",
@@ -10664,7 +10664,7 @@ dependencies = [
 
 [[package]]
 name = "tingskriver"
-version = "0.4.1"
+version = "0.5.0-dev.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -10744,7 +10744,7 @@ dependencies = [
 
 [[package]]
 name = "tingskriver-app"
-version = "0.4.1"
+version = "0.5.0-dev.2"
 dependencies = [
  "anyhow",
  "dirs 5.0.1",
@@ -10763,7 +10763,7 @@ dependencies = [
 
 [[package]]
 name = "tingskriver-core"
-version = "0.4.1"
+version = "0.5.0-dev.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -10816,7 +10816,7 @@ dependencies = [
 
 [[package]]
 name = "tingskriver-overlay"
-version = "0.4.1"
+version = "0.5.0-dev.2"
 
 [[package]]
 name = "tiny-keccak"

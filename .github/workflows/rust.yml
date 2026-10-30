@@ -5,6 +5,8 @@ name: Rust
 # of the GPUI app as an artifact; Linux runs the platform independent tests
 # in tingskriver-core and checks the crate boundaries and the GPUI version
 # lock. Agents read the result with scripts/ci-status.sh.
+# clippy -D warnings and fmt --check are deferred until the fork code is
+# cleaned up (docs/agenter.md).
 
 on:
   push:
@@ -153,6 +155,24 @@ jobs:
           path: target/release/tingskriver-app.exe
           if-no-files-found: error
           retention-days: 30
+
+  # Licence and ban rules for every Cargo dependency (deny.toml). A GPL or
+  # LGPL crate anywhere in the tree fails this job.
+  cargo-deny:
+    name: Dependency licences (cargo deny)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny@0.20.2
+
+      - name: cargo deny check
+        run: cargo deny --locked check licenses bans
 
   # The same Windows type-check agents run on Linux (docs/BUILDING.md). The
   # Tauri crate is left out: its build script runs the downloaded ffmpeg.exe.

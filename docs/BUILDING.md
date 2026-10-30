@@ -52,6 +52,17 @@ cargo xwin check --target x86_64-pc-windows-msvc -p tingskriver
 
 Delete the stub before building an installer on that machine. CI runs the same xwin check (without the Tauri crate) in `.github/workflows/rust.yml`.
 
+### Dependency licences (cargo deny)
+
+`deny.toml` lists the licences a Cargo dependency may have. GPL, LGPL and AGPL crates are rejected, because they would end up in the MIT-licensed binary. CI runs the check in `.github/workflows/rust.yml`; run it locally with:
+
+```bash
+cargo install cargo-deny --version 0.20.2 --locked
+cargo deny --locked check licenses bans
+```
+
+Bundled programs and downloaded models are not Cargo dependencies; their licences are listed in [THIRD_PARTY_LICENSES.md](../THIRD_PARTY_LICENSES.md).
+
 ### Reading CI results without a token
 
 `scripts/ci-status.sh <branch> [sha]` waits for the GitHub Actions runs of the newest commit on a branch (or the given commit, short SHA allowed) through the public API, then prints each workflow's result. When something failed it lists the failed jobs and steps and the job annotations; cargo errors and test panics show up there because the workflow steps run through `.github/scripts/annotate-errors.sh` (job logs need admin rights, annotations do not). Exit code 0 means green, 1 a failure, 2 a timeout or API problem. Without a token GitHub allows 60 requests an hour; the script polls every 60 s with ETags, and answers that did not change do not count. `GITHUB_TOKEN` raises the limit, `CI_POLL_SECONDS` and `CI_TIMEOUT_MINUTES` tune the wait.
