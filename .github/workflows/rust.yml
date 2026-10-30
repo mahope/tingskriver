@@ -101,7 +101,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          tree="$(cargo tree --locked -p tingskriver-core -e normal,build --prefix none)"
+          tree="$(cargo tree --locked -p tingskriver-core -e normal,build --prefix none --target all)"
           if echo "$tree" | grep -E '^(tauri|tauri-[a-z-]+|gpui|gpui-[a-z-]+|wry|webview2[a-z-]*) v'; then
             echo "::error::tingskriver-core depends on a UI crate (see the lines above)"
             exit 1
