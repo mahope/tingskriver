@@ -16,7 +16,7 @@ pub async fn pull_ollama_model<R: Runtime>(
     endpoint: Option<String>,
 ) -> Result<(), String> {
     tingskriver_core::ollama::pull_ollama_model(
-        crate::core_bridge::events(&app_handle),
+        crate::core_bridge::host(&app_handle),
         model_name,
         endpoint,
     )

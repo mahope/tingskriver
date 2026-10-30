@@ -17,7 +17,7 @@ use chrono::{DateTime, Duration, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::{LazyLock, Mutex};
-use tauri::{AppHandle, Runtime};
+use tauri::{AppHandle, Manager, Runtime};
 
 
 static SUMMARY_START_LOCK: LazyLock<tokio::sync::Mutex<()>> =
@@ -526,9 +526,11 @@ pub async fn api_process_transcript<R: Runtime>(
     let cancellation_token =
         SummaryService::register_cancellation_token(&m_id, started_at);
     let meeting_id_clone = m_id.clone();
+    // App data directory for the BuiltInAI provider
+    let app_data_dir = app.path().app_data_dir().ok();
     tauri::async_runtime::spawn(async move {
         SummaryService::process_transcript_background(
-            app,
+            app_data_dir,
             pool,
             meeting_id_clone,
             started_at,

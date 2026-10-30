@@ -2,7 +2,7 @@ use std::process::Command;
 use std::sync::Arc;
 use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
-use crate::events::{EventHandle, EventSinkExt};
+use crate::host::{HostExt, HostHandle};
 use reqwest::Client;
 use tokio::time::{timeout, Duration, sleep};
 use tokio::sync::RwLock;
@@ -256,7 +256,7 @@ pub struct DownloadProgress {
 }
 
 pub async fn pull_ollama_model(
-    app_handle: EventHandle,
+    app_handle: HostHandle,
     model_name: String,
     endpoint: Option<String>,
 ) -> Result<(), String> {

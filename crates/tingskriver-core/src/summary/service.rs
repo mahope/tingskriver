@@ -14,10 +14,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Manager};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
@@ -217,7 +216,7 @@ pub struct SummaryService;
 
 impl SummaryService {
     /// Registers a new cancellation token for a meeting.
-    pub(crate) fn register_cancellation_token(
+    pub fn register_cancellation_token(
         meeting_id: &str,
         started_at: DateTime<Utc>,
     ) -> CancellationToken {
@@ -326,7 +325,7 @@ impl SummaryService {
     /// the main thread. It updates the database with progress and results.
     ///
     /// # Arguments
-    /// * `_app` - Tauri app handle (for future use)
+    /// * `app_data_dir` - Application data folder (for the BuiltInAI provider)
     /// * `pool` - SQLx connection pool
     /// * `meeting_id` - Unique identifier for the meeting
     /// * `text` - Full transcript text
@@ -334,8 +333,8 @@ impl SummaryService {
     /// * `model_name` - Specific model (e.g., "gpt-4", "llama3.2:latest")
     /// * `custom_prompt` - Optional user-provided context
     /// * `template_id` - Template identifier (e.g., "daily_standup", "standard_meeting")
-    pub async fn process_transcript_background<R: tauri::Runtime>(
-        _app: AppHandle<R>,
+    pub async fn process_transcript_background(
+        app_data_dir: Option<PathBuf>,
         pool: SqlitePool,
         meeting_id: String,
         started_at: DateTime<Utc>,
@@ -480,8 +479,6 @@ impl SummaryService {
             100000  // Effectively unlimited for single-pass processing
         };
 
-        // Get app data directory for BuiltInAI provider
-        let app_data_dir = _app.path().app_data_dir().ok();
 
         if let Some(code) = &summary_language {
             info!("📝 Summary language preference: {}", code);

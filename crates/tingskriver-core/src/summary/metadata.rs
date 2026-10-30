@@ -12,24 +12,24 @@ const METADATA_FILE: &str = "metadata.json";
 const METADATA_TEMP_FILE_PREFIX: &str = ".metadata.json.";
 static METADATA_WRITE_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
-pub(crate) fn read_summary_language_from_metadata(folder: &Path) -> Result<Option<String>> {
+pub fn read_summary_language_from_metadata(folder: &Path) -> Result<Option<String>> {
     read_language_field_from_metadata(folder, SUMMARY_LANGUAGE_FIELD)
 }
 
-pub(crate) fn read_detected_summary_language_from_metadata(
+pub fn read_detected_summary_language_from_metadata(
     folder: &Path,
 ) -> Result<Option<String>> {
     read_language_field_from_metadata(folder, DETECTED_SUMMARY_LANGUAGE_FIELD)
 }
 
-pub(crate) fn write_summary_language_to_metadata(
+pub fn write_summary_language_to_metadata(
     folder: &Path,
     summary_language: Option<&str>,
 ) -> Result<()> {
     write_language_field_to_metadata(folder, SUMMARY_LANGUAGE_FIELD, summary_language)
 }
 
-pub(crate) fn write_detected_summary_language_to_metadata(
+pub fn write_detected_summary_language_to_metadata(
     folder: &Path,
     summary_language: Option<&str>,
 ) -> Result<()> {

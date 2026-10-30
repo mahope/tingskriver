@@ -48,7 +48,7 @@ pub fn clean_llm_markdown_detailed(raw: &str) -> CleanedLlmMarkdown {
     }
 }
 
-pub(crate) fn contains_reasoning_marker(markdown: &str) -> bool {
+pub fn contains_reasoning_marker(markdown: &str) -> bool {
     THINK_MARKER_REGEX.is_match(markdown)
 }
 

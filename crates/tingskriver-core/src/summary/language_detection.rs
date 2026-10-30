@@ -24,7 +24,7 @@ pub struct SummaryLanguageDetection {
     pub reason: SummaryLanguageDetectionReason,
 }
 
-pub(crate) fn detect_summary_language(transcript_texts: &[String]) -> SummaryLanguageDetection {
+pub fn detect_summary_language(transcript_texts: &[String]) -> SummaryLanguageDetection {
     let mut weights: HashMap<&'static str, usize> = HashMap::new();
     let mut saw_meaningful_text = false;
     let mut saw_low_confidence = false;

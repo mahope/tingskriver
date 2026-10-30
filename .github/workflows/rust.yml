@@ -11,7 +11,8 @@ on:
 
 concurrency:
   group: rust-${{ github.ref }}
-  cancel-in-progress: true
+  # Queue instead of cancel: every push gets a finished result for agents.
+  cancel-in-progress: false
 
 permissions:
   contents: read

@@ -6,14 +6,14 @@
 //!
 //! # Architecture
 //!
-//! - **Built-in templates**: JSON files in `frontend/src-tauri/templates/` embedded at compile time
+//! - **Built-in templates**: JSON files in `crates/tingskriver-core/templates/` embedded at compile time
 //! - **Custom templates**: JSON files in platform-specific app data directory
 //! - **Fallback strategy**: Custom templates override built-in templates with the same ID
 //!
 //! # Usage
 //!
 //! ```rust
-//! use app_lib::summary::templates;
+//! use tingskriver_core::summary::templates;
 //!
 //! // Load a specific template
 //! let template = templates::get_template("daily_standup").expect("daily standup template exists");

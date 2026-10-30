@@ -96,9 +96,9 @@
             "icons/icon.icns",
             "icons/icon.ico"
         ],
-        "resources": [
-            "templates/*.json"
-        ],
+        "resources": {
+            "../../crates/tingskriver-core/templates/*.json": "templates/"
+        },
         "externalBin": [
             "binaries/llama-helper",
             "binaries/ffmpeg"

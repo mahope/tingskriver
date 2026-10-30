@@ -1,40 +1,41 @@
-//! Events from core to the UI.
+//! The connection from core to the UI layer.
 //!
-//! Core never talks to a UI framework directly. Code that used to call
-//! `AppHandle::emit` takes an [`EventHandle`] instead; the Tauri layer
-//! implements [`EventSink`] on top of its `AppHandle`, and the GPUI app will
-//! implement it on top of its own channel.
+//! Core never talks to a UI framework directly. Code that used to take a
+//! Tauri `AppHandle` takes a [`HostHandle`] instead: it emits events to the
+//! UI, reads the database once it is open and finds the app data folder.
+//! The Tauri crate implements [`AppHost`] on top of its `AppHandle`; the GPUI
+//! app will implement it on top of its own event channel.
 
+use crate::database::manager::DatabaseManager;
 use serde::Serialize;
+use std::path::PathBuf;
 use std::sync::Arc;
 
-/// Receives events emitted by core.
-pub trait EventSink: Send + Sync + 'static {
+/// What core needs from the application around it.
+pub trait AppHost: Send + Sync + 'static {
     /// Deliver an event with an already serialized payload to every listener.
     fn emit_value(&self, event: &str, payload: serde_json::Value) -> Result<(), String>;
+
+    /// The open database, or `None` until it has been initialised (first
+    /// launch before onboarding).
+    fn database(&self) -> Option<DatabaseManager>;
+
+    /// The per-user application data folder.
+    fn app_data_dir(&self) -> Result<PathBuf, String>;
 }
 
-/// Shared handle to the UI's event sink.
-pub type EventHandle = Arc<dyn EventSink>;
+/// Shared handle to the application host.
+pub type HostHandle = Arc<dyn AppHost>;
 
 /// `emit` with any serializable payload, mirroring `tauri::Emitter::emit`.
-pub trait EventSinkExt {
+pub trait HostExt {
     fn emit<S: Serialize>(&self, event: &str, payload: S) -> Result<(), String>;
 }
 
-impl<T: EventSink + ?Sized> EventSinkExt for T {
+impl<T: AppHost + ?Sized> HostExt for T {
     fn emit<S: Serialize>(&self, event: &str, payload: S) -> Result<(), String> {
         let value = serde_json::to_value(payload).map_err(|e| e.to_string())?;
         self.emit_value(event, value)
-    }
-}
-
-/// An event sink that drops everything (tests and headless use).
-pub struct NoopEventSink;
-
-impl EventSink for NoopEventSink {
-    fn emit_value(&self, _event: &str, _payload: serde_json::Value) -> Result<(), String> {
-        Ok(())
     }
 }
 
@@ -46,10 +47,18 @@ mod tests {
     #[derive(Default)]
     struct Recorder(Mutex<Vec<(String, serde_json::Value)>>);
 
-    impl EventSink for Recorder {
+    impl AppHost for Recorder {
         fn emit_value(&self, event: &str, payload: serde_json::Value) -> Result<(), String> {
             self.0.lock().unwrap().push((event.to_string(), payload));
             Ok(())
+        }
+
+        fn database(&self) -> Option<DatabaseManager> {
+            None
+        }
+
+        fn app_data_dir(&self) -> Result<PathBuf, String> {
+            Err("no app data dir in tests".to_string())
         }
     }
 
@@ -61,7 +70,7 @@ mod tests {
     #[test]
     fn emit_serializes_payload_through_handle() {
         let recorder = Arc::new(Recorder::default());
-        let handle: EventHandle = recorder.clone();
+        let handle: HostHandle = recorder.clone();
         handle.emit("progress", Progress { percent: 42 }).unwrap();
         handle.emit("done", ()).unwrap();
         let events = recorder.0.lock().unwrap();

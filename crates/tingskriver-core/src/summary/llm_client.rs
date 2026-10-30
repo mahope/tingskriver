@@ -142,7 +142,7 @@ impl ClaudeChatResponse {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct LlmCompletion {
+pub struct LlmCompletion {
     pub content: String,
     pub reasoning_stripped: bool,
 }
@@ -256,7 +256,7 @@ impl LLMProvider {
 /// * `cancellation_token` - Optional token to cancel the request
 ///
 /// The generated visible content and whether private reasoning was removed.
-pub(crate) async fn generate_summary(
+pub async fn generate_summary(
     client: &Client,
     provider: &LLMProvider,
     model_name: &str,

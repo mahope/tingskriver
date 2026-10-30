@@ -1,44 +1,10 @@
-/// Summary module - handles all meeting summary generation functionality
-///
-/// This module contains:
-/// - LLM client for communicating with various AI providers (OpenAI, Claude, Groq, Ollama, OpenRouter, CustomOpenAI)
-/// - Processor for chunking transcripts and generating summaries
-/// - Service layer for orchestrating summary generation
-/// - Templates for structured meeting summary generation
-/// - Tauri commands for frontend integration
+//! Summary commands; the summary engine lives in `tingskriver_core::summary`.
 
-use serde::{Deserialize, Serialize};
-
-/// Custom OpenAI-compatible endpoint configuration
-/// Stored as JSON in the database and used for connecting to any OpenAI-compatible API server
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CustomOpenAIConfig {
-    /// Base URL of the OpenAI-compatible API endpoint (e.g., "http://localhost:8000/v1")
-    pub endpoint: String,
-    /// API key for authentication (optional if server doesn't require it)
-    #[serde(rename = "apiKey")]
-    pub api_key: Option<String>,
-    /// Model identifier to use (e.g., "gpt-4", "llama-3-70b", "mistral-7b")
-    pub model: String,
-    /// Maximum tokens for completion (optional)
-    #[serde(rename = "maxTokens")]
-    pub max_tokens: Option<i32>,
-    /// Temperature parameter (0.0-2.0, optional)
-    pub temperature: Option<f32>,
-    /// Top-P sampling parameter (0.0-1.0, optional)
-    #[serde(rename = "topP")]
-    pub top_p: Option<f32>,
-}
+pub use tingskriver_core::summary::*;
 
 pub mod commands;
-pub(crate) mod language_detection;
-pub mod llm_client;
-pub(crate) mod metadata;
-pub mod processor;
-pub mod service;
 pub mod summary_engine;
 pub mod template_commands;
-pub mod templates;
 
 // Re-export Tauri commands (with their generated __cmd__ variants)
 pub use commands::{
@@ -67,8 +33,3 @@ pub use template_commands::{
     __tauri_command_name_api_validate_template,
     api_get_template_details, api_list_templates, api_validate_template,
 };
-
-// Re-export commonly used items
-pub use llm_client::LLMProvider;
-pub use processor::{chunk_text, extract_meeting_name_from_markdown, rough_token_count};
-pub use service::SummaryService;
