@@ -22,7 +22,8 @@ use windows::Win32::Security::Credentials::{
     CRED_TYPE_GENERIC,
 };
 use windows::Win32::System::DataExchange::{
-    CloseClipboard, EmptyClipboard, EnumClipboardFormats, GetClipboardData, GetClipboardSequenceNumber,
+    CloseClipboard, EmptyClipboard, EnumClipboardFormats, GetClipboardData, GetClipboardFormatNameW,
+    GetClipboardSequenceNumber,
     OpenClipboard, RegisterClipboardFormatW, SetClipboardData,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -248,6 +249,25 @@ impl InsertMethod {
 /// Formats that hold GDI handles rather than global memory; not copied.
 const GDI_FORMATS: &[u32] = &[2, 3, 9, 14, 0x80, 0x82, 0x83, 0x8E];
 const MAX_SAVED_BYTES: usize = 32 * 1024 * 1024;
+/// OLE bookkeeping formats hold pointers into the copying process; copying
+/// their bytes back would hand other programs dangling data.
+const SKIPPED_FORMAT_NAMES: &[&str] = &["DataObject", "Ole Private Data", "OwnerLink", "ObjectLink", "Link"];
+
+fn is_skipped_format(format: u32) -> bool {
+    if GDI_FORMATS.contains(&format) {
+        return true;
+    }
+    if format < 0xC000 {
+        return false;
+    }
+    let mut buf = [0u16; 128];
+    let len = unsafe { GetClipboardFormatNameW(format, &mut buf) };
+    if len <= 0 {
+        return false;
+    }
+    let name = String::from_utf16_lossy(&buf[..len as usize]);
+    SKIPPED_FORMAT_NAMES.contains(&name.as_str())
+}
 
 struct SavedClipboard {
     formats: Vec<(u32, Vec<u8>)>,
@@ -283,7 +303,7 @@ fn save_clipboard() -> Result<SavedClipboard, String> {
     unsafe {
         let mut format = EnumClipboardFormats(0);
         while format != 0 {
-            if !GDI_FORMATS.contains(&format) {
+            if !is_skipped_format(format) {
                 if let Ok(handle) = GetClipboardData(format) {
                     let global = HGLOBAL(handle.0);
                     let size = GlobalSize(global);
