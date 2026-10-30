@@ -123,6 +123,10 @@ jobs:
       - name: Test tingskriver-core
         run: .github/scripts/annotate-errors.sh cargo test --locked -p tingskriver-core
 
+      # The overlay's state model, layout and renderer are platform independent.
+      - name: Test tingskriver-overlay
+        run: .github/scripts/annotate-errors.sh cargo test --locked -p tingskriver-overlay
+
   # Release build of the GPUI app for the manual Windows tests in
   # docs/gpui.md (text input, IME, UI Automation, DPI, start time, no GPU).
   windows-gpui-app:

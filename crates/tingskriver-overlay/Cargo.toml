@@ -9,3 +9,17 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+tingskriver-core = { path = "../tingskriver-core" }
+log = "0.4"
+# Drawing and glyph rasterisation, both pure Rust so the renderer is tested on Linux.
+tiny-skia = "0.11"
+swash = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_HiDpi",
+    "Win32_UI_WindowsAndMessaging",
+] }
