@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicBool, Ordering};
-use tauri::{AppHandle, Emitter, Runtime};
+use crate::host::{HostExt, HostHandle};
 use anyhow::Result;
 use log::{error, info};
 use serde::Serialize;
@@ -23,8 +23,8 @@ pub struct AudioLevelUpdate {
 static IS_MONITORING: AtomicBool = AtomicBool::new(false);
 
 /// Start audio level monitoring for specified devices
-pub async fn start_monitoring<R: Runtime>(
-    app_handle: AppHandle<R>,
+pub async fn start_monitoring(
+    app_handle: HostHandle,
     device_names: Vec<String>,
 ) -> Result<()> {
     info!("Starting simplified audio level monitoring for devices: {:?}", device_names);

@@ -32,7 +32,6 @@ pub mod hardware_detector;
 pub mod async_logger;
 pub mod batch_processor;
 pub mod system_detector;
-pub mod system_audio_commands;
 pub mod device_monitor;  // NEW: Device disconnect/reconnect monitoring
 pub mod device_follow;   // Default-device following decisions (Windows hot-swap)
 #[cfg(target_os = "windows")]
@@ -45,7 +44,7 @@ pub mod playback_monitor; // NEW: Playback device detection for BT warnings
 pub mod transcription;
 
 // Shared utilities for import and retranscription
-pub(crate) mod common;
+pub mod common;
 
 // Shared constants
 pub mod constants;
@@ -77,12 +76,6 @@ pub use system_detector::{
 };
 
 // Export system audio commands
-pub use system_audio_commands::{
-    start_system_audio_capture_command, list_system_audio_devices_command,
-    check_system_audio_permissions_command, start_system_audio_monitoring,
-    stop_system_audio_monitoring, get_system_audio_monitoring_status,
-    init_system_audio_state
-};
 
 // Export new simplified components
 pub use recording_state::{RecordingState, AudioChunk, ProcessedAudioChunk, AudioError, DeviceType as RecordingDeviceType};

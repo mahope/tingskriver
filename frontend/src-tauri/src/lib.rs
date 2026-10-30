@@ -2,35 +2,6 @@ use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
 // Removed unused import
 
-// Performance optimization: Conditional logging macros for hot paths
-#[cfg(debug_assertions)]
-macro_rules! perf_debug {
-    ($($arg:tt)*) => {
-        log::debug!($($arg)*)
-    };
-}
-
-#[cfg(not(debug_assertions))]
-macro_rules! perf_debug {
-    ($($arg:tt)*) => {};
-}
-
-#[cfg(debug_assertions)]
-macro_rules! perf_trace {
-    ($($arg:tt)*) => {
-        log::trace!($($arg)*)
-    };
-}
-
-#[cfg(not(debug_assertions))]
-macro_rules! perf_trace {
-    ($($arg:tt)*) => {};
-}
-
-// Make these macros available to other modules
-pub(crate) use perf_debug;
-pub(crate) use perf_trace;
-
 // Re-export async logging macros for external use (removed due to macro conflicts)
 
 // Declare audio module
@@ -138,7 +109,7 @@ async fn start_recording<R: Runtime>(
 
     // Call the actual audio recording system with meeting name
     match audio::recording_commands::start_recording_with_devices_and_meeting(
-        app.clone(),
+        crate::core_bridge::host(&app),
         mic_device_name,
         system_device_name,
         meeting_name.clone(),
@@ -190,7 +161,7 @@ async fn stop_recording<R: Runtime>(app: AppHandle<R>, args: RecordingArgs) -> R
 
     // Call the actual audio recording system to stop
     match audio::recording_commands::stop_recording(
-        app.clone(),
+        crate::core_bridge::host(&app),
         audio::recording_commands::RecordingArgs {
             save_path: args.save_path.clone(),
         },
@@ -295,7 +266,7 @@ async fn start_audio_level_monitoring<R: Runtime>(
         device_names
     );
 
-    audio::simple_level_monitor::start_monitoring(app, device_names)
+    audio::simple_level_monitor::start_monitoring(crate::core_bridge::host(&app), device_names)
         .await
         .map_err(|e| format!("Failed to start audio level monitoring: {}", e))
 }
@@ -360,7 +331,7 @@ async fn start_recording_with_devices_and_meeting<R: Runtime>(
                 "No devices specified, starting with defaults and meeting: {:?}",
                 meeting_name
             );
-            audio::recording_commands::start_recording_with_meeting_name(app.clone(), meeting_name)
+            audio::recording_commands::start_recording_with_meeting_name(crate::core_bridge::host(&app), meeting_name)
                 .await
         }
         _ => {
@@ -371,7 +342,7 @@ async fn start_recording_with_devices_and_meeting<R: Runtime>(
                 meeting_name
             );
             audio::recording_commands::start_recording_with_devices_and_meeting(
-                app.clone(),
+                crate::core_bridge::host(&app),
                 mic_device_name,
                 system_device_name,
                 meeting_name,

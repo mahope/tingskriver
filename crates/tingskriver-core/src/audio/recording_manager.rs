@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use crate::host::HostHandle;
 use tokio::sync::mpsc;
 use anyhow::Result;
 use log::{debug, error, info, warn};
@@ -365,7 +366,7 @@ impl RecordingManager {
     }
 
     /// Save recording after transcription is complete
-    pub async fn save_recording_only<R: tauri::Runtime>(&mut self, app: &tauri::AppHandle<R>) -> Result<()> {
+    pub async fn save_recording_only(&mut self, app: &HostHandle) -> Result<()> {
         debug!("Saving recording with transcript chunks");
 
         // Get actual recording duration from state
@@ -391,7 +392,7 @@ impl RecordingManager {
     }
 
     /// Stop recording and save audio (legacy method)
-    pub async fn stop_recording<R: tauri::Runtime>(&mut self, app: &tauri::AppHandle<R>) -> Result<()> {
+    pub async fn stop_recording(&mut self, app: &HostHandle) -> Result<()> {
         info!("Stopping recording manager");
 
         // Get recording duration BEFORE stopping (important!)

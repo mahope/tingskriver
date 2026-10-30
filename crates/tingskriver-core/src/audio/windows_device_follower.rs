@@ -25,7 +25,7 @@ use std::time::{Duration, Instant};
 
 use cpal::traits::{DeviceTrait, HostTrait};
 use log::{debug, error, info, warn};
-use tauri::{AppHandle, Emitter, Runtime};
+use crate::host::{HostExt, HostHandle};
 use tokio::sync::mpsc;
 
 use super::device_follow::{
@@ -241,8 +241,8 @@ async fn open_on(
     Ok(())
 }
 
-struct Follower<R: Runtime> {
-    app: AppHandle<R>,
+struct Follower {
+    app: HostHandle,
     session: Arc<RecordingState>,
     follower: DeviceFollower,
     keepers: HashMap<StreamKind, SilenceKeeper>,
@@ -252,7 +252,7 @@ struct Follower<R: Runtime> {
     mic_watchdog: MicWatchdog,
 }
 
-impl<R: Runtime> Follower<R> {
+impl Follower {
     async fn evaluate(&mut self) -> Option<Duration> {
         let snapshot_follower = self.follower.clone();
         let eval =
@@ -528,8 +528,8 @@ fn preferred_device(requested: Option<&str>, current_default: Option<&str>) -> O
 /// `requested_mic` / `requested_system`: what the user asked for (`None` =
 /// default). `monitor_events`: the upstream polling monitor's events; on
 /// Windows they only serve as an extra trigger to re-check devices.
-pub fn spawn<R: Runtime>(
-    app: AppHandle<R>,
+pub fn spawn(
+    app: HostHandle,
     session: Arc<RecordingState>,
     monitor_events: Option<mpsc::UnboundedReceiver<DeviceEvent>>,
     requested_mic: Option<String>,

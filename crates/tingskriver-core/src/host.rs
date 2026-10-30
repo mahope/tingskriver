@@ -11,6 +11,9 @@ use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+/// Identifies a listener registered with [`AppHost::listen`].
+pub type ListenerId = u32;
+
 /// What core needs from the application around it.
 pub trait AppHost: Send + Sync + 'static {
     /// Deliver an event with an already serialized payload to every listener.
@@ -22,6 +25,20 @@ pub trait AppHost: Send + Sync + 'static {
 
     /// The per-user application data folder.
     fn app_data_dir(&self) -> Result<PathBuf, String>;
+
+    /// Call `handler` with the JSON payload of every `event`, whether core
+    /// or the UI emitted it, until [`AppHost::unlisten`].
+    fn listen(&self, event: &str, handler: Box<dyn Fn(&str) + Send + Sync>) -> ListenerId;
+
+    /// Remove a listener registered with [`AppHost::listen`].
+    fn unlisten(&self, id: ListenerId);
+
+    /// Read `key` from the settings file `store` (for example
+    /// `recording_preferences.json`). `Ok(None)` when the key is not set.
+    fn read_setting(&self, store: &str, key: &str) -> Result<Option<serde_json::Value>, String>;
+
+    /// Write `key` in the settings file `store` and persist it to disk.
+    fn write_setting(&self, store: &str, key: &str, value: serde_json::Value) -> Result<(), String>;
 
     /// Recording or model availability changed: refresh status UI such as
     /// the tray menu.
@@ -72,6 +89,20 @@ mod tests {
 
         fn app_data_dir(&self) -> Result<PathBuf, String> {
             Err("no app data dir in tests".to_string())
+        }
+
+        fn listen(&self, _event: &str, _handler: Box<dyn Fn(&str) + Send + Sync>) -> ListenerId {
+            0
+        }
+
+        fn unlisten(&self, _id: ListenerId) {}
+
+        fn read_setting(&self, _store: &str, _key: &str) -> Result<Option<serde_json::Value>, String> {
+            Ok(None)
+        }
+
+        fn write_setting(&self, _store: &str, _key: &str, _value: serde_json::Value) -> Result<(), String> {
+            Ok(())
         }
     }
 

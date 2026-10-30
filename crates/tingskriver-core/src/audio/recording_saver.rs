@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::Mutex as AsyncMutex;
 use anyhow::Result;
 use log::{info, warn, error};
-use tauri::{AppHandle, Runtime, Emitter};
+use crate::host::{HostExt, HostHandle};
 use tokio::sync::mpsc;
 use serde::{Serialize, Deserialize};
 use std::path::PathBuf;
@@ -349,9 +349,9 @@ impl RecordingSaver {
     /// # Arguments
     /// * `app` - Tauri app handle for emitting events
     /// * `recording_duration` - Actual recording duration in seconds (from RecordingState)
-    pub async fn stop_and_save<R: Runtime>(
+    pub async fn stop_and_save(
         &mut self,
-        app: &AppHandle<R>,
+        app: &HostHandle,
         recording_duration: Option<f64>
     ) -> Result<Option<String>, String> {
         info!("Stopping recording saver");

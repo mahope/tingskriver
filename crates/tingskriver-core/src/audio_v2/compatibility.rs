@@ -66,9 +66,9 @@ impl LegacyBridge {
     }
 
     /// Start recording using the appropriate system
-    pub async fn start_recording<R: tauri::Runtime>(
+    pub async fn start_recording(
         &mut self,
-        app: &tauri::AppHandle<R>,
+        app: &HostHandle,
     ) -> Result<mpsc::UnboundedSender<AudioChunk>> {
         match self.mode {
             AudioMode::Legacy => {
@@ -113,9 +113,9 @@ impl LegacyBridge {
     }
 
     /// Stop recording and return the file path(s)
-    pub async fn stop_recording<R: tauri::Runtime>(
+    pub async fn stop_recording(
         &mut self,
-        app: &tauri::AppHandle<R>,
+        app: &HostHandle,
     ) -> Result<Option<String>> {
         match self.mode {
             AudioMode::Legacy => {

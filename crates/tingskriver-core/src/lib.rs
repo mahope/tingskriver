@@ -3,8 +3,40 @@
 //! later) calls into this crate and receives events through
 //! [`events::EventSink`].
 
+// Performance optimization: Conditional logging macros for hot paths
+#[cfg(debug_assertions)]
+macro_rules! perf_debug {
+    ($($arg:tt)*) => {
+        log::debug!($($arg)*)
+    };
+}
+
+#[cfg(not(debug_assertions))]
+macro_rules! perf_debug {
+    ($($arg:tt)*) => {};
+}
+
+#[cfg(debug_assertions)]
+macro_rules! perf_trace {
+    ($($arg:tt)*) => {
+        log::trace!($($arg)*)
+    };
+}
+
+#[cfg(not(debug_assertions))]
+macro_rules! perf_trace {
+    ($($arg:tt)*) => {};
+}
+
+#[allow(unused_imports)]
+pub(crate) use perf_debug;
+#[allow(unused_imports)]
+pub(crate) use perf_trace;
+
+pub mod analytics;
 pub mod anthropic;
 pub mod api;
+pub mod audio;
 pub mod config;
 pub mod database;
 pub mod dictation;
@@ -17,6 +49,7 @@ pub mod parakeet_engine;
 pub mod runtime;
 pub mod state;
 pub mod summary;
+pub mod whisper_engine;
 
 #[cfg(target_os = "windows")]
 static ONNX_RUNTIME_INIT_ERROR: std::sync::OnceLock<String> = std::sync::OnceLock::new();

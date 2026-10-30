@@ -10,7 +10,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex,
 };
-use tauri::{AppHandle, Emitter, Manager, Runtime};
+use crate::host::{HostExt, HostHandle, ListenerId};
 use tokio::task::JoinHandle;
 
 use super::{
@@ -104,7 +104,7 @@ pub(super) static RECORDING_MANAGER: Mutex<Option<RecordingManager>> = Mutex::ne
 static TRANSCRIPTION_TASK: Mutex<Option<JoinHandle<()>>> = Mutex::new(None);
 
 // Listener ID for proper cleanup - prevents microphone from staying active after recording stops
-static TRANSCRIPT_LISTENER_ID: Mutex<Option<tauri::EventId>> = Mutex::new(None);
+static TRANSCRIPT_LISTENER_ID: Mutex<Option<ListenerId>> = Mutex::new(None);
 
 const TRANSCRIPTION_RUNTIME_START_ERROR_CODE: &str =
     "TRANSCRIPTION_RUNTIME_INITIALIZATION_FAILED";
@@ -126,11 +126,11 @@ pub struct TranscriptionStatus {
     pub last_activity_ms: u64,
 }
 
-fn map_recording_start_error<R: Runtime>(
-    app: &AppHandle<R>,
+fn map_recording_start_error(
+    app: &HostHandle,
     error: RecordingStartError,
 ) -> String {
-    crate::tray::update_tray_menu(app);
+    app.refresh_status_ui();
 
     match error {
         RecordingStartError::TranscriptionRuntime(source) => {
@@ -177,8 +177,8 @@ fn map_recording_start_error<R: Runtime>(
 /// ponytail: sync pre-flight substitution (matches Pro), not catch-and-retry —
 /// stream.rs keeps its hard-fail as the last line of defense. cpal calls
 /// block briefly either way.
-fn resolve_mic_or_default<R: Runtime>(
-    app: &AppHandle<R>,
+fn resolve_mic_or_default(
+    app: &HostHandle,
     requested_name: Option<&str>,
 ) -> Option<Arc<super::AudioDevice>> {
     use cpal::traits::{DeviceTrait, HostTrait};
@@ -299,13 +299,13 @@ async fn prepare_audio_for_recording(
 // ============================================================================
 
 /// Start recording with default devices
-pub async fn start_recording<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
+pub async fn start_recording(app: HostHandle) -> Result<(), String> {
     start_recording_with_meeting_name(app, None).await
 }
 
 /// Start recording with default devices and optional meeting name
-pub async fn start_recording_with_meeting_name<R: Runtime>(
-    app: AppHandle<R>,
+pub async fn start_recording_with_meeting_name(
+    app: HostHandle,
     meeting_name: Option<String>,
 ) -> Result<(), String> {
     info!(
@@ -442,10 +442,9 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
     // This enables transcript history persistence for page reload sync
     // Store listener ID for cleanup during stop_recording to ensure microphone is released
     {
-        use tauri::Listener;
-        let listener_id = app.listen("transcript-update", move |event: tauri::Event| {
+        let listener_id = app.listen("transcript-update", Box::new(move |payload: &str| {
             // Parse the transcript update from the event payload
-            if let Ok(update) = serde_json::from_str::<TranscriptUpdate>(event.payload()) {
+            if let Ok(update) = serde_json::from_str::<TranscriptUpdate>(payload) {
                 // Create structured transcript segment
                 let segment = crate::audio::recording_saver::TranscriptSegment {
                     id: format!("seg_{}", update.sequence_id),
@@ -465,7 +464,7 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
                     }
                 }
             }
-        });
+        }));
         let mut global_listener = TRANSCRIPT_LISTENER_ID.lock().unwrap();
         *global_listener = Some(listener_id);
         info!("✅ Transcript-update event listener registered for history persistence");
@@ -479,7 +478,7 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
     })).map_err(|e| e.to_string())?;
 
     // Update tray menu to reflect recording state
-    crate::tray::update_tray_menu(&app);
+    app.refresh_status_ui();
 
     info!("✅ Recording started successfully with async-first approach");
 
@@ -487,8 +486,8 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
 }
 
 /// Start recording with specific devices
-pub async fn start_recording_with_devices<R: Runtime>(
-    app: AppHandle<R>,
+pub async fn start_recording_with_devices(
+    app: HostHandle,
     mic_device_name: Option<String>,
     system_device_name: Option<String>,
 ) -> Result<(), String> {
@@ -496,8 +495,8 @@ pub async fn start_recording_with_devices<R: Runtime>(
 }
 
 /// Start recording with specific devices and optional meeting name
-pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
-    app: AppHandle<R>,
+pub async fn start_recording_with_devices_and_meeting(
+    app: HostHandle,
     mic_device_name: Option<String>,
     system_device_name: Option<String>,
     meeting_name: Option<String>,
@@ -633,10 +632,9 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
     // This enables transcript history persistence for page reload sync
     // Store listener ID for cleanup during stop_recording to ensure microphone is released
     {
-        use tauri::Listener;
-        let listener_id = app.listen("transcript-update", move |event: tauri::Event| {
+        let listener_id = app.listen("transcript-update", Box::new(move |payload: &str| {
             // Parse the transcript update from the event payload
-            if let Ok(update) = serde_json::from_str::<TranscriptUpdate>(event.payload()) {
+            if let Ok(update) = serde_json::from_str::<TranscriptUpdate>(payload) {
                 // Create structured transcript segment
                 let segment = crate::audio::recording_saver::TranscriptSegment {
                     id: format!("seg_{}", update.sequence_id),
@@ -656,7 +654,7 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
                     }
                 }
             }
-        });
+        }));
         let mut global_listener = TRANSCRIPT_LISTENER_ID.lock().unwrap();
         *global_listener = Some(listener_id);
         info!("✅ Transcript-update event listener registered for history persistence");
@@ -673,7 +671,7 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
     })).map_err(|e| e.to_string())?;
 
     // Update tray menu to reflect recording state
-    crate::tray::update_tray_menu(&app);
+    app.refresh_status_ui();
 
     info!("✅ Recording started with custom devices using async-first approach");
 
@@ -681,8 +679,8 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
 }
 
 /// Stop recording with optimized graceful shutdown ensuring NO transcript chunks are lost
-pub async fn stop_recording<R: Runtime>(
-    app: AppHandle<R>,
+pub async fn stop_recording(
+    app: HostHandle,
     _args: RecordingArgs,
 ) -> Result<(), String> {
     info!(
@@ -745,7 +743,6 @@ pub async fn stop_recording<R: Runtime>(
     // Step 1.5: Clean up transcript listener to release microphone
     // Unlisten transcript-update event to prevent lingering references
     {
-        use tauri::Listener;
         if let Some(listener_id) = TRANSCRIPT_LISTENER_ID.lock().unwrap().take() {
             app.unlisten(listener_id);
             info!("✅ Transcript-update listener removed");
@@ -833,11 +830,7 @@ pub async fn stop_recording<R: Runtime>(
     // Determine which provider was used and unload the appropriate model (with timeout)
     let config = match tokio::time::timeout(
         tokio::time::Duration::from_secs(30), // 30 seconds max for DB operation
-        crate::api::api::api_get_transcript_config(
-            app.clone(),
-            app.clone().state(),
-            None,
-        )
+        crate::api::api::get_transcript_config(&app.expect_database())
     )
     .await
     {
@@ -948,11 +941,7 @@ pub async fn stop_recording<R: Runtime>(
         }
 
         // Get transcription model info (already loaded above for model unload)
-        let transcription_config = match crate::api::api::api_get_transcript_config(
-            app.clone(),
-            app.clone().state(),
-            None,
-        )
+        let transcription_config = match crate::api::api::get_transcript_config(&app.expect_database())
         .await
         {
             Ok(Some(config)) => Some((config.provider, config.model)),
@@ -963,11 +952,7 @@ pub async fn stop_recording<R: Runtime>(
             .unwrap_or_else(|| ("unknown".to_string(), "unknown".to_string()));
 
         // Get summary model info from API
-        let summary_config = match crate::api::api::api_get_model_config(
-            app.clone(),
-            app.clone().state(),
-            None,
-        )
+        let summary_config = match crate::api::api::get_model_config(&app.expect_database())
         .await
         {
             Ok(Some(config)) => Some((config.provider, config.model)),
@@ -1099,7 +1084,7 @@ pub async fn stop_recording<R: Runtime>(
     .map_err(|e| e.to_string())?;
 
     // Update tray menu to reflect stopped state
-    crate::tray::update_tray_menu(&app);
+    app.refresh_status_ui();
 
     info!("🎉 Recording stopped successfully with ZERO transcript chunks lost");
     Ok(())
@@ -1120,8 +1105,7 @@ pub async fn get_transcription_status() -> TranscriptionStatus {
 }
 
 /// Pause the current recording
-#[tauri::command]
-pub async fn pause_recording<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
+pub async fn pause_recording(app: HostHandle) -> Result<(), String> {
     info!("Pausing recording");
 
     // Check if currently recording
@@ -1144,7 +1128,7 @@ pub async fn pause_recording<R: Runtime>(app: AppHandle<R>) -> Result<(), String
         .map_err(|e| e.to_string())?;
 
         // Update tray menu to reflect paused state
-        crate::tray::update_tray_menu(&app);
+        app.refresh_status_ui();
 
         info!("Recording paused successfully");
         Ok(())
@@ -1154,8 +1138,7 @@ pub async fn pause_recording<R: Runtime>(app: AppHandle<R>) -> Result<(), String
 }
 
 /// Resume the current recording
-#[tauri::command]
-pub async fn resume_recording<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
+pub async fn resume_recording(app: HostHandle) -> Result<(), String> {
     info!("Resuming recording");
 
     // Check if currently recording
@@ -1178,7 +1161,7 @@ pub async fn resume_recording<R: Runtime>(app: AppHandle<R>) -> Result<(), Strin
         .map_err(|e| e.to_string())?;
 
         // Update tray menu to reflect resumed state
-        crate::tray::update_tray_menu(&app);
+        app.refresh_status_ui();
 
         info!("Recording resumed successfully");
         Ok(())
@@ -1188,7 +1171,6 @@ pub async fn resume_recording<R: Runtime>(app: AppHandle<R>) -> Result<(), Strin
 }
 
 /// Check if recording is currently paused
-#[tauri::command]
 pub async fn is_recording_paused() -> bool {
     let manager_guard = RECORDING_MANAGER.lock().unwrap();
     if let Some(manager) = manager_guard.as_ref() {
@@ -1199,7 +1181,6 @@ pub async fn is_recording_paused() -> bool {
 }
 
 /// Get detailed recording state
-#[tauri::command]
 pub async fn get_recording_state() -> serde_json::Value {
     let is_recording = IS_RECORDING.load(Ordering::SeqCst);
     let manager_guard = RECORDING_MANAGER.lock().unwrap();
@@ -1229,7 +1210,6 @@ pub async fn get_recording_state() -> serde_json::Value {
 
 /// Get the meeting folder path for the current recording
 /// Returns the path if a meeting name was set and folder structure initialized
-#[tauri::command]
 pub async fn get_meeting_folder_path() -> Result<Option<String>, String> {
     let manager_guard = RECORDING_MANAGER.lock().unwrap();
     if let Some(manager) = manager_guard.as_ref() {
@@ -1241,7 +1221,6 @@ pub async fn get_meeting_folder_path() -> Result<Option<String>, String> {
 
 /// Get accumulated transcript segments from current recording session
 /// Used for syncing frontend state after page reload during active recording
-#[tauri::command]
 pub async fn get_transcript_history() -> Result<Vec<crate::audio::recording_saver::TranscriptSegment>, String> {
     let manager_guard = RECORDING_MANAGER.lock().unwrap();
 
@@ -1254,7 +1233,6 @@ pub async fn get_transcript_history() -> Result<Vec<crate::audio::recording_save
 
 /// Get meeting name from current recording session
 /// Used for syncing frontend state after page reload during active recording
-#[tauri::command]
 pub async fn get_recording_meeting_name() -> Result<Option<String>, String> {
     let manager_guard = RECORDING_MANAGER.lock().unwrap();
 
@@ -1271,7 +1249,6 @@ pub async fn get_recording_meeting_name() -> Result<Option<String>, String> {
 
 /// Get information about the active audio output device
 /// Used to warn users about Bluetooth playback issues
-#[tauri::command]
 pub async fn get_active_audio_output() -> Result<super::playback_monitor::AudioOutputInfo, String> {
     super::playback_monitor::get_active_audio_output()
         .await
@@ -1297,10 +1274,10 @@ const MAX_MIC_FALLBACK_ATTEMPTS: u32 = 3;
 /// except the brief mic-stream stop in Phase 1.
 /// If CPAL hangs during stream creation, only this task blocks; stop flow stays unblocked.
 #[cfg_attr(target_os = "windows", allow(dead_code))]
-async fn perform_mic_hot_swap_task<R: Runtime>(
+async fn perform_mic_hot_swap_task(
     new_device_name: String,
     session: &Arc<super::RecordingState>,
-    app: AppHandle<R>,
+    app: HostHandle,
 ) -> Result<(), String> {
     info!("[HOT_SWAP] Starting mic hot-swap to '{}'", new_device_name);
 
@@ -1432,8 +1409,8 @@ async fn do_mic_swap(device_name: &str, session: &Arc<super::RecordingState>) ->
 /// The task stops automatically when the receiver is dropped (recording
 /// ends / monitor stops).
 #[cfg_attr(target_os = "windows", allow(dead_code))]
-fn spawn_device_event_processor<R: Runtime>(
-    app: AppHandle<R>,
+fn spawn_device_event_processor(
+    app: HostHandle,
     mut receiver: tokio::sync::mpsc::UnboundedReceiver<DeviceEvent>,
     session: Arc<super::RecordingState>,
 ) {
@@ -1492,8 +1469,8 @@ fn spawn_device_event_processor<R: Runtime>(
 /// must NOT already hold it. If a swap is somehow already running this
 /// returns immediately.
 #[cfg_attr(target_os = "windows", allow(dead_code))]
-async fn trigger_mic_fallback_to_default<R: Runtime>(
-    app: AppHandle<R>,
+async fn trigger_mic_fallback_to_default(
+    app: HostHandle,
     disconnected_name: String,
     session: Arc<super::RecordingState>,
 ) {

@@ -1,7 +1,7 @@
 use crate::whisper_engine::{is_download_cancelled, CancelDownloadOutcome, ModelInfo, WhisperEngine};
 use std::sync::{Arc, Mutex};
 use std::path::PathBuf;
-use tauri::{command, Emitter, Manager, AppHandle, Runtime};
+use crate::host::{HostExt, HostHandle};
 use crate::config::WHISPER_MODEL_CATALOG;
 
 // Global whisper engine
@@ -12,8 +12,8 @@ static MODELS_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
 
 /// Initialize the models directory path using app_data_dir
 /// This should be called during app setup before whisper_init
-pub fn set_models_directory<R: Runtime>(app: &AppHandle<R>) {
-    let app_data_dir = app.path().app_data_dir()
+pub fn set_models_directory(app: &HostHandle) {
+    let app_data_dir = app.app_data_dir()
         .expect("Failed to get app data dir");
 
     let models_dir = app_data_dir.join("models");
@@ -37,7 +37,6 @@ fn get_models_directory() -> Option<PathBuf> {
     MODELS_DIR.lock().unwrap().clone()
 }
 
-#[command]
 pub async fn whisper_init() -> Result<(), String> {
     let mut guard = WHISPER_ENGINE.lock().unwrap();
     if guard.is_some() {
@@ -51,7 +50,6 @@ pub async fn whisper_init() -> Result<(), String> {
     Ok(())
 }
 
-#[command]
 pub async fn whisper_get_available_models() -> Result<Vec<ModelInfo>, String> {
     let engine = {
         let guard = WHISPER_ENGINE.lock().unwrap();
@@ -123,9 +121,8 @@ fn discover_models_standalone() -> Result<Vec<ModelInfo>, String> {
     Ok(models)
 }
 
-#[command]
 pub async fn whisper_load_model(
-    app_handle: tauri::AppHandle,
+    app_handle: HostHandle,
     model_name: String
 ) -> Result<(), String> {
     let engine = {
@@ -177,7 +174,6 @@ pub async fn whisper_load_model(
     }
 }
 
-#[command]
 pub async fn whisper_get_current_model() -> Result<Option<String>, String> {
     let engine = {
         let guard = WHISPER_ENGINE.lock().unwrap();
@@ -191,7 +187,6 @@ pub async fn whisper_get_current_model() -> Result<Option<String>, String> {
     }
 }
 
-#[command]
 pub async fn whisper_is_model_loaded() -> Result<bool, String> {
     let engine = {
         let guard = WHISPER_ENGINE.lock().unwrap();
@@ -205,7 +200,6 @@ pub async fn whisper_is_model_loaded() -> Result<bool, String> {
     }
 }
 
-#[command]
 pub async fn whisper_has_available_models() -> Result<bool, String> {
     let engine = {
         let guard = WHISPER_ENGINE.lock().unwrap();
@@ -230,7 +224,6 @@ pub async fn whisper_has_available_models() -> Result<bool, String> {
     }
 }
 
-#[command]
 pub async fn whisper_validate_model_ready() -> Result<String, String> {
     let engine = {
         let guard = WHISPER_ENGINE.lock().unwrap();
@@ -277,8 +270,8 @@ pub async fn whisper_validate_model_ready() -> Result<String, String> {
 }
 
 /// Internal version of whisper_validate_model_ready that respects user's transcript config
-pub async fn whisper_validate_model_ready_with_config<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
+pub async fn whisper_validate_model_ready_with_config(
+    app: &HostHandle,
 ) -> Result<String, String> {
     let engine = {
         let guard = WHISPER_ENGINE.lock().unwrap();
@@ -295,11 +288,7 @@ pub async fn whisper_validate_model_ready_with_config<R: tauri::Runtime>(
         }
 
         // No model loaded - try to load user's configured model from transcript config
-        let model_to_load = match crate::api::api::api_get_transcript_config(
-            app.clone(),
-            app.state(),
-            None,
-        )
+        let model_to_load = match crate::api::api::get_transcript_config(&app.expect_database())
         .await
         {
             Ok(Some(config)) => {
@@ -384,7 +373,6 @@ pub async fn whisper_validate_model_ready_with_config<R: tauri::Runtime>(
     }
 }
 
-#[command]
 pub async fn whisper_transcribe_audio(audio_data: Vec<f32>) -> Result<String, String> {
     let engine = {
         let guard = WHISPER_ENGINE.lock().unwrap();
@@ -403,7 +391,6 @@ pub async fn whisper_transcribe_audio(audio_data: Vec<f32>) -> Result<String, St
     }
 }
 
-#[command]
 pub async fn whisper_get_models_directory() -> Result<String, String> {
     let engine = {
         let guard = WHISPER_ENGINE.lock().unwrap();
@@ -418,9 +405,8 @@ pub async fn whisper_get_models_directory() -> Result<String, String> {
     }
 }
 
-#[command]
 pub async fn whisper_download_model(
-    app_handle: tauri::AppHandle,
+    app_handle: HostHandle,
     model_name: String,
 ) -> Result<(), String> {
     let engine = {
@@ -491,7 +477,6 @@ pub async fn whisper_download_model(
     }
 }
 
-#[command]
 pub async fn whisper_cancel_download(model_name: String) -> Result<CancelDownloadOutcome, String> {
     let engine = {
         let guard = WHISPER_ENGINE.lock().unwrap();
@@ -508,7 +493,6 @@ pub async fn whisper_cancel_download(model_name: String) -> Result<CancelDownloa
     }
 }
 
-#[command]
 pub async fn whisper_delete_corrupted_model(model_name: String) -> Result<String, String> {
     let engine = {
         let guard = WHISPER_ENGINE.lock().unwrap();
@@ -526,7 +510,6 @@ pub async fn whisper_delete_corrupted_model(model_name: String) -> Result<String
 }
 
 /// Open the models folder in the system file explorer
-#[command]
 pub async fn open_models_folder() -> Result<(), String> {
     let models_dir = get_models_directory()
         .ok_or_else(|| "Models directory not initialized".to_string())?;

@@ -22,8 +22,8 @@ jobs:
       release: false
     secrets: inherit
 
-  # The full crate only builds on Windows; the device switching logic is
-  # plain std and is tested on its own here.
+  # The device switching logic is plain std; compiling it on its own keeps
+  # it that way (tingskriver-core runs the same tests in rust.yml).
   device-follow-tests:
     name: Device switching unit tests
     runs-on: ubuntu-latest
@@ -36,5 +36,5 @@ jobs:
 
       - name: Run tests
         run: |
-          rustc --edition 2021 --test frontend/src-tauri/src/audio/device_follow.rs -o "$RUNNER_TEMP/device_follow_tests"
+          rustc --edition 2021 --test crates/tingskriver-core/src/audio/device_follow.rs -o "$RUNNER_TEMP/device_follow_tests"
           "$RUNNER_TEMP/device_follow_tests"

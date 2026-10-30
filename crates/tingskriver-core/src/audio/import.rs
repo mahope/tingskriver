@@ -5,7 +5,6 @@ use crate::audio::decoder::{decode_audio_file, decode_audio_file_with_progress};
 use crate::audio::vad::get_speech_chunks_with_progress;
 use crate::config::{DEFAULT_WHISPER_MODEL, DEFAULT_PARAKEET_MODEL};
 use crate::parakeet_engine::ParakeetEngine;
-use crate::state::AppState;
 use crate::whisper_engine::WhisperEngine;
 use anyhow::{anyhow, Result};
 use log::{debug, error, info, warn};
@@ -13,8 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter, Manager, Runtime};
-use tauri_plugin_dialog::DialogExt;
+use crate::host::{HostExt, HostHandle};
 use uuid::Uuid;
 
 use super::audio_processing::create_meeting_folder;
@@ -252,8 +250,8 @@ fn extract_duration_from_metadata(path: &Path) -> Result<f64> {
 }
 
 /// Start import of an audio file
-pub async fn start_import<R: Runtime>(
-    app: AppHandle<R>,
+pub async fn start_import(
+    app: HostHandle,
     source_path: String,
     title: String,
     language: Option<String>,
@@ -309,8 +307,8 @@ pub async fn start_import<R: Runtime>(
 }
 
 /// Internal function to run import
-async fn run_import<R: Runtime>(
-    app: AppHandle<R>,
+async fn run_import(
+    app: HostHandle,
     source_path: String,
     title: String,
     language: Option<String>,
@@ -634,12 +632,12 @@ async fn run_import<R: Runtime>(
     let segments = create_transcript_segments(&all_transcripts);
 
     // Save to database
-    let app_state = app
-        .try_state::<AppState>()
+    let db = app
+        .database()
         .ok_or_else(|| anyhow!("App state not available"))?;
 
     let meeting_id = create_meeting_with_transcripts(
-        app_state.db_manager.pool(),
+        db.pool(),
         &title,
         &segments,
         meeting_folder.to_string_lossy().to_string(),
@@ -675,7 +673,7 @@ async fn run_import<R: Runtime>(
 }
 
 /// Emit progress event
-fn emit_progress<R: Runtime>(app: &AppHandle<R>, stage: &str, progress: u32, message: &str) {
+fn emit_progress(app: &HostHandle, stage: &str, progress: u32, message: &str) {
     let _ = app.emit(
         "import-progress",
         ImportProgress {
@@ -749,8 +747,8 @@ async fn create_meeting_with_transcripts(
 }
 
 /// Get or initialize the Whisper engine
-async fn get_or_init_whisper<R: Runtime>(
-    app: &AppHandle<R>,
+async fn get_or_init_whisper(
+    app: &HostHandle,
     requested_model: Option<&str>,
 ) -> Result<Arc<WhisperEngine>> {
     use crate::whisper_engine::commands::WHISPER_ENGINE;
@@ -795,8 +793,8 @@ async fn get_or_init_whisper<R: Runtime>(
 }
 
 /// Get or initialize the Parakeet engine
-async fn get_or_init_parakeet<R: Runtime>(
-    app: &AppHandle<R>,
+async fn get_or_init_parakeet(
+    app: &HostHandle,
     requested_model: Option<&str>,
 ) -> Result<Arc<ParakeetEngine>> {
     use crate::parakeet_engine::commands::PARAKEET_ENGINE;
@@ -841,15 +839,15 @@ async fn get_or_init_parakeet<R: Runtime>(
 }
 
 /// Get the configured model from database
-async fn get_configured_model<R: Runtime>(app: &AppHandle<R>, provider_type: &str) -> Result<String> {
-    let app_state = app
-        .try_state::<AppState>()
+async fn get_configured_model(app: &HostHandle, provider_type: &str) -> Result<String> {
+    let db = app
+        .database()
         .ok_or_else(|| anyhow!("App state not available"))?;
 
     let result: Option<(String, String)> = sqlx::query_as(
         "SELECT provider, model FROM transcript_settings WHERE id = '1'",
     )
-    .fetch_optional(app_state.db_manager.pool())
+    .fetch_optional(db.pool())
     .await
     .map_err(|e| anyhow!("Failed to query config: {}", e))?;
 
@@ -911,59 +909,18 @@ fn write_import_metadata(
 }
 
 // ============================================================================
-// Tauri Commands
+// Command bodies (the Tauri commands of the same name call these)
 // ============================================================================
 
-/// Select an audio file and validate it
-#[tauri::command]
-pub async fn select_and_validate_audio_command<R: Runtime>(
-    app: AppHandle<R>,
-) -> Result<Option<AudioFileInfo>, String> {
-    info!("Opening file dialog for audio import");
-
-    // Use spawn_blocking to avoid blocking async runtime
-    let app_clone = app.clone();
-    let file_path = tokio::task::spawn_blocking(move || {
-        app_clone
-            .dialog()
-            .file()
-            .add_filter("Audio Files", &AUDIO_EXTENSIONS.iter().map(|s| *s).collect::<Vec<_>>())
-            .blocking_pick_file()
-    })
-    .await
-    .map_err(|e| format!("File dialog task failed: {}", e))?;
-
-    match file_path {
-        Some(path) => {
-            let path_str = path.to_string();
-            info!("User selected: {}", path_str);
-
-            match validate_audio_file(Path::new(&path_str)) {
-                Ok(info) => Ok(Some(info)),
-                Err(e) => {
-                    error!("Validation failed: {}", e);
-                    Err(e.to_string())
-                }
-            }
-        }
-        None => {
-            info!("User cancelled file selection");
-            Ok(None)
-        }
-    }
-}
-
 /// Validate an audio file from a given path (for drag-drop)
-#[tauri::command]
 pub async fn validate_audio_file_command(path: String) -> Result<AudioFileInfo, String> {
     info!("Validating audio file: {}", path);
     validate_audio_file(Path::new(&path)).map_err(|e| e.to_string())
 }
 
 /// Start importing an audio file (Beta gated using configContext.betaFeatures)
-#[tauri::command]
-pub async fn start_import_audio_command<R: Runtime>(
-    app: AppHandle<R>,
+pub async fn start_import_audio_command(
+    app: HostHandle,
     source_path: String,
     title: String,
     language: Option<String>,
@@ -976,7 +933,7 @@ pub async fn start_import_audio_command<R: Runtime>(
     }
 
     // Spawn import in background
-    tauri::async_runtime::spawn(async move {
+    crate::runtime::spawn(async move {
         let result = start_import(app, source_path, title, language, model, provider).await;
 
         if let Err(e) = result {
@@ -990,7 +947,6 @@ pub async fn start_import_audio_command<R: Runtime>(
 }
 
 /// Cancel ongoing import
-#[tauri::command]
 pub async fn cancel_import_command() -> Result<(), String> {
     if !is_import_in_progress() {
         return Err("No import in progress".to_string());
@@ -1000,7 +956,6 @@ pub async fn cancel_import_command() -> Result<(), String> {
 }
 
 /// Check if import is in progress
-#[tauri::command]
 pub async fn is_import_in_progress_command() -> bool {
     is_import_in_progress()
 }

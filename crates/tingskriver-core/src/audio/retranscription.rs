@@ -6,7 +6,6 @@ use super::common::{create_transcript_segments, split_segment_at_silence, write_
 use super::constants::AUDIO_EXTENSIONS;
 use crate::config::{DEFAULT_WHISPER_MODEL, DEFAULT_PARAKEET_MODEL};
 use crate::parakeet_engine::ParakeetEngine;
-use crate::state::AppState;
 use crate::whisper_engine::WhisperEngine;
 use anyhow::{anyhow, Result};
 use log::{debug, error, info, warn};
@@ -14,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter, Manager, Runtime};
+use crate::host::{HostExt, HostHandle};
 
 /// Global flag to track if retranscription is in progress
 static RETRANSCRIPTION_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
@@ -88,8 +87,8 @@ pub fn cancel_retranscription() {
 }
 
 /// Start retranscription of a meeting's audio
-pub async fn start_retranscription<R: Runtime>(
-    app: AppHandle<R>,
+pub async fn start_retranscription(
+    app: HostHandle,
     meeting_id: String,
     meeting_folder_path: String,
     language: Option<String>,
@@ -170,8 +169,8 @@ fn find_audio_file(folder: &Path) -> Result<PathBuf> {
 }
 
 /// Internal function to run retranscription
-async fn run_retranscription<R: Runtime>(
-    app: AppHandle<R>,
+async fn run_retranscription(
+    app: HostHandle,
     meeting_id: String,
     meeting_folder_path: String,
     language: Option<String>,
@@ -423,12 +422,12 @@ async fn run_retranscription<R: Runtime>(
     let segments = create_transcript_segments(&all_transcripts);
 
     // Save to database
-    let app_state = app
-        .try_state::<AppState>()
+    let db = app
+        .database()
         .ok_or_else(|| anyhow!("App state not available"))?;
 
     // Wrap delete+insert+update in a transaction to prevent data loss
-    let pool = app_state.db_manager.pool();
+    let pool = db.pool();
     let mut conn = pool.acquire().await.map_err(|e| anyhow!("DB error: {}", e))?;
     let mut tx = sqlx::Connection::begin(&mut *conn)
         .await
@@ -500,8 +499,8 @@ async fn run_retranscription<R: Runtime>(
 }
 
 /// Emit progress event
-fn emit_progress<R: Runtime>(
-    app: &AppHandle<R>,
+fn emit_progress(
+    app: &HostHandle,
     meeting_id: &str,
     stage: &str,
     progress: u32,
@@ -520,8 +519,8 @@ fn emit_progress<R: Runtime>(
 
 /// Get or initialize the Whisper engine, auto-loading the model if needed
 /// If `requested_model` is provided, ensures that specific model is loaded
-async fn get_or_init_whisper<R: Runtime>(
-    app: &AppHandle<R>,
+async fn get_or_init_whisper(
+    app: &HostHandle,
     requested_model: Option<&str>,
 ) -> Result<Arc<WhisperEngine>> {
     use crate::whisper_engine::commands::WHISPER_ENGINE;
@@ -578,11 +577,11 @@ async fn get_or_init_whisper<R: Runtime>(
 }
 
 /// Get the configured Whisper model name from the database
-async fn get_configured_whisper_model<R: Runtime>(app: &AppHandle<R>) -> Result<String> {
+async fn get_configured_whisper_model(app: &HostHandle) -> Result<String> {
     debug!("Getting configured Whisper model from database...");
 
-    let app_state = app
-        .try_state::<AppState>()
+    let db = app
+        .database()
         .ok_or_else(|| {
             error!("App state not available");
             anyhow!("App state not available")
@@ -594,7 +593,7 @@ async fn get_configured_whisper_model<R: Runtime>(app: &AppHandle<R>) -> Result<
     let result: Option<(String, String)> = sqlx::query_as(
         "SELECT provider, model FROM transcript_settings WHERE id = '1'"
     )
-    .fetch_optional(app_state.db_manager.pool())
+    .fetch_optional(db.pool())
     .await
     .map_err(|e| {
         error!("Failed to query transcript config: {}", e);
@@ -622,8 +621,8 @@ async fn get_configured_whisper_model<R: Runtime>(app: &AppHandle<R>) -> Result<
 }
 
 /// Get or initialize the Parakeet engine, auto-loading the model if needed
-async fn get_or_init_parakeet<R: Runtime>(
-    app: &AppHandle<R>,
+async fn get_or_init_parakeet(
+    app: &HostHandle,
     requested_model: Option<&str>,
 ) -> Result<Arc<ParakeetEngine>> {
     use crate::parakeet_engine::commands::PARAKEET_ENGINE;
@@ -680,11 +679,11 @@ async fn get_or_init_parakeet<R: Runtime>(
 }
 
 /// Get the configured Parakeet model name from the database
-async fn get_configured_parakeet_model<R: Runtime>(app: &AppHandle<R>) -> Result<String> {
+async fn get_configured_parakeet_model(app: &HostHandle) -> Result<String> {
     debug!("Getting configured Parakeet model from database...");
 
-    let app_state = app
-        .try_state::<AppState>()
+    let db = app
+        .database()
         .ok_or_else(|| {
             error!("App state not available");
             anyhow!("App state not available")
@@ -694,7 +693,7 @@ async fn get_configured_parakeet_model<R: Runtime>(app: &AppHandle<R>) -> Result
     let result: Option<(String, String)> = sqlx::query_as(
         "SELECT provider, model FROM transcript_settings WHERE id = '1'"
     )
-    .fetch_optional(app_state.db_manager.pool())
+    .fetch_optional(db.pool())
     .await
     .map_err(|e| {
         error!("Failed to query transcript config: {}", e);
@@ -777,9 +776,8 @@ pub struct RetranscriptionStarted {
 }
 
 // Start retranscription (Beta gated using configContext.betaFeatures)
-#[tauri::command]
-pub async fn start_retranscription_command<R: Runtime>(
-    app: AppHandle<R>,
+pub async fn start_retranscription_command(
+    app: HostHandle,
     meeting_id: String,
     meeting_folder_path: String,
     language: Option<String>,
@@ -796,7 +794,7 @@ pub async fn start_retranscription_command<R: Runtime>(
     let meeting_id_clone = meeting_id.clone();
 
     // Spawn the retranscription in a background task
-    tauri::async_runtime::spawn(async move {
+    crate::runtime::spawn(async move {
         let result = start_retranscription(
             app,
             meeting_id_clone,
@@ -820,7 +818,6 @@ pub async fn start_retranscription_command<R: Runtime>(
     })
 }
 
-#[tauri::command]
 pub async fn cancel_retranscription_command() -> Result<(), String> {
     if !is_retranscription_in_progress() {
         return Err("No retranscription in progress".to_string());
@@ -829,7 +826,6 @@ pub async fn cancel_retranscription_command() -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
 pub async fn is_retranscription_in_progress_command() -> bool {
     is_retranscription_in_progress()
 }

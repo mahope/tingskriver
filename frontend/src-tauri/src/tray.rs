@@ -77,7 +77,7 @@ fn toggle_recording_handler<R: Runtime>(app: &AppHandle<R>) {
 
             // Call Rust stop_recording command (like pause/resume pattern)
             let stop_result = crate::audio::recording_commands::stop_recording(
-                app_clone.clone(),
+                crate::core_bridge::host(&app_clone),
                 crate::audio::recording_commands::RecordingArgs {
                     save_path: save_path.to_string_lossy().to_string(),
                 },
@@ -173,7 +173,7 @@ fn stop_recording_handler<R: Runtime>(app: &AppHandle<R>) {
 
         // Call Rust stop_recording command (like pause/resume pattern)
         let stop_result = crate::audio::recording_commands::stop_recording(
-            app_clone.clone(),
+            crate::core_bridge::host(&app_clone),
             crate::audio::recording_commands::RecordingArgs {
                 save_path: save_path.to_string_lossy().to_string(),
             },

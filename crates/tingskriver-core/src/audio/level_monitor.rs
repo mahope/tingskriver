@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::Mutex;
 use tokio::time::{interval, Duration};
-use tauri::{AppHandle, Emitter, Runtime};
+use crate::host::{HostExt, HostHandle};
 use anyhow::Result;
 use log::{debug, error, info, warn};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -40,9 +40,9 @@ impl AudioLevelMonitor {
     }
 
     /// Start monitoring audio levels for specified devices
-    pub async fn start_monitoring<R: Runtime>(
+    pub async fn start_monitoring(
         &mut self,
-        app_handle: AppHandle<R>,
+        app_handle: HostHandle,
         device_names: Vec<String>,
     ) -> Result<()> {
         if AUDIO_LEVEL_STATE.is_monitoring.load(Ordering::SeqCst) {

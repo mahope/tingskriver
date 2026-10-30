@@ -246,7 +246,6 @@ pub struct AudioRecoveryStatus {
 
 /// Recover audio from checkpoint files
 /// This is called by the transcript recovery system to merge audio chunks after a crash
-#[tauri::command]
 pub async fn recover_audio_from_checkpoints(
     meeting_folder: String,
     _sample_rate: u32
@@ -381,7 +380,6 @@ pub async fn recover_audio_from_checkpoints(
 
 /// Clean up checkpoint files after successful recording or recovery
 /// This command is called by the frontend after successful save to clean up checkpoint files
-#[tauri::command]
 pub async fn cleanup_checkpoints(meeting_folder: String) -> Result<(), String> {
     info!("Cleaning up checkpoints for folder: {}", meeting_folder);
 
@@ -401,7 +399,6 @@ pub async fn cleanup_checkpoints(meeting_folder: String) -> Result<(), String> {
 
 /// Check if a meeting folder has audio checkpoint files
 /// Returns true if .checkpoints/ directory exists and contains .mp4 files
-#[tauri::command]
 pub async fn has_audio_checkpoints(meeting_folder: String) -> Result<bool, String> {
     let folder_path = PathBuf::from(&meeting_folder);
     let checkpoints_dir = folder_path.join(".checkpoints");
