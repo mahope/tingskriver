@@ -5,7 +5,7 @@
 /// - Processor for chunking transcripts and generating summaries
 /// - Service layer for orchestrating summary generation
 /// - Templates for structured meeting summary generation
-/// The Tauri commands live in the Tauri crate (`summary::commands`).
+/// - Command bodies behind the Tauri commands (`commands`, `template_commands`)
 
 use serde::{Deserialize, Serialize};
 
@@ -30,12 +30,14 @@ pub struct CustomOpenAIConfig {
     pub top_p: Option<f32>,
 }
 
+pub mod commands;
 pub mod language_detection;
 pub mod llm_client;
 pub mod metadata;
 pub mod processor;
 pub mod service;
 pub mod summary_engine;
+pub mod template_commands;
 pub mod templates;
 
 // Re-export commonly used items

@@ -1,6 +1,5 @@
 use crate::summary::templates;
 use serde::{Deserialize, Serialize};
-use tauri::Runtime;
 use tracing::{info, warn};
 
 /// Template metadata for UI display
@@ -39,9 +38,7 @@ pub struct TemplateDetails {
 ///
 /// # Returns
 /// Vector of TemplateInfo with id, name, and description for each template
-#[tauri::command]
-pub async fn api_list_templates<R: Runtime>(
-    _app: tauri::AppHandle<R>,
+pub async fn api_list_templates(
 ) -> Result<Vec<TemplateInfo>, String> {
     info!("api_list_templates called");
 
@@ -68,9 +65,7 @@ pub async fn api_list_templates<R: Runtime>(
 ///
 /// # Returns
 /// TemplateDetails with full template structure
-#[tauri::command]
-pub async fn api_get_template_details<R: Runtime>(
-    _app: tauri::AppHandle<R>,
+pub async fn api_get_template_details(
     template_id: String,
 ) -> Result<TemplateDetails, String> {
     info!("api_get_template_details called for template_id: {}", template_id);
@@ -104,9 +99,7 @@ pub async fn api_get_template_details<R: Runtime>(
 ///
 /// # Returns
 /// Ok(template_name) if valid, Err(error_message) if invalid
-#[tauri::command]
-pub async fn api_validate_template<R: Runtime>(
-    _app: tauri::AppHandle<R>,
+pub async fn api_validate_template(
     template_json: String,
 ) -> Result<String, String> {
     info!("api_validate_template called");

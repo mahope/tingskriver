@@ -4,7 +4,7 @@
 pub use tingskriver_core::dictation::*;
 
 pub mod commands;
-mod overlay;
+pub mod overlay;
 
 use std::sync::Arc;
 use tauri::AppHandle;

@@ -1,7 +1,5 @@
 //! Tauri commands for analytics; the client lives in `tingskriver_core::analytics`.
 
-pub use tingskriver_core::analytics::commands::*;
-
 use std::collections::HashMap;
 
 #[tauri::command]

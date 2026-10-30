@@ -17,7 +17,7 @@ use chrono::{DateTime, Duration, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::{LazyLock, Mutex};
-use tauri::{AppHandle, Manager, Runtime};
+use crate::host::HostHandle;
 
 
 static SUMMARY_START_LOCK: LazyLock<tokio::sync::Mutex<()>> =
@@ -91,10 +91,8 @@ enum MeetingFolderResolution {
 /// Saves a meeting summary (Native SQLx implementation)
 ///
 /// Expected format: { "markdown": "...", "summary_json": [...BlockNote blocks...] }
-#[tauri::command]
-pub async fn api_save_meeting_summary<R: Runtime>(
-    _app: AppHandle<R>,
-    state: tauri::State<'_, AppState>,
+pub async fn api_save_meeting_summary(
+    state: &AppState,
     meeting_id: String,
     summary: serde_json::Value,
     _auth_token: Option<String>,
@@ -131,10 +129,8 @@ pub async fn api_save_meeting_summary<R: Runtime>(
 }
 
 /// Gets the per-meeting summary language override from metadata.json.
-#[tauri::command]
-pub async fn api_get_meeting_summary_language<R: Runtime>(
-    _app: AppHandle<R>,
-    state: tauri::State<'_, AppState>,
+pub async fn api_get_meeting_summary_language(
+    state: &AppState,
     meeting_id: String,
 ) -> Result<MeetingSummaryLanguagePreference, String> {
     log_info!(
@@ -151,10 +147,8 @@ pub async fn api_get_meeting_summary_language<R: Runtime>(
 }
 
 /// Saves or clears the per-meeting summary language override in metadata.json.
-#[tauri::command]
-pub async fn api_save_meeting_summary_language<R: Runtime>(
-    _app: AppHandle<R>,
-    state: tauri::State<'_, AppState>,
+pub async fn api_save_meeting_summary_language(
+    state: &AppState,
     meeting_id: String,
     summary_language: Option<String>,
 ) -> Result<MeetingSummaryLanguagePreference, String> {
@@ -177,10 +171,8 @@ pub async fn api_save_meeting_summary_language<R: Runtime>(
 }
 
 /// Gets the cached Auto-detected summary language from metadata.json.
-#[tauri::command]
-pub async fn api_get_meeting_detected_summary_language<R: Runtime>(
-    _app: AppHandle<R>,
-    state: tauri::State<'_, AppState>,
+pub async fn api_get_meeting_detected_summary_language(
+    state: &AppState,
     meeting_id: String,
 ) -> Result<MeetingSummaryLanguagePreference, String> {
     log_info!(
@@ -197,10 +189,8 @@ pub async fn api_get_meeting_detected_summary_language<R: Runtime>(
 }
 
 /// Saves or clears the cached Auto-detected summary language in metadata.json.
-#[tauri::command]
-pub async fn api_save_meeting_detected_summary_language<R: Runtime>(
-    _app: AppHandle<R>,
-    state: tauri::State<'_, AppState>,
+pub async fn api_save_meeting_detected_summary_language(
+    state: &AppState,
     meeting_id: String,
     detected_summary_language: Option<String>,
 ) -> Result<MeetingSummaryLanguagePreference, String> {
@@ -223,7 +213,6 @@ pub async fn api_save_meeting_detected_summary_language<R: Runtime>(
 }
 
 /// Detects the dominant supported summary language from transcript segments.
-#[tauri::command]
 pub async fn api_detect_transcript_summary_language(
     transcript_texts: Vec<String>,
 ) -> Result<SummaryLanguageDetection, String> {
@@ -352,10 +341,8 @@ fn redact_flagged_reasoning(mut result: serde_json::Value) -> serde_json::Value 
 /// Gets summary status and data (Native SQLx implementation)
 ///
 /// Returns summary status (pending/processing/completed/failed) and parsed result data
-#[tauri::command]
-pub async fn api_get_summary<R: Runtime>(
-    _app: AppHandle<R>,
-    state: tauri::State<'_, AppState>,
+pub async fn api_get_summary(
+    state: &AppState,
     meeting_id: String,
     _auth_token: Option<String>,
 ) -> Result<SummaryResponse, String> {
@@ -458,10 +445,9 @@ pub async fn api_get_summary<R: Runtime>(
 /// Processes transcript and generates summary (Native SQLx implementation)
 ///
 /// Spawns a background task and returns immediately with process_id
-#[tauri::command]
-pub async fn api_process_transcript<R: Runtime>(
-    app: AppHandle<R>,
-    state: tauri::State<'_, AppState>,
+pub async fn api_process_transcript(
+    app: HostHandle,
+    state: &AppState,
     text: String,
     model: String,
     model_name: String,
@@ -527,8 +513,8 @@ pub async fn api_process_transcript<R: Runtime>(
         SummaryService::register_cancellation_token(&m_id, started_at);
     let meeting_id_clone = m_id.clone();
     // App data directory for the BuiltInAI provider
-    let app_data_dir = app.path().app_data_dir().ok();
-    tauri::async_runtime::spawn(async move {
+    let app_data_dir = app.app_data_dir().ok();
+    crate::runtime::spawn(async move {
         SummaryService::process_transcript_background(
             app_data_dir,
             pool,
@@ -556,10 +542,8 @@ pub async fn api_process_transcript<R: Runtime>(
 ///
 /// This command triggers the cancellation token for the specified meeting,
 /// stopping the summary generation gracefully.
-#[tauri::command]
-pub async fn api_cancel_summary<R: Runtime>(
-    _app: AppHandle<R>,
-    state: tauri::State<'_, AppState>,
+pub async fn api_cancel_summary(
+    state: &AppState,
     meeting_id: String,
     process_id: String,
 ) -> Result<serde_json::Value, String> {
