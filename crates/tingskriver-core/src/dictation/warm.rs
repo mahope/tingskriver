@@ -78,12 +78,18 @@ pub fn process_memory_mb() -> Option<u64> {
     use sysinfo::{ProcessRefreshKind, ProcessesToUpdate};
     let pid = sysinfo::get_current_pid().ok()?;
     let mut system = sysinfo::System::new();
-    system.refresh_processes_specifics(ProcessesToUpdate::Some(&[pid]), true, ProcessRefreshKind::new().with_memory());
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[pid]),
+        true,
+        ProcessRefreshKind::new().with_memory(),
+    );
     system.process(pid).map(|p| p.memory() / (1024 * 1024))
 }
 
 fn mb(value: Option<u64>) -> String {
-    value.map(|v| format!("{v} MB")).unwrap_or_else(|| "?".to_string())
+    value
+        .map(|v| format!("{v} MB"))
+        .unwrap_or_else(|| "?".to_string())
 }
 
 async fn check_once() {
@@ -96,7 +102,9 @@ async fn check_once() {
     let now = Instant::now();
 
     if let Some(engine) = parakeet() {
-        if let (Some((last_used, busy)), Some(model)) = (engine.usage().await, engine.get_current_model().await) {
+        if let (Some((last_used, busy)), Some(model)) =
+            (engine.usage().await, engine.get_current_model().await)
+        {
             let snapshot = Snapshot {
                 model: &model,
                 idle_for: now.saturating_duration_since(last_used),
@@ -119,7 +127,9 @@ async fn check_once() {
     }
 
     if let Some(engine) = whisper() {
-        if let (Some((last_used, busy)), Some(model)) = (engine.usage().await, engine.get_current_model().await) {
+        if let (Some((last_used, busy)), Some(model)) =
+            (engine.usage().await, engine.get_current_model().await)
+        {
             let snapshot = Snapshot {
                 model: &model,
                 idle_for: now.saturating_duration_since(last_used),

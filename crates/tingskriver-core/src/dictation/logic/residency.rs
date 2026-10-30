@@ -93,7 +93,8 @@ pub fn decide(policy: &Policy, now: &Snapshot) -> Decision {
 
 /// True when less than [`PRESSURE_FREE_PERCENT`] of memory is available.
 pub fn memory_pressure(available_bytes: u64, total_bytes: u64) -> bool {
-    total_bytes > 0 && available_bytes.saturating_mul(100) < total_bytes.saturating_mul(PRESSURE_FREE_PERCENT)
+    total_bytes > 0
+        && available_bytes.saturating_mul(100) < total_bytes.saturating_mul(PRESSURE_FREE_PERCENT)
 }
 
 #[cfg(test)]
@@ -115,14 +116,24 @@ mod tests {
         let policy = Policy::default();
         assert_eq!(decide(&policy, &snapshot(0)), Decision::Keep);
         assert_eq!(decide(&policy, &snapshot(9 * 60 + 59)), Decision::Keep);
-        assert_eq!(decide(&policy, &snapshot(10 * 60)), Decision::Unload(Reason::Idle));
+        assert_eq!(
+            decide(&policy, &snapshot(10 * 60)),
+            Decision::Unload(Reason::Idle)
+        );
     }
 
     #[test]
     fn never_unloads_mid_call_or_during_a_meeting() {
         let policy = Policy::from_minutes(1, Vec::new());
-        let busy = Snapshot { busy: 1, ..snapshot(3600) };
-        let recording = Snapshot { recording: true, memory_pressure: true, ..snapshot(3600) };
+        let busy = Snapshot {
+            busy: 1,
+            ..snapshot(3600)
+        };
+        let recording = Snapshot {
+            recording: true,
+            memory_pressure: true,
+            ..snapshot(3600)
+        };
         assert_eq!(decide(&policy, &busy), Decision::Keep);
         assert_eq!(decide(&policy, &recording), Decision::Keep);
     }
@@ -132,7 +143,10 @@ mod tests {
         let warm = Policy::from_minutes(10, vec!["parakeet-tdt-0.6b-v3-int8".into()]);
         assert_eq!(decide(&warm, &snapshot(24 * 3600)), Decision::Keep);
         let other = Policy::from_minutes(10, vec!["large-v3".into()]);
-        assert_eq!(decide(&other, &snapshot(24 * 3600)), Decision::Unload(Reason::Idle));
+        assert_eq!(
+            decide(&other, &snapshot(24 * 3600)),
+            Decision::Unload(Reason::Idle)
+        );
         let never = Policy::from_minutes(0, Vec::new());
         assert_eq!(never.idle_timeout, None);
         assert_eq!(decide(&never, &snapshot(24 * 3600)), Decision::Keep);
@@ -141,10 +155,19 @@ mod tests {
     #[test]
     fn memory_pressure_wins_over_keep_warm_after_grace() {
         let warm = Policy::from_minutes(10, vec!["parakeet-tdt-0.6b-v3-int8".into()]);
-        let fresh = Snapshot { memory_pressure: true, ..snapshot(5) };
-        let stale = Snapshot { memory_pressure: true, ..snapshot(31) };
+        let fresh = Snapshot {
+            memory_pressure: true,
+            ..snapshot(5)
+        };
+        let stale = Snapshot {
+            memory_pressure: true,
+            ..snapshot(31)
+        };
         assert_eq!(decide(&warm, &fresh), Decision::Keep);
-        assert_eq!(decide(&warm, &stale), Decision::Unload(Reason::MemoryPressure));
+        assert_eq!(
+            decide(&warm, &stale),
+            Decision::Unload(Reason::MemoryPressure)
+        );
     }
 
     #[test]

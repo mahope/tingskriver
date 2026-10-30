@@ -304,7 +304,9 @@ mod tests {
     async fn rows_roundtrip_and_failed_inserts_are_not_counted() {
         let t = timings().await;
         for i in 0..5 {
-            t.add(&timing(i, "syv", 900 + i as u64, true)).await.unwrap();
+            t.add(&timing(i, "syv", 900 + i as u64, true))
+                .await
+                .unwrap();
         }
         t.add(&timing(10, "syv", 9000, false)).await.unwrap();
         let recent = t.recent(10).await.unwrap();

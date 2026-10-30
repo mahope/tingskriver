@@ -102,7 +102,9 @@ pub fn summarize(samples: &[Sample]) -> Vec<ProviderStats> {
                 .map(|s| &s.steps)
                 .collect();
             let collect = |f: fn(&Steps) -> u64| steps.iter().map(|s| f(s)).collect::<Vec<_>>();
-            let optional = |f: fn(&Steps) -> Option<u64>| steps.iter().filter_map(|s| f(s)).collect::<Vec<_>>();
+            let optional = |f: fn(&Steps) -> Option<u64>| {
+                steps.iter().filter_map(|s| f(s)).collect::<Vec<_>>()
+            };
             let total = stat(&collect(|s| s.total_ms))?;
             Some(ProviderStats {
                 provider: provider.to_string(),
@@ -122,7 +124,10 @@ pub fn summarize(samples: &[Sample]) -> Vec<ProviderStats> {
 /// Providers that crossed the target since the last check. `warned` holds the
 /// providers already warned about and is updated: a provider is warned again
 /// only after its median has been back under the target.
-pub fn new_warnings<'a>(stats: &'a [ProviderStats], warned: &mut BTreeSet<String>) -> Vec<&'a ProviderStats> {
+pub fn new_warnings<'a>(
+    stats: &'a [ProviderStats],
+    warned: &mut BTreeSet<String>,
+) -> Vec<&'a ProviderStats> {
     let mut fresh = Vec::new();
     for s in stats {
         if s.over_target {
@@ -179,18 +184,60 @@ mod tests {
         let local = &stats[0];
         assert_eq!(local.provider, "local");
         assert_eq!(local.count, 4);
-        assert_eq!(local.total, Stat { median_ms: 1350, p95_ms: 1500 });
+        assert_eq!(
+            local.total,
+            Stat {
+                median_ms: 1350,
+                p95_ms: 1500
+            }
+        );
         assert_eq!(local.polish, None);
         assert!(!local.over_target);
 
         let syv = &stats[1];
         assert_eq!(syv.count, 10);
-        assert_eq!(syv.total, Stat { median_ms: 845, p95_ms: 890 });
-        assert_eq!(syv.transcribe, Stat { median_ms: 725, p95_ms: 770 });
-        assert_eq!(syv.capture, Stat { median_ms: 20, p95_ms: 20 });
-        assert_eq!(syv.insert, Stat { median_ms: 100, p95_ms: 100 });
-        assert_eq!(syv.start, Some(Stat { median_ms: 40, p95_ms: 40 }));
-        assert_eq!(syv.polish, Some(Stat { median_ms: 600, p95_ms: 600 }));
+        assert_eq!(
+            syv.total,
+            Stat {
+                median_ms: 845,
+                p95_ms: 890
+            }
+        );
+        assert_eq!(
+            syv.transcribe,
+            Stat {
+                median_ms: 725,
+                p95_ms: 770
+            }
+        );
+        assert_eq!(
+            syv.capture,
+            Stat {
+                median_ms: 20,
+                p95_ms: 20
+            }
+        );
+        assert_eq!(
+            syv.insert,
+            Stat {
+                median_ms: 100,
+                p95_ms: 100
+            }
+        );
+        assert_eq!(
+            syv.start,
+            Some(Stat {
+                median_ms: 40,
+                p95_ms: 40
+            })
+        );
+        assert_eq!(
+            syv.polish,
+            Some(Stat {
+                median_ms: 600,
+                p95_ms: 600
+            })
+        );
     }
 
     #[test]

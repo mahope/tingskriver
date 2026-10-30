@@ -5,7 +5,7 @@
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::{Duration, Instant};
@@ -19,6 +19,7 @@ use super::logic::cleanup::{self, Rules, Style};
 use super::logic::engine::{self, Attempt, Engine, EnginePreference, Next};
 use super::logic::gesture::{Gesture, GestureAction, GestureConfig, GestureEvent};
 use super::logic::hotkey::ChordSignal;
+use super::logic::order::Order;
 use super::logic::timing::{self, Steps};
 use super::overlay::{Overlay, OverlayState};
 use super::secrets;
@@ -59,6 +60,12 @@ pub struct Service {
     app_data_dir: PathBuf,
     audio_dir: PathBuf,
     shortcut_active: AtomicBool,
+    /// Dictations are inserted in the order they were spoken: each stop takes
+    /// a ticket, and insertion waits for the previous ticket to finish.
+    next_ticket: AtomicU64,
+    order: Mutex<Order>,
+    /// The lowest unfinished ticket, for waiting dictations.
+    insert_turn: tokio::sync::watch::Sender<u64>,
     last_error: Mutex<Option<String>>,
     #[cfg(windows)]
     hook: Mutex<Option<super::win::KeyboardHook>>,
@@ -99,6 +106,9 @@ async fn init_inner(app: HostHandle, overlay: Arc<dyn Overlay>) -> Result<(), St
         audio_dir: app_data_dir.join("dictation_audio"),
         app_data_dir,
         shortcut_active: AtomicBool::new(false),
+        next_ticket: AtomicU64::new(0),
+        order: Mutex::new(Order::default()),
+        insert_turn: tokio::sync::watch::channel(0).0,
         last_error: Mutex::new(None),
         #[cfg(windows)]
         hook: Mutex::new(None),
@@ -378,8 +388,13 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant)>) {
                         let service = service.clone();
                         let target_app = s.target_app;
                         let start_ms = s.start_ms;
+                        let ticket = service.next_ticket.fetch_add(1, Ordering::SeqCst);
                         crate::runtime::spawn(async move {
-                            service.process(samples, target_app, at, start_ms).await;
+                            let turn = Turn {
+                                service: service.clone(),
+                                ticket,
+                            };
+                            service.process(samples, target_app, at, start_ms, &turn).await;
                         });
                     }
                 }
@@ -397,6 +412,45 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant)>) {
     if session.take().is_some() {
         DICTATING.store(false, Ordering::Relaxed);
         service.overlay.set(OverlayState::Hidden);
+    }
+}
+
+/// A dictation's place in the insertion order. Dropping it (inserted,
+/// failed or empty) lets the next dictation insert.
+struct Turn {
+    service: Arc<Service>,
+    ticket: u64,
+}
+
+/// A dictation never waits longer than this for the one before it.
+const TURN_TIMEOUT: Duration = Duration::from_secs(30);
+
+impl Turn {
+    async fn wait(&self) {
+        let mut turn = self.service.insert_turn.subscribe();
+        let ticket = self.ticket;
+        if tokio::time::timeout(TURN_TIMEOUT, turn.wait_for(|current| *current >= ticket))
+            .await
+            .is_err()
+        {
+            log::warn!("Dictation: previous dictation still busy after {} s; inserting anyway", TURN_TIMEOUT.as_secs());
+        }
+    }
+}
+
+impl Drop for Turn {
+    fn drop(&mut self) {
+        let next = match self.service.order.lock() {
+            Ok(mut order) => order.finish(self.ticket),
+            Err(poisoned) => poisoned.into_inner().finish(self.ticket),
+        };
+        self.service.insert_turn.send_if_modified(|current| {
+            let advance = *current < next;
+            if advance {
+                *current = next;
+            }
+            advance
+        });
     }
 }
 
@@ -592,7 +646,14 @@ impl Service {
         (config.provider == "builtin-ai").then_some(config.model)
     }
 
-    async fn process(self: Arc<Self>, samples: Vec<f32>, target_app: Option<String>, released_at: Instant, start_ms: u64) {
+    async fn process(
+        self: Arc<Self>,
+        samples: Vec<f32>,
+        target_app: Option<String>,
+        released_at: Instant,
+        start_ms: u64,
+        turn: &Turn,
+    ) {
         let capture_ms = released_at.elapsed().as_millis() as u64;
         let settings = self.settings();
         let audio_ms = audio::duration_ms(samples.len(), audio::TARGET_RATE);
@@ -630,8 +691,14 @@ impl Service {
             return;
         }
 
+        turn.wait().await;
         let insert_started = Instant::now();
-        let inserted = insert(text.clone(), settings.restore_clipboard_ms).await;
+        let options = InsertOptions {
+            restore_after: Duration::from_millis(settings.restore_clipboard_ms),
+            paste_timeout: Duration::from_millis(settings.paste_timeout_ms),
+            app: target_app.clone(),
+        };
+        let inserted = insert(text.clone(), options).await;
         let (insert_method, inserted_at) = match inserted {
             Ok((method, at)) => {
                 self.set_error(None);
@@ -731,14 +798,26 @@ impl Service {
 }
 
 #[cfg(windows)]
-async fn insert(text: String, restore_ms: u64) -> Result<(&'static str, Instant), String> {
-    tokio::task::spawn_blocking(move || super::win::insert_text(&text, Duration::from_millis(restore_ms)))
+use super::win::InsertOptions;
+
+/// Insertion settings (the Windows type, mirrored for other platforms).
+#[cfg(not(windows))]
+struct InsertOptions {
+    restore_after: Duration,
+    paste_timeout: Duration,
+    app: Option<String>,
+}
+
+#[cfg(windows)]
+async fn insert(text: String, options: InsertOptions) -> Result<(&'static str, Instant), String> {
+    tokio::task::spawn_blocking(move || super::win::insert_text(&text, &options))
         .await
         .map_err(|e| e.to_string())?
         .map(|(method, at)| (method.as_str(), at))
 }
 
 #[cfg(not(windows))]
-async fn insert(_text: String, _restore_ms: u64) -> Result<(&'static str, Instant), String> {
+async fn insert(_text: String, options: InsertOptions) -> Result<(&'static str, Instant), String> {
+    let _ = (options.restore_after, options.paste_timeout, options.app);
     Err("Indsættelse understøttes kun på Windows".to_string())
 }
