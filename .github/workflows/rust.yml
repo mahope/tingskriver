@@ -68,12 +68,16 @@ jobs:
 
       # ort loads ONNX Runtime dynamically on Windows. The app points it at the
       # bundled DLL at startup; tests use the DLL the Tauri build script
-      # downloaded instead of an older one from System32.
+      # downloaded instead of an older one from System32. The runner has no
+      # audio output device, so the playback device test only runs on Linux
+      # and on real machines.
       - name: Test workspace
         shell: bash
         env:
           ORT_DYLIB_PATH: ${{ github.workspace }}\frontend\src-tauri\binaries\onnxruntime\onnxruntime.dll
-        run: .github/scripts/annotate-errors.sh cargo test --workspace --locked
+        run: >-
+          .github/scripts/annotate-errors.sh cargo test --workspace --locked --no-fail-fast --
+          --skip audio::playback_monitor::tests::test_get_output_device
 
   linux-core:
     name: Core tests and crate boundaries (Linux)
@@ -119,7 +123,8 @@ jobs:
   # Tauri crate is left out: its build script runs the downloaded ffmpeg.exe.
   xwin-check:
     name: Windows check from Linux (cargo xwin)
-    runs-on: ubuntu-latest
+    # Pinned so the LLVM 19 packages below exist.
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - name: Checkout repository
@@ -130,11 +135,12 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
-      - name: Install LLVM, lld and Ninja
+      # The MSVC STL that cargo-xwin downloads needs Clang 19 or newer.
+      - name: Install LLVM 19, lld and Ninja
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends clang llvm lld ninja-build cmake
-          echo "$(llvm-config --bindir)" >> "$GITHUB_PATH"
+          sudo apt-get install -y --no-install-recommends clang-19 llvm-19 lld-19 ninja-build cmake
+          echo "/usr/lib/llvm-19/bin" >> "$GITHUB_PATH"
 
       - name: Install cargo-xwin
         uses: taiki-e/install-action@v2
