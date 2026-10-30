@@ -15,7 +15,7 @@ Nyttige parametre:
 | Parameter | Betydning | Standard |
 |---|---|---|
 | `-Repetitioner N` | antal gentagelser, medianen bruges | 5 |
-| `-EfterMinutter N` | mål hukommelsen igen N minutter efter tomgangsmålingen (fx 60 for en time i tray) | 0 (fra) |
+| `-EfterMinutter N` | mål hukommelsen igen N minutter efter tomgangsmålingen (fx 60 for en time). Scriptet skjuler vinduet i tray før ventetiden, så målingen er en tray-måling | 0 (fra) |
 | `-Dikteringer N` | antal seneste dikteringer i p50/p95 | 50 |
 | `-TomgangSekunder N` | ventetid før hukommelsesmåling | 60 |
 | `-ExeSti` | anden sti til appen | `%LOCALAPPDATA%\Tingskriver\tingskriver.exe` |
@@ -23,14 +23,18 @@ Nyttige parametre:
 | `-KunHukommelse` | mål hukommelse og CPU på en app der allerede kører (fx efter et møde); rører ikke appen | |
 | `-KunKoldstart -KoldLog fil.txt` | én koldstart pr. kørsel; medianen over filens linjer vises | |
 
+`efter_ws_total_mb` er kun med, når `-EfterMinutter 60` er brugt.
+
 Med `-EfterMinutter 60` og 5 gentagelser tager en kørsel over 5 timer. Brug i stedet `-Repetitioner 1 -EfterMinutter 60` til tray-målingen og de normale fem gentagelser til resten.
 
 Scriptet skriver en markdown-tabel og en JSON-blok. Sæt tabellen ind under "Resultater" nedenfor. Scriptet ændrer intet: det starter og lukker kun appen (`CloseMainWindow`, derefter `Stop-Process` efter 10 s), læser logfilerne og læser en midlertidig kopi af `dictation.sqlite`. Eneste fil det kan skrive er `-KoldLog`, hvis du angiver den.
 
+Appen skjuler sig i tray ved `CloseMainWindow` og afslutter ikke selv, så lukningen ender normalt i `Stop-Process` på appen og dens underprocesser. Varmstart måles derfor efter et kill, ikke efter et pænt afslut.
+
 Scriptet stopper uden at røre appen, hvis:
 
 - `tingskriver.exe` allerede kører (der kan være en optagelse i gang)
-- filer i `%USERPROFILE%\Music\tingskriver-recordings` er ændret de seneste 2 minutter
+- filer i optagelsesmappen er ændret de seneste 2 minutter: standardmappen `%USERPROFILE%\Music\tingskriver-recordings` og den mappe brugeren har valgt (`save_folder` i `%APPDATA%\dk.mahoje.tingskriver\recording_preferences.json`, læses kun)
 
 ## Metode
 
@@ -53,17 +57,19 @@ Scriptet stopper uden at røre appen, hvis:
 
 ## Budgetter (foreslået)
 
-Ikke kildebelagte; ejeren godkender efter første måling. Maskinlæsbart, til en senere automatisk sammenligning med JSON-blokken fra scriptet (nøglerne matcher `resultater`):
+Ikke kildebelagte; ejeren godkender efter første måling. Maskinlæsbart, til en senere automatisk sammenligning med JSON-blokken fra scriptet (nøglerne under `budgetter` er de samme som under `resultater` i scriptets JSON; `ikke_maalt` har ingen nøgle i scriptet endnu):
 
 ```json
 {
   "status": "foreslaaet",
   "budgetter": {
-    "tomgang_tray_ws_total_mb": 200,
+    "efter_ws_total_mb": 200,
     "tomgang_cpu_pct": 1,
+    "diktering_log_p50_15s_ms": 1500
+  },
+  "ikke_maalt": {
     "optagelse_to_spor_ws_total_mb": 400,
-    "tastetryk_til_optagelse_ms": 150,
-    "diktering_p50_15s_ms": 1500
+    "tastetryk_til_optagelse_ms": 150
   }
 }
 ```

@@ -62,7 +62,7 @@ $LukTimeoutSek = 10
 # ---------------------------------------------------------------- hjælpere
 
 function Get-Median([double[]]$Values) {
-    if (-not $Values -or $Values.Count -eq 0) { return $null }
+    if ($null -eq $Values -or $Values.Count -eq 0) { return $null }
     $s = @($Values | Sort-Object)
     $n = $s.Count
     if ($n % 2 -eq 1) { return [double]$s[($n - 1) / 2] }
@@ -71,7 +71,7 @@ function Get-Median([double[]]$Values) {
 
 # Nearest-rank percentil (p mellem 0 og 100).
 function Get-Percentile([double[]]$Values, [double]$P) {
-    if (-not $Values -or $Values.Count -eq 0) { return $null }
+    if ($null -eq $Values -or $Values.Count -eq 0) { return $null }
     $s = @($Values | Sort-Object)
     $rank = [math]::Ceiling($P / 100 * $s.Count)
     if ($rank -lt 1) { $rank = 1 }
@@ -104,6 +104,15 @@ function Get-RecordingFolders {
     $music = [Environment]::GetFolderPath('MyMusic')
     if ($music) { $folders += (Join-Path $music 'tingskriver-recordings') }
     $folders += (Join-Path $env:USERPROFILE 'Music\tingskriver-recordings')
+    # Brugerens valgte mappe (save_folder) står i appens store-fil; den læses kun, aldrig skrives.
+    $prefs = Join-Path (Join-Path $env:APPDATA $AppId) 'recording_preferences.json'
+    if (Test-Path -LiteralPath $prefs) {
+        try {
+            $j = Get-Content -LiteralPath $prefs -Raw -Encoding UTF8 | ConvertFrom-Json
+            $custom = $j.preferences.save_folder
+            if ($custom) { $folders += [string]$custom }
+        } catch { Write-Warning 'Kunne ikke læse recording_preferences.json; tjekker kun standardmappen.' }
+    }
     return @($folders | Select-Object -Unique | Where-Object { Test-Path -LiteralPath $_ })
 }
 
@@ -150,7 +159,11 @@ function Start-AppTimed {
     return @{ Ms = $ms; Process = $proc }
 }
 
+# Appen skjuler sig i tray ved CloseMainWindow (CloseRequested -> prevent_close), så processen
+# afsluttes normalt ikke af sig selv. Fallback: Stop-Process på appen og alle dens efterkommere,
+# så llama-helper/ffmpeg ikke efterlades som forældreløse. Varmstart måles derfor efter et kill.
 function Stop-AppGracefully($Proc) {
+    $roots = @(Get-AppProcesses | ForEach-Object { $_.Id })
     foreach ($p in (Get-AppProcesses)) {
         [void]$p.CloseMainWindow()
     }
@@ -160,8 +173,9 @@ function Stop-AppGracefully($Proc) {
     }
     $left = Get-AppProcesses
     if ($left.Count -gt 0) {
-        Write-Host "  (appen lukkede ikke selv inden $LukTimeoutSek s, bruger Stop-Process)"
-        $left | Stop-Process -Force -ErrorAction SilentlyContinue
+        Write-Host "  (appen lukkede ikke selv inden $LukTimeoutSek s - den skjuler sig i tray - bruger Stop-Process)"
+        $ids = @(Get-ProcessTreeIds $roots)
+        Stop-Process -Id $ids -Force -ErrorAction SilentlyContinue
         Start-Sleep -Milliseconds 500
     }
     # Underprocesser (webview2) lukker typisk med forælderen; giv dem et øjeblik.
@@ -281,7 +295,10 @@ function Get-HistoryLatencies([int]$Max) {
             if (Test-Path -LiteralPath $src) { Copy-Item -LiteralPath $src -Destination (Join-Path $tmp ($dbName + $suffix)) }
         }
         $q = "SELECT latency_ms, audio_ms FROM dictation_history WHERE insert_method IS NOT NULL ORDER BY created_at DESC LIMIT $Max;"
-        $out = & $sqlite.Source -readonly -separator ',' (Join-Path $tmp $dbName) $q 2>&1
+        $prevEap = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try { $out = & $sqlite.Source -readonly -separator ',' (Join-Path $tmp $dbName) $q 2>&1 }
+        finally { $ErrorActionPreference = $prevEap }
         if ($LASTEXITCODE -ne 0) { return @{ Status = 'sqlite3 kunne ikke læse historikken'; Rows = @() } }
         $rows = @()
         foreach ($line in @($out)) {
@@ -352,15 +369,15 @@ if ($Repetitioner -lt 1) { throw 'Repetitioner skal være mindst 1.' }
 if ($KunHukommelse) {
     if ((Get-AppProcesses).Count -eq 0) { Write-Warning 'tingskriver.exe kører ikke.'; exit 5 }
     $m = Measure-Idle 10
-    Write-Host ''
-    Write-Host '| Måling | Værdi | Enhed |'
-    Write-Host '|---|---|---|'
-    Write-Host ("| Working set, i alt | {0} | MB |" -f (Format-Num $m.TotalWS))
-    Write-Host ("| Private bytes, i alt | {0} | MB |" -f (Format-Num $m.TotalPB))
-    Write-Host ("| - tingskriver.exe, working set | {0} | MB |" -f (Format-Num $m.AppWS))
-    Write-Host ("| - msedgewebview2.exe, working set ({1} processer) | {0} | MB |" -f (Format-Num $m.WebViewWS), $m.WebViewCount)
-    Write-Host ("| - øvrige underprocesser, working set ({1} processer) | {0} | MB |" -f (Format-Num $m.AndreWS), $m.AndreCount)
-    Write-Host ("| CPU (10 s) | {0} | % |" -f (Format-Num $m.CpuPct 2))
+    Write-Output ''
+    Write-Output '| Måling | Værdi | Enhed |'
+    Write-Output '|---|---|---|'
+    Write-Output ("| Working set, i alt | {0} | MB |" -f (Format-Num $m.TotalWS))
+    Write-Output ("| Private bytes, i alt | {0} | MB |" -f (Format-Num $m.TotalPB))
+    Write-Output ("| - tingskriver.exe, working set | {0} | MB |" -f (Format-Num $m.AppWS))
+    Write-Output ("| - msedgewebview2.exe, working set ({1} processer) | {0} | MB |" -f (Format-Num $m.WebViewWS), $m.WebViewCount)
+    Write-Output ("| - øvrige underprocesser, working set ({1} processer) | {0} | MB |" -f (Format-Num $m.AndreWS), $m.AndreCount)
+    Write-Output ("| CPU (10 s) | {0} | % |" -f (Format-Num $m.CpuPct 2))
     exit 0
 }
 
@@ -406,7 +423,9 @@ if (-not $KunDiktering) {
         Write-Host "  tomgangsmåling om $TomgangSekunder s..."
         $idle += , (Measure-Idle $TomgangSekunder)
         if ($EfterMinutter -gt 0) {
-            Write-Host "  venter $EfterMinutter min før næste måling..."
+            # CloseMainWindow skjuler hovedvinduet i tray, så målingen efter ventetiden er en tray-måling.
+            foreach ($p in (Get-AppProcesses)) { [void]$p.CloseMainWindow() }
+            Write-Host "  vinduet skjult i tray; venter $EfterMinutter min før næste måling..."
             Start-Sleep -Seconds ($EfterMinutter * 60)
             $late += , (Measure-Idle 10)
         }
@@ -459,7 +478,7 @@ function Add-Row([string]$Name, $Value, [string]$Unit, [string]$Note, [string]$J
 }
 
 if (-not $KunDiktering) {
-    Add-Row 'Koldstart (første start i kørslen)' (Get-Median ([double[]]$result.Kold)) 'ms' 'proces start til synligt hovedvindue; ægte kold kræver -KunKoldstart efter genstart' 'koldstart_ms'
+    Add-Row 'Koldstart (første start i kørslen)' (Get-Median ([double[]]$result.Kold)) 'ms' "n = $($result.Kold.Count), ikke en median; proces start til synligt hovedvindue; ægte kold kræver -KunKoldstart efter genstart" 'koldstart_ms'
     Add-Row 'Varmstart' (Get-Median ([double[]]$result.Varm)) 'ms' "efter lukning, $($result.Varm.Count) målinger" 'varmstart_ms'
     $i0 = $result.Idle
     Add-Row "Tomgang efter $TomgangSekunder s: working set, i alt" (Med $i0 'TotalWS') 'MB' 'app + alle underprocesser' 'tomgang_ws_total_mb'
@@ -486,12 +505,12 @@ Add-Row 'Diktering p95, 10-20 s tale (log)' $logSum.P95Mid 'ms' "n = $($logSum.N
 Add-Row 'Diktering p50 (historik)' $histSum.P50 'ms' "n = $($histSum.N); $($histRes.Status)" 'diktering_hist_p50_ms'
 Add-Row 'Diktering p95 (historik)' $histSum.P95 'ms' "n = $($histSum.N)" 'diktering_hist_p95_ms'
 
-Write-Host ''
-Write-Host $sb.ToString()
-Write-Host '## Maskinlæsbart'
-Write-Host ''
-Write-Host '```json'
-Write-Host ($json | ConvertTo-Json -Depth 5)
-Write-Host '```'
-Write-Host ''
-Write-Host 'Ikke målt af scriptet: optagelse af to spor, tid fra tastetryk til optagelse, hukommelse efter et 30 min møde og efter en time i tray (kræver at du selv optager eller venter; brug -EfterMinutter for tray).'
+Write-Output ''
+Write-Output $sb.ToString()
+Write-Output '## Maskinlæsbart'
+Write-Output ''
+Write-Output '```json'
+Write-Output ($json | ConvertTo-Json -Depth 5)
+Write-Output '```'
+Write-Output ''
+Write-Output 'Ikke målt af scriptet: optagelse af to spor, tid fra tastetryk til optagelse, hukommelse efter et 30 min møde og efter en time i tray (kræver at du selv optager eller venter; brug -EfterMinutter for tray).'
