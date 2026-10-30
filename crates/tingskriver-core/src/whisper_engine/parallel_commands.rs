@@ -1,4 +1,3 @@
-use tauri::State;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use anyhow::Result;
@@ -23,9 +22,8 @@ impl ParallelProcessorState {
     }
 }
 
-#[tauri::command]
 pub async fn initialize_parallel_processor(
-    state: State<'_, ParallelProcessorState>,
+    state: &ParallelProcessorState,
     max_workers: Option<usize>,
     memory_budget_mb: Option<u64>,
 ) -> Result<String, String> {
@@ -58,9 +56,8 @@ pub async fn initialize_parallel_processor(
                config.max_workers, config.memory_budget_mb))
 }
 
-#[tauri::command]
 pub async fn start_parallel_processing(
-    state: State<'_, ParallelProcessorState>,
+    state: &ParallelProcessorState,
     audio_chunks: Vec<serde_json::Value>, // JSON representation of AudioChunk
     model_name: String,
 ) -> Result<String, String> {
@@ -82,9 +79,8 @@ pub async fn start_parallel_processing(
                chunks.len(), model_name))
 }
 
-#[tauri::command]
 pub async fn pause_parallel_processing(
-    state: State<'_, ParallelProcessorState>,
+    state: &ParallelProcessorState,
 ) -> Result<String, String> {
     let processor_guard = state.processor.read().await;
     let processor = processor_guard.as_ref()
@@ -94,9 +90,8 @@ pub async fn pause_parallel_processing(
     Ok("Processing paused".to_string())
 }
 
-#[tauri::command]
 pub async fn resume_parallel_processing(
-    state: State<'_, ParallelProcessorState>,
+    state: &ParallelProcessorState,
 ) -> Result<String, String> {
     let processor_guard = state.processor.read().await;
     let processor = processor_guard.as_ref()
@@ -106,9 +101,8 @@ pub async fn resume_parallel_processing(
     Ok("Processing resumed".to_string())
 }
 
-#[tauri::command]
 pub async fn stop_parallel_processing(
-    state: State<'_, ParallelProcessorState>,
+    state: &ParallelProcessorState,
 ) -> Result<String, String> {
     let mut processor_guard = state.processor.write().await;
     let processor = processor_guard.as_mut()
@@ -118,9 +112,8 @@ pub async fn stop_parallel_processing(
     Ok("Processing stopped".to_string())
 }
 
-#[tauri::command]
 pub async fn get_parallel_processing_status(
-    state: State<'_, ParallelProcessorState>,
+    state: &ParallelProcessorState,
 ) -> Result<ProcessingStatus, String> {
     let processor_guard = state.processor.read().await;
     let processor = processor_guard.as_ref()
@@ -130,9 +123,8 @@ pub async fn get_parallel_processing_status(
     Ok(status)
 }
 
-#[tauri::command]
 pub async fn get_system_resources(
-    state: State<'_, ParallelProcessorState>,
+    state: &ParallelProcessorState,
 ) -> Result<serde_json::Value, String> {
     state.system_monitor.refresh_system_info()
         .await
@@ -146,9 +138,8 @@ pub async fn get_system_resources(
         .map_err(|e| format!("Failed to serialize resources: {}", e))
 }
 
-#[tauri::command]
 pub async fn check_resource_constraints(
-    state: State<'_, ParallelProcessorState>,
+    state: &ParallelProcessorState,
 ) -> Result<serde_json::Value, String> {
     let status = state.system_monitor.check_resource_constraints()
         .await
@@ -158,9 +149,8 @@ pub async fn check_resource_constraints(
         .map_err(|e| format!("Failed to serialize resource status: {}", e))
 }
 
-#[tauri::command]
 pub async fn calculate_optimal_workers(
-    state: State<'_, ParallelProcessorState>,
+    state: &ParallelProcessorState,
 ) -> Result<usize, String> {
     state.system_monitor.calculate_safe_worker_count()
         .await
@@ -168,7 +158,6 @@ pub async fn calculate_optimal_workers(
 }
 
 // Utility command to convert audio file to chunks for parallel processing
-#[tauri::command]
 pub async fn prepare_audio_chunks(
     audio_data: Vec<f32>,
     sample_rate: u32,
@@ -200,9 +189,8 @@ pub async fn prepare_audio_chunks(
 }
 
 // Test command for validating the parallel processing setup
-#[tauri::command]
 pub async fn test_parallel_processing_setup(
-    state: State<'_, ParallelProcessorState>,
+    state: &ParallelProcessorState,
 ) -> Result<String, String> {
     let mut report = String::new();
 
