@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "frontend/src-tauri",
+    "frontend/src-tauri/dictation-tests",
     "llama-helper"
 ]
 

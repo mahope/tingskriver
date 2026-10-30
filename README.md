@@ -32,7 +32,7 @@ Hold `Ctrl+Win`, tal, og slip. Teksten bliver renskrevet og skrevet ind dér, hv
 - **Tale til tekst:** Med en Syv.ai-nøgle bruges Syv.ai (dansk). Fejler Syv.ai, eller svarer den ikke inden for 2 sekunder, bruges den lokale Parakeet-model automatisk. Uden nøgle bruges kun den lokale model.
 - **Renskrivning:** øh og altså fjernes, og du kan sige tegn: "punktum", "komma", "spørgsmålstegn", "udråbstegn", "kolon", "ny linje" og "nyt afsnit". Sætninger får stort begyndelsesbogstav. I kodeprogrammer og terminaler (fx VS Code og Windows Terminal) skrives teksten råt. Polering med en sprogmodel kan slås til, men er slået fra som standard.
 - **Ordbog og snippets:** Egne ord og navne staves rigtigt, og en talt udløser som "mit CVR" kan indsætte en fast tekst.
-- **Indsættelse:** Teksten indsættes via udklipsholderen og `Ctrl+V`, og din udklipsholder sættes tilbage bagefter. Hvis et felt ikke tager imod indsæt, skrives teksten tegn for tegn.
+- **Indsættelse:** Teksten indsættes via udklipsholderen og `Ctrl+V`, og din udklipsholder sættes tilbage bagefter. Kan udklipsholderen ikke bruges, eller kan `Ctrl+V` ikke sendes, skrives teksten tegn for tegn i stedet. Felter, der selv afviser indsæt, får ingen tekst, men den kan kopieres fra historikken, hvis den er slået til. Under en mødeoptagelse er mødets mikrofonspor stille, mens du dikterer, så dikteringen ikke kommer med i mødet.
 - **Historik:** De seneste 500 dikteringer står på siden "Diktering" med svartid og program og kan kopieres igen. Lyden gemmes i 24 timer. Begge dele kan slås fra.
 
 **Privatliv:** Med Syv.ai sendes kun lydoptagelsen af det, du dikterer, sammen med ordene i din ordbog som stikord. Uden nøgle, eller med "Kun lokal model", forlader intet computeren. Nøglen gemmes i Windows Legitimationsstyring, ikke i Tingskrivers filer. Genvejen bruger én tastaturhook, der kun holder øje med genvejens taster. Tastetryk gemmes eller logges aldrig. Programmer, der kører som administrator, kan ikke modtage tekst fra Tingskriver (Windows' UIPI), så kør ikke Tingskriver som administrator.
@@ -55,7 +55,7 @@ Tingskriver er en fork af [Meetily](https://github.com/Zackriya-Solutions/meetil
 - Byggevejledning: [docs/BUILDING.md](docs/BUILDING.md). Frontenden ligger i `frontend/` (Tauri 2, Next.js, Rust).
 - Logfiler: `%LOCALAPPDATA%\dk.mahoje.tingskriver\logs\` (`tingskriver.log`, roterer ved 5 MB, de to seneste filer gemmes også). Åbn mappen fra Indstillinger under "Logfiler". Enhedsskift står som `[DEVICE_FOLLOW]`-linjer med tidsstempel.
 - Test af enhedsskift: `rustc --edition 2021 --test frontend/src-tauri/src/audio/device_follow.rs -o /tmp/df && /tmp/df` (ren std, kører på Linux; det samme gør CI på hver gren). Manuel test på Windows: optag, tag headsettet af og på igen, og tjek at `audio.mp4` ikke har huller og at `[DEVICE_FOLLOW]`-linjerne i loggen viser skiftet inden for ca. 1 sekund.
-- Test af diktering: `rustc --edition 2021 --test frontend/src-tauri/src/dictation/logic/mod.rs -o /tmp/dl && /tmp/dl` (renskrivning, genvej, dobbelttryk og reservevalg; ren std, kører også i CI).
+- Test af diktering: `cargo test -p dictation-tests` (renskrivning, genvej, dobbelttryk, reservevalg, SQLite-lager og Syv.ai-kaldet mod en falsk server; kører på Linux og i CI).
 
 ## English
 
@@ -86,7 +86,7 @@ Hold `Ctrl+Win`, speak, and release. The text is cleaned up and typed where your
 - **Speech to text:** With a Syv.ai key, Syv.ai (Danish) is used. If Syv.ai fails or takes longer than 2 seconds, the local Parakeet model is used automatically. Without a key, only the local model is used.
 - **Cleanup:** Danish fillers ("øh", "altså") are removed and spoken punctuation ("punktum", "komma", "spørgsmålstegn", "udråbstegn", "kolon", "ny linje", "nyt afsnit") becomes characters. Sentences are capitalised. Code editors and terminals get raw text. Optional LLM polishing is off by default.
 - **Dictionary and snippets:** Your own words and names are spelled correctly, and a spoken trigger such as "mit CVR" can insert a fixed block of text.
-- **Insertion:** Text is pasted through the clipboard with `Ctrl+V` and your clipboard is restored afterwards. Fields that block paste get the text typed instead.
+- **Insertion:** Text is pasted through the clipboard with `Ctrl+V` and your clipboard is restored afterwards. If the clipboard can't be used or `Ctrl+V` can't be sent, the text is typed character by character instead. Fields that refuse paste themselves get no text, but it can be copied from the history when that is on. During a meeting recording the meeting's microphone track is silent while you dictate, so dictation stays out of the meeting.
 - **History:** The last 500 dictations are listed on the "Diktering" page with latency and program, and can be copied again. Audio is kept for 24 hours. Both can be turned off.
 
 **Privacy:** With Syv.ai, only the audio of what you dictate is sent, along with your dictionary words as hints. Without a key, or with "local model only", nothing leaves the computer. The key is stored in Windows Credential Manager, not in Tingskriver's files. The shortcut uses one keyboard hook that only watches the shortcut keys; keystrokes are never stored or logged. Programs running as administrator cannot receive text from Tingskriver (Windows UIPI), so do not run Tingskriver as administrator.
@@ -103,4 +103,4 @@ Tingskriver is a fork of [Meetily](https://github.com/Zackriya-Solutions/meetily
 - Build instructions: [docs/BUILDING.md](docs/BUILDING.md). The app lives in `frontend/` (Tauri 2, Next.js, Rust).
 - Log files: `%LOCALAPPDATA%\dk.mahoje.tingskriver\logs\` (`tingskriver.log`, rotates at 5 MB, the two previous files are kept). Open the folder from Settings under "Logfiler". Device switches appear as `[DEVICE_FOLLOW]` lines with timestamps.
 - Testing device switching: `rustc --edition 2021 --test frontend/src-tauri/src/audio/device_follow.rs -o /tmp/df && /tmp/df` (plain std, runs on Linux; CI runs it on every branch). Manual test on Windows: record, take the headset off and put it on again, and check that `audio.mp4` has no gaps and the `[DEVICE_FOLLOW]` lines in the log show the switch within about a second.
-- Testing dictation: `rustc --edition 2021 --test frontend/src-tauri/src/dictation/logic/mod.rs -o /tmp/dl && /tmp/dl` (cleanup, shortcut, double tap and fallback decisions; plain std, also run by CI).
+- Testing dictation: `cargo test -p dictation-tests` (cleanup, shortcut, double tap, fallback decisions, the SQLite store and the Syv.ai request against a fake server; runs on Linux and in CI).
