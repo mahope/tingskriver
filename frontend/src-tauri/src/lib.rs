@@ -38,7 +38,8 @@ pub(crate) use perf_trace;
 pub mod analytics;
 pub mod api;
 pub mod audio;
-pub mod config;
+pub use tingskriver_core::config;
+pub mod core_bridge;
 pub mod console_utils;
 pub mod database;
 pub mod dictation;
@@ -497,6 +498,9 @@ pub fn run() {
         .manage(audio::init_system_audio_state())
         .manage(summary::summary_engine::ModelManagerState(Arc::new(tokio::sync::Mutex::new(None))))
         .setup(|_app| {
+            // Core spawns async work from audio and hook threads on Tauri's runtime.
+            tingskriver_core::runtime::set_handle(tauri::async_runtime::handle().inner().clone());
+
             #[cfg(target_os = "windows")]
             match _app.path().resolve(
                 "onnxruntime.dll",

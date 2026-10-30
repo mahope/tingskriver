@@ -10738,6 +10738,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "time",
+ "tingskriver-core",
  "tokio",
  "tokio-util",
  "tracing",
@@ -10765,6 +10766,18 @@ dependencies = [
 [[package]]
 name = "tingskriver-core"
 version = "0.4.1"
+dependencies = [
+ "anyhow",
+ "futures-util",
+ "log",
+ "once_cell",
+ "regex",
+ "reqwest 0.11.27",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
 
 [[package]]
 name = "tingskriver-overlay"

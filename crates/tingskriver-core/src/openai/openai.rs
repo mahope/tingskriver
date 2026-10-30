@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::sync::RwLock;
 use std::time::{Duration, Instant};
-use tauri::command;
 
 /// OpenAI model information returned to frontend
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -100,7 +99,6 @@ fn is_chat_model(model_id: &str) -> bool {
 ///
 /// # Returns
 /// Vector of available models, or fallback models on error
-#[command]
 pub async fn get_openai_models(api_key: Option<String>) -> Result<Vec<OpenAIModel>, String> {
     // Return fallback if no API key provided
     let api_key = match api_key {

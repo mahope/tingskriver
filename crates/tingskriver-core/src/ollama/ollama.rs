@@ -2,7 +2,7 @@ use std::process::Command;
 use std::sync::Arc;
 use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
-use tauri::{command, AppHandle, Emitter, Runtime};
+use crate::events::{EventHandle, EventSinkExt};
 use reqwest::Client;
 use tokio::time::{timeout, Duration, sleep};
 use tokio::sync::RwLock;
@@ -93,7 +93,6 @@ fn validate_endpoint_url(url: &str) -> Result<(), OllamaError> {
     Ok(())
 }
 
-#[command]
 pub async fn get_ollama_models(endpoint: Option<String>) -> Result<Vec<OllamaModel>, String> {
     // Validate endpoint format if provided
     if let Some(ref ep) = endpoint {
@@ -256,9 +255,8 @@ pub struct DownloadProgress {
     pub total: u64,
 }
 
-#[command]
-pub async fn pull_ollama_model<R: Runtime>(
-    app_handle: AppHandle<R>,
+pub async fn pull_ollama_model(
+    app_handle: EventHandle,
     model_name: String,
     endpoint: Option<String>,
 ) -> Result<(), String> {
@@ -432,7 +430,6 @@ pub async fn pull_ollama_model<R: Runtime>(
     Ok(())
 }
 
-#[command]
 pub async fn delete_ollama_model(
     model_name: String,
     endpoint: Option<String>,
@@ -485,7 +482,6 @@ pub async fn delete_ollama_model(
 ///
 /// # Returns
 /// Context size in tokens, or error message
-#[command]
 pub async fn get_ollama_model_context(
     model_name: String,
     endpoint: Option<String>,

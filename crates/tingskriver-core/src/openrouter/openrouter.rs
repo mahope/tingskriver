@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use tauri::command;
 use reqwest::blocking::Client;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -38,7 +37,6 @@ struct OpenRouterResponse {
     data: Vec<OpenRouterApiModel>,
 }
 
-#[command]
 pub fn get_openrouter_models() -> Result<Vec<OpenRouterModel>, String> {
     let client = Client::new();
     let response = client
