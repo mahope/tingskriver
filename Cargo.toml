@@ -1,6 +1,9 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/tingskriver-core",
+    "crates/tingskriver-app",
+    "crates/tingskriver-overlay",
     "frontend/src-tauri",
     "frontend/src-tauri/dictation-tests",
     "llama-helper"
@@ -8,8 +11,11 @@ members = [
 
 # Shared workspace settings
 [workspace.package]
+version = "0.4.1"
 edition = "2021"
 rust-version = "1.77"
+license = "MIT"
+repository = "https://github.com/mahope/tingskriver"
 
 # Shared dependencies that can be inherited by workspace members
 [workspace.dependencies]
@@ -17,3 +23,9 @@ anyhow = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1.32.0", features = ["full"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+panic = "unwind"

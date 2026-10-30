@@ -1,0 +1,19 @@
+[package]
+name = "tingskriver-app"
+description = "Tingskriver: GPUI-skal ovenpå tingskriver-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "tingskriver-app"
+path = "src/main.rs"
+
+[dependencies]
+# GPUI is pinned to the exact snapshot gpui-component 0.8.1 is built against
+# (gpui-pre is Zed's gpui published by the gpui-component maintainers).
+gpui = { package = "gpui-pre", version = "=0.3.10" }
+gpui-component = "=0.8.1"
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.10", features = ["x11", "wayland"] }

@@ -1,0 +1,115 @@
+name: Rust
+
+# Builds and tests the Cargo workspace on every push. Windows builds the
+# whole workspace (core, GPUI app, overlay, Tauri crate); Linux runs the
+# platform independent tests in tingskriver-core and checks the crate
+# boundaries. Agents read the result with scripts/ci-status.sh.
+
+on:
+  push:
+  workflow_dispatch:
+
+concurrency:
+  group: rust-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  windows:
+    name: Windows workspace build and tests
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      # sqlx checks migration checksums; CRLF checkouts break them (upstream #843).
+      - name: Disable CRLF conversion
+        run: git config --global core.autocrlf false
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Report compiler errors and test panics as annotations
+        shell: bash
+        run: echo "::add-matcher::.github/rust-problem-matcher.json"
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          prefix-key: tingskriver-windows-test-v1
+
+      - name: Cache FFmpeg binary
+        uses: actions/cache@v4
+        with:
+          path: frontend/src-tauri/binaries/ffmpeg-*.exe
+          key: ${{ runner.os }}-ffmpeg-${{ hashFiles('frontend/src-tauri/build.rs', 'frontend/src-tauri/build/ffmpeg.rs') }}
+
+      - name: Cache Windows ONNX Runtime
+        uses: actions/cache@v4
+        with:
+          path: frontend/src-tauri/binaries/onnxruntime
+          key: ${{ runner.os }}-onnxruntime-x86_64-pc-windows-msvc-${{ hashFiles('frontend/src-tauri/build/onnxruntime.rs') }}
+
+      # tauri-build checks that every externalBin exists. The real sidecar is
+      # only needed in the installer, so an empty placeholder is enough here.
+      - name: Placeholder llama-helper sidecar
+        shell: bash
+        run: |
+          mkdir -p frontend/src-tauri/binaries
+          touch frontend/src-tauri/binaries/llama-helper-x86_64-pc-windows-msvc.exe
+
+      - name: Build workspace
+        run: cargo build --workspace --locked
+
+      - name: Test workspace
+        run: cargo test --workspace --locked
+
+  linux-core:
+    name: Core tests and crate boundaries (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libasound2-dev cmake clang
+
+      - name: Report compiler errors and test panics as annotations
+        shell: bash
+        run: echo "::add-matcher::.github/rust-problem-matcher.json"
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          prefix-key: tingskriver-linux-core-v1
+
+      # tingskriver-core must stay free of UI crates (docs/arkitektur.md).
+      - name: Core has no UI dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          tree="$(cargo tree --locked -p tingskriver-core -e normal,build --prefix none)"
+          if echo "$tree" | grep -E '^(tauri|tauri-[a-z-]+|gpui|gpui-[a-z-]+|wry|webview2[a-z-]*) v'; then
+            echo "::error::tingskriver-core depends on a UI crate (see the lines above)"
+            exit 1
+          fi
+          echo "tingskriver-core has no tauri, gpui, wry or webview2 dependency"
+
+      - name: Test tingskriver-core
+        run: cargo test --locked -p tingskriver-core
+
+      - name: Test dictation crate
+        run: cargo test --locked -p dictation-tests
