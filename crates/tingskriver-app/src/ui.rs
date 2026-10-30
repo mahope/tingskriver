@@ -37,9 +37,17 @@ pub struct AppModel {
 
 impl AppModel {
     pub fn new(runtime: Handle, clock: StartupClock, log_path: Option<PathBuf>) -> Self {
+        let app_data_dir = startup::app_data_dir(std::env::var_os(startup::DATA_DIR_ENV));
+        if std::env::var_os(startup::DATA_DIR_ENV).is_some_and(|v| !v.is_empty()) {
+            log::warn!(
+                "Data folder from {}: {:?}",
+                startup::DATA_DIR_ENV,
+                app_data_dir
+            );
+        }
         AppModel {
             db: DbState::Loading,
-            app_data_dir: tingskriver_core::paths::app_data_dir(),
+            app_data_dir,
             log_path,
             runtime,
             clock,

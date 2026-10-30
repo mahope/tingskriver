@@ -97,6 +97,19 @@ fn filetime_delta(created: u64, now: u64) -> Option<Duration> {
     (delta < Duration::from_secs(60)).then_some(delta)
 }
 
+/// `TINGSKRIVER_DATA_DIR` points the app at another data folder (manual
+/// tests on a copy, never on the real meetings).
+pub const DATA_DIR_ENV: &str = "TINGSKRIVER_DATA_DIR";
+
+/// The data folder: `override_dir` when set and not empty, otherwise the
+/// one the Tauri app uses.
+pub fn app_data_dir(override_dir: Option<std::ffi::OsString>) -> Option<PathBuf> {
+    match override_dir {
+        Some(dir) if !dir.is_empty() => Some(PathBuf::from(dir)),
+        _ => tingskriver_core::paths::app_data_dir(),
+    }
+}
+
 /// Where the database is in its life.
 #[derive(Clone)]
 pub enum DbState {
@@ -237,6 +250,20 @@ mod tests {
         assert!(line.contains("40 ms before main"), "{line}");
         let (level, _) = first_frame_report(Duration::from_millis(501), Duration::ZERO);
         assert_eq!(level, log::Level::Warn);
+    }
+
+    #[test]
+    fn data_dir_can_be_overridden_for_tests() {
+        let dir = std::ffi::OsString::from("/tmp/tingskriver-kopi");
+        assert_eq!(
+            app_data_dir(Some(dir)),
+            Some(PathBuf::from("/tmp/tingskriver-kopi"))
+        );
+        assert_eq!(
+            app_data_dir(Some("".into())),
+            tingskriver_core::paths::app_data_dir()
+        );
+        assert_eq!(app_data_dir(None), tingskriver_core::paths::app_data_dir());
     }
 
     #[test]
