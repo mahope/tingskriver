@@ -32,7 +32,9 @@ pub struct AppModel {
     pub clock: StartupClock,
     /// The page a new window opens on.
     pub start_page: Page,
-    first_frame_logged: bool,
+    /// Whether the first-frame time is still to be reported. Off for
+    /// `--hidden`, where the window opens long after process start.
+    pub report_first_frame: bool,
 }
 
 impl AppModel {
@@ -52,7 +54,7 @@ impl AppModel {
             runtime,
             clock,
             start_page: Page::Meetings,
-            first_frame_logged: false,
+            report_first_frame: true,
         }
     }
 
@@ -181,8 +183,8 @@ fn open_main_window(cx: &mut App) -> anyhow::Result<WindowHandle<Root>> {
             let model = model(cx);
             window.on_next_frame(move |_, cx| {
                 model.update(cx, |m, _| {
-                    if !m.first_frame_logged {
-                        m.first_frame_logged = true;
+                    if m.report_first_frame {
+                        m.report_first_frame = false;
                         let (level, line) =
                             startup::first_frame_report(m.clock.elapsed(), m.clock.before_main());
                         log::log!(level, "{line}");

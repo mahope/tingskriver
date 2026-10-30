@@ -93,6 +93,7 @@ pub fn run() {
             });
             let model = cx.new(|_| {
                 let mut model = ui::AppModel::new(handle, clock, log_path);
+                model.report_first_frame = !args.hidden;
                 if let Some(page) = start_page {
                     model.start_page = page;
                 }
