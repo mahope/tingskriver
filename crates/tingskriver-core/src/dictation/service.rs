@@ -64,6 +64,9 @@ fn now_ms() -> i64 {
 
 /// Start dictation in the background. Called once from app setup.
 pub fn init(app: HostHandle, overlay: Arc<dyn Overlay>) {
+    // Runs also if dictation fails to start, since meetings rely on it to
+    // unload idle models.
+    super::warm::start();
     crate::runtime::spawn(async move {
         if let Err(e) = init_inner(app, overlay).await {
             log::error!("Dictation could not start: {e}");
@@ -76,6 +79,7 @@ async fn init_inner(app: HostHandle, overlay: Arc<dyn Overlay>) -> Result<(), St
     let store = Store::open(&app_data_dir.join("dictation.sqlite")).await?;
     let settings = store.settings().await?;
     let rules = store.rules().await?;
+    super::warm::set_policy(settings.residency_policy());
     let service = Arc::new(Service {
         app: app.clone(),
         overlay,
@@ -133,6 +137,9 @@ impl Service {
         let previous = self.settings();
         if let Ok(mut slot) = self.settings.write() {
             *slot = settings.clone();
+        }
+        if previous.residency_policy() != settings.residency_policy() {
+            super::warm::set_policy(settings.residency_policy());
         }
         if previous.enabled != settings.enabled || previous.shortcut != settings.shortcut {
             self.apply_shortcut();
@@ -288,6 +295,9 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant)>) {
                         continue;
                     }
                     let target_app = foreground_process();
+                    // Load the local model while the user speaks, so neither
+                    // the local engine nor the fallback pays for a load.
+                    super::warm::prewarm_parakeet();
                     match Recorder::start() {
                         Ok(recorder) => {
                             DICTATING.store(true, Ordering::Relaxed);
@@ -344,7 +354,7 @@ struct Transcript {
 }
 
 async fn transcribe_local(samples: Vec<f32>) -> Result<String, String> {
-    crate::parakeet_engine::commands::parakeet_validate_model_ready().await?;
+    super::warm::ensure_parakeet().await?;
     crate::parakeet_engine::commands::parakeet_transcribe_audio(samples).await
 }
 

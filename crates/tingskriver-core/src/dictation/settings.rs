@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use super::logic::app_style::{self, AppStyleRule};
 use super::logic::cleanup::Style;
 use super::logic::hotkey::Chord;
+use super::logic::residency::{self, Policy};
 
 pub const SYV_DEFAULT_ENDPOINT: &str = "https://platform.syv.ai/v1";
 pub const SYV_DEFAULT_MODEL: &str = "syv-transcribe";
@@ -39,6 +40,10 @@ pub struct DictationSettings {
     pub keep_audio: bool,
     pub restore_clipboard_ms: u64,
     pub app_styles: Vec<AppStyleSetting>,
+    /// Unload a local speech model after this many idle minutes (0 = never).
+    pub model_idle_minutes: u64,
+    /// Local models that stay loaded however long they are idle.
+    pub keep_warm_models: Vec<String>,
 }
 
 impl Default for DictationSettings {
@@ -65,6 +70,8 @@ impl Default for DictationSettings {
                     style: rule.style.as_str().to_string(),
                 })
                 .collect(),
+            model_idle_minutes: residency::DEFAULT_IDLE_MINUTES,
+            keep_warm_models: Vec::new(),
         }
     }
 }
@@ -83,6 +90,10 @@ impl DictationSettings {
                 style: Style::parse(&s.style),
             })
             .collect()
+    }
+
+    pub fn residency_policy(&self) -> Policy {
+        Policy::from_minutes(self.model_idle_minutes, self.keep_warm_models.clone())
     }
 
     /// Validate and normalise user input before saving.
@@ -109,6 +120,14 @@ impl DictationSettings {
             s.style = Style::parse(&s.style).as_str().to_string();
         }
         self.app_styles.retain(|s| !s.process.is_empty());
+        self.model_idle_minutes = self.model_idle_minutes.min(24 * 60);
+        self.keep_warm_models = self
+            .keep_warm_models
+            .iter()
+            .map(|m| m.trim().to_string())
+            .filter(|m| !m.is_empty())
+            .collect();
+        self.keep_warm_models.dedup();
         Ok(self)
     }
 }
