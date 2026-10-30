@@ -26,7 +26,8 @@ pub enum CrashKind {
 
 pub fn classify(message: &str) -> CrashKind {
     let lower = message.to_lowercase();
-    if lower.contains("failed to initialize directx") || lower.contains("creating directx devices") {
+    if lower.contains("failed to initialize directx") || lower.contains("creating directx devices")
+    {
         CrashKind::GraphicsUnavailable
     } else if lower.contains("device lost") || lower.contains("lost device") {
         CrashKind::GraphicsLost
@@ -116,7 +117,11 @@ fn show_error_dialog(title: &str, text: &str) -> bool {
     use windows::Win32::UI::WindowsAndMessaging::{
         MessageBoxW, IDRETRY, MB_ICONERROR, MB_RETRYCANCEL, MB_SETFOREGROUND, MB_TOPMOST,
     };
-    let wide = |s: &str| s.encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>();
+    let wide = |s: &str| {
+        s.encode_utf16()
+            .chain(std::iter::once(0))
+            .collect::<Vec<u16>>()
+    };
     let (title, text) = (wide(title), wide(text));
     let choice = unsafe {
         MessageBoxW(
@@ -142,19 +147,26 @@ mod tests {
     #[test]
     fn recognises_gpui_graphics_panics() {
         assert_eq!(
-            classify("failed to initialize DirectX: Creating DirectX devices: Getting DXGI adapter"),
+            classify(
+                "failed to initialize DirectX: Creating DirectX devices: Getting DXGI adapter"
+            ),
             CrashKind::GraphicsUnavailable
         );
         assert_eq!(
             classify("Device lost: DirectXRenderer failed to recover from lost device after multiple attempts"),
             CrashKind::GraphicsLost
         );
-        assert_eq!(classify("called `Option::unwrap()` on a `None` value"), CrashKind::Other);
+        assert_eq!(
+            classify("called `Option::unwrap()` on a `None` value"),
+            CrashKind::Other
+        );
     }
 
     #[test]
     fn graphics_dialogs_name_the_log_file() {
-        let path = PathBuf::from(r"C:\Users\test\AppData\Local\dk.mahoje.tingskriver\logs\tingskriver-app.log");
+        let path = PathBuf::from(
+            r"C:\Users\test\AppData\Local\dk.mahoje.tingskriver\logs\tingskriver-app.log",
+        );
         for kind in [CrashKind::GraphicsUnavailable, CrashKind::GraphicsLost] {
             let (title, text) = dialog_text(kind, Some(&path)).unwrap();
             assert!(title.starts_with("Tingskriver"));

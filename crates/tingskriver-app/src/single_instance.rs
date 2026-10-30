@@ -46,9 +46,19 @@ pub enum Instance {
 pub fn endpoint_name(user: &str) -> String {
     let user: String = user
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
-    format!("{}.gpui-{}", tingskriver_core::paths::APP_ID, if user.is_empty() { "user" } else { &user })
+    format!(
+        "{}.gpui-{}",
+        tingskriver_core::paths::APP_ID,
+        if user.is_empty() { "user" } else { &user }
+    )
 }
 
 fn current_user() -> String {
@@ -204,25 +214,38 @@ mod tests {
     #[test]
     fn endpoint_names_are_safe() {
         assert_eq!(endpoint_name("mads"), "dk.mahoje.tingskriver.gpui-mads");
-        assert_eq!(endpoint_name(r"DOMÆNE\Søren Ås"), "dk.mahoje.tingskriver.gpui-DOMÆNE_Søren_Ås");
+        assert_eq!(
+            endpoint_name(r"DOMÆNE\Søren Ås"),
+            "dk.mahoje.tingskriver.gpui-DOMÆNE_Søren_Ås"
+        );
         assert_eq!(endpoint_name(""), "dk.mahoje.tingskriver.gpui-user");
     }
 
     #[cfg(unix)]
     #[tokio::test]
     async fn second_launch_reaches_the_first() {
-        let path = std::env::temp_dir().join(format!("tingskriver-si-test-{}.sock", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("tingskriver-si-test-{}.sock", std::process::id()));
         let _ = std::fs::remove_file(&path);
 
         let Instance::Primary(mut rx) = claim_at(&path, Some(Message::Show)).await.unwrap() else {
             panic!("first launch must become the primary instance");
         };
-        assert!(matches!(claim_at(&path, Some(Message::Show)).await.unwrap(), Instance::Forwarded));
+        assert!(matches!(
+            claim_at(&path, Some(Message::Show)).await.unwrap(),
+            Instance::Forwarded
+        ));
         assert_eq!(rx.recv().await, Some(Message::Show));
 
         // A hidden launch exits quietly without showing the window.
-        assert!(matches!(claim_at(&path, None).await.unwrap(), Instance::Forwarded));
-        assert!(matches!(claim_at(&path, Some(Message::Show)).await.unwrap(), Instance::Forwarded));
+        assert!(matches!(
+            claim_at(&path, None).await.unwrap(),
+            Instance::Forwarded
+        ));
+        assert!(matches!(
+            claim_at(&path, Some(Message::Show)).await.unwrap(),
+            Instance::Forwarded
+        ));
         assert_eq!(rx.recv().await, Some(Message::Show));
         let _ = std::fs::remove_file(&path);
     }
@@ -230,11 +253,15 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn stale_socket_from_a_crash_is_replaced() {
-        let path = std::env::temp_dir().join(format!("tingskriver-si-stale-{}.sock", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("tingskriver-si-stale-{}.sock", std::process::id()));
         let _ = std::fs::remove_file(&path);
         drop(std::os::unix::net::UnixListener::bind(&path).unwrap());
         assert!(path.exists());
-        assert!(matches!(claim_at(&path, Some(Message::Show)).await.unwrap(), Instance::Primary(_)));
+        assert!(matches!(
+            claim_at(&path, Some(Message::Show)).await.unwrap(),
+            Instance::Primary(_)
+        ));
         let _ = std::fs::remove_file(&path);
     }
 }

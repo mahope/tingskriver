@@ -115,7 +115,10 @@ pub fn load(path: &Path) -> Option<SavedWindow> {
     match serde_json::from_str(&text) {
         Ok(saved) => Some(saved),
         Err(error) => {
-            log::warn!("Ignoring unreadable window state {}: {error}", path.display());
+            log::warn!(
+                "Ignoring unreadable window state {}: {error}",
+                path.display()
+            );
             None
         }
     }
@@ -143,7 +146,13 @@ mod tests {
     }
 
     fn saved(x: f32, y: f32, w: f32, h: f32) -> SavedWindow {
-        SavedWindow { x, y, width: w, height: h, maximized: false }
+        SavedWindow {
+            x,
+            y,
+            width: w,
+            height: h,
+            maximized: false,
+        }
     }
 
     const PRIMARY: (f32, f32, f32, f32) = (0.0, 0.0, 1920.0, 1040.0);
@@ -151,7 +160,10 @@ mod tests {
     const LEFT: (f32, f32, f32, f32) = (-1280.0, 0.0, 1280.0, 680.0);
 
     fn displays() -> Vec<Bounds<Pixels>> {
-        [PRIMARY, LEFT].iter().map(|&(x, y, w, h)| rect(x, y, w, h)).collect()
+        [PRIMARY, LEFT]
+            .iter()
+            .map(|&(x, y, w, h)| rect(x, y, w, h))
+            .collect()
     }
 
     #[test]
@@ -200,27 +212,42 @@ mod tests {
         let Some(WindowBounds::Windowed(b)) = restore(Some(tiny), &displays()) else {
             panic!("expected a windowed restore");
         };
-        assert_eq!(b.size, size(layout::MIN_WINDOW_WIDTH, layout::MIN_WINDOW_HEIGHT));
-        assert_eq!(restore(Some(saved(f32::NAN, 0.0, 800.0, 600.0)), &displays()), None);
-        assert_eq!(restore(Some(saved(0.0, 0.0, -5.0, 600.0)), &displays()), None);
+        assert_eq!(
+            b.size,
+            size(layout::MIN_WINDOW_WIDTH, layout::MIN_WINDOW_HEIGHT)
+        );
+        assert_eq!(
+            restore(Some(saved(f32::NAN, 0.0, 800.0, 600.0)), &displays()),
+            None
+        );
+        assert_eq!(
+            restore(Some(saved(0.0, 0.0, -5.0, 600.0)), &displays()),
+            None
+        );
     }
 
     #[test]
     fn maximized_is_restored_with_its_restore_size() {
-        let s = SavedWindow { maximized: true, ..saved(100.0, 80.0, 1100.0, 720.0) };
+        let s = SavedWindow {
+            maximized: true,
+            ..saved(100.0, 80.0, 1100.0, 720.0)
+        };
         assert_eq!(
             restore(Some(s), &displays()),
             Some(WindowBounds::Maximized(rect(100.0, 80.0, 1100.0, 720.0)))
         );
-        let from = SavedWindow::from_window_bounds(WindowBounds::Maximized(rect(1.0, 2.0, 3.0, 4.0)));
+        let from =
+            SavedWindow::from_window_bounds(WindowBounds::Maximized(rect(1.0, 2.0, 3.0, 4.0)));
         assert!(from.maximized);
-        let full = SavedWindow::from_window_bounds(WindowBounds::Fullscreen(rect(1.0, 2.0, 3.0, 4.0)));
+        let full =
+            SavedWindow::from_window_bounds(WindowBounds::Fullscreen(rect(1.0, 2.0, 3.0, 4.0)));
         assert!(!full.maximized);
     }
 
     #[test]
     fn saves_and_loads_through_a_file() {
-        let dir = std::env::temp_dir().join(format!("tingskriver-window-state-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("tingskriver-window-state-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let path = path_in(&dir);
         assert_eq!(load(&path), None);

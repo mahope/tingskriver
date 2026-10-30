@@ -84,7 +84,20 @@ pub fn run() {
                 QuitMode::LastWindowClosed
             });
 
-            let model = cx.new(|_| ui::AppModel::new(handle, clock, log_path));
+            let start_page = args.page.as_deref().and_then(|name| {
+                let page = ui::Page::from_arg(name);
+                if page.is_none() {
+                    log::warn!("Unknown page {name:?}; opening Møder");
+                }
+                page
+            });
+            let model = cx.new(|_| {
+                let mut model = ui::AppModel::new(handle, clock, log_path);
+                if let Some(page) = start_page {
+                    model.start_page = page;
+                }
+                model
+            });
             ui::init(model, cx);
 
             if let Some(mut messages) = messages {

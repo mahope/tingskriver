@@ -10,13 +10,34 @@ use gpui::{App, AssetSource, SharedString};
 
 /// Every bundled font file, embedded in the binary.
 pub const FONTS: &[(&str, &[u8])] = &[
-    ("HankenGrotesk-Regular.ttf", include_bytes!("../assets/fonts/HankenGrotesk-Regular.ttf")),
-    ("HankenGrotesk-Medium.ttf", include_bytes!("../assets/fonts/HankenGrotesk-Medium.ttf")),
-    ("HankenGrotesk-SemiBold.ttf", include_bytes!("../assets/fonts/HankenGrotesk-SemiBold.ttf")),
-    ("HankenGrotesk-Bold.ttf", include_bytes!("../assets/fonts/HankenGrotesk-Bold.ttf")),
-    ("Literata-Regular.ttf", include_bytes!("../assets/fonts/Literata-Regular.ttf")),
-    ("Literata-SemiBold.ttf", include_bytes!("../assets/fonts/Literata-SemiBold.ttf")),
-    ("Literata-Italic.ttf", include_bytes!("../assets/fonts/Literata-Italic.ttf")),
+    (
+        "HankenGrotesk-Regular.ttf",
+        include_bytes!("../assets/fonts/HankenGrotesk-Regular.ttf"),
+    ),
+    (
+        "HankenGrotesk-Medium.ttf",
+        include_bytes!("../assets/fonts/HankenGrotesk-Medium.ttf"),
+    ),
+    (
+        "HankenGrotesk-SemiBold.ttf",
+        include_bytes!("../assets/fonts/HankenGrotesk-SemiBold.ttf"),
+    ),
+    (
+        "HankenGrotesk-Bold.ttf",
+        include_bytes!("../assets/fonts/HankenGrotesk-Bold.ttf"),
+    ),
+    (
+        "Literata-Regular.ttf",
+        include_bytes!("../assets/fonts/Literata-Regular.ttf"),
+    ),
+    (
+        "Literata-SemiBold.ttf",
+        include_bytes!("../assets/fonts/Literata-SemiBold.ttf"),
+    ),
+    (
+        "Literata-Italic.ttf",
+        include_bytes!("../assets/fonts/Literata-Italic.ttf"),
+    ),
 ];
 
 /// Characters every bundled font must draw: Danish letters, the vowels that
@@ -26,24 +47,30 @@ pub const REQUIRED_CHARACTERS: &str =
 
 /// Register the bundled fonts with GPUI's text system.
 pub fn register_fonts(cx: &mut App) {
-    let fonts = FONTS.iter().map(|(_, bytes)| Cow::Borrowed(*bytes)).collect();
+    let fonts = FONTS
+        .iter()
+        .map(|(_, bytes)| Cow::Borrowed(*bytes))
+        .collect();
     if let Err(error) = cx.text_system().add_fonts(fonts) {
         log::error!("Could not register the bundled fonts: {error:#}");
     }
 }
 
-gpui_kit_assets::icon_assets!(ShellIcons, [
-    Mic,
-    Calendar,
-    Settings,
-    Bot,
-    CircleAlert,
-    TriangleAlert,
-    FolderOpen,
-    RotateCcw,
-    LoaderCircle,
-    Inbox,
-]);
+gpui_kit_assets::icon_assets!(
+    ShellIcons,
+    [
+        Mic,
+        Calendar,
+        Settings,
+        Bot,
+        CircleAlert,
+        TriangleAlert,
+        FolderOpen,
+        RotateCcw,
+        LoaderCircle,
+        Inbox,
+    ]
+);
 
 /// The icons of the shell plus gpui-component's default icons.
 pub struct Assets;
@@ -91,7 +118,9 @@ mod tests {
             let family = face
                 .names()
                 .into_iter()
-                .filter(|n| n.name_id == name_id::TYPOGRAPHIC_FAMILY || n.name_id == name_id::FAMILY)
+                .filter(|n| {
+                    n.name_id == name_id::TYPOGRAPHIC_FAMILY || n.name_id == name_id::FAMILY
+                })
                 .filter_map(|n| n.to_string())
                 .min_by_key(|s| s.len())
                 .unwrap();

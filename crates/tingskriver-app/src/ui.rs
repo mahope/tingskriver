@@ -30,6 +30,8 @@ pub struct AppModel {
     pub log_path: Option<PathBuf>,
     pub runtime: Handle,
     pub clock: StartupClock,
+    /// The page a new window opens on.
+    pub start_page: Page,
     first_frame_logged: bool,
 }
 
@@ -41,6 +43,7 @@ impl AppModel {
             log_path,
             runtime,
             clock,
+            start_page: Page::Meetings,
             first_frame_logged: false,
         }
     }
@@ -193,6 +196,16 @@ pub enum Page {
 impl Page {
     pub const ALL: [Page; 3] = [Page::Meetings, Page::Dictation, Page::Settings];
 
+    /// The page for a `--page` argument (English or Danish name).
+    pub fn from_arg(name: &str) -> Option<Page> {
+        match name.to_lowercase().as_str() {
+            "meetings" | "møder" => Some(Page::Meetings),
+            "dictation" | "diktering" => Some(Page::Dictation),
+            "settings" | "indstillinger" => Some(Page::Settings),
+            _ => None,
+        }
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             Page::Meetings => "Møder",
@@ -224,12 +237,13 @@ pub struct Shell {
 impl Shell {
     fn new(state_path: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let model = model(cx);
-        let probe_line = cx.new(|cx| {
-            InputState::new(window, cx).placeholder("Skriv fx æøå, é, ü, ê, @ og € her")
-        });
+        let probe_line = cx
+            .new(|cx| InputState::new(window, cx).placeholder("Skriv fx æøå, é, ü, ê, @ og € her"));
         let probe_text = cx.new(|cx| {
             TextareaState::new(window, cx)
-                .placeholder("Flere linjer: prøv også IME-komposition, fx Windows' emoji-panel (Win+.)")
+                .placeholder(
+                    "Flere linjer: prøv også IME-komposition, fx Windows' emoji-panel (Win+.)",
+                )
                 .rows(4)
         });
         let subscriptions = vec![
@@ -252,9 +266,10 @@ impl Shell {
             }
             true
         });
+        let page = model.read(cx).start_page;
         Shell {
             model,
-            page: Page::Meetings,
+            page,
             probe_line,
             probe_text,
             state_path,
@@ -384,7 +399,11 @@ impl Shell {
 
     fn settings_page(&self, cx: &mut Context<Self>) -> AnyElement {
         let model = self.model.read(cx);
-        let mode = if cx.theme().mode.is_dark() { "mørk" } else { "lys" };
+        let mode = if cx.theme().mode.is_dark() {
+            "mørk"
+        } else {
+            "lys"
+        };
         let data_dir = model
             .app_data_dir
             .as_ref()
@@ -475,7 +494,10 @@ impl Shell {
                     .child(heading("Tingskriver kunne ikke åbne dine møder"))
                     .child(paragraph(&failure.summary, cx))
                     .child(paragraph(&failure.advice, cx))
-                    .child(muted(&format!("Database: {}", failure.database_path.display()), cx))
+                    .child(muted(
+                        &format!("Database: {}", failure.database_path.display()),
+                        cx,
+                    ))
                     .child(muted(&log_line, cx))
                     .child(
                         div()
@@ -628,7 +650,11 @@ fn empty_state(icon: IconName, title: &str, text: &str, cx: &App) -> AnyElement 
         .border_1()
         .border_color(palette.border)
         .bg(palette.card)
-        .child(Icon::from(icon).size(px(28.0)).text_color(palette.muted_foreground))
+        .child(
+            Icon::from(icon)
+                .size(px(28.0))
+                .text_color(palette.muted_foreground),
+        )
         .child(section_title(title))
         .child(
             div()
@@ -649,5 +675,13 @@ mod tests {
     fn navigation_is_danish_and_ordered() {
         let labels: Vec<_> = Page::ALL.iter().map(|p| p.label()).collect();
         assert_eq!(labels, ["Møder", "Diktering", "Indstillinger"]);
+    }
+
+    #[test]
+    fn pages_can_be_named_on_the_command_line() {
+        assert_eq!(Page::from_arg("settings"), Some(Page::Settings));
+        assert_eq!(Page::from_arg("Diktering"), Some(Page::Dictation));
+        assert_eq!(Page::from_arg("møder"), Some(Page::Meetings));
+        assert_eq!(Page::from_arg("assistent"), None);
     }
 }

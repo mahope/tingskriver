@@ -68,7 +68,14 @@ mod platform {
     pub fn time_since_process_creation() -> Option<Duration> {
         let (mut created, mut exit, mut kernel, mut user) = Default::default();
         unsafe {
-            GetProcessTimes(GetCurrentProcess(), &mut created, &mut exit, &mut kernel, &mut user).ok()?;
+            GetProcessTimes(
+                GetCurrentProcess(),
+                &mut created,
+                &mut exit,
+                &mut kernel,
+                &mut user,
+            )
+            .ok()?;
             let now = GetSystemTimeAsFileTime();
             super::filetime_delta(ticks(created), ticks(now))
         }
@@ -127,22 +134,28 @@ impl DbFailure {
                 "Databasen er låst af et andet program.",
                 "Luk andre vinduer med Tingskriver (også den gamle app), og prøv igen.",
             )
-        } else if lower.contains("not a database") || lower.contains("malformed") || lower.contains("corrupt") {
+        } else if lower.contains("not a database")
+            || lower.contains("malformed")
+            || lower.contains("corrupt")
+        {
             (
                 "Databasefilen er beskadiget.",
                 "Dine optagelser ligger stadig som lydfiler. Send logfilen til udvikleren, før du sletter noget.",
             )
-        } else if lower.contains("disk is full") || lower.contains("no space") || lower.contains("os error 112") {
-            (
-                "Disken er fuld.",
-                "Frigør plads på disken, og prøv igen.",
-            )
+        } else if lower.contains("disk is full")
+            || lower.contains("no space")
+            || lower.contains("os error 112")
+        {
+            ("Disken er fuld.", "Frigør plads på disken, og prøv igen.")
         } else if lower.contains("migrat") {
             (
                 "Databasen kunne ikke opdateres til den nye version.",
                 "Send logfilen til udvikleren. Databasen er ikke ændret.",
             )
-        } else if lower.contains("permission") || lower.contains("access is denied") || lower.contains("os error 5") {
+        } else if lower.contains("permission")
+            || lower.contains("access is denied")
+            || lower.contains("os error 5")
+        {
             (
                 "Tingskriver har ikke adgang til databasefilen.",
                 "Tjek at mappen ikke er skrivebeskyttet, og prøv igen.",
@@ -171,12 +184,17 @@ pub async fn open_database(app_data_dir: PathBuf) -> DbState {
     match DatabaseManager::is_first_launch(&app_data_dir).await {
         Ok(true) => return DbState::NotCreated,
         Ok(false) => {}
-        Err(error) => return DbState::Failed(DbFailure::from_error(&error.to_string(), database_path)),
+        Err(error) => {
+            return DbState::Failed(DbFailure::from_error(&error.to_string(), database_path))
+        }
     }
     match DatabaseManager::new_from_app_data_dir(&app_data_dir).await {
         Ok(db) => DbState::Ready(db),
         Err(error) => {
-            log::error!("Database at {} failed to open: {error}", database_path.display());
+            log::error!(
+                "Database at {} failed to open: {error}",
+                database_path.display()
+            );
             DbState::Failed(DbFailure::from_error(&error.to_string(), database_path))
         }
     }
@@ -201,7 +219,10 @@ mod tests {
     use super::*;
 
     fn temp_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("tingskriver-app-startup-{name}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "tingskriver-app-startup-{name}-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -209,7 +230,8 @@ mod tests {
 
     #[test]
     fn first_frame_over_budget_is_a_warning() {
-        let (level, line) = first_frame_report(Duration::from_millis(320), Duration::from_millis(40));
+        let (level, line) =
+            first_frame_report(Duration::from_millis(320), Duration::from_millis(40));
         assert_eq!(level, log::Level::Info);
         assert!(line.contains("first frame 320 ms"), "{line}");
         assert!(line.contains("40 ms before main"), "{line}");
@@ -219,7 +241,10 @@ mod tests {
 
     #[test]
     fn filetime_delta_rejects_nonsense() {
-        assert_eq!(filetime_delta(1_000, 1_000 + 10_000 * 250), Some(Duration::from_millis(250)));
+        assert_eq!(
+            filetime_delta(1_000, 1_000 + 10_000 * 250),
+            Some(Duration::from_millis(250))
+        );
         assert_eq!(filetime_delta(2_000, 1_000), None);
         assert_eq!(filetime_delta(0, 10_000_000 * 120), None);
     }
@@ -228,17 +253,33 @@ mod tests {
     fn failures_are_explained_in_danish() {
         let path = PathBuf::from("meeting_minutes.sqlite");
         let cases = [
-            ("error returned from database: (code: 5) database is locked", "låst"),
-            ("error returned from database: (code: 26) file is not a database", "beskadiget"),
+            (
+                "error returned from database: (code: 5) database is locked",
+                "låst",
+            ),
+            (
+                "error returned from database: (code: 26) file is not a database",
+                "beskadiget",
+            ),
             ("database disk image is malformed", "beskadiget"),
-            ("error returned from database: (code: 13) database or disk is full", "fuld"),
-            ("while executing migrations: error returned from database", "opdateres"),
+            (
+                "error returned from database: (code: 13) database or disk is full",
+                "fuld",
+            ),
+            (
+                "while executing migrations: error returned from database",
+                "opdateres",
+            ),
             ("Permission denied (os error 13)", "adgang"),
             ("something else", "kunne ikke åbnes"),
         ];
         for (detail, word) in cases {
             let failure = DbFailure::from_error(detail, path.clone());
-            assert!(failure.summary.contains(word), "{detail} -> {}", failure.summary);
+            assert!(
+                failure.summary.contains(word),
+                "{detail} -> {}",
+                failure.summary
+            );
             assert_eq!(failure.detail, detail);
         }
     }
@@ -246,7 +287,10 @@ mod tests {
     #[tokio::test]
     async fn missing_database_is_first_launch_and_is_not_created() {
         let dir = temp_dir("missing");
-        assert!(matches!(open_database(dir.clone()).await, DbState::NotCreated));
+        assert!(matches!(
+            open_database(dir.clone()).await,
+            DbState::NotCreated
+        ));
         assert!(!dir.join(tingskriver_core::paths::DATABASE_FILE).exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -255,7 +299,11 @@ mod tests {
     async fn broken_database_gives_the_error_page_instead_of_a_crash() {
         let dir = temp_dir("broken");
         let db = dir.join(tingskriver_core::paths::DATABASE_FILE);
-        std::fs::write(&db, b"dette er ikke en SQLite-database, men det ligner en ".repeat(200)).unwrap();
+        std::fs::write(
+            &db,
+            b"dette er ikke en SQLite-database, men det ligner en ".repeat(200),
+        )
+        .unwrap();
         let DbState::Failed(failure) = open_database(dir.clone()).await else {
             panic!("a broken file must fail");
         };
@@ -268,7 +316,10 @@ mod tests {
     async fn existing_database_opens_and_migrates() {
         let dir = temp_dir("ok");
         std::fs::write(dir.join(tingskriver_core::paths::DATABASE_FILE), b"").unwrap();
-        assert!(matches!(open_database(dir.clone()).await, DbState::Ready(_)));
+        assert!(matches!(
+            open_database(dir.clone()).await,
+            DbState::Ready(_)
+        ));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

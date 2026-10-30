@@ -167,9 +167,23 @@ pub fn emphasize(color: Hsla, dark: bool, step: u8) -> Hsla {
     Hsla { l, ..color }
 }
 
-/// The theme mode for a system appearance.
+/// `TINGSKRIVER_APPEARANCE=light` or `dark` pins the appearance instead of
+/// following the system (manual tests and screenshots).
+pub const APPEARANCE_ENV: &str = "TINGSKRIVER_APPEARANCE";
+
+/// The mode `TINGSKRIVER_APPEARANCE` asks for, if any.
+pub fn forced_mode(value: Option<&str>) -> Option<ThemeMode> {
+    match value?.trim().to_lowercase().as_str() {
+        "light" | "lys" => Some(ThemeMode::Light),
+        "dark" | "mørk" => Some(ThemeMode::Dark),
+        _ => None,
+    }
+}
+
+/// The theme mode for a system appearance, unless one is forced.
 pub fn mode_for(appearance: WindowAppearance) -> ThemeMode {
-    ThemeMode::from(appearance)
+    forced_mode(std::env::var(APPEARANCE_ENV).ok().as_deref())
+        .unwrap_or_else(|| ThemeMode::from(appearance))
 }
 
 /// Load gpui-component's theme for `mode` and put the Tingskriver tokens on
@@ -303,7 +317,10 @@ mod tests {
         for (mode, palette) in [("lys", &Palette::LIGHT), ("mørk", &Palette::DARK)] {
             for (name, fg, bg) in text_pairs(palette) {
                 let ratio = contrast(fg, bg);
-                assert!(ratio >= 4.5, "{mode}: {name} has contrast {ratio:.2}, below 4.5");
+                assert!(
+                    ratio >= 4.5,
+                    "{mode}: {name} has contrast {ratio:.2}, below 4.5"
+                );
             }
         }
     }
@@ -313,7 +330,10 @@ mod tests {
         for (dark, p) in [(false, &Palette::LIGHT), (true, &Palette::DARK)] {
             for step in [1, 2] {
                 let hover = emphasize(p.primary, dark, step);
-                assert!(contrast(p.primary_foreground, hover) >= 4.5, "dark={dark} step={step}");
+                assert!(
+                    contrast(p.primary_foreground, hover) >= 4.5,
+                    "dark={dark} step={step}"
+                );
             }
         }
     }
@@ -337,9 +357,21 @@ mod tests {
 
     #[test]
     fn appearance_maps_to_mode() {
-        assert_eq!(mode_for(WindowAppearance::Dark), ThemeMode::Dark);
-        assert_eq!(mode_for(WindowAppearance::VibrantDark), ThemeMode::Dark);
-        assert_eq!(mode_for(WindowAppearance::Light), ThemeMode::Light);
+        assert_eq!(ThemeMode::from(WindowAppearance::Dark), ThemeMode::Dark);
+        assert_eq!(
+            ThemeMode::from(WindowAppearance::VibrantDark),
+            ThemeMode::Dark
+        );
+        assert_eq!(ThemeMode::from(WindowAppearance::Light), ThemeMode::Light);
         assert!(Palette::for_mode(ThemeMode::Dark) == &Palette::DARK);
+    }
+
+    #[test]
+    fn appearance_can_be_forced() {
+        assert_eq!(forced_mode(Some("dark")), Some(ThemeMode::Dark));
+        assert_eq!(forced_mode(Some(" Mørk ")), Some(ThemeMode::Dark));
+        assert_eq!(forced_mode(Some("light")), Some(ThemeMode::Light));
+        assert_eq!(forced_mode(Some("system")), None);
+        assert_eq!(forced_mode(None), None);
     }
 }

@@ -93,22 +93,41 @@ impl RotatingFile {
     }
 }
 
-/// The level in `RUST_LOG` when it is a plain level (`debug`, `warn`, ...),
-/// otherwise `default`. Per-module filters are not supported here.
-pub fn level_from_env(value: Option<&str>, default: LevelFilter) -> LevelFilter {
-    value
-        .and_then(|v| v.trim().parse::<LevelFilter>().ok())
-        .unwrap_or(default)
+/// The level in `RUST_LOG` when it is a plain level (`debug`, `warn`, ...).
+/// Per-module filters are not supported here.
+pub fn level_from_env(value: Option<&str>) -> Option<LevelFilter> {
+    value.and_then(|v| v.trim().parse::<LevelFilter>().ok())
+}
+
+/// Targets logged at info without `RUST_LOG`: Tingskriver itself and the
+/// UI framework (adapter choice, GPU recovery). Everything else (zbus,
+/// sqlx, hyper, ...) only from warn.
+const INFO_TARGETS: &[&str] = &["tingskriver", "gpui"];
+
+/// Whether a record passes: the `RUST_LOG` level for everything when set,
+/// otherwise info for [`INFO_TARGETS`] and warn for the rest.
+pub fn passes(target: &str, level: log::Level, configured: Option<LevelFilter>) -> bool {
+    match configured {
+        Some(max) => level <= max,
+        None => {
+            let max = if INFO_TARGETS.iter().any(|t| target.starts_with(t)) {
+                LevelFilter::Info
+            } else {
+                LevelFilter::Warn
+            };
+            level <= max
+        }
+    }
 }
 
 struct FileLogger {
-    level: LevelFilter,
+    configured: Option<LevelFilter>,
     file: Mutex<Option<RotatingFile>>,
 }
 
 impl Log for FileLogger {
     fn enabled(&self, metadata: &Metadata) -> bool {
-        metadata.level() <= self.level
+        passes(metadata.target(), metadata.level(), self.configured)
     }
 
     fn log(&self, record: &Record) {
@@ -144,7 +163,7 @@ impl Log for FileLogger {
 /// [`crate::paths::log_dir`]. Returns the log file's path, or `None` when it
 /// could not be opened (the logger then writes to stderr only).
 pub fn init(file_name: &str) -> Option<PathBuf> {
-    let level = level_from_env(std::env::var("RUST_LOG").ok().as_deref(), LevelFilter::Info);
+    let configured = level_from_env(std::env::var("RUST_LOG").ok().as_deref());
     let file = crate::paths::log_dir().and_then(|dir| {
         match RotatingFile::open(&dir, file_name, MAX_FILE_BYTES) {
             Ok(file) => Some(file),
@@ -156,11 +175,11 @@ pub fn init(file_name: &str) -> Option<PathBuf> {
     });
     let path = file.as_ref().map(RotatingFile::path);
     let logger = FileLogger {
-        level,
+        configured,
         file: Mutex::new(file),
     };
     if log::set_logger(Box::leak(Box::new(logger))).is_ok() {
-        log::set_max_level(level);
+        log::set_max_level(configured.unwrap_or(LevelFilter::Info));
     }
     path
 }
@@ -218,12 +237,38 @@ mod tests {
 
     #[test]
     fn reads_plain_levels_from_rust_log() {
-        assert_eq!(level_from_env(Some("debug"), LevelFilter::Info), LevelFilter::Debug);
-        assert_eq!(level_from_env(Some(" WARN "), LevelFilter::Info), LevelFilter::Warn);
-        assert_eq!(level_from_env(None, LevelFilter::Info), LevelFilter::Info);
-        assert_eq!(
-            level_from_env(Some("tingskriver_core=debug"), LevelFilter::Info),
-            LevelFilter::Info
-        );
+        assert_eq!(level_from_env(Some("debug")), Some(LevelFilter::Debug));
+        assert_eq!(level_from_env(Some(" WARN ")), Some(LevelFilter::Warn));
+        assert_eq!(level_from_env(None), None);
+        assert_eq!(level_from_env(Some("tingskriver_core=debug")), None);
+    }
+
+    #[test]
+    fn without_rust_log_only_own_targets_log_info() {
+        use log::Level;
+        assert!(passes("tingskriver_app::ui", Level::Info, None));
+        assert!(passes(
+            "tingskriver_core::database::manager",
+            Level::Info,
+            None
+        ));
+        assert!(passes("gpui_wgpu::wgpu_context", Level::Info, None));
+        assert!(!passes(
+            "zbus::connection::handshake::common",
+            Level::Info,
+            None
+        ));
+        assert!(passes("zbus::connection", Level::Warn, None));
+        assert!(!passes("tingskriver_app::ui", Level::Debug, None));
+        assert!(passes(
+            "sqlx::query",
+            Level::Debug,
+            Some(LevelFilter::Debug)
+        ));
+        assert!(!passes(
+            "tingskriver_app",
+            Level::Info,
+            Some(LevelFilter::Warn)
+        ));
     }
 }
