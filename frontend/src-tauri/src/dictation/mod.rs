@@ -1,20 +1,18 @@
-//! Dictation (Wispr Flow style): hold a shortcut, speak, release, and the
-//! cleaned-up text is inserted where the cursor is.
-//!
-//! - `logic`: platform independent decisions, unit tested on any OS
-//! - `win`: keyboard hook, clipboard/SendInput, Credential Manager (Windows)
-//! - `service`: orchestration; `commands`: Tauri commands for the UI
+//! Dictation commands and the webview overlay; the dictation service lives
+//! in `tingskriver_core::dictation`.
 
-pub mod capture;
+pub use tingskriver_core::dictation::*;
+
 pub mod commands;
-pub mod logic;
 mod overlay;
-pub mod secrets;
-mod service;
-pub mod settings;
-pub mod store;
-pub mod syv;
-#[cfg(windows)]
-pub mod win;
 
-pub use service::{init, is_dictating, HISTORY_CHANGED_EVENT};
+use std::sync::Arc;
+use tauri::AppHandle;
+
+/// Start dictation in the background. Called once from app setup.
+pub fn init(app: &AppHandle) {
+    tingskriver_core::dictation::init(
+        crate::core_bridge::host(app),
+        Arc::new(overlay::TauriOverlay(app.clone())),
+    );
+}

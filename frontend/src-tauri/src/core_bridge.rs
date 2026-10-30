@@ -24,6 +24,10 @@ impl<R: Runtime> AppHost for TauriHost<R> {
     fn app_data_dir(&self) -> Result<PathBuf, String> {
         self.0.path().app_data_dir().map_err(|e| e.to_string())
     }
+
+    fn refresh_status_ui(&self) {
+        crate::tray::update_tray_menu(&self.0);
+    }
 }
 
 /// Host handle that forwards core events to every Tauri window and reads

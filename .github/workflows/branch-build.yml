@@ -38,19 +38,3 @@ jobs:
         run: |
           rustc --edition 2021 --test frontend/src-tauri/src/audio/device_follow.rs -o "$RUNNER_TEMP/device_follow_tests"
           "$RUNNER_TEMP/device_follow_tests"
-
-  # Dictation logic (cleanup, shortcut, gesture, fallback), the SQLite store
-  # and the Syv.ai request against a fake server. The dictation-tests crate
-  # compiles those files without the Windows-only app crate.
-  dictation-tests:
-    name: Dictation unit tests
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Run tests
-        run: cargo test --locked -p dictation-tests

@@ -22,6 +22,10 @@ pub trait AppHost: Send + Sync + 'static {
 
     /// The per-user application data folder.
     fn app_data_dir(&self) -> Result<PathBuf, String>;
+
+    /// Recording or model availability changed: refresh status UI such as
+    /// the tray menu.
+    fn refresh_status_ui(&self) {}
 }
 
 /// Shared handle to the application host.
@@ -30,12 +34,21 @@ pub type HostHandle = Arc<dyn AppHost>;
 /// `emit` with any serializable payload, mirroring `tauri::Emitter::emit`.
 pub trait HostExt {
     fn emit<S: Serialize>(&self, event: &str, payload: S) -> Result<(), String>;
+
+    /// The open database. Panics when it is not initialised yet, like
+    /// Tauri's `state::<AppState>()` did.
+    fn expect_database(&self) -> DatabaseManager;
 }
 
 impl<T: AppHost + ?Sized> HostExt for T {
     fn emit<S: Serialize>(&self, event: &str, payload: S) -> Result<(), String> {
         let value = serde_json::to_value(payload).map_err(|e| e.to_string())?;
         self.emit_value(event, value)
+    }
+
+    fn expect_database(&self) -> DatabaseManager {
+        self.database()
+            .expect("state() called before manage() for AppState")
     }
 }
 

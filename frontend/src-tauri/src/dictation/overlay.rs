@@ -2,25 +2,19 @@
 //!
 //! A borderless, transparent, always-on-top window that never takes focus
 //! (on Windows it is a click-through tool window with `WS_EX_NOACTIVATE`).
-//! State is pushed with `eval`, so the page needs no IPC permissions.
+//! State is pushed with `eval`, so the page needs no IPC permissions. The
+//! dictation service in core drives it through [`TauriOverlay`].
 
 // The shortcut, overlay and insertion only run on Windows.
 #![cfg_attr(not(windows), allow(dead_code))]
 
 use tauri::{AppHandle, Manager, Runtime, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tingskriver_core::dictation::overlay::{Overlay, OverlayState};
 
 pub const LABEL: &str = "dictation-overlay";
 const WIDTH: i32 = 220;
 const HEIGHT: i32 = 52;
 const MARGIN: i32 = 64;
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum OverlayState {
-    Recording { level: f32, locked: bool },
-    Processing,
-    Error,
-    Hidden,
-}
 
 fn window<R: Runtime>(app: &AppHandle<R>) -> Option<WebviewWindow<R>> {
     app.get_webview_window(LABEL)
@@ -104,4 +98,17 @@ fn show<R: Runtime>(win: &WebviewWindow<R>) {
 #[cfg(not(windows))]
 fn hide<R: Runtime>(win: &WebviewWindow<R>) {
     let _ = win.hide();
+}
+
+/// The webview overlay as the core dictation service sees it.
+pub struct TauriOverlay<R: Runtime>(pub AppHandle<R>);
+
+impl<R: Runtime> Overlay for TauriOverlay<R> {
+    fn ensure(&self) -> Result<(), String> {
+        ensure(&self.0)
+    }
+
+    fn set(&self, state: OverlayState) {
+        set(&self.0, state)
+    }
 }

@@ -111,6 +111,3 @@ jobs:
 
       - name: Test tingskriver-core
         run: cargo test --locked -p tingskriver-core
-
-      - name: Test dictation crate
-        run: cargo test --locked -p dictation-tests

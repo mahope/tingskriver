@@ -9,7 +9,7 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::{Duration, Instant};
 
-use tauri::{AppHandle, Emitter, Manager};
+use crate::host::{HostExt, HostHandle};
 
 use super::capture::Recorder;
 use super::logic::app_style;
@@ -18,7 +18,7 @@ use super::logic::cleanup::{self, Rules, Style};
 use super::logic::engine::{self, Attempt, Engine, EnginePreference, Next};
 use super::logic::gesture::{Gesture, GestureAction, GestureConfig, GestureEvent};
 use super::logic::hotkey::ChordSignal;
-use super::overlay::{self, OverlayState};
+use super::overlay::{Overlay, OverlayState};
 use super::secrets;
 use super::settings::DictationSettings;
 use super::store::{NewHistoryEntry, Store};
@@ -36,19 +36,20 @@ pub fn is_dictating() -> bool {
     DICTATING.load(Ordering::Relaxed)
 }
 
-pub(crate) fn get() -> Result<Arc<Service>, String> {
+pub fn get() -> Result<Arc<Service>, String> {
     SERVICE
         .get()
         .cloned()
         .ok_or_else(|| "Diktering er ikke klar endnu".to_string())
 }
 
-pub(crate) struct Service {
-    app: AppHandle,
-    pub(crate) store: Store,
+pub struct Service {
+    app: HostHandle,
+    overlay: Arc<dyn Overlay>,
+    pub store: Store,
     settings: RwLock<DictationSettings>,
     rules: RwLock<Rules>,
-    pub(crate) http: reqwest::Client,
+    pub http: reqwest::Client,
     app_data_dir: PathBuf,
     audio_dir: PathBuf,
     shortcut_active: AtomicBool,
@@ -62,22 +63,22 @@ fn now_ms() -> i64 {
 }
 
 /// Start dictation in the background. Called once from app setup.
-pub fn init(app: &AppHandle) {
-    let app = app.clone();
-    tauri::async_runtime::spawn(async move {
-        if let Err(e) = init_inner(app).await {
+pub fn init(app: HostHandle, overlay: Arc<dyn Overlay>) {
+    crate::runtime::spawn(async move {
+        if let Err(e) = init_inner(app, overlay).await {
             log::error!("Dictation could not start: {e}");
         }
     });
 }
 
-async fn init_inner(app: AppHandle) -> Result<(), String> {
-    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+async fn init_inner(app: HostHandle, overlay: Arc<dyn Overlay>) -> Result<(), String> {
+    let app_data_dir = app.app_data_dir()?;
     let store = Store::open(&app_data_dir.join("dictation.sqlite")).await?;
     let settings = store.settings().await?;
     let rules = store.rules().await?;
     let service = Arc::new(Service {
         app: app.clone(),
+        overlay,
         store,
         settings: RwLock::new(settings),
         rules: RwLock::new(rules),
@@ -104,7 +105,7 @@ async fn init_inner(app: AppHandle) -> Result<(), String> {
 }
 
 impl Service {
-    pub(crate) fn settings(&self) -> DictationSettings {
+    pub fn settings(&self) -> DictationSettings {
         self.settings.read().map(|s| s.clone()).unwrap_or_default()
     }
 
@@ -112,11 +113,11 @@ impl Service {
         self.rules.read().map(|r| r.clone()).unwrap_or_default()
     }
 
-    pub(crate) fn shortcut_active(&self) -> bool {
+    pub fn shortcut_active(&self) -> bool {
         self.shortcut_active.load(Ordering::Relaxed)
     }
 
-    pub(crate) fn last_error(&self) -> Option<String> {
+    pub fn last_error(&self) -> Option<String> {
         self.last_error.lock().ok().and_then(|e| e.clone())
     }
 
@@ -126,7 +127,7 @@ impl Service {
         }
     }
 
-    pub(crate) async fn save_settings(self: &Arc<Self>, settings: DictationSettings) -> Result<DictationSettings, String> {
+    pub async fn save_settings(self: &Arc<Self>, settings: DictationSettings) -> Result<DictationSettings, String> {
         let settings = settings.normalized()?;
         self.store.save_settings(&settings).await?;
         let previous = self.settings();
@@ -139,7 +140,7 @@ impl Service {
         Ok(settings)
     }
 
-    pub(crate) async fn reload_rules(&self) -> Result<(), String> {
+    pub async fn reload_rules(&self) -> Result<(), String> {
         let rules = self.store.rules().await?;
         if let Ok(mut slot) = self.rules.write() {
             *slot = rules;
@@ -147,11 +148,11 @@ impl Service {
         Ok(())
     }
 
-    pub(crate) fn preview(&self, text: &str, style: Style) -> String {
+    pub fn preview(&self, text: &str, style: Style) -> String {
         cleanup::clean(text, style, &self.rules())
     }
 
-    pub(crate) fn delete_files(&self, paths: Vec<String>) {
+    pub fn delete_files(&self, paths: Vec<String>) {
         for path in paths {
             let path = PathBuf::from(path);
             // Only ever delete inside our own audio folder.
@@ -161,7 +162,7 @@ impl Service {
         }
     }
 
-    pub(crate) fn notify_history_changed(&self) {
+    pub fn notify_history_changed(&self) {
         let _ = self.app.emit(HISTORY_CHANGED_EVENT, ());
     }
 
@@ -208,9 +209,9 @@ impl Service {
                 let _ = std::thread::Builder::new()
                     .name("dictation-control".into())
                     .spawn(move || control_loop(service, rx));
-                let app = self.app.clone();
-                tauri::async_runtime::spawn(async move {
-                    if let Err(e) = overlay::ensure(&app) {
+                let overlay = self.overlay.clone();
+                crate::runtime::spawn(async move {
+                    if let Err(e) = overlay.ensure() {
                         log::warn!("{e}");
                     }
                 });
@@ -252,13 +253,13 @@ fn foreground_process() -> Option<String> {
     None
 }
 
-fn flash_error(app: &AppHandle) {
-    overlay::set(app, OverlayState::Error);
-    let app = app.clone();
+fn flash_error(overlay: &Arc<dyn Overlay>) {
+    overlay.set(OverlayState::Error);
+    let overlay = overlay.clone();
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(1500));
         if !is_dictating() {
-            overlay::set(&app, OverlayState::Hidden);
+            overlay.set(OverlayState::Hidden);
         }
     });
 }
@@ -296,7 +297,7 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant)>) {
                             log::warn!("Dictation microphone failed: {e}");
                             service.set_error(Some(e));
                             gesture.reset();
-                            flash_error(&service.app);
+                            flash_error(&service.overlay);
                         }
                     }
                 }
@@ -304,17 +305,17 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant)>) {
                 GestureAction::Cancel => {
                     if session.take().is_some() {
                         DICTATING.store(false, Ordering::Relaxed);
-                        overlay::set(&service.app, OverlayState::Hidden);
+                        service.overlay.set(OverlayState::Hidden);
                     }
                 }
                 GestureAction::Stop => {
                     if let Some(s) = session.take() {
                         let samples = s.recorder.stop();
                         DICTATING.store(false, Ordering::Relaxed);
-                        overlay::set(&service.app, OverlayState::Processing);
+                        service.overlay.set(OverlayState::Processing);
                         let service = service.clone();
                         let target_app = s.target_app;
-                        tauri::async_runtime::spawn(async move {
+                        crate::runtime::spawn(async move {
                             service.process(samples, target_app, at).await;
                         });
                     }
@@ -323,19 +324,16 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant)>) {
         }
 
         if let Some(s) = &session {
-            overlay::set(
-                &service.app,
-                OverlayState::Recording {
-                    level: s.recorder.level(),
-                    locked: gesture.is_locked(),
-                },
-            );
+            service.overlay.set(OverlayState::Recording {
+                level: s.recorder.level(),
+                locked: gesture.is_locked(),
+            });
         }
     }
 
     if session.take().is_some() {
         DICTATING.store(false, Ordering::Relaxed);
-        overlay::set(&service.app, OverlayState::Hidden);
+        service.overlay.set(OverlayState::Hidden);
     }
 }
 
@@ -526,8 +524,8 @@ impl Service {
 
     async fn summary_builtin_model(&self) -> Option<String> {
         use crate::database::repositories::setting::SettingsRepository;
-        let state = self.app.try_state::<crate::state::AppState>()?;
-        let config = SettingsRepository::get_model_config(state.db_manager.pool()).await.ok()??;
+        let db = self.app.database()?;
+        let config = SettingsRepository::get_model_config(db.pool()).await.ok()??;
         (config.provider == "builtin-ai").then_some(config.model)
     }
 
@@ -536,7 +534,7 @@ impl Service {
         let audio_ms = audio::duration_ms(samples.len(), audio::TARGET_RATE);
         if audio_ms < 300 || !audio::has_signal(&samples) {
             log::info!("Dictation: no speech in {audio_ms} ms recording");
-            overlay::set(&self.app, OverlayState::Hidden);
+            self.overlay.set(OverlayState::Hidden);
             return;
         }
 
@@ -547,7 +545,7 @@ impl Service {
             Err(e) => {
                 log::warn!("Dictation transcription failed: {e}");
                 self.set_error(Some(e));
-                flash_error(&self.app);
+                flash_error(&self.overlay);
                 return;
             }
         };
@@ -556,7 +554,7 @@ impl Service {
         if settings.polish_enabled && style == Style::Normal && !text.is_empty() {
             text = self.polish(&settings, text).await;
         }
-        overlay::set(&self.app, OverlayState::Hidden);
+        self.overlay.set(OverlayState::Hidden);
         if text.trim().is_empty() {
             log::info!("Dictation: transcript empty after cleanup");
             return;

@@ -5,7 +5,6 @@ members = [
     "crates/tingskriver-app",
     "crates/tingskriver-overlay",
     "frontend/src-tauri",
-    "frontend/src-tauri/dictation-tests",
     "llama-helper"
 ]
 

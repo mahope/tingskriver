@@ -2297,18 +2297,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dictation-tests"
-version = "0.0.0"
-dependencies = [
- "log",
- "reqwest 0.11.27",
- "serde",
- "serde_json",
- "sqlx",
- "tokio",
-]
-
-[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10769,22 +10757,31 @@ version = "0.4.1"
 dependencies = [
  "anyhow",
  "chrono",
+ "cpal",
+ "crossbeam",
  "dirs 5.0.1",
  "futures-util",
  "lazy_static",
  "log",
+ "ndarray",
  "once_cell",
+ "ort",
  "regex",
  "reqwest 0.11.27",
  "serde",
  "serde_json",
  "sqlx",
+ "sysinfo 0.32.1",
  "tempfile",
+ "thiserror 2.0.18",
  "tokio",
  "tokio-util",
  "tracing",
  "uuid",
  "whatlang",
+ "whisper-rs",
+ "windows 0.61.3",
+ "windows-core 0.61.2",
 ]
 
 [[package]]

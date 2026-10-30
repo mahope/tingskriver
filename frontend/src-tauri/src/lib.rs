@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex as StdMutex;
 // Removed unused import
 
 // Performance optimization: Conditional logging macros for hot paths
@@ -68,18 +67,6 @@ use tokio::sync::RwLock;
 static RECORDING_FLAG: AtomicBool = AtomicBool::new(false);
 
 #[cfg(target_os = "windows")]
-static ONNX_RUNTIME_INIT_ERROR: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-
-pub(crate) fn ensure_onnx_runtime_available() -> anyhow::Result<()> {
-    #[cfg(target_os = "windows")]
-    if let Some(error) = ONNX_RUNTIME_INIT_ERROR.get() {
-        anyhow::bail!("{error}");
-    }
-
-    Ok(())
-}
-
-#[cfg(target_os = "windows")]
 fn catch_onnx_runtime_init<F, E>(init: F) -> Result<(), String>
 where
     F: FnOnce() -> Result<(), E>,
@@ -96,12 +83,6 @@ where
             Err(format!("ONNX Runtime initialization panicked: {message}"))
         }
     }
-}
-
-#[cfg(target_os = "windows")]
-fn record_onnx_runtime_failure(error: String) {
-    log::error!("{error}");
-    let _ = ONNX_RUNTIME_INIT_ERROR.set(error);
 }
 
 #[cfg(all(test, target_os = "windows"))]
@@ -123,10 +104,6 @@ mod onnx_runtime_tests {
         assert!(error.contains("synthetic loader panic"));
     }
 }
-
-// Global language preference storage (default to "auto-translate" for automatic translation to English)
-static LANGUAGE_PREFERENCE: std::sync::LazyLock<StdMutex<String>> =
-    std::sync::LazyLock::new(|| StdMutex::new("auto-translate".to_string()));
 
 #[derive(Debug, Deserialize)]
 struct RecordingArgs {
@@ -434,18 +411,10 @@ async fn start_recording_with_devices_and_meeting<R: Runtime>(
 
 #[tauri::command]
 async fn set_language_preference(language: String) -> Result<(), String> {
-    let mut lang_pref = LANGUAGE_PREFERENCE
-        .lock()
-        .map_err(|e| format!("Failed to set language preference: {}", e))?;
-    log_info!("Setting language preference to: {}", language);
-    *lang_pref = language;
-    Ok(())
+    tingskriver_core::set_language_preference(language)
 }
 
-// Internal helper function to get language preference (for use within Rust code)
-pub fn get_language_preference_internal() -> Option<String> {
-    LANGUAGE_PREFERENCE.lock().ok().map(|lang| lang.clone())
-}
+pub use tingskriver_core::{ensure_onnx_runtime_available, get_language_preference_internal};
 
 /// Open the folder with the application log files in the file manager.
 #[tauri::command]
@@ -517,14 +486,14 @@ pub fn run() {
                             "Initialized bundled ONNX Runtime from {}",
                             runtime_path.display()
                         ),
-                        Err(error) => record_onnx_runtime_failure(format!(
+                        Err(error) => tingskriver_core::record_onnx_runtime_failure(format!(
                             "Failed to initialize bundled ONNX Runtime from {}: {}",
                             runtime_path.display(),
                             error
                         )),
                     }
                 }
-                Err(error) => record_onnx_runtime_failure(format!(
+                Err(error) => tingskriver_core::record_onnx_runtime_failure(format!(
                     "Failed to resolve bundled ONNX Runtime resource: {}",
                     error
                 )),
