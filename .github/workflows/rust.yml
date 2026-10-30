@@ -115,6 +115,24 @@ jobs:
       - name: Test tingskriver-core
         run: .github/scripts/annotate-errors.sh cargo test --locked -p tingskriver-core
 
+  # Licence and ban rules for every Cargo dependency (deny.toml). A GPL or
+  # LGPL crate anywhere in the tree fails this job.
+  cargo-deny:
+    name: Dependency licences (cargo deny)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny@0.20.2
+
+      - name: cargo deny check
+        run: cargo deny --locked check licenses bans
+
   # The same Windows type-check agents run on Linux (docs/BUILDING.md). The
   # Tauri crate is left out: its build script runs the downloaded ffmpeg.exe.
   xwin-check:
