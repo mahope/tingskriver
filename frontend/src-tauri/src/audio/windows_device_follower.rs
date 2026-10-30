@@ -9,6 +9,11 @@
 //! While a stream is down, a silence keeper feeds zeros for it at real-time
 //! pace so the mixed track and transcript timestamps keep their timeline.
 //!
+//! A stream is only moved away from a device that is still listed if the
+//! stream itself fails: it reports an error, or the microphone delivers no
+//! frames at all for 2 s. A muted or quiet microphone keeps delivering frames
+//! (of zeros) and is never switched away from.
+//!
 //! Decisions live in `device_follow` (platform independent, unit tested);
 //! this module wires them to IMMNotificationClient, cpal/WASAPI and the
 //! recording manager. macOS/Linux keep the upstream device monitor behaviour.
@@ -24,9 +29,9 @@ use tauri::{AppHandle, Emitter, Runtime};
 use tokio::sync::mpsc;
 
 use super::device_follow::{
-    describe_switch, endpoint_is_dead, failure_notice, silence_samples_due, DeviceFollower,
-    DeviceSnapshot, DeviceSource, FailureNotice, StreamKind, SwitchAction, SwitchReason,
-    DEAD_RETRY_AFTER,
+    describe_switch, failure_notice, silence_samples_due, DeviceFollower, DeviceSnapshot,
+    DeviceSource, FailureNotice, MicCheck, MicWatchdog, StreamFailure, StreamKind, SwitchAction,
+    SwitchReason, FAILED_RETRY_AFTER,
 };
 use super::device_monitor::DeviceEvent;
 use super::recording_commands::{session_live, RECORDING_MANAGER};
@@ -45,8 +50,8 @@ const STREAM_OPEN_TIMEOUT: Duration = Duration::from_secs(10);
 /// The pipeline runs at 48 kHz; capture resamples to it.
 const PIPELINE_SAMPLE_RATE: u32 = 48_000;
 const KEEPER_TICK: Duration = Duration::from_millis(50);
-/// How often the microphone is checked for a silent (dead) endpoint.
-const SILENCE_CHECK: Duration = Duration::from_millis(250);
+/// How often the running streams are checked for errors and missing frames.
+const HEALTH_CHECK: Duration = Duration::from_millis(250);
 /// Upper bound for stopping the old stream. Stopping a WASAPI stream whose
 /// device just vanished can block for many seconds; the new stream must not
 /// wait for it (the stop keeps running on its own thread).
@@ -241,8 +246,10 @@ struct Follower<R: Runtime> {
     session: Arc<RecordingState>,
     follower: DeviceFollower,
     keepers: HashMap<StreamKind, SilenceKeeper>,
-    /// When the microphone device was marked as delivering only silence.
-    mic_dead_since: Option<Instant>,
+    /// When a device was excluded after its stream failed, per kind.
+    failed_since: HashMap<StreamKind, Instant>,
+    /// Fails the microphone over when it delivers no frames; ignores mute.
+    mic_watchdog: MicWatchdog,
 }
 
 impl<R: Runtime> Follower<R> {
@@ -315,7 +322,8 @@ impl<R: Runtime> Follower<R> {
             action.reason,
             SwitchReason::ActiveDisappeared
                 | SwitchReason::StreamMissing
-                | SwitchReason::EndpointSilent
+                | SwitchReason::StreamError
+                | SwitchReason::NoFrames
         );
         if old_stream_dead {
             self.ensure_keeper(kind);
@@ -335,11 +343,17 @@ impl<R: Runtime> Follower<R> {
                     .remove(&kind)
                     .map(SilenceKeeper::stop)
                     .unwrap_or_else(|| started.elapsed());
-                self.follower.swap_succeeded(kind, &action.to);
-                if kind == StreamKind::Microphone {
-                    // Judge the new device on its own audio, not the old one's.
-                    self.session.reset_mic_signal();
-                }
+                // A new microphone stream is judged on its own frames.
+                self.mic_watchdog.swap_succeeded(
+                    &mut self.follower,
+                    kind,
+                    &action.to,
+                    &*self.session,
+                    Instant::now(),
+                );
+                // An error the old stream reported while it was torn down
+                // says nothing about the new one.
+                let _ = self.session.take_stream_error(&recording_device_type(kind));
                 // Errors reported by the stream that died must not add up to
                 // the "too many errors" stop over a long meeting.
                 self.session.clear_recoverable_errors();
@@ -401,42 +415,86 @@ impl<R: Runtime> Follower<R> {
             .or_insert_with(|| SilenceKeeper::start(kind, session));
     }
 
-    /// Mark the microphone device as dead when it has delivered only silence
-    /// for a while, and forget the mark when it is time to try it again.
-    /// Returns true if an evaluation should run now.
-    fn check_mic_silence(&mut self) -> bool {
-        if let Some(since) = self.mic_dead_since {
-            if since.elapsed() >= DEAD_RETRY_AFTER {
-                info!("[DEVICE_FOLLOW] Trying the silent microphone device again");
-                self.clear_mic_dead();
-                return true;
+    /// Check the running streams for real failures: a reported stream error,
+    /// or a microphone that delivers no frames at all. Silent frames (mute)
+    /// are logged and ignored. Also lets failed devices be tried again after
+    /// a while. Returns true if an evaluation should run now.
+    fn check_streams(&mut self) -> bool {
+        let mut evaluate = false;
+
+        for kind in self.follower.kinds() {
+            if let Some(since) = self.failed_since.get(&kind) {
+                if since.elapsed() >= FAILED_RETRY_AFTER {
+                    info!(
+                        "[DEVICE_FOLLOW] Trying failed {} device again after {} s",
+                        kind,
+                        FAILED_RETRY_AFTER.as_secs()
+                    );
+                    self.clear_failed(kind);
+                    evaluate = true;
+                }
             }
-            return false;
+
+            if let Some(device) = self.session.take_stream_error(&recording_device_type(kind)) {
+                if self
+                    .follower
+                    .stream_failed(kind, &device, StreamFailure::Error)
+                {
+                    warn!(
+                        "[DEVICE_FOLLOW] {} stream on '{}' reported an error -> failover",
+                        kind, device
+                    );
+                    self.failed_since.insert(kind, Instant::now());
+                    evaluate = true;
+                } else {
+                    debug!(
+                        "[DEVICE_FOLLOW] Error from old {} stream on '{}' ignored (not the active stream)",
+                        kind, device
+                    );
+                }
+            }
         }
-        let (Some(active), Some(silent_for)) = (
-            self.follower
-                .active(StreamKind::Microphone)
-                .map(str::to_string),
-            self.session.mic_silent_for(),
-        ) else {
-            return false;
-        };
-        if !endpoint_is_dead(silent_for) {
-            return false;
+
+        // Only the microphone: WASAPI loopback legitimately delivers no
+        // frames while nothing is playing.
+        match self
+            .mic_watchdog
+            .check(&mut self.follower, &*self.session, Instant::now())
+        {
+            MicCheck::Failover {
+                device,
+                since_frame,
+            } => {
+                warn!(
+                    "[DEVICE_FOLLOW] Microphone '{}' delivered no frames for {} ms -> failover",
+                    device,
+                    since_frame.as_millis()
+                );
+                self.failed_since
+                    .insert(StreamKind::Microphone, Instant::now());
+                evaluate = true;
+            }
+            MicCheck::SilenceStarted { device, silent_for } => {
+                info!(
+                    "[DEVICE_FOLLOW] Microphone '{}' delivers only silent frames for {} ms (muted or quiet); silent frames ignored, no switch",
+                    device,
+                    silent_for.as_millis()
+                );
+            }
+            MicCheck::SoundResumed { device } => {
+                info!(
+                    "[DEVICE_FOLLOW] Microphone '{}' delivers sound again",
+                    device
+                );
+            }
+            MicCheck::Quiet => {}
         }
-        warn!(
-            "[DEVICE_FOLLOW] Microphone '{}' has delivered only silence for {} ms; treating it as dead and looking for another device",
-            active,
-            silent_for.as_millis()
-        );
-        self.follower.mark_dead(StreamKind::Microphone, &active);
-        self.mic_dead_since = Some(Instant::now());
-        true
+        evaluate
     }
 
-    fn clear_mic_dead(&mut self) {
-        self.follower.clear_dead(StreamKind::Microphone);
-        self.mic_dead_since = None;
+    fn clear_failed(&mut self, kind: StreamKind) {
+        self.follower.clear_failed(kind);
+        self.failed_since.remove(&kind);
     }
 
     fn stop_keepers(&mut self) {
@@ -549,7 +607,8 @@ pub fn spawn<R: Runtime>(
                 system_active,
             ),
             keepers: HashMap::new(),
-            mic_dead_since: None,
+            failed_since: HashMap::new(),
+            mic_watchdog: MicWatchdog::new(Instant::now()),
         };
         let mut monitor_events = monitor_events;
         let mut notifier_alive = notifier.is_some();
@@ -559,14 +618,19 @@ pub fn spawn<R: Runtime>(
         // We are spawned just before the recording is flagged live.
         let spawned_at = Instant::now();
         let mut seen_live = false;
-        let mut silence_tick = tokio::time::interval(SILENCE_CHECK);
-        silence_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        // The silence tick wakes the loop often, so the heartbeat deadline
+        let mut health_tick = tokio::time::interval(HEALTH_CHECK);
+        health_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        // The health tick wakes the loop often, so the heartbeat deadline
         // must outlive an iteration.
         let mut next_heartbeat = tokio::time::Instant::now() + HEARTBEAT;
 
         loop {
             if session_live(&session) {
+                if !seen_live {
+                    // Frames are only counted while recording; start the
+                    // no-frames clock now.
+                    state.mic_watchdog.start_clock(Instant::now());
+                }
                 seen_live = true;
             } else if seen_live || spawned_at.elapsed() > Duration::from_secs(10) {
                 break;
@@ -580,9 +644,11 @@ pub fn spawn<R: Runtime>(
                     match event {
                         Some(event) => {
                             info!("[DEVICE_FOLLOW] Windows endpoint event: {:?}", event);
-                            // Windows says something changed: a silent device
-                            // may be alive again (headset switched on).
-                            state.clear_mic_dead();
+                            // Windows says something changed: a failed device
+                            // may work again (headset reconnected).
+                            for kind in state.follower.kinds() {
+                                state.clear_failed(kind);
+                            }
                             let at = tokio::time::Instant::now() + DEBOUNCE;
                             check_at = Some(check_at.map_or(at, |c| c.min(at)));
                         }
@@ -602,8 +668,8 @@ pub fn spawn<R: Runtime>(
                         None => monitor_events = None,
                     }
                 }
-                _ = silence_tick.tick() => {
-                    if state.check_mic_silence() {
+                _ = health_tick.tick() => {
+                    if state.check_streams() {
                         check_at = Some(tokio::time::Instant::now());
                     }
                 }
