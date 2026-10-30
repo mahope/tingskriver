@@ -93,9 +93,14 @@ async fn init_inner(app: AppHandle) -> Result<(), String> {
         .set(service.clone())
         .map_err(|_| "dictation already initialised".to_string())?;
 
-    service.expire_audio().await;
     service.apply_shortcut();
-    Ok(())
+    // Recordings must be gone 24 h after they were made, also when no new
+    // dictation happens in between, so check every ten minutes.
+    let mut interval = tokio::time::interval(Duration::from_secs(10 * 60));
+    loop {
+        interval.tick().await;
+        service.expire_audio().await;
+    }
 }
 
 impl Service {
@@ -345,10 +350,26 @@ async fn transcribe_local(samples: Vec<f32>) -> Result<String, String> {
     crate::parakeet_engine::commands::parakeet_transcribe_audio(samples).await
 }
 
-fn local_engine_available() -> bool {
-    crate::parakeet_engine::commands::PARAKEET_ENGINE
+/// True when Parakeet can transcribe: the engine runs and a model is loaded or downloaded.
+async fn local_engine_available() -> bool {
+    let engine = crate::parakeet_engine::commands::PARAKEET_ENGINE
         .lock()
-        .map(|engine| engine.is_some())
+        .ok()
+        .and_then(|engine| engine.as_ref().cloned());
+    let Some(engine) = engine else {
+        return false;
+    };
+    if engine.is_model_loaded().await {
+        return true;
+    }
+    engine
+        .discover_models()
+        .await
+        .map(|models| {
+            models
+                .iter()
+                .any(|model| matches!(model.status, crate::parakeet_engine::ModelStatus::Available))
+        })
         .unwrap_or(false)
 }
 
@@ -363,7 +384,7 @@ impl Service {
             EnginePreference::Auto => secrets::syv_key(),
             EnginePreference::LocalOnly => None,
         };
-        let plan = engine::plan(preference, key.is_some(), local_engine_available())
+        let plan = engine::plan(preference, key.is_some(), local_engine_available().await)
             .ok_or_else(|| "Ingen transskription: sæt en Syv.ai-nøgle eller hent en lokal Parakeet-model".to_string())?;
 
         let Some(key) = key.filter(|_| plan.primary == Engine::Syv) else {
@@ -543,14 +564,16 @@ impl Service {
 
         let inserted = insert(text.clone(), settings.restore_clipboard_ms).await;
         let (insert_method, latency_ms) = match inserted {
-            Ok((method, at)) => (Some(method), at.saturating_duration_since(released_at).as_millis() as i64),
+            Ok((method, at)) => {
+                self.set_error(None);
+                (Some(method), at.saturating_duration_since(released_at).as_millis() as i64)
+            }
             Err(e) => {
                 log::warn!("Dictation insert failed: {e}");
                 self.set_error(Some(format!("Teksten kunne ikke indsættes: {e}")));
                 (None, released_at.elapsed().as_millis() as i64)
             }
         };
-        self.set_error(None);
         log::info!(
             "Dictation: {latency_ms} ms from release to text (engine {}, {audio_ms} ms audio, {} chars, app {}, method {})",
             transcript.engine.as_str(),

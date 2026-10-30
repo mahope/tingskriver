@@ -622,6 +622,12 @@ impl AudioCapture {
         //     }
         // }
 
+        // Keep dictation speech out of the meeting: silence the microphone
+        // track (same length, so timing is preserved) while dictating.
+        if matches!(self.device_type, DeviceType::Microphone) && crate::dictation::is_dictating() {
+            mono_data.fill(0.0);
+        }
+
         // Use global recording timestamp for proper synchronization
         let timestamp = self.state.get_recording_duration().unwrap_or(0.0);
 

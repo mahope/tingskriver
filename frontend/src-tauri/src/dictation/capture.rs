@@ -1,8 +1,9 @@
 //! Microphone capture for dictation.
 //!
 //! Opens its own shared-mode input stream on the default microphone, so a
-//! meeting recording that is running at the same time is left untouched and
-//! dictation audio never enters the meeting pipeline.
+//! meeting recording that is running at the same time keeps running. While
+//! dictating, the meeting pipeline silences its microphone track (see
+//! `is_dictating`), so dictation speech stays out of the meeting.
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc;

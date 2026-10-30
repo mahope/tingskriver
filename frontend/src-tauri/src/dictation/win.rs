@@ -147,6 +147,9 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
                 let decision = match HOOK_STATE.try_lock() {
                     Ok(mut guard) => guard.as_mut().map(|state| {
                         let decision = if is_down {
+                            if let Some(signal) = state.tracker.resync(|vk| key_is_down(VIRTUAL_KEY(vk as u16))) {
+                                let _ = state.sender.send((signal, Instant::now()));
+                            }
                             state.tracker.key_down(kb.vkCode)
                         } else {
                             state.tracker.key_up(kb.vkCode)
@@ -346,7 +349,7 @@ fn registered_format(name: &str) -> u32 {
 
 /// Put `text` on the clipboard, marked so clipboard history and cloud sync skip it.
 fn set_clipboard_text(text: &str) -> Result<u32, String> {
-    let _guard = ClipboardGuard::open()?;
+    let guard = ClipboardGuard::open()?;
     unsafe {
         EmptyClipboard().map_err(|e| format!("EmptyClipboard: {e}"))?;
         let utf16: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
@@ -364,6 +367,8 @@ fn set_clipboard_text(text: &str) -> Result<u32, String> {
             }
         }
     }
+    // Read the number only after CloseClipboard, which may bump it.
+    drop(guard);
     Ok(unsafe { GetClipboardSequenceNumber() })
 }
 
@@ -533,10 +538,14 @@ pub fn credential_read(target: &str) -> Result<Option<String>, String> {
     }
     unsafe {
         let credential = &*ptr;
-        let bytes = std::slice::from_raw_parts(credential.CredentialBlob, credential.CredentialBlobSize as usize);
-        let secret = String::from_utf8_lossy(bytes).into_owned();
+        let secret = if credential.CredentialBlob.is_null() || credential.CredentialBlobSize == 0 {
+            None
+        } else {
+            let bytes = std::slice::from_raw_parts(credential.CredentialBlob, credential.CredentialBlobSize as usize);
+            Some(String::from_utf8_lossy(bytes).into_owned())
+        };
         CredFree(ptr as *const c_void);
-        Ok(Some(secret))
+        Ok(secret)
     }
 }
 

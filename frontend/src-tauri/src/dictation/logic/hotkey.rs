@@ -183,6 +183,33 @@ impl ChordTracker {
         self.held == self.chord.modifiers && self.chord.key.map_or(true, |_| self.key_held)
     }
 
+    /// Forget modifiers that are no longer physically down. The hook never
+    /// sees some key-ups (Win+L, the secure desktop, UAC prompts), and a
+    /// modifier stuck in `held` would let e.g. Ctrl alone match Ctrl+Win.
+    /// `is_down` reports the physical state of a virtual-key code. Returns
+    /// `Interrupted` if an active shortcut lost one of its modifiers.
+    pub fn resync(&mut self, is_down: impl Fn(u32) -> bool) -> Option<ChordSignal> {
+        let physical = [
+            (MOD_CTRL, is_down(vk::CONTROL)),
+            (MOD_WIN, is_down(vk::LWIN) || is_down(vk::RWIN)),
+            (MOD_SHIFT, is_down(vk::SHIFT)),
+            (MOD_ALT, is_down(vk::MENU)),
+        ];
+        for (bit, down) in physical {
+            if self.held & bit != 0 && !down {
+                self.held &= !bit;
+                if bit == MOD_WIN {
+                    self.mask_win = false;
+                }
+            }
+        }
+        if self.active && self.held != self.chord.modifiers {
+            self.active = false;
+            return Some(ChordSignal::Interrupted);
+        }
+        None
+    }
+
     pub fn key_down(&mut self, vk_code: u32) -> HookDecision {
         let mut decision = HookDecision::default();
         let bit = modifier_bit(vk_code);
@@ -348,6 +375,38 @@ mod tests {
         assert_eq!(up.signal, Some(ChordSignal::Released));
         assert!(up.swallow);
         assert_eq!(up.inject_win_release, None);
+    }
+
+    #[test]
+    fn missed_win_release_does_not_stick() {
+        let mut t = tracker("Ctrl+Win");
+        // Win goes down, then Win+L locks the screen and the key-up is never seen.
+        t.key_down(vk::LWIN);
+        // After unlocking, only Ctrl is physically down.
+        assert_eq!(t.resync(|vk| vk == vk::LCONTROL || vk == vk::CONTROL), None);
+        let d = t.key_down(vk::LCONTROL);
+        assert_eq!(d.signal, None);
+        assert!(!t.is_active());
+    }
+
+    #[test]
+    fn resync_keeps_held_modifiers() {
+        let mut t = tracker("Ctrl+Win");
+        t.key_down(vk::LWIN);
+        assert_eq!(t.resync(|vk| vk == vk::LWIN), None);
+        assert_eq!(t.key_down(vk::LCONTROL).signal, Some(ChordSignal::Pressed));
+        assert_eq!(t.resync(|vk| matches!(vk, vk::LWIN | vk::CONTROL)), None);
+        assert!(t.is_active());
+    }
+
+    #[test]
+    fn resync_interrupts_active_chord_on_lost_modifier() {
+        let mut t = tracker("Ctrl+Win");
+        t.key_down(vk::LCONTROL);
+        t.key_down(vk::LWIN);
+        assert!(t.is_active());
+        assert_eq!(t.resync(|vk| vk == vk::CONTROL), Some(ChordSignal::Interrupted));
+        assert!(!t.is_active());
     }
 
     #[test]
