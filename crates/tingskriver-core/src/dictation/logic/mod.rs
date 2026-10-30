@@ -15,3 +15,4 @@ pub mod engine;
 pub mod gesture;
 pub mod hotkey;
 pub mod residency;
+pub mod timing;

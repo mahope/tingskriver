@@ -3,6 +3,7 @@
 // The shortcut, overlay and insertion only run on Windows.
 #![cfg_attr(not(windows), allow(dead_code))]
 
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
@@ -18,11 +19,13 @@ use super::logic::cleanup::{self, Rules, Style};
 use super::logic::engine::{self, Attempt, Engine, EnginePreference, Next};
 use super::logic::gesture::{Gesture, GestureAction, GestureConfig, GestureEvent};
 use super::logic::hotkey::ChordSignal;
+use super::logic::timing::{self, Steps};
 use super::overlay::{Overlay, OverlayState};
 use super::secrets;
 use super::settings::DictationSettings;
 use super::store::{NewHistoryEntry, Store};
 use super::syv;
+use super::timings::{LatencyReport, LatencyWarning, NewTiming, Timings, LATENCY_WARNING_EVENT};
 
 /// Emitted to the main window when the history list changes.
 pub const HISTORY_CHANGED_EVENT: &str = "dictation-history-changed";
@@ -47,6 +50,9 @@ pub struct Service {
     app: HostHandle,
     overlay: Arc<dyn Overlay>,
     pub store: Store,
+    timings: Timings,
+    /// Providers whose median is over the target and already warned about.
+    latency_warned: Mutex<BTreeSet<String>>,
     settings: RwLock<DictationSettings>,
     rules: RwLock<Rules>,
     pub http: reqwest::Client,
@@ -79,11 +85,14 @@ async fn init_inner(app: HostHandle, overlay: Arc<dyn Overlay>) -> Result<(), St
     let store = Store::open(&app_data_dir.join("dictation.sqlite")).await?;
     let settings = store.settings().await?;
     let rules = store.rules().await?;
+    let timings = Timings::open(store.pool()).await?;
     super::warm::set_policy(settings.residency_policy());
     let service = Arc::new(Service {
         app: app.clone(),
         overlay,
         store,
+        timings,
+        latency_warned: Mutex::new(BTreeSet::new()),
         settings: RwLock::new(settings),
         rules: RwLock::new(rules),
         http: reqwest::Client::new(),
@@ -153,6 +162,42 @@ impl Service {
             *slot = rules;
         }
         Ok(())
+    }
+
+    /// Median and p95 per provider and step, for the debug page.
+    pub async fn latency_report(&self) -> Result<LatencyReport, String> {
+        Ok(LatencyReport::from_stats(&self.timings.stats().await?))
+    }
+
+    /// Store the timings of one dictation and warn when a provider's median
+    /// went over the target.
+    async fn record_timing(&self, timing: NewTiming) {
+        if let Err(e) = self.timings.add(&timing).await {
+            log::warn!("Dictation: could not save timings: {e}");
+            return;
+        }
+        let stats = match self.timings.stats().await {
+            Ok(stats) => stats,
+            Err(e) => {
+                log::warn!("Dictation: could not read timings: {e}");
+                return;
+            }
+        };
+        let warnings: Vec<LatencyWarning> = match self.latency_warned.lock() {
+            Ok(mut warned) => timing::new_warnings(&stats, &mut warned).into_iter().map(Into::into).collect(),
+            Err(_) => Vec::new(),
+        };
+        for warning in warnings {
+            log::warn!(
+                "Dictation: median {} ms over the {} ms target for {} (p95 {} ms, {} dictations)",
+                warning.median_ms,
+                warning.target_ms,
+                warning.provider,
+                warning.p95_ms,
+                warning.count
+            );
+            let _ = self.app.emit(LATENCY_WARNING_EVENT, warning);
+        }
     }
 
     pub fn preview(&self, text: &str, style: Style) -> String {
@@ -240,6 +285,8 @@ impl Service {
 struct Session {
     recorder: Recorder,
     target_app: Option<String>,
+    /// Shortcut pressed until the microphone was open.
+    start_ms: u64,
 }
 
 fn gesture_event(signal: ChordSignal) -> GestureEvent {
@@ -301,7 +348,12 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant)>) {
                     match Recorder::start() {
                         Ok(recorder) => {
                             DICTATING.store(true, Ordering::Relaxed);
-                            session = Some(Session { recorder, target_app });
+                            let start_ms = at.elapsed().as_millis() as u64;
+                            session = Some(Session {
+                                recorder,
+                                target_app,
+                                start_ms,
+                            });
                         }
                         Err(e) => {
                             log::warn!("Dictation microphone failed: {e}");
@@ -325,8 +377,9 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant)>) {
                         service.overlay.set(OverlayState::Processing);
                         let service = service.clone();
                         let target_app = s.target_app;
+                        let start_ms = s.start_ms;
                         crate::runtime::spawn(async move {
-                            service.process(samples, target_app, at).await;
+                            service.process(samples, target_app, at, start_ms).await;
                         });
                     }
                 }
@@ -539,7 +592,8 @@ impl Service {
         (config.provider == "builtin-ai").then_some(config.model)
     }
 
-    async fn process(self: Arc<Self>, samples: Vec<f32>, target_app: Option<String>, released_at: Instant) {
+    async fn process(self: Arc<Self>, samples: Vec<f32>, target_app: Option<String>, released_at: Instant, start_ms: u64) {
+        let capture_ms = released_at.elapsed().as_millis() as u64;
         let settings = self.settings();
         let audio_ms = audio::duration_ms(samples.len(), audio::TARGET_RATE);
         if audio_ms < 300 || !audio::has_signal(&samples) {
@@ -550,6 +604,7 @@ impl Service {
 
         let style = app_style::style_for(target_app.as_deref(), &settings.style_rules());
         let rules = self.rules();
+        let transcribe_started = Instant::now();
         let transcript = match self.transcribe(&settings, &samples, &rules).await {
             Ok(t) => t,
             Err(e) => {
@@ -560,9 +615,14 @@ impl Service {
             }
         };
 
+        let transcribe_ms = transcribe_started.elapsed().as_millis() as u64;
+
         let mut text = cleanup::clean(&transcript.text, style, &rules);
+        let mut polish_ms = None;
         if settings.polish_enabled && style == Style::Normal && !text.is_empty() {
+            let polish_started = Instant::now();
             text = self.polish(&settings, text).await;
+            polish_ms = Some(polish_started.elapsed().as_millis() as u64);
         }
         self.overlay.set(OverlayState::Hidden);
         if text.trim().is_empty() {
@@ -570,18 +630,42 @@ impl Service {
             return;
         }
 
+        let insert_started = Instant::now();
         let inserted = insert(text.clone(), settings.restore_clipboard_ms).await;
-        let (insert_method, latency_ms) = match inserted {
+        let (insert_method, inserted_at) = match inserted {
             Ok((method, at)) => {
                 self.set_error(None);
-                (Some(method), at.saturating_duration_since(released_at).as_millis() as i64)
+                (Some(method), at)
             }
             Err(e) => {
                 log::warn!("Dictation insert failed: {e}");
                 self.set_error(Some(format!("Teksten kunne ikke indsættes: {e}")));
-                (None, released_at.elapsed().as_millis() as i64)
+                (None, Instant::now())
             }
         };
+        let latency_ms = inserted_at.saturating_duration_since(released_at).as_millis() as i64;
+        let steps = Steps {
+            start_ms: Some(start_ms),
+            audio_ms,
+            capture_ms,
+            transcribe_ms,
+            polish_ms,
+            insert_ms: inserted_at.saturating_duration_since(insert_started).as_millis() as u64,
+            total_ms: latency_ms as u64,
+        };
+        log::info!(
+            "Dictation steps: start {start_ms} ms, capture {capture_ms} ms, transcribe {transcribe_ms} ms, polish {} ms, insert {} ms",
+            polish_ms.map(|ms| ms.to_string()).unwrap_or_else(|| "-".to_string()),
+            steps.insert_ms,
+        );
+        self.record_timing(NewTiming {
+            created_at: now_ms(),
+            provider: transcript.engine.as_str(),
+            fallback: transcript.fallback_reason.is_some(),
+            inserted: insert_method.is_some(),
+            steps,
+        })
+        .await;
         log::info!(
             "Dictation: {latency_ms} ms from release to text (engine {}, {audio_ms} ms audio, {} chars, app {}, method {})",
             transcript.engine.as_str(),

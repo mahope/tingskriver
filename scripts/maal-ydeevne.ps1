@@ -276,16 +276,17 @@ function Get-LogLatencies([int]$Max) {
     return @($rows)
 }
 
-function Get-HistoryLatencies([int]$Max) {
+# Kører en SELECT mod en kopi af dictation.sqlite. Returnerer @{ Status; Lines }.
+function Invoke-DictationQuery([string]$Query) {
     $dbName = 'dictation.sqlite'
     $db = $null
     foreach ($base in @($env:APPDATA, $env:LOCALAPPDATA)) {
         $cand = Join-Path (Join-Path $base $AppId) $dbName
         if (Test-Path -LiteralPath $cand) { $db = $cand; break }
     }
-    if (-not $db) { return @{ Status = "$dbName findes ikke"; Rows = @() } }
+    if (-not $db) { return @{ Status = "$dbName findes ikke"; Lines = @() } }
     $sqlite = Get-Command sqlite3.exe -ErrorAction SilentlyContinue
-    if (-not $sqlite) { return @{ Status = 'sqlite3.exe ikke på PATH (historikken springes over)'; Rows = @() } }
+    if (-not $sqlite) { return @{ Status = 'sqlite3.exe ikke på PATH (springes over)'; Lines = @() } }
     # Arbejd på en kopi, så den levende database (WAL) aldrig røres.
     $tmp = Join-Path ([IO.Path]::GetTempPath()) ("tingskriver-maal-" + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $tmp | Out-Null
@@ -294,23 +295,52 @@ function Get-HistoryLatencies([int]$Max) {
             $src = $db + $suffix
             if (Test-Path -LiteralPath $src) { Copy-Item -LiteralPath $src -Destination (Join-Path $tmp ($dbName + $suffix)) }
         }
-        $q = "SELECT latency_ms, audio_ms FROM dictation_history WHERE insert_method IS NOT NULL ORDER BY created_at DESC LIMIT $Max;"
         $prevEap = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
-        try { $out = & $sqlite.Source -readonly -separator ',' (Join-Path $tmp $dbName) $q 2>&1 }
+        try { $out = & $sqlite.Source -readonly -separator ',' (Join-Path $tmp $dbName) $Query 2>&1 }
         finally { $ErrorActionPreference = $prevEap }
-        if ($LASTEXITCODE -ne 0) { return @{ Status = 'sqlite3 kunne ikke læse historikken'; Rows = @() } }
-        $rows = @()
-        foreach ($line in @($out)) {
-            $parts = "$line".Split(',')
-            if ($parts.Count -eq 2) {
-                $rows += [pscustomobject]@{ LatencyMs = [double]$parts[0]; AudioMs = [double]$parts[1] }
-            }
-        }
-        return @{ Status = 'ok'; Rows = $rows }
+        if ($LASTEXITCODE -ne 0) { return @{ Status = 'sqlite3 kunne ikke læse tabellen (ældre appversion?)'; Lines = @() } }
+        return @{ Status = 'ok'; Lines = @($out | ForEach-Object { "$_" }) }
     } finally {
         Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
     }
+}
+
+function Get-HistoryLatencies([int]$Max) {
+    $res = Invoke-DictationQuery "SELECT latency_ms, audio_ms FROM dictation_history WHERE insert_method IS NOT NULL ORDER BY created_at DESC LIMIT $Max;"
+    $rows = @()
+    foreach ($line in $res.Lines) {
+        $parts = $line.Split(',')
+        if ($parts.Count -eq 2) {
+            $rows += [pscustomobject]@{ LatencyMs = [double]$parts[0]; AudioMs = [double]$parts[1] }
+        }
+    }
+    return @{ Status = $res.Status; Rows = $rows }
+}
+
+# Tider pr. trin fra tabellen dictation_timings (kun tal, aldrig tekst). De seneste $Max pr. udbyder.
+function Get-StepTimings([int]$Max) {
+    $cols = 'provider, start_ms, capture_ms, transcribe_ms, polish_ms, insert_ms, total_ms, audio_ms'
+    $res = Invoke-DictationQuery "SELECT $cols FROM dictation_timings WHERE inserted = 1 ORDER BY created_at DESC, id DESC LIMIT $($Max * 4);"
+    $rows = @()
+    foreach ($line in $res.Lines) {
+        $p = $line.Split(',')
+        if ($p.Count -ne 8) { continue }
+        $num = { param($s) if ($s -eq '') { $null } else { [double]$s } }
+        $rows += [pscustomobject]@{
+            Provider = $p[0]; StartMs = (& $num $p[1]); CaptureMs = (& $num $p[2]); TranscribeMs = (& $num $p[3])
+            PolishMs = (& $num $p[4]); InsertMs = (& $num $p[5]); TotalMs = (& $num $p[6]); AudioMs = (& $num $p[7])
+        }
+    }
+    $byProvider = [ordered]@{}
+    foreach ($name in @($rows | ForEach-Object { $_.Provider } | Sort-Object -Unique)) {
+        $byProvider[$name] = @($rows | Where-Object { $_.Provider -eq $name } | Select-Object -First $Max)
+    }
+    return @{ Status = $res.Status; Providers = $byProvider }
+}
+
+function Get-StepValues($Rows, [string]$Prop) {
+    return [double[]]@($Rows | ForEach-Object { $_.$Prop } | Where-Object { $null -ne $_ })
 }
 
 function Summarize-Latency($Rows) {
@@ -444,6 +474,8 @@ $logRows = @()
 $histRes = @{ Status = 'sprunget over'; Rows = @() }
 try { $logRows = Get-LogLatencies $Dikteringer } catch { Write-Warning "Kunne ikke læse loggen: $($_.Exception.Message)" }
 try { $histRes = Get-HistoryLatencies $Dikteringer } catch { Write-Warning "Kunne ikke læse historikken: $($_.Exception.Message)" }
+$stepRes = @{ Status = 'sprunget over'; Providers = [ordered]@{} }
+try { $stepRes = Get-StepTimings $Dikteringer } catch { Write-Warning "Kunne ikke læse dikteringstider: $($_.Exception.Message)" }
 $logSum = Summarize-Latency $logRows
 $histSum = Summarize-Latency $histRes.Rows
 
@@ -505,6 +537,30 @@ Add-Row 'Diktering p95, 10-20 s tale (log)' $logSum.P95Mid 'ms' "n = $($logSum.N
 Add-Row 'Diktering p50 (historik)' $histSum.P50 'ms' "n = $($histSum.N); $($histRes.Status)" 'diktering_hist_p50_ms'
 Add-Row 'Diktering p95 (historik)' $histSum.P95 'ms' "n = $($histSum.N)" 'diktering_hist_p95_ms'
 
+# Tider pr. trin og udbyder (tabellen dictation_timings, appen fra 0.5.1).
+if ($stepRes.Providers.Count -eq 0) {
+    [void]$sb.AppendLine("| Diktering pr. trin | n/a | | $($stepRes.Status); ingen dikteringer i dictation_timings endnu |")
+}
+foreach ($prov in $stepRes.Providers.Keys) {
+    $r = $stepRes.Providers[$prov]
+    $n = $r.Count
+    $total = Get-StepValues $r 'TotalMs'
+    Add-Row "Diktering $prov p50 (trin)" (Get-Median $total) 'ms' "slip til indsat, n = $n; advarsel over 1500" "diktering_${prov}_p50_ms"
+    Add-Row "Diktering $prov p95 (trin)" (Get-Percentile $total 95) 'ms' "n = $n" "diktering_${prov}_p95_ms"
+    $mid = [double[]]@($r | Where-Object { $_.AudioMs -ge 10000 -and $_.AudioMs -le 20000 } | ForEach-Object { $_.TotalMs })
+    Add-Row "Diktering $prov p50, 10-20 s tale (trin)" (Get-Median $mid) 'ms' "n = $($mid.Count)" "diktering_${prov}_p50_15s_ms"
+    foreach ($step in @(
+            @('StartMs', 'tastetryk til optagelse', 'start'),
+            @('CaptureMs', 'slip til lyd klar', 'capture'),
+            @('TranscribeMs', 'transskription', 'transcribe'),
+            @('PolishMs', 'polering', 'polish'),
+            @('InsertMs', 'indsættelse', 'insert'))) {
+        $v = Get-StepValues $r $step[0]
+        if ($v.Count -eq 0) { continue }
+        Add-Row "- $prov $($step[1]) p50 / p95" (Get-Median $v) 'ms' "p95 $(Format-Num (Get-Percentile $v 95)) ms, n = $($v.Count)" "diktering_${prov}_$($step[2])_p50_ms"
+    }
+}
+
 Write-Output ''
 Write-Output $sb.ToString()
 Write-Output '## Maskinlæsbart'
@@ -513,4 +569,4 @@ Write-Output '```json'
 Write-Output ($json | ConvertTo-Json -Depth 5)
 Write-Output '```'
 Write-Output ''
-Write-Output 'Ikke målt af scriptet: optagelse af to spor, tid fra tastetryk til optagelse, hukommelse efter et 30 min møde og efter en time i tray (kræver at du selv optager eller venter; brug -EfterMinutter for tray).'
+Write-Output 'Ikke målt af scriptet: optagelse af to spor, hukommelse efter et 30 min møde og efter en time i tray (kræver at du selv optager eller venter; brug -EfterMinutter for tray).'
