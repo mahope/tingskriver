@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
-import { ArrowLeft, Settings2, Mic, Database as DatabaseIcon, SparkleIcon, FlaskConical } from 'lucide-react';
+import { ArrowLeft, Settings2, Mic, Database as DatabaseIcon, SparkleIcon, FlaskConical, AudioLines } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { invoke } from '@tauri-apps/api/core';
 import { motion } from 'framer-motion';
@@ -10,6 +10,7 @@ import { RecordingSettings } from '@/components/RecordingSettings';
 import { PreferenceSettings } from '@/components/PreferenceSettings';
 import { SummaryModelSettings } from '@/components/SummaryModelSettings';
 import { BetaSettings } from '@/components/BetaSettings';
+import { DictationSettings } from '@/components/dictation/DictationSettings';
 import { useConfig } from '@/contexts/ConfigContext';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 
@@ -19,6 +20,7 @@ const TABS = [
   { value: 'recording', label: 'Optagelser', icon: Mic },
   { value: 'Transcriptionmodels', label: 'Transskription', icon: DatabaseIcon },
   { value: 'summaryModels', label: 'Opsummering', icon: SparkleIcon },
+  { value: 'diktering', label: 'Diktering', icon: AudioLines },
   { value: 'beta', label: 'Beta', icon: FlaskConical }
 ] as const;
 
@@ -30,6 +32,12 @@ export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState('general');
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const [underlineStyle, setUnderlineStyle] = useState({ left: 0, width: 0 });
+
+  // Open a tab from the link, e.g. /settings?tab=diktering
+  useEffect(() => {
+    const tab = new URLSearchParams(window.location.search).get('tab');
+    if (tab && TABS.some(t => t.value === tab)) setActiveTab(tab);
+  }, []);
 
   // Load saved transcript configuration on mount
   useEffect(() => {
@@ -124,6 +132,9 @@ export default function SettingsPage() {
             </TabsContent>
             <TabsContent value="summaryModels">
               <SummaryModelSettings />
+            </TabsContent>
+            <TabsContent value="diktering" className="mt-6">
+              <DictationSettings />
             </TabsContent>
             <TabsContent value="beta" className="mt-6">
               <BetaSettings />

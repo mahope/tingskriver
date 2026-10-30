@@ -41,6 +41,7 @@ pub mod audio;
 pub mod config;
 pub mod console_utils;
 pub mod database;
+pub mod dictation;
 pub mod file_logger;
 pub mod notifications;
 pub mod ollama;
@@ -578,6 +579,9 @@ pub fn run() {
                 }
             });
 
+            // Dictation: global shortcut, overlay and history (Windows)
+            dictation::init(_app.handle());
+
             // Initialize ModelManager for summary engine (async, non-blocking)
             let app_handle_for_model_manager = _app.handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -820,6 +824,23 @@ pub fn run() {
             audio::permissions::request_screen_recording_permission_command,
             audio::permissions::trigger_system_audio_permission_command,
             // Database import commands
+            // Dictation
+            dictation::commands::dictation_get_settings,
+            dictation::commands::dictation_save_settings,
+            dictation::commands::dictation_get_status,
+            dictation::commands::dictation_set_syv_key,
+            dictation::commands::dictation_delete_syv_key,
+            dictation::commands::dictation_test_syv,
+            dictation::commands::dictation_preview_cleanup,
+            dictation::commands::dictation_list_dictionary,
+            dictation::commands::dictation_save_dictionary_word,
+            dictation::commands::dictation_delete_dictionary_word,
+            dictation::commands::dictation_list_snippets,
+            dictation::commands::dictation_save_snippet,
+            dictation::commands::dictation_delete_snippet,
+            dictation::commands::dictation_list_history,
+            dictation::commands::dictation_delete_history,
+            dictation::commands::dictation_clear_history,
             database::commands::check_first_launch,
             database::commands::select_legacy_database_path,
             database::commands::detect_legacy_database,
