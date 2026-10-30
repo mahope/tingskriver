@@ -5,9 +5,10 @@
 #
 #   .github/scripts/annotate-errors.sh cargo test --workspace --locked
 #
-# A block starts at a rustc/cargo `error` line, a test panic or a failed
-# test's captured output, and runs until the next blank line (max 40 lines).
-# At most 8 blocks are annotated plus the last 30 output lines (GitHub keeps
+# A block starts at a rustc/cargo `error` line, a C/C++ or CMake error, a
+# test panic or a failed test's captured output, and runs until the next
+# blank line (max 40 lines).
+# At most 8 blocks are annotated plus the last 40 output lines (GitHub keeps
 # 10 error annotations per step).
 
 set -uo pipefail
@@ -24,10 +25,13 @@ import sys
 
 start = re.compile(
     r"^(error(\[\w+\])?:|error: |thread '.*' panicked|---- .* stdout ----|failures:$)"
+    # C/C++ compiler and CMake errors from build scripts (indented by cargo)
+    r"|^\s*\S+(\(\d+,\d+\)|:\d+:\d+): (fatal )?error|^\s*CMake Error"
 )
+ansi = re.compile(r"\x1b\[[0-9;]*m")
+lines = [ansi.sub("", raw.rstrip("\r\n")) for raw in open(sys.argv[1], encoding="utf-8", errors="replace")]
 blocks, current = [], None
-for raw in open(sys.argv[1], encoding="utf-8", errors="replace"):
-    line = raw.rstrip("\r\n")
+for line in lines:
     if start.match(line):
         if current:
             blocks.append(current)
@@ -55,7 +59,7 @@ for block in blocks[:8]:
 
 # The last lines show which test binary crashed when there is no error text
 # (for example a segfault).
-tail = [l.rstrip("\r\n") for l in open(sys.argv[1], encoding="utf-8", errors="replace")][-30:]
+tail = lines[-40:]
 print(f"::error title=Last output lines::{escape(chr(10).join(tail))}")
 PY
 fi
