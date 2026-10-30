@@ -66,8 +66,13 @@ jobs:
         shell: bash
         run: .github/scripts/annotate-errors.sh cargo build --workspace --locked
 
+      # ort loads ONNX Runtime dynamically on Windows. The app points it at the
+      # bundled DLL at startup; tests use the DLL the Tauri build script
+      # downloaded instead of an older one from System32.
       - name: Test workspace
         shell: bash
+        env:
+          ORT_DYLIB_PATH: ${{ github.workspace }}\frontend\src-tauri\binaries\onnxruntime\onnxruntime.dll
         run: .github/scripts/annotate-errors.sh cargo test --workspace --locked
 
   linux-core:

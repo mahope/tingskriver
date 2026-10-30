@@ -7,7 +7,8 @@
 #
 # A block starts at a rustc/cargo `error` line, a test panic or a failed
 # test's captured output, and runs until the next blank line (max 40 lines).
-# At most 9 blocks are annotated (GitHub keeps 10 error annotations per step).
+# At most 8 blocks are annotated plus the last 30 output lines (GitHub keeps
+# 10 error annotations per step).
 
 set -uo pipefail
 
@@ -48,11 +49,14 @@ def escape(text):
     return text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
 
 
-for block in blocks[:9]:
+for block in blocks[:8]:
     title = escape(block[0][:200]).replace(",", "%2C").replace(":", "%3A")
     print(f"::error title={title}::{escape(chr(10).join(block))}")
-if not blocks:
-    print("::error::Command failed without a recognisable error line; see the job log")
+
+# The last lines show which test binary crashed when there is no error text
+# (for example a segfault).
+tail = [l.rstrip("\r\n") for l in open(sys.argv[1], encoding="utf-8", errors="replace")][-30:]
+print(f"::error title=Last output lines::{escape(chr(10).join(tail))}")
 PY
 fi
 
