@@ -37,10 +37,6 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Report compiler errors and test panics as annotations
-        shell: bash
-        run: echo "::add-matcher::.github/rust-problem-matcher.json"
-
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
@@ -67,10 +63,12 @@ jobs:
           touch frontend/src-tauri/binaries/llama-helper-x86_64-pc-windows-msvc.exe
 
       - name: Build workspace
-        run: cargo build --workspace --locked
+        shell: bash
+        run: .github/scripts/annotate-errors.sh cargo build --workspace --locked
 
       - name: Test workspace
-        run: cargo test --workspace --locked
+        shell: bash
+        run: .github/scripts/annotate-errors.sh cargo test --workspace --locked
 
   linux-core:
     name: Core tests and crate boundaries (Linux)
@@ -87,10 +85,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libasound2-dev cmake clang
-
-      - name: Report compiler errors and test panics as annotations
-        shell: bash
-        run: echo "::add-matcher::.github/rust-problem-matcher.json"
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
@@ -110,4 +104,4 @@ jobs:
           echo "tingskriver-core has no tauri, gpui, wry or webview2 dependency"
 
       - name: Test tingskriver-core
-        run: cargo test --locked -p tingskriver-core
+        run: .github/scripts/annotate-errors.sh cargo test --locked -p tingskriver-core

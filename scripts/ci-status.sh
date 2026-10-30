@@ -72,7 +72,7 @@ while :; do
     sha="$(jq -r '.workflow_runs[0].head_sha // empty' <<<"$runs")"
   fi
   if [ -n "$sha" ]; then
-    mine="$(jq --arg s "$sha" '[.workflow_runs[] | select(.head_sha == $s)]' <<<"$runs")"
+    mine="$(jq --arg s "$sha" '[.workflow_runs[] | select(.head_sha | startswith($s))]' <<<"$runs")"
     count="$(jq 'length' <<<"$mine")"
     pending="$(jq '[.[] | select(.status != "completed")] | length' <<<"$mine")"
     if [ "$count" -gt 0 ] && [ "$pending" -eq 0 ]; then
