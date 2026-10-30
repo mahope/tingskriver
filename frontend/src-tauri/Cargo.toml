@@ -1,6 +1,6 @@
 [package]
 name = "tingskriver"
-version = "0.4.1"
+version.workspace = true
 description = "Tingskriver: dansk mødeassistent der skriver referat lokalt"
 authors = ["Mahope"]
 license = "MIT"
