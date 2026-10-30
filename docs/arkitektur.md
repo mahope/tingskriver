@@ -8,7 +8,7 @@ Cargo.toml                    workspace root, shared [workspace.package] and rel
 crates/
   tingskriver-core/           audio, transcription, database, AI providers, dictation, summaries
   tingskriver-app/            GPUI app (gpui + gpui-component), an empty window for now
-  tingskriver-overlay/        pill and recording indicator (Windows), a stub for now
+  tingskriver-overlay/        pill and recording indicator: native Win32 layered window (Windows)
 frontend/
   src-tauri/                  the current Tauri app: commands, windows, tray, notifications
   src/                        the React UI of the Tauri app
@@ -65,3 +65,21 @@ registers at startup.
 
 The GPUI app will implement `AppHost` on its own event channel and call the
 same core functions.
+
+## The pill overlay
+
+`crates/tingskriver-overlay` draws the dictation pill (and later the
+recording indicator) as a native Win32 layered window instead of a GPUI or
+webview window, so it can stay on top, be click-through and never take focus.
+
+- `model`, `layout`, `render`, `text`, `theme`: the state machine (auto-hide,
+  fade-out, level bars), geometry per DPI scale, tiny-skia drawing and swash
+  text. Platform independent and tested on Linux.
+- `windows`: one hidden `WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST |
+  WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW` window on its own thread, shown with
+  `SW_SHOWNOACTIVATE` at the bottom centre of the monitor with the active
+  window. A 33 ms timer draws frames only while the pill is visible.
+  `windows::Overlay` has `set_state`, `set_level`, `show` and `hide`;
+  `windows::CoreOverlay` implements core's dictation `Overlay` trait.
+- `cargo run -p tingskriver-overlay --example demo` shows every state on
+  Windows; `-- --png <folder>` writes them as PNG files on any OS.

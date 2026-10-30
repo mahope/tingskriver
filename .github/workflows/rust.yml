@@ -117,6 +117,10 @@ jobs:
       - name: Test tingskriver-core
         run: .github/scripts/annotate-errors.sh cargo test --locked -p tingskriver-core
 
+      # The overlay's state model, layout and renderer are platform independent.
+      - name: Test tingskriver-overlay
+        run: .github/scripts/annotate-errors.sh cargo test --locked -p tingskriver-overlay
+
   # Licence and ban rules for every Cargo dependency (deny.toml). A GPL or
   # LGPL crate anywhere in the tree fails this job.
   cargo-deny:
