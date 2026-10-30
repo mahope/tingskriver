@@ -16,8 +16,9 @@ pub type ListenerId = u32;
 
 /// What core needs from the application around it.
 pub trait AppHost: Send + Sync + 'static {
-    /// Deliver an event with an already serialized payload to every listener.
-    fn emit_value(&self, event: &str, payload: serde_json::Value) -> Result<(), String>;
+    /// Deliver an event to every listener. `payload_json` is the payload
+    /// already serialized to JSON, exactly as it should reach the UI.
+    fn emit_json(&self, event: &str, payload_json: &str) -> Result<(), String>;
 
     /// The open database, or `None` until it has been initialised (first
     /// launch before onboarding).
@@ -59,8 +60,8 @@ pub trait HostExt {
 
 impl<T: AppHost + ?Sized> HostExt for T {
     fn emit<S: Serialize>(&self, event: &str, payload: S) -> Result<(), String> {
-        let value = serde_json::to_value(payload).map_err(|e| e.to_string())?;
-        self.emit_value(event, value)
+        let json = serde_json::to_string(&payload).map_err(|e| e.to_string())?;
+        self.emit_json(event, &json)
     }
 
     fn expect_database(&self) -> DatabaseManager {
@@ -75,11 +76,11 @@ mod tests {
     use std::sync::Mutex;
 
     #[derive(Default)]
-    struct Recorder(Mutex<Vec<(String, serde_json::Value)>>);
+    struct Recorder(Mutex<Vec<(String, String)>>);
 
     impl AppHost for Recorder {
-        fn emit_value(&self, event: &str, payload: serde_json::Value) -> Result<(), String> {
-            self.0.lock().unwrap().push((event.to_string(), payload));
+        fn emit_json(&self, event: &str, payload_json: &str) -> Result<(), String> {
+            self.0.lock().unwrap().push((event.to_string(), payload_json.to_string()));
             Ok(())
         }
 
@@ -107,18 +108,21 @@ mod tests {
     }
 
     #[derive(Serialize)]
-    struct Progress {
-        percent: u8,
+    struct Level {
+        name: &'static str,
+        rms: f32,
     }
 
     #[test]
-    fn emit_serializes_payload_through_handle() {
+    fn emit_serializes_payload_like_tauri_did() {
         let recorder = Arc::new(Recorder::default());
         let handle: HostHandle = recorder.clone();
-        handle.emit("progress", Progress { percent: 42 }).unwrap();
+        handle.emit("audio-levels", Level { name: "mic", rms: 0.1 }).unwrap();
         handle.emit("done", ()).unwrap();
         let events = recorder.0.lock().unwrap();
-        assert_eq!(events[0], ("progress".to_string(), serde_json::json!({ "percent": 42 })));
-        assert_eq!(events[1], ("done".to_string(), serde_json::Value::Null));
+        // Field order and f32 text as serde_json::to_string writes them (what
+        // tauri::Emitter::emit sent), not via serde_json::Value.
+        assert_eq!(events[0], ("audio-levels".to_string(), r#"{"name":"mic","rms":0.1}"#.to_string()));
+        assert_eq!(events[1], ("done".to_string(), "null".to_string()));
     }
 }

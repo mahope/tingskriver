@@ -1,6 +1,7 @@
 //! Glue between `tingskriver_core` and Tauri: core reaches the UI through
 //! [`AppHost`], which is implemented here on top of the `AppHandle`.
 
+use serde_json::value::RawValue;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Listener, Manager, Runtime};
@@ -12,7 +13,10 @@ use tingskriver_core::state::AppState;
 struct TauriHost<R: Runtime>(AppHandle<R>);
 
 impl<R: Runtime> AppHost for TauriHost<R> {
-    fn emit_value(&self, event: &str, payload: serde_json::Value) -> Result<(), String> {
+    fn emit_json(&self, event: &str, payload_json: &str) -> Result<(), String> {
+        // Emit the JSON text as is, so payloads are byte for byte what
+        // `emit` with the original Rust value produced.
+        let payload = RawValue::from_string(payload_json.to_string()).map_err(|e| e.to_string())?;
         self.0.emit(event, payload).map_err(|e| e.to_string())
     }
 

@@ -37,7 +37,7 @@ core needs from the application around it:
 
 | Method | Used for |
 |---|---|
-| `emit_value` (and `HostExt::emit`) | events to the UI (`transcript-update`, download progress, ...) |
+| `emit_json` (and `HostExt::emit`) | events to the UI (`transcript-update`, download progress, ...), serialized exactly as before |
 | `listen` / `unlisten` | the recording's transcript history listens to its own `transcript-update` events |
 | `database` | the open database, `None` before onboarding has created it |
 | `app_data_dir` | models, dictation store, summary models |
