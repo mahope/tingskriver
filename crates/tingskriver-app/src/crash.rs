@@ -20,6 +20,9 @@ pub enum CrashKind {
     /// The GPU disappeared (driver update, reset, eGPU unplugged) and could
     /// not be recovered.
     GraphicsLost,
+    /// GPUI started, but the main window (its swapchain) could not be
+    /// created. Not a panic: reported by [`window_failed`].
+    WindowFailed,
     /// Anything else.
     Other,
 }
@@ -53,6 +56,11 @@ pub fn dialog_text(kind: CrashKind, log_path: Option<&Path>) -> Option<(String, 
             "Grafikkortet forsvandt, mens Tingskriver kørte (fx ved en driveropdatering), og vinduet kunne ikke tegnes igen.\n\n\
              En igangværende optagelse er gemt løbende på disken.",
         ),
+        CrashKind::WindowFailed => (
+            "Tingskriver kan ikke vise sit vindue",
+            "Tingskriver startede, men Windows kunne ikke oprette vinduet (Direct3D 11). Det sker typisk på virtuelle maskiner eller med en grafikdriver, der ikke virker.\n\n\
+             Opdatér grafikdriveren, eller start Tingskriver på en anden maskine.",
+        ),
         CrashKind::Other => return None,
     };
     Some((
@@ -78,15 +86,29 @@ pub fn install_panic_hook(log_path: Option<PathBuf>) {
         default_hook(info);
 
         let kind = classify(&message);
-        if let Some((title, text)) = dialog_text(kind, log_path.as_deref()) {
-            log::error!("Graphics failure ({kind:?}); showing the error dialog");
-            log::logger().flush();
-            if show_error_dialog(&title, &text) {
-                restart();
-            }
-            std::process::exit(1);
+        if kind != CrashKind::Other {
+            fail(kind, log_path.as_deref());
         }
     }));
+}
+
+/// The main window could not be opened. Without a window and without a
+/// dialog the process would linger invisibly and keep the single-instance
+/// endpoint, so later launches would only reach it; show the dialog and exit.
+pub fn window_failed(error: &anyhow::Error, log_path: Option<&Path>) -> ! {
+    log::error!("Could not open the main window: {error:#}");
+    fail(CrashKind::WindowFailed, log_path)
+}
+
+fn fail(kind: CrashKind, log_path: Option<&Path>) -> ! {
+    if let Some((title, text)) = dialog_text(kind, log_path) {
+        log::error!("Graphics failure ({kind:?}); showing the error dialog");
+        log::logger().flush();
+        if show_error_dialog(&title, &text) {
+            restart();
+        }
+    }
+    std::process::exit(1);
 }
 
 fn panic_message(info: &std::panic::PanicHookInfo<'_>) -> String {
@@ -104,7 +126,13 @@ fn restart() {
         return;
     };
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if let Err(error) = std::process::Command::new(exe).args(args).spawn() {
+    // This process still holds the single-instance endpoint until it exits;
+    // the variable makes the new one wait for that instead of handing over.
+    if let Err(error) = std::process::Command::new(exe)
+        .args(args)
+        .env(crate::single_instance::RESTART_ENV, "1")
+        .spawn()
+    {
         log::error!("Could not start Tingskriver again: {error}");
     }
 }
@@ -167,7 +195,11 @@ mod tests {
         let path = PathBuf::from(
             r"C:\Users\test\AppData\Local\dk.mahoje.tingskriver\logs\tingskriver-app.log",
         );
-        for kind in [CrashKind::GraphicsUnavailable, CrashKind::GraphicsLost] {
+        for kind in [
+            CrashKind::GraphicsUnavailable,
+            CrashKind::GraphicsLost,
+            CrashKind::WindowFailed,
+        ] {
             let (title, text) = dialog_text(kind, Some(&path)).unwrap();
             assert!(title.starts_with("Tingskriver"));
             assert!(text.contains("tingskriver-app.log"), "{text}");

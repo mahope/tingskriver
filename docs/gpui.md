@@ -95,7 +95,10 @@ logmappen" and "Prøv igen".
 Logs go to `%LOCALAPPDATA%\dk.mahoje.tingskriver\logs\tingskriver-app.log`
 (rotated at 5 MB, three files), separate from the Tauri app's
 `tingskriver.log`. Without `RUST_LOG`, Tingskriver and GPUI log from info,
-other crates from warn.
+other crates from warn. `RUST_LOG` takes a plain level (`RUST_LOG=debug`)
+for all crates; per-module filters such as
+`RUST_LOG=tingskriver_core::audio=debug` are not supported by this logger,
+which logs a warning and keeps the defaults.
 
 `TINGSKRIVER_APPEARANCE=dark` (or `light`) pins the appearance instead of
 following Windows, and `TINGSKRIVER_DATA_DIR=<folder>` points the app at

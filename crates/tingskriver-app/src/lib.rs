@@ -57,7 +57,15 @@ pub fn run() {
     tingskriver_core::runtime::set_handle(runtime.handle().clone());
 
     let message = (!args.hidden).then_some(Message::Show);
-    let messages = match runtime.block_on(single_instance::claim(message)) {
+    let claimed = if std::env::var_os(single_instance::RESTART_ENV).is_some() {
+        runtime.block_on(single_instance::claim_after_restart(
+            message,
+            std::time::Duration::from_secs(5),
+        ))
+    } else {
+        runtime.block_on(single_instance::claim(message))
+    };
+    let messages = match claimed {
         Ok(Instance::Primary(messages)) => Some(messages),
         Ok(Instance::Forwarded) => {
             log::info!("Tingskriver already runs; handed over to it");

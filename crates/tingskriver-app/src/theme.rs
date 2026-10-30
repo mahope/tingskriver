@@ -149,6 +149,18 @@ pub mod layout {
     pub const DEFAULT_WINDOW_HEIGHT: Pixels = px(720.0);
     pub const MIN_WINDOW_WIDTH: Pixels = px(640.0);
     pub const MIN_WINDOW_HEIGHT: Pixels = px(420.0);
+    /// Error pages (database failure).
+    pub const NOTICE_MAX_WIDTH: Pixels = px(600.0);
+    /// Running text inside an empty state.
+    pub const EMPTY_TEXT_MAX_WIDTH: Pixels = px(420.0);
+}
+
+/// Icon sizes beyond the component defaults.
+pub mod icon_size {
+    use gpui::{px, Pixels};
+
+    pub const EMPTY_STATE: Pixels = px(28.0);
+    pub const ERROR: Pixels = px(32.0);
 }
 
 /// Corner radius of controls (`calc(var(--radius) - 2px)`) and cards (`--radius`).

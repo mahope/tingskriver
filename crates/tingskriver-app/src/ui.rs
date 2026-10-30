@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    div, prelude::*, px, relative, size, AnyElement, App, Bounds, Context, Entity, FontWeight,
-    Global, SharedString, Subscription, Task, TitlebarOptions, Window, WindowBounds, WindowHandle,
+    div, prelude::*, relative, size, AnyElement, App, Bounds, Context, Entity, FontWeight, Global,
+    SharedString, Subscription, Task, TitlebarOptions, Window, WindowBounds, WindowHandle,
     WindowOptions,
 };
 use gpui_component::{
@@ -20,7 +20,7 @@ use gpui_kit_assets::IconName;
 use tokio::runtime::Handle;
 
 use crate::startup::{self, DbFailure, DbState, StartupClock};
-use crate::theme::{self, layout, space, typography, Palette};
+use crate::theme::{self, icon_size, layout, space, typography, Palette};
 use crate::{probe, window_state};
 
 /// State shared by every window: the database and where things live.
@@ -146,7 +146,10 @@ pub fn show_main_window(cx: &mut App) {
             cx.global_mut::<Globals>().main_window = Some(handle);
             cx.activate(true);
         }
-        Err(error) => log::error!("Could not open the main window: {error:#}"),
+        Err(error) => {
+            let log_path = model(cx).read(cx).log_path.clone();
+            crate::crash::window_failed(&error, log_path.as_deref())
+        }
     }
 }
 
@@ -494,11 +497,11 @@ impl Shell {
             .overflow_y_scroll()
             .child(
                 v_flex()
-                    .max_w(px(600.0))
+                    .max_w(layout::NOTICE_MAX_WIDTH)
                     .gap(space::MD)
                     .child(
                         Icon::from(IconName::TriangleAlert)
-                            .size(px(32.0))
+                            .size(icon_size::ERROR)
                             .text_color(palette.destructive),
                     )
                     .child(heading("Tingskriver kunne ikke åbne dine møder"))
@@ -662,13 +665,13 @@ fn empty_state(icon: IconName, title: &str, text: &str, cx: &App) -> AnyElement 
         .bg(palette.card)
         .child(
             Icon::from(icon)
-                .size(px(28.0))
+                .size(icon_size::EMPTY_STATE)
                 .text_color(palette.muted_foreground),
         )
         .child(section_title(title))
         .child(
             div()
-                .max_w(px(420.0))
+                .max_w(layout::EMPTY_TEXT_MAX_WIDTH)
                 .text_center()
                 .text_size(typography::SM)
                 .text_color(palette.muted_foreground)

@@ -163,7 +163,8 @@ impl Log for FileLogger {
 /// [`crate::paths::log_dir`]. Returns the log file's path, or `None` when it
 /// could not be opened (the logger then writes to stderr only).
 pub fn init(file_name: &str) -> Option<PathBuf> {
-    let configured = level_from_env(std::env::var("RUST_LOG").ok().as_deref());
+    let rust_log = std::env::var("RUST_LOG").ok();
+    let configured = level_from_env(rust_log.as_deref());
     let file = crate::paths::log_dir().and_then(|dir| {
         match RotatingFile::open(&dir, file_name, MAX_FILE_BYTES) {
             Ok(file) => Some(file),
@@ -180,6 +181,11 @@ pub fn init(file_name: &str) -> Option<PathBuf> {
     };
     if log::set_logger(Box::leak(Box::new(logger))).is_ok() {
         log::set_max_level(configured.unwrap_or(LevelFilter::Info));
+        if let Some(value) = rust_log.filter(|v| !v.trim().is_empty() && configured.is_none()) {
+            log::warn!(
+                "RUST_LOG={value:?} is not a plain level (debug, info, ...); per-module filters are not supported, using the default levels"
+            );
+        }
     }
     path
 }

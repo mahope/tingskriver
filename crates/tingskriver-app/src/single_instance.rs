@@ -91,6 +91,28 @@ pub async fn claim(message: Option<Message>) -> io::Result<Instance> {
 
 pub use platform::claim_at;
 
+/// Set by the crash dialog's "Prøv igen" on the new process: the old one
+/// still holds the endpoint for a moment and must not get the hand-over.
+pub const RESTART_ENV: &str = "TINGSKRIVER_RESTARTED";
+
+/// [`claim`] for a process started by "Prøv igen": wait up to `wait` for the
+/// old instance to release the endpoint (asking it for nothing meanwhile),
+/// then claim as usual.
+pub async fn claim_after_restart(
+    message: Option<Message>,
+    wait: std::time::Duration,
+) -> io::Result<Instance> {
+    let endpoint = platform::default_endpoint();
+    let deadline = tokio::time::Instant::now() + wait;
+    while tokio::time::Instant::now() < deadline {
+        if let Ok(Instance::Primary(rx)) = claim_at(&endpoint, None).await {
+            return Ok(Instance::Primary(rx));
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    claim_at(&endpoint, message).await
+}
+
 #[cfg(windows)]
 mod platform {
     use super::*;
@@ -248,6 +270,35 @@ mod tests {
         ));
         assert_eq!(rx.recv().await, Some(Message::Show));
         let _ = std::fs::remove_file(&path);
+    }
+
+    // The named pipe is recreated after every client, so the third and
+    // fourth launch must still reach the first instance.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn second_launch_reaches_the_first() {
+        let name = format!(r"\\.\pipe\tingskriver-si-test-{}", std::process::id());
+
+        let Instance::Primary(mut rx) = claim_at(&name, Some(Message::Show)).await.unwrap() else {
+            panic!("first launch must become the primary instance");
+        };
+        for _ in 0..3 {
+            assert!(matches!(
+                claim_at(&name, Some(Message::Show)).await.unwrap(),
+                Instance::Forwarded
+            ));
+            assert_eq!(rx.recv().await, Some(Message::Show));
+        }
+        // A hidden launch exits quietly without showing the window.
+        assert!(matches!(
+            claim_at(&name, None).await.unwrap(),
+            Instance::Forwarded
+        ));
+        assert!(matches!(
+            claim_at(&name, Some(Message::Show)).await.unwrap(),
+            Instance::Forwarded
+        ));
+        assert_eq!(rx.recv().await, Some(Message::Show));
     }
 
     #[cfg(unix)]
