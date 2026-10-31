@@ -690,7 +690,10 @@ mod tests {
         drop(tx);
         let summary = handle.join().unwrap();
         let elapsed = stop.elapsed();
-        assert!(elapsed < Duration::from_secs(2), "stop took {elapsed:?}");
+        // The acceptance bound for a 60 min meeting; well under a second on a
+        // normal disk, slower on CI runners with slow sync.
+        assert!(elapsed < Duration::from_secs(5), "stop took {elapsed:?}");
+        eprintln!("stop-to-saved after 300 s of audio: {elapsed:?}");
         assert!((summary.duration_seconds() - 300.0).abs() < 1e-6);
         assert_eq!(summary.lost_samples(), 0);
     }

@@ -1,10 +1,11 @@
 //! One recording track (microphone or system) written continuously to disk.
 //!
 //! Samples are kept as 16-bit PCM in WAV segments (`microphone_000.wav`,
-//! `microphone_001.wav`, ...). Every commit writes the new samples, then the
-//! header sizes, then syncs, so after a crash the files hold everything up to
-//! the last commit (at most [`COMMIT_INTERVAL`] old). A header that lags the
-//! data is repaired on recovery (`audio::finalize`).
+//! `microphone_001.wav`, ...). Every commit hands the new samples and then
+//! the header sizes to the OS, so a killed or crashed process loses at most
+//! [`COMMIT_INTERVAL`]; the files are synced to the disk every
+//! [`SYNC_INTERVAL`] and at stop (power loss). A header that lags the data is
+//! repaired on recovery (`audio::finalize`).
 //!
 //! [`TrackWriter`] is the timeline logic on top of a [`TrackStorage`]: gap
 //! filling against the shared recording clock, bounded buffering while the
@@ -24,6 +25,10 @@ use serde::{Deserialize, Serialize};
 /// How often buffered samples are written and synced. A crash loses at most
 /// this much audio (plus what is still in the channel).
 pub const COMMIT_INTERVAL: Duration = Duration::from_secs(1);
+
+/// How often the files are flushed to the disk itself (`sync_data`). Not on
+/// every commit: a slow disk can take hundreds of milliseconds per sync.
+pub const SYNC_INTERVAL: Duration = Duration::from_secs(5);
 
 /// While the storage fails, at most one write attempt per this interval.
 pub const RETRY_INTERVAL: Duration = Duration::from_secs(10);
@@ -94,13 +99,17 @@ impl WriteOutcome {
     }
 }
 
-/// Where a track's samples go. `write` makes `samples` durable (data, header,
-/// sync) or reports how many of them made it; a retry after an error writes
-/// the rest again from the last durable position, never twice.
+/// Where a track's samples go. `write` hands `samples` to the OS (data, then
+/// header) or reports how many of them made it; a retry after an error writes
+/// the rest again from the last written position, never twice.
 pub trait TrackStorage: Send {
     fn write(&mut self, samples: &[i16]) -> WriteOutcome;
     /// Names of the files written so far, in order.
     fn segment_names(&self) -> Vec<String>;
+    /// Flush everything written to the disk itself (called at stop).
+    fn sync(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 impl TrackStorage for Box<dyn TrackStorage> {
@@ -109,6 +118,9 @@ impl TrackStorage for Box<dyn TrackStorage> {
     }
     fn segment_names(&self) -> Vec<String> {
         (**self).segment_names()
+    }
+    fn sync(&mut self) -> io::Result<()> {
+        (**self).sync()
     }
 }
 
@@ -126,8 +138,9 @@ pub struct WavSegmentStorage {
 
 struct OpenSegment {
     file: File,
-    /// Samples durable in this segment (data and header).
+    /// Samples written to this segment (data and header).
     committed: u64,
+    last_sync: Instant,
 }
 
 impl WavSegmentStorage {
@@ -157,6 +170,10 @@ impl WavSegmentStorage {
     }
 
     fn open_next(&mut self) -> io::Result<()> {
+        // The finished segment goes to the disk before the next one starts.
+        if let Some(previous) = self.current.as_mut() {
+            previous.file.sync_data()?;
+        }
         let name = segment_file_name(self.kind, self.next_index);
         let mut file = OpenOptions::new()
             .read(true)
@@ -165,10 +182,13 @@ impl WavSegmentStorage {
             .truncate(true)
             .open(self.dir.join(&name))?;
         write_wav_header(&mut file, self.sample_rate, 0)?;
-        file.sync_data()?;
         self.next_index += 1;
         self.names.push(name);
-        self.current = Some(OpenSegment { file, committed: 0 });
+        self.current = Some(OpenSegment {
+            file,
+            committed: 0,
+            last_sync: Instant::now(),
+        });
         Ok(())
     }
 
@@ -188,8 +208,11 @@ impl WavSegmentStorage {
         segment.file.write_all(&self.bytes)?;
         let committed = segment.committed + samples.len() as u64;
         update_wav_sizes(&mut segment.file, committed * 2)?;
-        segment.file.sync_data()?;
         segment.committed = committed;
+        if segment.last_sync.elapsed() >= SYNC_INTERVAL {
+            segment.file.sync_data()?;
+            segment.last_sync = Instant::now();
+        }
         Ok(())
     }
 }
@@ -228,6 +251,17 @@ impl TrackStorage for WavSegmentStorage {
 
     fn segment_names(&self) -> Vec<String> {
         self.names.clone()
+    }
+
+    fn sync(&mut self) -> io::Result<()> {
+        match self.current.as_mut() {
+            Some(segment) => {
+                segment.file.sync_data()?;
+                segment.last_sync = Instant::now();
+                Ok(())
+            }
+            None => Ok(()),
+        }
     }
 }
 
@@ -729,6 +763,9 @@ impl<S: TrackStorage> TrackWriter<S> {
     /// Final commit at stop (one attempt regardless of the retry timer).
     pub fn finish(mut self, now: Instant) -> (TrackSummary, Option<StorageEvent>) {
         let event = self.commit(now);
+        if let Err(e) = self.storage.sync() {
+            log::warn!("Could not sync the track to the disk at stop: {e}");
+        }
         let lost: u64 = self.pending.iter().map(Block::len).sum();
         let summary = TrackSummary {
             offset_samples: self.offset.unwrap_or(0),
