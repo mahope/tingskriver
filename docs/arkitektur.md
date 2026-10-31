@@ -7,7 +7,7 @@ all logic lives in a UI-free crate that both UIs share.
 Cargo.toml                    workspace root, shared [workspace.package] and release profile
 crates/
   tingskriver-core/           audio, transcription, database, AI providers, dictation, summaries
-  tingskriver-app/            GPUI app (gpui + gpui-component), an empty window for now
+  tingskriver-app/            GPUI app (gpui + gpui-component): shell with navigation, see gpui.md
   tingskriver-overlay/        pill and recording indicator: native Win32 layered window (Windows)
 frontend/
   src-tauri/                  the current Tauri app: commands, windows, tray, notifications
@@ -64,7 +64,9 @@ registers at startup.
   the archived FastAPI backend.
 
 The GPUI app will implement `AppHost` on its own event channel and call the
-same core functions.
+same core functions. Today it calls core only on its own tokio runtime (the
+database open at startup), never on the UI thread; see [gpui.md](gpui.md)
+for the shell and the GPUI version lock.
 
 ## The pill overlay
 

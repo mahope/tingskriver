@@ -7,13 +7,37 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+[lib]
+path = "src/lib.rs"
+
 [[bin]]
 name = "tingskriver-app"
 path = "src/main.rs"
 
 [dependencies]
+tingskriver-core = { path = "../tingskriver-core" }
 # GPUI is pinned to the exact snapshot gpui-component 0.8.1 is built against
 # (gpui-pre is Zed's gpui published by the gpui-component maintainers).
+# Upgrade only together with gpui-component; scripts/check-gpui-lock.py
+# fails CI otherwise (docs/gpui.md).
 gpui = { package = "gpui-pre", version = "=0.3.10" }
 gpui-component = "=0.8.1"
+gpui-kit-assets = "=0.8.1"
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.10", features = ["x11", "wayland"] }
+anyhow = { workspace = true }
+dirs = "5.0.1"
+log = "0.4"
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[dev-dependencies]
+ttf-parser = "0.25"

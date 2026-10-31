@@ -10746,9 +10746,19 @@ dependencies = [
 name = "tingskriver-app"
 version = "0.5.0-dev.2"
 dependencies = [
+ "anyhow",
+ "dirs 5.0.1",
  "gpui-component",
+ "gpui-kit-assets",
  "gpui-pre",
  "gpui-pre-platform",
+ "log",
+ "serde",
+ "serde_json",
+ "tingskriver-core",
+ "tokio",
+ "ttf-parser",
+ "windows 0.61.3",
 ]
 
 [[package]]

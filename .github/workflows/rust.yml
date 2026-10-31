@@ -1,9 +1,10 @@
 name: Rust
 
 # Builds and tests the Cargo workspace on every push. Windows builds the
-# whole workspace (core, GPUI app, overlay, Tauri crate); Linux runs the
-# platform independent tests in tingskriver-core and checks the crate
-# boundaries. Agents read the result with scripts/ci-status.sh.
+# whole workspace (core, GPUI app, overlay, Tauri crate) and a release build
+# of the GPUI app as an artifact; Linux runs the platform independent tests
+# in tingskriver-core and checks the crate boundaries and the GPUI version
+# lock. Agents read the result with scripts/ci-status.sh.
 # clippy -D warnings and fmt --check are deferred until the fork code is
 # cleaned up (docs/agenter.md).
 
@@ -114,12 +115,50 @@ jobs:
           fi
           echo "tingskriver-core has no tauri, gpui, wry or webview2 dependency"
 
+      # One GPUI version, the one gpui-component's own Cargo.lock uses
+      # (docs/gpui.md). Mixed versions fail with E0277 far from the cause.
+      - name: GPUI version lock
+        run: python3 scripts/check-gpui-lock.py
+
       - name: Test tingskriver-core
         run: .github/scripts/annotate-errors.sh cargo test --locked -p tingskriver-core
 
       # The overlay's state model, layout and renderer are platform independent.
       - name: Test tingskriver-overlay
         run: .github/scripts/annotate-errors.sh cargo test --locked -p tingskriver-overlay
+
+  # Release build of the GPUI app for the manual Windows tests in
+  # docs/gpui.md (text input, IME, UI Automation, DPI, start time, no GPU).
+  windows-gpui-app:
+    name: GPUI app artifact (Windows release)
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - name: Disable CRLF conversion
+        run: git config --global core.autocrlf false
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          prefix-key: tingskriver-windows-gpui-release-v1
+
+      - name: Build tingskriver-app (release)
+        shell: bash
+        run: .github/scripts/annotate-errors.sh cargo build --release --locked -p tingskriver-app
+
+      - name: Upload tingskriver-app.exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: tingskriver-app-windows-x64
+          path: target/release/tingskriver-app.exe
+          if-no-files-found: error
+          retention-days: 30
 
   # Licence and ban rules for every Cargo dependency (deny.toml). A GPL or
   # LGPL crate anywhere in the tree fails this job.
