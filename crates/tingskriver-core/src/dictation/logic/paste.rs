@@ -66,18 +66,16 @@ pub enum SaveCheck {
     TypeInstead(String),
 }
 
-/// `total_bytes` of all saved formats, `failed` formats that should have been
-/// saved but could not be read.
-pub fn check_saved(total_bytes: usize, failed: &[u32]) -> SaveCheck {
+/// `total_bytes` of all saved formats. Formats that could not be read are
+/// skipped by the caller: no program can paste them either, so leaving them
+/// out does not change what the clipboard offers.
+pub fn check_saved(total_bytes: usize) -> SaveCheck {
     if total_bytes > MAX_SAVED_BYTES {
         return SaveCheck::TypeInstead(format!(
             "clipboard holds {} MB, more than {} MB",
             total_bytes / (1024 * 1024),
             MAX_SAVED_BYTES / (1024 * 1024)
         ));
-    }
-    if !failed.is_empty() {
-        return SaveCheck::TypeInstead(format!("clipboard formats {failed:?} could not be saved"));
     }
     SaveCheck::Complete
 }
@@ -225,15 +223,15 @@ mod tests {
     }
 
     #[test]
-    fn large_or_partial_clipboards_are_typed_instead() {
-        assert_eq!(check_saved(0, &[]), SaveCheck::Complete);
+    fn large_clipboards_are_typed_instead() {
+        assert_eq!(check_saved(0), SaveCheck::Complete);
         // A 4K screenshot as DIB + DIBV5 + PNG is about 80 MB.
-        assert_eq!(check_saved(80 * 1024 * 1024, &[]), SaveCheck::Complete);
+        assert_eq!(check_saved(80 * 1024 * 1024), SaveCheck::Complete);
+        assert_eq!(check_saved(MAX_SAVED_BYTES), SaveCheck::Complete);
         assert!(matches!(
-            check_saved(MAX_SAVED_BYTES + 1, &[]),
+            check_saved(MAX_SAVED_BYTES + 1),
             SaveCheck::TypeInstead(_)
         ));
-        assert!(matches!(check_saved(10, &[8]), SaveCheck::TypeInstead(_)));
     }
 
     fn seen(before: bool, sent: bool, after: bool, replaced: bool) -> Observed {

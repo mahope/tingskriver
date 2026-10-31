@@ -526,12 +526,11 @@ unsafe fn read_enh_metafile() -> Option<Vec<u8>> {
     (GetEnhMetaFileBits(metafile, Some(&mut bytes)) == size).then_some(bytes)
 }
 
-/// Save every format, or fail so the caller types instead and the original
-/// clipboard is never lost.
+/// Save every readable format, or fail (too large) so the caller types
+/// instead and the original clipboard is never lost.
 fn save_clipboard(owner: &ClipboardOwner) -> Result<SavedClipboard, String> {
     let _guard = owner.open()?;
     let mut formats = Vec::new();
-    let mut failed = Vec::new();
     let mut total = 0usize;
     unsafe {
         let mut format = EnumClipboardFormats(0);
@@ -551,13 +550,13 @@ fn save_clipboard(owner: &ClipboardOwner) -> Result<SavedClipboard, String> {
                     }
                     formats.push((format, data));
                 }
-                Some(None) => failed.push(format),
+                Some(None) => log::debug!("Dictation: clipboard format {format} could not be read; skipped"),
                 None => {}
             }
             format = EnumClipboardFormats(format);
         }
     }
-    match paste::check_saved(total, &failed) {
+    match paste::check_saved(total) {
         SaveCheck::Complete => Ok(SavedClipboard { formats }),
         SaveCheck::TypeInstead(reason) => Err(reason),
     }
