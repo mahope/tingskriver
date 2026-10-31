@@ -231,7 +231,10 @@ pub fn scan_raw_tracks(raw_dir: &Path, repair: bool) -> io::Result<ScannedTracks
                         );
                         problems.push(format!("{name} er afkortet"));
                     }
-                    if repair && (wav.header_lags() || wav.truncated()) {
+                    // A truncated header is left as it is: shrinking it would
+                    // hide the loss from the next scan (and turn `delvis`
+                    // into `ok`). The reader stops at the real data.
+                    if repair && wav.header_lags() {
                         if let Err(e) = repair_header(path, wav.actual_data_bytes) {
                             log::warn!("Could not repair the header of {}: {e}", path.display());
                         } else {
@@ -1100,6 +1103,14 @@ mod tests {
             vec!["microphone_002.wav er afkortet".to_string()]
         );
         assert_eq!(scanned.tracks[0].samples(), 4800 + 4800 + 1000);
+        // A repairing scan does not hide the loss from the next run.
+        for _ in 0..2 {
+            let scanned = scan_raw_tracks(dir.path(), true).unwrap();
+            assert_eq!(
+                scanned.problems,
+                vec!["microphone_002.wav er afkortet".to_string()]
+            );
+        }
 
         // Unreadable last segment: skipped, the others remain.
         std::fs::write(
