@@ -105,3 +105,49 @@ Meetings and dictation share the Parakeet and Whisper engines in core.
   and after (`Model keeper: unloaded ...`).
 - Pressing the dictation shortcut prewarms the local model while the user
   speaks. Dictation logs `model_load=none` when the model was already loaded.
+
+## Recording: the audio is saved first
+
+A recording captures and saves, nothing else. Transcription, VAD and the
+summary run after the meeting from the saved files, so a crash in a model
+(a native abort in ggml or ONNX Runtime) cannot stop the audio.
+
+- Capture (`audio::pipeline::AudioCapture`) resamples to 48 kHz mono and
+  applies the microphone filters, then hands the chunk to the disk writer
+  through `RecordingState::send_audio_chunk`. That uses a bounded channel
+  with `try_send`: capture never blocks; a full queue drops the chunk and the
+  writer reports it.
+- The writer (`audio::recording_writer`) is one thread. It writes the
+  microphone and system tracks separately (`audio::track_writer`) as 16-bit
+  WAV segments of 10 minutes in `<meeting>/.checkpoints/`
+  (`microphone_000.wav`, `system_000.wav`, ...). Every second the new samples
+  and the header sizes go to the OS (a killed process loses at most about a
+  second); every 5 s and at stop they are synced to the disk.
+  `tracks.json` holds each track's offset on the shared recording clock (the
+  active duration, pauses excluded). A track that lags that clock for more
+  than a second gets silence for the missing time, and at stop both tracks
+  are padded to the same end.
+- Storage errors are a state, not a log line: the first failure emits
+  `recording-storage-error` (`{ message, kind }`, e.g. "Lyden gemmes ikke:
+  disken er fuld"), recovery emits `recording-storage-recovered`, and more
+  than 5 s of queued audio emits `recording-storage-backlog`. While the disk
+  fails, the writer retries at most once per 10 s and keeps at most 30 s per
+  track in memory (older audio becomes silence of the same length, so the
+  time axis survives). `recording_commands::current_storage_error()` and
+  `get_recording_state().storage_error` give the current message to UIs and
+  the recording indicator.
+- Stop stops the streams (their last callbacks and the resampler tail still
+  reach the writer), closes the channel and waits for the writer to drain it.
+  The log line `Stop-to-saved: N ms` measures this. `recording-saved` and
+  `recording-stopped` carry the save status.
+- In the background, `audio::finalize` encodes `microphone.m4a`,
+  `system.m4a` and the mixed `audio.mp4` (all on the shared clock), decodes
+  each and requires at most 1 s difference from the recorded length. The
+  status is `ok`, `delvis` or `fejlet` (`recording-audio-finalized`,
+  `metadata.json` field `audio_status`). The raw tracks are deleted only on
+  `ok`; otherwise the message is "Lyden kunne ikke samles. Originalen er
+  gemt."
+- After a crash, `recover_audio_from_checkpoints` runs the same finalize:
+  headers that lag their data are repaired, a truncated segment keeps its
+  readable part, an unreadable one is skipped (silence keeps later segments
+  in place), and any of these gives `delvis` with the other pieces.

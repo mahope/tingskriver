@@ -74,27 +74,24 @@ The archived FastAPI service had unauthenticated, development-oriented CORS beha
 
 The current app does not require a separate FastAPI tier. Meeting persistence, local transcription, and summary orchestration are handled through the Rust/Tauri core.
 
-### Audio Processing Pipeline (Critical Understanding)
+### Audio Recording Path (Critical Understanding)
 
-The audio system has **two parallel paths** with different purposes:
+The recording only captures and saves. There is no VAD, transcription model or
+ffmpeg during a recording, so a crash in any of them cannot cost audio:
 
 ```
-Raw Audio (Mic + System)
-         ↓
-┌────────────────────────────────────────────────────────────┐
-│              Audio Pipeline Manager                         │
-│  (crates/tingskriver-core/src/audio/pipeline.rs)           │
-└─────────────┬──────────────────────────┬───────────────────┘
-              ↓                          ↓
-    ┌─────────────────┐        ┌─────────────────────┐
-    │ Recording Path  │        │ Transcription Path  │
-    │ (Pre-mixed)     │        │ (VAD-filtered)      │
-    └─────────────────┘        └─────────────────────┘
-              ↓                          ↓
-    RecordingSaver.save()      WhisperEngine.transcribe()
+Mic callback ──┐                                  ┌─ microphone_000.wav ...
+               ├─ AudioCapture (pipeline.rs) ─────┤   (.checkpoints/, committed every 1 s)
+System callback┘  bounded channel, never blocks   └─ system_000.wav ...
+                  RecordingWriter thread                     ↓ after stop, in the background
+                  (recording_writer.rs, track_writer.rs)     finalize.rs: microphone.m4a,
+                                                             system.m4a, audio.mp4, verified
 ```
 
-**Key Insight**: The pipeline performs **professional audio mixing** (RMS-based ducking, clipping prevention) for recording, while simultaneously applying **Voice Activity Detection (VAD)** to send only speech segments to Whisper for transcription.
+**Key Insight**: stop means "the audio is on disk" (the writer drains its queue
+and returns within seconds). Encoding, verification and deletion of the raw
+tracks (only on status `ok`) happen afterwards; transcription runs from the
+saved files. See [docs/arkitektur.md](docs/arkitektur.md#recording-the-audio-is-saved-first).
 
 ### Audio Device Modularization (Recently Completed)
 
@@ -115,7 +112,7 @@ crates/tingskriver-core/src/audio/
 │   ├── microphone.rs          # Microphone capture stream
 │   ├── system.rs              # System audio capture stream
 │   └── core_audio.rs          # macOS ScreenCaptureKit integration
-├── pipeline.rs                # Audio mixing and VAD processing
+├── pipeline.rs                # Capture processing (resampling, mic filters) -> writer
 ├── recording_manager.rs       # High-level recording coordination
 ├── recording_commands.rs      # Start/stop orchestration (Tauri wrappers in frontend/src-tauri/src/audio/)
 └── recording_saver.rs         # Audio file writing
@@ -125,7 +122,7 @@ crates/tingskriver-core/src/audio/
 - Device detection issues → `devices/discovery.rs` or `devices/platform/{windows,macos,linux}.rs`
 - Microphone/speaker problems → `devices/microphone.rs` or `devices/speakers.rs`
 - Audio capture issues → `capture/microphone.rs` or `capture/system.rs`
-- Mixing/processing problems → `pipeline.rs`
+- Capture processing problems → `pipeline.rs`; saving → `recording_writer.rs` / `track_writer.rs`; final files and crash recovery → `finalize.rs`
 - Recording workflow → `recording_manager.rs`
 
 ### Rust ↔ Frontend Communication (Tauri Architecture)
