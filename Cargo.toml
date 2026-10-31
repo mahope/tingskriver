@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/tingskriver-core",
     "crates/tingskriver-app",
+    "crates/tingskriver-host",
     "crates/tingskriver-overlay",
     "frontend/src-tauri",
     "llama-helper"

@@ -8,6 +8,7 @@
 use std::cell::RefCell;
 use std::ffi::c_void;
 use std::sync::mpsc::Sender;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -52,10 +53,11 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SetWindowLongPtrW, SetWindowPos, SetWindowsHookExW, ShowWindow, TranslateMessage, UnhookWindowsHookEx,
     GWL_EXSTYLE, HC_ACTION, HWND_MESSAGE, HWND_TOPMOST, KBDLLHOOKSTRUCT, MSG, PM_NOREMOVE, PM_REMOVE,
     SWP_NOACTIVATE, SWP_SHOWWINDOW, SW_HIDE, WH_KEYBOARD_LL, WINDOW_EX_STYLE, WINDOW_STYLE, WM_KEYDOWN, WM_KEYUP,
-    WM_QUIT, WM_RENDERALLFORMATS, WM_RENDERFORMAT, WM_SYSKEYDOWN, WM_SYSKEYUP, WNDCLASSW, WS_EX_NOACTIVATE,
+    WM_APP, WM_QUIT, WM_RENDERALLFORMATS, WM_RENDERFORMAT, WM_SYSKEYDOWN, WM_SYSKEYUP, WNDCLASSW, WS_EX_NOACTIVATE,
     WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
 };
 
+use super::logic::hook_stats::{HookSummary, HookTimes};
 use super::logic::hotkey::{Chord, ChordSignal, ChordTracker};
 use super::logic::paste::{self, FormatKind, Observed, Outcome, SaveCheck, TargetAccess, WhenBlocked};
 
@@ -78,6 +80,31 @@ struct HookShared {
 }
 
 static HOOK_STATE: Mutex<Option<HookShared>> = Mutex::new(None);
+
+/// How long each `hook_proc` call took. Only durations, never keys.
+static HOOK_TIMES: HookTimes = HookTimes::new();
+/// Thread id of the running hook thread, for the summary message.
+static HOOK_THREAD: AtomicU32 = AtomicU32::new(0);
+/// Posted to the hook thread when a summary of `HOOK_TIMES` is due, so it
+/// is logged after the callback has returned instead of inside it.
+const WM_HOOK_SUMMARY: u32 = WM_APP + 0x54;
+
+/// Call durations of the keyboard hook since the last logged summary.
+pub fn hook_times() -> HookSummary {
+    HOOK_TIMES.summary()
+}
+
+fn log_hook_times() {
+    let summary = HOOK_TIMES.take();
+    if summary.count == 0 {
+        return;
+    }
+    if summary.within_target() {
+        log::info!("Keyboard hook timing: {summary}");
+    } else {
+        log::warn!("Keyboard hook timing over the 1 ms target: {summary}");
+    }
+}
 
 /// A running `WH_KEYBOARD_LL` hook. Dropping it removes the hook.
 pub struct KeyboardHook {
@@ -114,9 +141,15 @@ impl KeyboardHook {
                         return;
                     }
                 };
+                HOOK_THREAD.store(GetCurrentThreadId(), Ordering::Relaxed);
                 let _ = ready_tx.send(Ok(GetCurrentThreadId()));
-                while GetMessageW(&mut msg, None, 0, 0).0 > 0 {}
+                while GetMessageW(&mut msg, None, 0, 0).0 > 0 {
+                    if msg.hwnd.0.is_null() && msg.message == WM_HOOK_SUMMARY {
+                        log_hook_times();
+                    }
+                }
                 let _ = UnhookWindowsHookEx(hook);
+                log_hook_times();
             })
             .map_err(|e| format!("could not start hook thread: {e}"))?;
 
@@ -147,6 +180,15 @@ impl Drop for KeyboardHook {
 
 /// Runs for every key press in the system. Must return fast and never record keys.
 unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    let started = Instant::now();
+    let result = handle_key(code, wparam, lparam);
+    if HOOK_TIMES.record(started.elapsed().as_nanos() as u64) {
+        let _ = PostThreadMessageW(HOOK_THREAD.load(Ordering::Relaxed), WM_HOOK_SUMMARY, WPARAM(0), LPARAM(0));
+    }
+    result
+}
+
+unsafe fn handle_key(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     if code == HC_ACTION as i32 {
         let kb = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
         if kb.dwExtraInfo != INJECT_MARKER {
@@ -716,6 +758,12 @@ fn typed(text: &str) -> Result<(InsertMethod, Instant), String> {
     } else {
         Err("Windows afviste tastetryk fra Tingskriver (SendInput)".to_string())
     }
+}
+
+/// Mandatory integrity level of this process; 0x3000 or more means it runs
+/// as administrator.
+pub fn own_integrity_level() -> Option<u32> {
+    integrity_level(unsafe { GetCurrentProcess() })
 }
 
 /// Mandatory integrity level of a process (0x2000 medium, 0x3000 high).

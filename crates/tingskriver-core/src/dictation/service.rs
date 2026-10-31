@@ -69,6 +69,9 @@ pub struct Service {
     last_error: Mutex<Option<String>>,
     #[cfg(windows)]
     hook: Mutex<Option<super::win::KeyboardHook>>,
+    /// Feeds the control loop like the hook does (tray menu "Diktér").
+    #[cfg(windows)]
+    trigger: Mutex<Option<std::sync::mpsc::Sender<(ChordSignal, Instant)>>>,
 }
 
 fn now_ms() -> i64 {
@@ -112,6 +115,8 @@ async fn init_inner(app: HostHandle, overlay: Arc<dyn Overlay>) -> Result<(), St
         last_error: Mutex::new(None),
         #[cfg(windows)]
         hook: Mutex::new(None),
+        #[cfg(windows)]
+        trigger: Mutex::new(None),
     });
     SERVICE
         .set(service.clone())
@@ -244,6 +249,9 @@ impl Service {
         };
         // Dropping the old hook also ends its control thread.
         slot.take();
+        if let Ok(mut trigger) = self.trigger.lock() {
+            trigger.take();
+        }
         self.shortcut_active.store(false, Ordering::Relaxed);
 
         let settings = self.settings();
@@ -261,9 +269,13 @@ impl Service {
         };
 
         let (tx, rx) = std::sync::mpsc::channel();
+        let trigger = tx.clone();
         match super::win::KeyboardHook::start(chord, tx) {
             Ok(hook) => {
                 *slot = Some(hook);
+                if let Ok(mut slot) = self.trigger.lock() {
+                    *slot = Some(trigger);
+                }
                 self.shortcut_active.store(true, Ordering::Relaxed);
                 self.set_error(None);
                 log::info!("Dictation shortcut active: {}", chord.label());
@@ -283,6 +295,31 @@ impl Service {
                 self.set_error(Some(format!("Genvejen kunne ikke registreres: {e}")));
             }
         }
+    }
+
+    /// Start hands-free dictation without the shortcut (the tray menu). The
+    /// user then clicks into the field and presses the shortcut once to
+    /// insert, as after a double tap. While dictating it stops instead.
+    #[cfg(windows)]
+    pub fn toggle_hands_free(&self) -> Result<(), String> {
+        let trigger = self.trigger.lock().ok().and_then(|t| t.clone());
+        let trigger = trigger.ok_or_else(|| "Genvejen til diktering er ikke aktiv".to_string())?;
+        let now = Instant::now();
+        // A double tap locks the recording; one tap stops a locked one.
+        let taps = if is_dictating() { 1 } else { 2 };
+        for _ in 0..taps {
+            for signal in [ChordSignal::Pressed, ChordSignal::Released] {
+                trigger
+                    .send((signal, now))
+                    .map_err(|_| "Diktering kører ikke".to_string())?;
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(not(windows))]
+    pub fn toggle_hands_free(&self) -> Result<(), String> {
+        Err("Diktering findes kun på Windows".to_string())
     }
 
     #[cfg(not(windows))]

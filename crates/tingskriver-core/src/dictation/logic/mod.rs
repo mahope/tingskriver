@@ -13,6 +13,7 @@ pub mod audio;
 pub mod cleanup;
 pub mod engine;
 pub mod gesture;
+pub mod hook_stats;
 pub mod hotkey;
 pub mod order;
 pub mod paste;

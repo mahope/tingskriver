@@ -49,6 +49,7 @@ pub mod openrouter;
 pub mod parakeet_engine;
 pub mod paths;
 pub mod runtime;
+pub mod shortcuts;
 pub mod state;
 pub mod summary;
 pub mod whisper_engine;
