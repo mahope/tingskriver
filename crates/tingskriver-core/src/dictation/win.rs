@@ -285,6 +285,8 @@ struct Offer {
     paste_sent: bool,
     read_before_paste: bool,
     read_after_paste: Option<Instant>,
+    /// The text was typed instead: a late read gets an empty string.
+    withdrawn: bool,
 }
 
 thread_local! {
@@ -299,7 +301,8 @@ fn render_offer() {
         let Some(offer) = offer.as_mut() else {
             return;
         };
-        let bytes = unsafe { std::slice::from_raw_parts(offer.utf16.as_ptr() as *const u8, offer.utf16.len() * 2) };
+        let units: &[u16] = if offer.withdrawn { &[0] } else { &offer.utf16 };
+        let bytes = unsafe { std::slice::from_raw_parts(units.as_ptr() as *const u8, units.len() * 2) };
         if let Err(e) = unsafe { set_clipboard_bytes(CF_UNICODETEXT.0 as u32, bytes) } {
             log::warn!("Dictation: could not render clipboard text: {e}");
         }
@@ -420,6 +423,7 @@ impl ClipboardOwner {
                 paste_sent: false,
                 read_before_paste: false,
                 read_after_paste: None,
+                withdrawn: false,
             })
         });
         let _guard = self.open()?;
@@ -443,6 +447,15 @@ impl ClipboardOwner {
         OFFER.with(|offer| {
             if let Some(offer) = offer.borrow_mut().as_mut() {
                 offer.paste_sent = true;
+            }
+        });
+    }
+
+    /// From now on a read gets an empty string instead of the text.
+    fn withdraw(&self) {
+        OFFER.with(|offer| {
+            if let Some(offer) = offer.borrow_mut().as_mut() {
+                offer.withdrawn = true;
             }
         });
     }
@@ -607,9 +620,9 @@ unsafe fn set_privacy_formats() {
     }
 }
 
-/// Put the saved formats back. They are marked like the dictated text, so
-/// clipboard history and cloud clipboard (which already have the original)
-/// do not get a duplicate.
+/// Put the saved formats back. They are kept out of clipboard history and
+/// cloud clipboard (which already have the original), so neither gets a
+/// duplicate; clipboard monitors do see the original again.
 fn restore_clipboard(owner: &ClipboardOwner, saved: &SavedClipboard) -> Result<(), String> {
     let _guard = owner.open()?;
     unsafe {
@@ -624,7 +637,7 @@ fn restore_clipboard(owner: &ClipboardOwner, saved: &SavedClipboard) -> Result<(
             }
         }
         if !saved.formats.is_empty() {
-            for name in paste::PRIVACY_FORMATS {
+            for name in paste::RESTORE_PRIVACY_FORMATS {
                 let format = registered_format(name);
                 if format != 0 && !saved.has_format(format) {
                     let _ = set_clipboard_bytes(format, &0u32.to_le_bytes());
@@ -759,7 +772,8 @@ fn foreground_integrity_level() -> Option<u32> {
 /// reads it (`WM_RENDERFORMAT`), the original is restored `restore_after`
 /// later, unless another program changed the clipboard in between. If the
 /// target does not read it within `paste_timeout`, the field blocks paste:
-/// the original is restored and the text is typed with `SendInput`.
+/// the text is typed with `SendInput`, and the original is restored after
+/// `paste::LATE_READ_GRACE` (a late read in between gets an empty string).
 pub fn insert_text(text: &str, options: &InsertOptions) -> Result<(InsertMethod, Instant), String> {
     let _one_at_a_time = INSERT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     wait_for_modifiers_released(Duration::from_millis(1500));
@@ -826,16 +840,30 @@ pub fn insert_text(text: &str, options: &InsertOptions) -> Result<(InsertMethod,
             .unwrap_or_else(|| "nothing".to_string())
     );
 
+    // A blocked paste is typed while the promise is still on the clipboard:
+    // a busy target may handle its queued Ctrl+V late, and must then paste
+    // nothing rather than the original clipboard (or the text a second time).
+    let result = match outcome {
+        Outcome::Pasted => Ok((InsertMethod::Paste, read_after_paste.unwrap_or(sent_at))),
+        Outcome::PastedUnconfirmed | Outcome::Replaced { typed: false } => Ok((InsertMethod::Paste, sent_at)),
+        Outcome::Blocked | Outcome::Replaced { typed: true } => match paste::when_blocked(access) {
+            WhenBlocked::Type => {
+                log::info!("Dictation: the field did not take Ctrl+V; typing instead");
+                owner.withdraw();
+                typed(text)
+            }
+            WhenBlocked::Report => Err(paste::not_received_message(options.app.as_deref())),
+        },
+    };
+
     if outcome.restore() {
-        let wait = match outcome {
-            Outcome::Pasted => options.restore_after,
-            Outcome::PastedUnconfirmed => options.paste_timeout.max(options.restore_after),
-            _ => Duration::ZERO,
-        };
-        let until = Instant::now() + wait;
+        let until = Instant::now() + paste::restore_wait(outcome, options.restore_after, options.paste_timeout);
         while Instant::now() < until {
             owner.pump();
             std::thread::sleep(Duration::from_millis(5));
+        }
+        if outcome == Outcome::Blocked && owner.observed().1.is_some() {
+            log::info!("Dictation: the target read the clipboard late; it got nothing (text was typed)");
         }
         if owner.owns_clipboard() {
             if let Err(e) = restore_clipboard(&owner, &saved) {
@@ -846,17 +874,7 @@ pub fn insert_text(text: &str, options: &InsertOptions) -> Result<(InsertMethod,
         }
     }
 
-    match outcome {
-        Outcome::Pasted => Ok((InsertMethod::Paste, read_after_paste.unwrap_or(sent_at))),
-        Outcome::PastedUnconfirmed | Outcome::Replaced { typed: false } => Ok((InsertMethod::Paste, sent_at)),
-        Outcome::Blocked | Outcome::Replaced { typed: true } => match paste::when_blocked(access) {
-            WhenBlocked::Type => {
-                log::info!("Dictation: the field did not take Ctrl+V; typing instead");
-                typed(text)
-            }
-            WhenBlocked::Report => Err(paste::not_received_message(options.app.as_deref())),
-        },
-    }
+    result
 }
 
 // ---------------------------------------------------------------------------

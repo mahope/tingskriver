@@ -321,7 +321,7 @@ function Get-HistoryLatencies([int]$Max) {
 # Tider pr. trin fra tabellen dictation_timings (kun tal, aldrig tekst). De seneste $Max pr. udbyder.
 function Get-StepTimings([int]$Max) {
     $cols = 'provider, start_ms, capture_ms, transcribe_ms, polish_ms, insert_ms, total_ms, audio_ms'
-    $res = Invoke-DictationQuery "SELECT $cols FROM dictation_timings WHERE inserted = 1 ORDER BY created_at DESC, id DESC LIMIT $($Max * 4);"
+    $res = Invoke-DictationQuery "SELECT $cols FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY provider ORDER BY created_at DESC, id DESC) AS n FROM dictation_timings WHERE inserted = 1) WHERE n <= $Max ORDER BY created_at DESC, id DESC;"
     $rows = @()
     foreach ($line in $res.Lines) {
         $p = $line.Split(',')
@@ -537,7 +537,7 @@ Add-Row 'Diktering p95, 10-20 s tale (log)' $logSum.P95Mid 'ms' "n = $($logSum.N
 Add-Row 'Diktering p50 (historik)' $histSum.P50 'ms' "n = $($histSum.N); $($histRes.Status)" 'diktering_hist_p50_ms'
 Add-Row 'Diktering p95 (historik)' $histSum.P95 'ms' "n = $($histSum.N)" 'diktering_hist_p95_ms'
 
-# Tider pr. trin og udbyder (tabellen dictation_timings, appen fra 0.5.1).
+# Tider pr. trin og udbyder (tabellen dictation_timings, appen fra versionen med #12).
 if ($stepRes.Providers.Count -eq 0) {
     [void]$sb.AppendLine("| Diktering pr. trin | n/a | | $($stepRes.Status); ingen dikteringer i dictation_timings endnu |")
 }

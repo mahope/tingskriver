@@ -78,15 +78,23 @@ impl ModelPool {
             Some(model) => model.transcribe(samples),
             None => Err("Parakeet instance missing".to_string()),
         };
+        self.mark_used();
+        result
+    }
+
+    /// Count the model as used now, so an idle unload waits again.
+    pub fn mark_used(&self) {
         self.last_used_ms.store(
             self.created_at.elapsed().as_millis() as u64,
             Ordering::Relaxed,
         );
-        result
     }
 
     fn checkout(&self) -> Result<Lease<'_>, String> {
         let mut state = self.lock();
+        // After a failed extra load (often low memory) wait for a busy
+        // instance instead of failing the call.
+        let mut may_load = true;
         loop {
             if let Some(model) = state.idle.pop() {
                 return Ok(Lease {
@@ -94,28 +102,39 @@ impl ModelPool {
                     model: Some(model),
                 });
             }
-            if state.total < self.max_instances {
+            if state.total == 0 {
+                may_load = true;
+            }
+            if may_load && state.total < self.max_instances {
                 state.total += 1;
                 let number = state.total;
                 drop(state);
                 let started = Instant::now();
-                return match (self.loader)() {
+                match (self.loader)() {
                     Ok(model) => {
                         log::info!(
                             "Parakeet: all instances busy, loaded instance {number} in {} ms",
                             started.elapsed().as_millis()
                         );
-                        Ok(Lease {
+                        return Ok(Lease {
                             pool: self,
                             model: Some(model),
-                        })
+                        });
                     }
                     Err(e) => {
-                        self.lock().total -= 1;
+                        state = self.lock();
+                        state.total -= 1;
                         self.returned.notify_one();
-                        Err(format!("could not load another Parakeet instance: {e}"))
+                        if state.total == 0 {
+                            return Err(format!("could not load another Parakeet instance: {e}"));
+                        }
+                        log::warn!(
+                            "Parakeet: could not load instance {number} ({e}); waiting for a busy one"
+                        );
+                        may_load = false;
+                        continue;
                     }
-                };
+                }
             }
             state = self
                 .returned
@@ -236,7 +255,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn failed_extra_load_frees_its_slot() {
+    fn failed_extra_load_waits_for_the_busy_instance() {
         let pool = Arc::new(ModelPool::new(
             Box::new(FakeModel),
             Box::new(|| Err("disk full".to_string())),
@@ -247,8 +266,7 @@ pub(crate) mod tests {
             std::thread::spawn(move || pool.transcribe(vec![200.0]))
         };
         std::thread::sleep(Duration::from_millis(30));
-        let error = pool.transcribe(vec![1.0]).err().unwrap_or_default();
-        assert!(error.contains("disk full"), "{error}");
+        assert_eq!(pool.transcribe(vec![1.0]).as_deref(), Ok("1 ms"));
         assert!(long.join().map(|r| r.is_ok()).unwrap_or(false));
         assert_eq!(pool.instances(), 1);
         // The remaining instance still serves calls.

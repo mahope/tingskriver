@@ -167,6 +167,9 @@ pub async fn ensure_parakeet() -> Result<Readiness, String> {
     let engine = parakeet().ok_or_else(|| "Parakeet engine not initialized".to_string())?;
     if engine.is_model_loaded().await {
         if let Some(model) = engine.get_current_model().await {
+            // Restart the idle clock, so the keeper does not unload the model
+            // while the user speaks or between this check and transcription.
+            engine.mark_used().await;
             log::info!("Dictation: local model '{model}' already loaded (model_load=none)");
             return Ok(Readiness::Warm(model));
         }

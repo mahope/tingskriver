@@ -66,6 +66,19 @@ pub enum CancelDownloadOutcome {
 
 const CANCEL_DOWNLOAD_CLEANUP_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// One running inference call; ends it (and marks the model used) on drop.
+struct InFlightCall {
+    in_flight: Arc<AtomicUsize>,
+    last_used: Arc<std::sync::Mutex<Instant>>,
+}
+
+impl Drop for InFlightCall {
+    fn drop(&mut self) {
+        *self.last_used.lock().unwrap_or_else(|p| p.into_inner()) = Instant::now();
+        self.in_flight.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 pub struct WhisperEngine {
     models_dir: PathBuf,
     /// The read lock is only held to clone the `Arc`, never during inference.
@@ -418,6 +431,14 @@ impl WhisperEngine {
         *self.last_used.lock().unwrap_or_else(|p| p.into_inner()) = Instant::now();
     }
 
+    fn start_call(&self) -> InFlightCall {
+        self.in_flight.fetch_add(1, Ordering::SeqCst);
+        InFlightCall {
+            in_flight: self.in_flight.clone(),
+            last_used: self.last_used.clone(),
+        }
+    }
+
     async fn context(&self) -> Result<Arc<WhisperContext>> {
         self.current_context
             .read()
@@ -434,10 +455,15 @@ impl WhisperEngine {
         F: FnOnce(&WhisperContext) -> Result<T> + Send + 'static,
     {
         let ctx = self.context().await?;
-        self.in_flight.fetch_add(1, Ordering::SeqCst);
-        let result = tokio::task::spawn_blocking(move || work(&ctx)).await;
-        self.in_flight.fetch_sub(1, Ordering::SeqCst);
-        self.mark_used();
+        // The guard lives on the blocking thread: the call counts as running
+        // until inference ends, also when the caller's future is dropped
+        // (a timeout), since the blocking task cannot be cancelled.
+        let call = self.start_call();
+        let result = tokio::task::spawn_blocking(move || {
+            let _call = call;
+            work(&ctx)
+        })
+        .await;
         result.map_err(|e| anyhow!("Whisper transcription task failed: {}", e))?
     }
     
@@ -1328,6 +1354,38 @@ mod tests {
             .iter()
             .find(|model| model.name == "tiny")
             .expect("tiny should be present in the Whisper model catalog")
+    }
+
+    #[tokio::test]
+    async fn in_flight_call_ends_when_a_timed_out_caller_drops_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine = WhisperEngine::new_with_models_dir(Some(dir.path().to_path_buf())).unwrap();
+        let before = *engine.last_used.lock().unwrap();
+
+        let (release, released) = std::sync::mpsc::channel::<()>();
+        // Same shape as `run_blocking`; the caller gives up while inference
+        // runs (as parallel_processor's timeout does) and drops the future.
+        let call_future = async {
+            let call = engine.start_call();
+            tokio::task::spawn_blocking(move || {
+                let _call = call;
+                let _ = released.recv();
+            })
+            .await
+        };
+        assert!(timeout(Duration::from_millis(20), call_future).await.is_err());
+        // The inference still runs and is still counted.
+        assert_eq!(engine.in_flight.load(Ordering::SeqCst), 1);
+
+        release.send(()).unwrap();
+        timeout(Duration::from_secs(5), async {
+            while engine.in_flight.load(Ordering::SeqCst) != 0 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("the finished call must no longer count as running");
+        assert!(*engine.last_used.lock().unwrap() > before);
     }
 
     #[tokio::test]

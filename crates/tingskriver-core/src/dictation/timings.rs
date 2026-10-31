@@ -195,13 +195,16 @@ impl Timings {
         Ok(())
     }
 
-    /// Inserted dictations, newest first.
-    pub async fn recent(&self, limit: i64) -> Result<Vec<Sample>, String> {
+    /// The newest `per_provider` inserted dictations of each provider,
+    /// newest first.
+    pub async fn recent(&self, per_provider: i64) -> Result<Vec<Sample>, String> {
         let rows = sqlx::query(
             "SELECT provider, start_ms, audio_ms, capture_ms, transcribe_ms, polish_ms, insert_ms, total_ms
-             FROM dictation_timings WHERE inserted = 1 ORDER BY created_at DESC, id DESC LIMIT ?1",
+             FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY provider ORDER BY created_at DESC, id DESC) AS n
+                   FROM dictation_timings WHERE inserted = 1)
+             WHERE n <= ?1 ORDER BY created_at DESC, id DESC",
         )
-        .bind(limit)
+        .bind(per_provider)
         .fetch_all(&self.pool)
         .await
         .map_err(db_err)?;
@@ -224,8 +227,7 @@ impl Timings {
 
     /// Median and p95 per provider over the newest dictations.
     pub async fn stats(&self) -> Result<Vec<ProviderStats>, String> {
-        // Enough rows for a full window for both providers.
-        let samples = self.recent(timing::WINDOW as i64 * 4).await?;
+        let samples = self.recent(timing::WINDOW as i64).await?;
         Ok(timing::summarize(&samples))
     }
 }
@@ -340,6 +342,22 @@ mod tests {
         let report = serde_json::to_value(LatencyReport::from_stats(&stats)).unwrap();
         assert_eq!(report["providers"][0]["overTarget"], true);
         assert_eq!(report["providers"][1]["transcribe"]["medianMs"], 550);
+    }
+
+    #[tokio::test]
+    async fn each_provider_gets_a_full_window() {
+        let t = timings().await;
+        let window = timing::WINDOW as i64;
+        for i in 0..window {
+            t.add(&timing(i, "local", 1200, true)).await.unwrap();
+        }
+        for i in 0..(window * 4) {
+            t.add(&timing(window + i, "syv", 700, true)).await.unwrap();
+        }
+        let stats = t.stats().await.unwrap();
+        let count = |p: &str| stats.iter().find(|s| s.provider == p).map(|s| s.count);
+        assert_eq!(count("local"), Some(timing::WINDOW));
+        assert_eq!(count("syv"), Some(timing::WINDOW));
     }
 
     #[tokio::test]

@@ -6,6 +6,8 @@
 //! original clipboard is restored only after the target has the text, and a
 //! field that ignores Ctrl+V is detected and gets the text typed instead.
 
+use std::time::Duration;
+
 /// Clipboard formats (standard ids) that hold GDI handles, not global memory.
 /// Windows synthesizes most of them again from the formats that are saved
 /// (CF_BITMAP from CF_DIB, CF_METAFILEPICT from CF_ENHMETAFILE).
@@ -32,6 +34,10 @@ pub const PRIVACY_FORMATS: &[&str] = &[
     "CanIncludeInClipboardHistory",
     "CanUploadToCloudClipboard",
 ];
+
+/// Formats set on the restored original: history and cloud already have it,
+/// but monitors (RDP/VM clipboard sync, Ditto) must see it again.
+pub const RESTORE_PRIVACY_FORMATS: &[&str] = &["CanIncludeInClipboardHistory", "CanUploadToCloudClipboard"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FormatKind {
@@ -100,7 +106,10 @@ pub enum Outcome {
     /// Read before Ctrl+V, so the moment the target reads it is unknown:
     /// restore after the long wait, never type (that would insert twice).
     PastedUnconfirmed,
-    /// Nothing read the text: restore at once, then type it.
+    /// Nothing read the text: type it. The target may only be busy and
+    /// still read on its queued Ctrl+V, so the promise stays on the
+    /// clipboard for [`LATE_READ_GRACE`] before the original comes back, and
+    /// a late read then gets nothing (the text is typed already).
     Blocked,
     /// Someone else owns the clipboard now: leave it. `typed` when the
     /// target never read our text.
@@ -117,6 +126,20 @@ impl Outcome {
 
     pub fn type_text(&self) -> bool {
         matches!(self, Outcome::Blocked | Outcome::Replaced { typed: true })
+    }
+}
+
+/// How long a blocked paste keeps the promise on the clipboard, so a busy
+/// target that handles its queued Ctrl+V late does not paste the original.
+pub const LATE_READ_GRACE: Duration = Duration::from_secs(2);
+
+/// Wait before the original clipboard is restored.
+pub fn restore_wait(outcome: Outcome, restore_after: Duration, paste_timeout: Duration) -> Duration {
+    match outcome {
+        Outcome::Pasted => restore_after,
+        Outcome::PastedUnconfirmed => paste_timeout.max(restore_after),
+        Outcome::Blocked => LATE_READ_GRACE.max(restore_after),
+        Outcome::Replaced { .. } => Duration::ZERO,
     }
 }
 
@@ -257,6 +280,22 @@ mod tests {
         assert!(o.restore() && o.type_text());
         // Ctrl+V could not even be sent.
         assert_eq!(outcome(seen(false, false, false, false)), Outcome::Blocked);
+    }
+
+    #[test]
+    fn blocked_paste_keeps_the_promise_for_late_reads() {
+        let after = Duration::from_millis(150);
+        let timeout = Duration::from_millis(1000);
+        assert_eq!(restore_wait(Outcome::Pasted, after, timeout), after);
+        assert_eq!(restore_wait(Outcome::PastedUnconfirmed, after, timeout), timeout);
+        // A busy target may handle its queued Ctrl+V after the timeout; the
+        // original must not be back on the clipboard by then.
+        let blocked = restore_wait(Outcome::Blocked, after, timeout);
+        assert!(blocked >= LATE_READ_GRACE && blocked > timeout);
+        assert_eq!(
+            restore_wait(Outcome::Replaced { typed: true }, after, timeout),
+            Duration::ZERO
+        );
     }
 
     #[test]

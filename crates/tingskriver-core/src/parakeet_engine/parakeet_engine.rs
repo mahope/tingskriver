@@ -586,6 +586,13 @@ impl ParakeetEngine {
         Some((pool.last_used(), pool.busy()))
     }
 
+    /// Count the loaded model as used now (a dictation is about to need it).
+    pub async fn mark_used(&self) {
+        if let Some(pool) = self.current_model.read().await.as_ref() {
+            pool.mark_used();
+        }
+    }
+
     #[cfg(test)]
     pub(crate) async fn set_test_pool(&self, name: &str, pool: ModelPool) {
         *self.current_model.write().await = Some(Arc::new(pool));
