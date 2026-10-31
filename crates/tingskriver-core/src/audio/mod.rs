@@ -25,6 +25,7 @@ pub mod recording_preferences;
 pub mod recording_saver;
 pub mod incremental_saver;  // Crash recovery and cleanup commands for the raw tracks
 pub mod track_writer;       // One track written continuously as WAV segments
+pub mod recording_writer;   // Writer thread: capture -> bounded channel -> track files
 pub mod level_monitor;
 pub mod simple_level_monitor;
 pub mod buffer_pool;

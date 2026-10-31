@@ -44,8 +44,11 @@ pub const SEGMENT_LENGTH: Duration = Duration::from_secs(10 * 60);
 
 pub const WAV_HEADER_LEN: u64 = 44;
 
+/// Largest single storage write, in seconds of audio.
+const MAX_WRITE_SECONDS: u64 = 10;
+
 /// Which track a writer holds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TrackKind {
     Microphone,
@@ -90,6 +93,15 @@ pub trait TrackStorage: Send {
     fn write(&mut self, samples: &[i16]) -> WriteOutcome;
     /// Names of the files written so far, in order.
     fn segment_names(&self) -> Vec<String>;
+}
+
+impl TrackStorage for Box<dyn TrackStorage> {
+    fn write(&mut self, samples: &[i16]) -> WriteOutcome {
+        (**self).write(samples)
+    }
+    fn segment_names(&self) -> Vec<String> {
+        (**self).segment_names()
+    }
 }
 
 /// WAV segments in a directory.
@@ -408,7 +420,7 @@ pub struct TrackWriter<S: TrackStorage> {
     retry_at: Option<Instant>,
     failing: bool,
     attempts: u64,
-    zeros: Vec<i16>,
+    scratch: Vec<i16>,
 }
 
 impl<S: TrackStorage> TrackWriter<S> {
@@ -427,7 +439,7 @@ impl<S: TrackStorage> TrackWriter<S> {
             retry_at: None,
             failing: false,
             attempts: 0,
-            zeros: vec![0; 4800],
+            scratch: Vec::new(),
         }
     }
 
@@ -592,37 +604,58 @@ impl<S: TrackStorage> TrackWriter<S> {
         }
     }
 
+    /// Write the pending blocks in as few storage writes as possible (each
+    /// write syncs): consecutive blocks are joined into one buffer of at most
+    /// `MAX_WRITE_SECONDS`.
     fn write_pending(&mut self) -> Option<io::Error> {
-        while let Some(block) = self.pending.front_mut() {
-            match block {
-                Block::Samples(samples) => {
-                    let outcome = self.storage.write(samples);
-                    self.written += outcome.committed as u64;
-                    self.pending_sample_count -= outcome.committed;
-                    if outcome.committed == samples.len() {
-                        self.pending.pop_front();
-                    } else {
-                        samples.drain(..outcome.committed);
-                    }
-                    if let Some(e) = outcome.error {
-                        return Some(e);
-                    }
+        let max = (MAX_WRITE_SECONDS * self.sample_rate as u64).max(1) as usize;
+        while !self.pending.is_empty() {
+            self.scratch.clear();
+            for block in &self.pending {
+                let room = max - self.scratch.len();
+                if room == 0 {
+                    break;
                 }
-                Block::Silence(n) => {
-                    while *n > 0 {
-                        let take = (*n).min(self.zeros.len() as u64) as usize;
-                        let outcome = self.storage.write(&self.zeros[..take]);
-                        self.written += outcome.committed as u64;
-                        *n -= outcome.committed as u64;
-                        if let Some(e) = outcome.error {
-                            return Some(e);
-                        }
-                    }
-                    self.pending.pop_front();
+                match block {
+                    Block::Samples(s) => self.scratch.extend_from_slice(&s[..s.len().min(room)]),
+                    Block::Silence(n) => self.scratch.resize(self.scratch.len() + (*n).min(room as u64) as usize, 0),
                 }
+            }
+            let outcome = self.storage.write(&self.scratch);
+            self.consume(outcome.committed);
+            if let Some(e) = outcome.error {
+                return Some(e);
             }
         }
         None
+    }
+
+    /// Drop `n` written samples from the front of the pending queue.
+    fn consume(&mut self, mut n: usize) {
+        self.written += n as u64;
+        while n > 0 {
+            let Some(block) = self.pending.front_mut() else { break };
+            match block {
+                Block::Samples(s) => {
+                    let take = n.min(s.len());
+                    self.pending_sample_count -= take;
+                    n -= take;
+                    if take == s.len() {
+                        self.pending.pop_front();
+                    } else {
+                        s.drain(..take);
+                    }
+                }
+                Block::Silence(m) => {
+                    let take = (n as u64).min(*m);
+                    n -= take as usize;
+                    *m -= take;
+                    if *m == 0 {
+                        self.pending.pop_front();
+                    }
+                }
+            }
+        }
     }
 
     /// Final commit at stop (one attempt regardless of the retry timer).
