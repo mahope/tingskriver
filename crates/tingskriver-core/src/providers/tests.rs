@@ -270,13 +270,12 @@ async fn unreachable_server() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     drop(listener);
-    let error = client::transcribe(
-        &http(),
-        &link("a", &format!("http://127.0.0.1:{port}/v1"), Some("k")),
-        &wav_request(),
-    )
-    .await
-    .unwrap_err();
+    // Windows retries a refused connection for about 2 s before giving up.
+    let mut closed = link("a", &format!("http://127.0.0.1:{port}/v1"), Some("k"));
+    closed.timeout = Some(Duration::from_secs(9));
+    let error = client::transcribe(&http(), &closed, &wav_request())
+        .await
+        .unwrap_err();
     assert!(
         matches!(error, ProviderError::Unreachable { .. }),
         "{error:?}"
@@ -913,4 +912,79 @@ fn no_log_statement_formats_a_key() {
             );
         }
     }
+}
+
+#[cfg(not(windows))]
+struct TestHost(std::path::PathBuf);
+
+#[cfg(not(windows))]
+impl crate::host::AppHost for TestHost {
+    fn emit_json(&self, _: &str, _: &str) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn database(&self) -> Option<crate::database::manager::DatabaseManager> {
+        None
+    }
+
+    fn app_data_dir(&self) -> Result<std::path::PathBuf, String> {
+        Ok(self.0.clone())
+    }
+
+    fn listen(&self, _: &str, _: Box<dyn Fn(&str) + Send + Sync>) -> crate::host::ListenerId {
+        0
+    }
+
+    fn unlisten(&self, _: crate::host::ListenerId) {}
+
+    fn read_setting(&self, _: &str, _: &str) -> Result<Option<serde_json::Value>, String> {
+        Ok(None)
+    }
+
+    fn write_setting(&self, _: &str, _: &str, _: serde_json::Value) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+#[cfg(not(windows))]
+#[tokio::test]
+async fn public_api_falls_back_to_the_local_model_without_a_syv_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let host: crate::host::HostHandle = Arc::new(TestHost(dir.path().to_path_buf()));
+
+    let links = super::chain_for(&host, Function::Dictation).await.unwrap();
+    assert_eq!(
+        links
+            .iter()
+            .map(|l| l.provider_id.as_str())
+            .collect::<Vec<_>>(),
+        [SYV_ID, LOCAL_ID]
+    );
+
+    let delivered = super::transcribe(
+        &host,
+        Function::Dictation,
+        wav_request(),
+        |link, _| async move {
+            Ok(Transcription {
+                text: format!("lokal {}", link.model),
+                ..Default::default()
+            })
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(delivered.provider_id, LOCAL_ID);
+    assert_eq!(delivered.attempts[0].error, ProviderError::MissingKey);
+
+    let off = super::chat(
+        &host,
+        Function::DictationPolish,
+        vec![ChatMessage::user("hej")],
+        |_, _| async { Ok(String::new()) },
+    )
+    .await
+    .unwrap_err();
+    assert!(off.to_string().contains("slået fra"));
+    assert!(!dir.path().join(super::service::CONFIG_FILE).exists());
 }

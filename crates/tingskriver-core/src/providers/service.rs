@@ -144,9 +144,11 @@ impl ProviderService {
         if let Some(config) = self.load()? {
             return Ok(config);
         }
-        let database = host.database();
+        let Some(database) = host.database() else {
+            return Ok(ProvidersConfig::default());
+        };
         let dictation = dictation_settings(&self.dir).await;
-        self.load_or_migrate(database.as_ref().map(|db| db.pool()), dictation.as_ref())
+        self.load_or_migrate(Some(database.pool()), dictation.as_ref())
             .await
     }
 
