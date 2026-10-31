@@ -491,6 +491,8 @@ pub struct TrackWriter<S: TrackStorage> {
     /// Earliest time of the next write attempt while failing.
     retry_at: Option<Instant>,
     failing: bool,
+    /// Buffered audio replaced by silence during the current failure.
+    replaced: u64,
     attempts: u64,
     scratch: Vec<i16>,
 }
@@ -511,6 +513,7 @@ impl<S: TrackStorage> TrackWriter<S> {
             last_commit: None,
             retry_at: None,
             failing: false,
+            replaced: 0,
             attempts: 0,
             scratch: Vec::new(),
         }
@@ -620,11 +623,11 @@ impl<S: TrackStorage> TrackWriter<S> {
                 }
             }
         }
-        if replaced > 0 && !self.failing {
-            log::warn!(
-                "Track buffer full: {:.2}s of audio replaced by silence",
-                replaced as f64 / self.sample_rate as f64
-            );
+        if replaced > 0 {
+            if self.replaced == 0 {
+                log::warn!("Track buffer full: the oldest buffered audio is replaced by silence");
+            }
+            self.replaced += replaced as u64;
         }
     }
 
@@ -688,6 +691,13 @@ impl<S: TrackStorage> TrackWriter<S> {
                 self.retry_at = None;
                 if self.failing {
                     self.failing = false;
+                    if self.replaced > 0 {
+                        log::warn!(
+                            "Track buffer full: {:.2}s of audio was replaced by silence",
+                            self.replaced as f64 / self.sample_rate as f64
+                        );
+                        self.replaced = 0;
+                    }
                     log::info!("Storage recovered, the track is written again");
                     return Some(StorageEvent::Recovered);
                 }
