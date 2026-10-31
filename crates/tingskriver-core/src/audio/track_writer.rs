@@ -28,11 +28,16 @@ pub const COMMIT_INTERVAL: Duration = Duration::from_secs(1);
 /// While the storage fails, at most one write attempt per this interval.
 pub const RETRY_INTERVAL: Duration = Duration::from_secs(10);
 
-/// A chunk that starts more than this far after the end of the track (on the
-/// shared recording clock) is preceded by silence, so both tracks stay on the
-/// same time axis across device outages. Larger than callback jitter, smaller
-/// than anything audible as drift.
+/// A track that lags the shared recording clock by more than this, for at
+/// least [`GAP_CONFIRM`], gets silence for the missing time, so both tracks
+/// stay on the same time axis across device outages. Larger than callback
+/// jitter, smaller than anything audible as drift.
 pub const GAP_FILL_THRESHOLD: Duration = Duration::from_millis(250);
+
+/// How long a lag must persist before it counts as a gap. A stalled device
+/// that then delivers its backlog in a burst lags only briefly; filling that
+/// with silence would push the track ahead of the other for good.
+pub const GAP_CONFIRM: Duration = Duration::from_secs(1);
 
 /// While the storage fails, at most this much audio is kept in memory per
 /// track (16-bit: 2.9 MB at 48 kHz). Older audio is replaced by silence of the
@@ -440,6 +445,9 @@ pub struct TrackWriter<S: TrackStorage> {
     offset: Option<u64>,
     /// Samples accepted so far (written + pending), including silence.
     accepted: u64,
+    /// Clock position where the current lag beyond the threshold started,
+    /// and the smallest lag seen since.
+    lag_since: Option<(u64, u64)>,
     pending: VecDeque<Block>,
     pending_sample_count: usize,
     max_pending_samples: usize,
@@ -460,6 +468,7 @@ impl<S: TrackStorage> TrackWriter<S> {
             sample_rate,
             offset: None,
             accepted: 0,
+            lag_since: None,
             pending: VecDeque::new(),
             pending_sample_count: 0,
             max_pending_samples: (MAX_PENDING.as_secs_f64() * sample_rate as f64) as usize,
@@ -490,15 +499,28 @@ impl<S: TrackStorage> TrackWriter<S> {
             }
             (Some(offset), Some(end)) => {
                 let start = end.saturating_sub(len);
-                let track_end = offset + self.accepted;
+                let lag = start.saturating_sub(offset + self.accepted);
                 let threshold = (GAP_FILL_THRESHOLD.as_secs_f64() * self.sample_rate as f64) as u64;
-                if start > track_end + threshold {
-                    let gap = start - track_end;
-                    log::warn!(
-                        "Track gap of {:.2}s on the recording clock, filled with silence",
-                        gap as f64 / self.sample_rate as f64
-                    );
-                    self.push_silence(gap);
+                let confirm = (GAP_CONFIRM.as_secs_f64() * self.sample_rate as f64) as u64;
+                if lag <= threshold {
+                    self.lag_since = None;
+                } else {
+                    match self.lag_since {
+                        None => self.lag_since = Some((start, lag)),
+                        Some((since, smallest)) => {
+                            let smallest = smallest.min(lag);
+                            if start.saturating_sub(since) >= confirm {
+                                log::warn!(
+                                    "Track lags the recording clock by {:.2}s; filled with silence",
+                                    smallest as f64 / self.sample_rate as f64
+                                );
+                                self.push_silence(smallest);
+                                self.lag_since = None;
+                            } else {
+                                self.lag_since = Some((since, smallest));
+                            }
+                        }
+                    }
                 }
             }
             (Some(_), None) => {}
@@ -796,16 +818,42 @@ pub(crate) mod tests {
         // Small jitter is ignored.
         w.push(&[0.1; 100], Some(800));
         assert_eq!(w.end_position(), Some(700));
-        // A 1 s gap: chunk ends at 1800, starts at 1700, track ends at 700.
-        w.push(&[0.1; 100], Some(1800));
-        assert_eq!(w.end_position(), Some(1800));
+        // Device outage of 1 s: the next chunk starts at 1700, the track
+        // ends at 700. Audio continues in real time; once the lag has lasted
+        // GAP_CONFIRM it is filled.
+        let mut end = 1800;
+        while end <= 3000 {
+            w.push(&[0.1; 100], Some(end));
+            end += 100;
+        }
+        assert_eq!(w.end_position(), Some(3000));
         let (summary, _) = w.finish(Instant::now());
         assert_eq!(summary.offset_samples, 500);
-        assert_eq!(summary.written_samples, 1300);
         assert_eq!(summary.silence_samples, 1000);
         let data = storage.samples.lock().unwrap();
-        assert!(data[200..1200].iter().all(|&s| s == 0));
-        assert!(data[1200..].iter().all(|&s| s != 0));
+        assert_eq!(data.len(), 2500);
+        // The silence sits after the audio that confirmed the gap.
+        assert_eq!(data.iter().filter(|&&s| s == 0).count(), 1000);
+    }
+
+    #[test]
+    fn a_burst_after_a_stall_is_not_a_gap() {
+        let storage = MemoryStorage::default();
+        let mut w = TrackWriter::new(storage.clone(), 1000);
+        for i in 1..=10u64 {
+            w.push(&[0.1; 100], Some(i * 100));
+        }
+        // The device stalls for 0.5 s and then delivers the backlog at once:
+        // five chunks all stamped at 1500, then real time again.
+        for _ in 0..5 {
+            w.push(&[0.1; 100], Some(1500));
+        }
+        for i in 16..=40u64 {
+            w.push(&[0.1; 100], Some(i * 100));
+        }
+        let (summary, _) = w.finish(Instant::now());
+        assert_eq!(summary.silence_samples, 0);
+        assert_eq!(summary.written_samples, 4000);
     }
 
     #[test]
