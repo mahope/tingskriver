@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 use tokio::sync::Mutex as AsyncMutex;
 use anyhow::Result;
-use log::{info, warn, error};
+use log::{debug, info, warn, error};
 use crate::host::{HostExt, HostHandle};
 use tokio::sync::mpsc;
 use serde::{Serialize, Deserialize};
@@ -96,12 +96,12 @@ impl RecordingSaver {
             // Check if segment with same sequence_id exists (update it)
             if let Some(existing) = segments.iter_mut().find(|s| s.sequence_id == segment.sequence_id) {
                 *existing = segment.clone();
-                info!("Updated transcript segment {} (seq: {}) - total segments: {}",
+                debug!("Updated transcript segment {} (seq: {}) - total segments: {}",
                       segment.id, segment.sequence_id, segments.len());
             } else {
                 // New segment, add it
                 segments.push(segment.clone());
-                info!("Added new transcript segment {} (seq: {}) - total segments: {}",
+                debug!("Added new transcript segment {} (seq: {}) - total segments: {}",
                       segment.id, segment.sequence_id, segments.len());
             }
         } else {
@@ -286,7 +286,7 @@ impl RecordingSaver {
             return Err(anyhow::anyhow!("Failed to lock transcript segments"));
         };
 
-        info!("Writing {} transcript segments to JSON", segments_clone.len());
+        debug!("Writing {} transcript segments to JSON", segments_clone.len());
 
         let transcript_path = folder.join("transcripts.json");
         let temp_path = folder.join(".transcripts.json.tmp");
@@ -327,7 +327,7 @@ impl RecordingSaver {
                 anyhow::anyhow!("Failed to rename transcript file: {}", e)
             })?;
 
-        info!("✅ Successfully wrote transcripts.json with {} segments", segments_clone.len());
+        debug!("✅ Successfully wrote transcripts.json with {} segments", segments_clone.len());
         Ok(())
     }
 

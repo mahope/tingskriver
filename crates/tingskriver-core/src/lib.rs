@@ -38,6 +38,7 @@ pub mod anthropic;
 pub mod api;
 pub mod audio;
 pub mod config;
+pub mod crash_dumps;
 pub mod database;
 pub mod dictation;
 pub mod host;

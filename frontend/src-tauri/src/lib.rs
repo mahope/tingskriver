@@ -405,6 +405,20 @@ async fn open_log_folder() -> Result<(), String> {
     Ok(())
 }
 
+/// Whether Windows saves a crash dump when the app crashes in native code.
+#[tauri::command]
+fn get_crash_dumps_enabled() -> bool {
+    tingskriver_core::crash_dumps::enabled()
+}
+
+/// Turn crash dumps on or off (the per-user WER LocalDumps key).
+#[tauri::command]
+async fn set_crash_dumps_enabled(enabled: bool) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || tingskriver_core::crash_dumps::set_enabled(enabled))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 pub fn run() {
     log::set_max_level(log::LevelFilter::Info);
 
@@ -439,6 +453,9 @@ pub fn run() {
         .setup(|_app| {
             // Core spawns async work from audio and hook threads on Tauri's runtime.
             tingskriver_core::runtime::set_handle(tauri::async_runtime::handle().inner().clone());
+
+            // Windows Error Reporting writes a minidump on a native crash.
+            tingskriver_core::crash_dumps::apply_in_background();
 
             #[cfg(target_os = "windows")]
             match _app.path().resolve(
@@ -740,6 +757,8 @@ pub fn run() {
             audio::recording_preferences::get_default_recordings_folder_path,
             audio::recording_preferences::open_recordings_folder,
             open_log_folder,
+            get_crash_dumps_enabled,
+            set_crash_dumps_enabled,
             audio::recording_preferences::select_recording_folder,
             audio::recording_preferences::get_available_audio_backends,
             audio::recording_preferences::get_current_audio_backend,

@@ -512,14 +512,14 @@ impl AudioCapture {
                     0
                 };
 
-                info!(
+                debug!(
                     "🔄 [{:?}] Persistent buffered resampler: {}Hz → {}Hz (ratio: {:.2}x)",
                     self.device_type,
                     self.sample_rate,
                     TARGET_SAMPLE_RATE,
                     ratio
                 );
-                info!(
+                debug!(
                     "   Chunk {}: {} → {} samples, RMS preservation: {:.1}%, buffer: {}",
                     chunk_id,
                     before_len,
@@ -879,7 +879,7 @@ impl AudioPipeline {
                                         let duration_ms = segment.end_timestamp_ms - segment.start_timestamp_ms;
 
                                         if segment.samples.len() >= 800 {  // Minimum 50ms at 16kHz - matches Parakeet capability
-                                            info!("📤 Sending VAD segment: {:.1}ms, {} samples",
+                                            debug!("📤 Sending VAD segment: {:.1}ms, {} samples",
                                                   duration_ms, segment.samples.len());
 
                                             let transcription_chunk = AudioChunk {

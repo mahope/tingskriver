@@ -26,5 +26,13 @@ tokio = { version = "1.32.0", features = ["full"] }
 [profile.release]
 lto = "thin"
 codegen-units = 1
-strip = true
+# File and line numbers in panic backtraces and crash dumps, at a fraction of
+# the size of full debug info.
+debug = "line-tables-only"
+# The debug info goes to a separate file (tingskriver.pdb next to the exe on
+# Windows), not into the exe. `strip = true` must stay off: on MSVC it makes
+# rustc link with /DEBUG:NONE, and then no PDB is written at all.
+split-debuginfo = "packed"
+strip = "none"
+# A panicking tokio task must not take the whole app down.
 panic = "unwind"

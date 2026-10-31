@@ -20,6 +20,27 @@ export function PreferenceSettings() {
   const [notificationsEnabled, setNotificationsEnabled] = useState<boolean | null>(null);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
   const [previousNotificationsEnabled, setPreviousNotificationsEnabled] = useState<boolean | null>(null);
+  const [crashDumpsEnabled, setCrashDumpsEnabled] = useState<boolean | null>(null);
+  const [crashDumpsError, setCrashDumpsError] = useState<string | null>(null);
+
+  useEffect(() => {
+    invoke<boolean>('get_crash_dumps_enabled')
+      .then(setCrashDumpsEnabled)
+      .catch((error) => console.error('Failed to read crash dump setting:', error));
+  }, []);
+
+  const handleCrashDumpsChange = async (enabled: boolean) => {
+    const previous = crashDumpsEnabled;
+    setCrashDumpsEnabled(enabled);
+    setCrashDumpsError(null);
+    try {
+      await invoke('set_crash_dumps_enabled', { enabled });
+    } catch (error) {
+      console.error('Failed to change crash dump setting:', error);
+      setCrashDumpsEnabled(previous);
+      setCrashDumpsError('Indstillingen kunne ikke gemmes. Prøv igen.');
+    }
+  };
   const hasTrackedViewRef = useRef(false);
 
   // Lazy load preferences on mount (only loads if not already cached)
@@ -223,6 +244,28 @@ export function PreferenceSettings() {
           <FolderOpen className="w-4 h-4" aria-hidden="true" />
           Åbn logmappe
         </button>
+
+        <div className="flex items-center justify-between gap-6 mt-6">
+          <div>
+            <label htmlFor="pref-crash-dumps-switch" className="font-medium text-foreground">
+              Gem nedbrudsfiler
+            </label>
+            <p id="pref-crash-dumps-hint" className="text-sm text-muted-foreground">
+              Går Tingskriver ned, gemmer Windows en lille fil i mappen dumps ved siden af loggen.
+              Den bliver på din computer, indtil du selv sender den.
+            </p>
+          </div>
+          <Switch
+            id="pref-crash-dumps-switch"
+            aria-describedby="pref-crash-dumps-hint"
+            checked={crashDumpsEnabled ?? true}
+            disabled={crashDumpsEnabled === null}
+            onCheckedChange={handleCrashDumpsChange}
+          />
+        </div>
+        {crashDumpsError && (
+          <p className="mt-2 text-sm text-destructive" role="alert">{crashDumpsError}</p>
+        )}
 
         <p className="mt-6 text-sm text-muted-foreground">
           Databasen og modellerne ligger sammen i programmets datamappe, så alt er samlet ét sted.

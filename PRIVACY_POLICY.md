@@ -62,6 +62,14 @@ When enabled, analytics helps us with:
 - **Location**: Data processed in accordance with PostHog's privacy policy
 - **Access Control**: Strictly limited to core development team members
 
+## Logs and Crash Dumps
+
+Tingskriver keeps a log file and, after a crash, a crash dump on your own computer. Neither is uploaded or sent anywhere; you decide whether to send one to the developer.
+
+- **Log**: `%LOCALAPPDATA%\dk.mahoje.tingskriver\logs`, at most three files of 5 MB. It records what the app did (startup, devices, errors, panics with a backtrace), not what was said in a meeting.
+- **Crash dumps**: when Tingskriver crashes in native code, Windows Error Reporting writes a minidump (`DumpType` 1: threads, call stacks and loaded modules, no full memory) to `%LOCALAPPDATA%\dk.mahoje.tingskriver\dumps`, at most five. The app sets this up with the per-user registry key `HKCU\Software\Microsoft\Windows\Windows Error Reporting\LocalDumps\tingskriver.exe`. A minidump holds the program's state at the moment of the crash and can contain fragments of what it was working on. On by default; turn it off under Settings > Preferences > "Gem nedbrudsfiler", which removes the registry key.
+- **Database backups**: if the database cannot be opened at startup, a copy is placed in `backups` in the app's data folder before the error is shown. Nothing is deleted.
+
 ## Third-Party Services
 
 ### LLM Providers (Optional)
