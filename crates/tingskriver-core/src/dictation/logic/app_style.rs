@@ -36,7 +36,25 @@ pub fn default_rules() -> Vec<AppStyleRule> {
 fn base_name(process: &str) -> String {
     let file = process.rsplit(['\\', '/']).next().unwrap_or(process).trim();
     let lower = file.to_lowercase();
-    lower.strip_suffix(".exe").map(str::to_string).unwrap_or(lower)
+    lower
+        .strip_suffix(".exe")
+        .map(str::to_string)
+        .unwrap_or(lower)
+}
+
+/// The style the user's list sets for `process`, if it names it. A program
+/// from [`default_rules`] that the user removed from the list counts as
+/// normal, so removing VS Code still turns raw text off.
+pub fn chosen_style(process: &str, rules: &[AppStyleRule]) -> Option<Style> {
+    let name = base_name(process);
+    let named = |rules: &[AppStyleRule]| rules.iter().any(|r| base_name(&r.process) == name);
+    if named(rules) {
+        Some(style_for(Some(process), rules))
+    } else if named(&default_rules()) {
+        Some(Style::Normal)
+    } else {
+        None
+    }
 }
 
 pub fn style_for(process: Option<&str>, rules: &[AppStyleRule]) -> Style {
@@ -60,7 +78,10 @@ mod tests {
         let rules = default_rules();
         assert_eq!(style_for(Some("Code.exe"), &rules), Style::Raw);
         assert_eq!(style_for(Some("code.EXE"), &rules), Style::Raw);
-        assert_eq!(style_for(Some("C:\\Program Files\\PowerShell\\7\\pwsh.exe"), &rules), Style::Raw);
+        assert_eq!(
+            style_for(Some("C:\\Program Files\\PowerShell\\7\\pwsh.exe"), &rules),
+            Style::Raw
+        );
         assert_eq!(style_for(Some("cmd.exe"), &rules), Style::Raw);
         assert_eq!(style_for(Some("idea64.exe"), &rules), Style::Raw);
     }

@@ -241,8 +241,10 @@ fn words(text: &str) -> Vec<String> {
 ///
 /// `shortcut` is the label of the mode shortcut that started the dictation,
 /// if any. `transcript` is the raw text, used for trigger words.
-/// `legacy_rules` is the old style-per-program list; a raw match there picks
-/// the first raw mode, so custom lists from earlier versions keep working.
+/// `legacy_rules` is the old style-per-program list, still edited in the
+/// settings. It decides for the programs it names (and the default editors
+/// the user removed from it): "raw" picks the first raw mode, "normal" keeps
+/// the program out of raw modes.
 pub fn choose(
     modes: &[Mode],
     window: &ForegroundWindow,
@@ -253,10 +255,17 @@ pub fn choose(
     if modes.is_empty() {
         return None;
     }
+    let legacy = window
+        .process
+        .as_deref()
+        .and_then(|p| app_style::chosen_style(p, legacy_rules));
     let pick = |matched_by, f: &dyn Fn(&ModeRule) -> bool| {
         modes
             .iter()
-            .position(|m| m.rules.iter().any(f))
+            .position(|m| {
+                let blocked = legacy == Some(Style::Normal) && m.style == Style::Raw;
+                !blocked && m.rules.iter().any(f)
+            })
             .map(|index| ModeChoice {
                 index,
                 matched_by,
@@ -292,6 +301,15 @@ pub fn choose(
         }
     }
 
+    if legacy == Some(Style::Raw) {
+        if let Some(index) = modes.iter().position(|m| m.style == Style::Raw) {
+            return Some(ModeChoice {
+                index,
+                matched_by: MatchedBy::LegacyStyle,
+                trigger_words: 0,
+            });
+        }
+    }
     if let Some(process) = &window.process {
         if let Some(c) = pick(
             MatchedBy::Program,
@@ -315,15 +333,6 @@ pub fn choose(
             &|r| matches!(r, ModeRule::TitleContains(t) if !t.trim().is_empty() && title.contains(&t.trim().to_lowercase())),
         ) {
             return Some(c);
-        }
-    }
-    if app_style::style_for(window.process.as_deref(), legacy_rules) == Style::Raw {
-        if let Some(index) = modes.iter().position(|m| m.style == Style::Raw) {
-            return Some(ModeChoice {
-                index,
-                matched_by: MatchedBy::LegacyStyle,
-                trigger_words: 0,
-            });
         }
     }
     let index = modes.iter().position(|m| m.id == "standard").unwrap_or(0);
@@ -537,7 +546,7 @@ mod tests {
 
     fn chosen(window: &ForegroundWindow, text: &str) -> String {
         let modes = builtin_modes();
-        let c = choose(&modes, window, text, None, &[]).unwrap();
+        let c = choose(&modes, window, text, None, &app_style::default_rules()).unwrap();
         modes[c.index].id.clone()
     }
 
@@ -680,6 +689,31 @@ mod tests {
             (modes[c.index].id.as_str(), c.matched_by),
             ("kode", MatchedBy::LegacyStyle)
         );
+    }
+
+    #[test]
+    fn legacy_list_overrides_builtin_program_rules() {
+        let modes = builtin_modes();
+        let id = |process: &str, legacy: &[app_style::AppStyleRule]| {
+            let c = choose(&modes, &window(process, ""), "hej", None, legacy).unwrap();
+            modes[c.index].id.clone()
+        };
+        let mut legacy = app_style::default_rules();
+        assert_eq!(id("Code.exe", &legacy), "kode");
+        // VS Code set to normal in the old list.
+        legacy[0].style = Style::Normal;
+        assert_eq!(id("Code.exe", &legacy), "standard");
+        // pwsh removed from the list.
+        legacy.retain(|r| r.process != "pwsh.exe");
+        assert_eq!(id("pwsh.exe", &legacy), "standard");
+        // Editors only the modes know are unaffected.
+        assert_eq!(id("zed.exe", &legacy), "kode");
+        // Slack set to raw in the old list beats the Chat program rule.
+        legacy.push(app_style::AppStyleRule {
+            process: "slack.exe".into(),
+            style: Style::Raw,
+        });
+        assert_eq!(id("slack.exe", &legacy), "kode");
     }
 
     fn defaults() -> Defaults {
