@@ -296,25 +296,51 @@ async fn failed_open_never_deletes_wal_or_shm_and_backs_them_up() {
 
     let crashed = tempfile::tempdir().unwrap();
     copy_crash_state(live.path(), crashed.path());
-    let [main, wal, shm] = database_files(&crashed.path().join(DATABASE_FILE));
+    let [main, wal, shm, _] = database_files(&crashed.path().join(DATABASE_FILE));
     let wal_bytes = std::fs::read(&wal).unwrap();
     assert!(shm.exists());
     // Destroy the header of the main file.
     let mut bytes = std::fs::read(&main).unwrap();
     bytes[..16].copy_from_slice(b"definitely-not!!");
-    std::fs::write(&main, bytes).unwrap();
+    std::fs::write(&main, &bytes).unwrap();
 
     let error = DatabaseManager::open(crashed.path())
         .await
         .err()
         .expect("must fail");
     assert!(matches!(error, DbInitError::Corrupt(_)), "{error:?}");
-    assert_eq!(std::fs::read(&wal).unwrap(), wal_bytes, "WAL untouched");
-    assert!(shm.exists(), "SHM untouched");
+
+    // The backup holds the files exactly as the crash left them, taken
+    // before SQLite opened them.
     let backup = error.backup_path().unwrap();
+    assert_eq!(std::fs::read(backup.join(DATABASE_FILE)).unwrap(), bytes);
     assert_eq!(
         std::fs::read(backup.join(format!("{DATABASE_FILE}-wal"))).unwrap(),
         wal_bytes
+    );
+    // Our code leaves the WAL alone. On Windows SQLite itself checkpoints
+    // the WAL into the main file when the failed connection closes and then
+    // removes it, so the frames move rather than disappear.
+    #[cfg(not(windows))]
+    {
+        assert_eq!(std::fs::read(&wal).unwrap(), wal_bytes, "WAL untouched");
+        assert!(shm.exists(), "SHM untouched");
+    }
+}
+
+#[tokio::test]
+async fn safety_copy_of_an_unclean_database_is_removed_when_it_opens() {
+    let live = tempfile::tempdir().unwrap();
+    let db = create_database(live.path()).await;
+    insert_meeting(db.pool(), "m").await;
+    let crashed = tempfile::tempdir().unwrap();
+    copy_crash_state(live.path(), crashed.path());
+
+    DatabaseManager::open(crashed.path()).await.unwrap();
+    assert!(
+        backups(crashed.path()).is_empty(),
+        "{:?}",
+        backups(crashed.path())
     );
 }
 

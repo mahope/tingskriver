@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use super::init::{
-    backup_after_failure, kind_from_io, kind_from_migrate, kind_from_sqlx, DbFailureInfo,
-    DbFailureKind, DbInitError, BACKUP_DIR, BUSY_TIMEOUT,
+    backup_after_failure, backup_before_open, kind_from_io, kind_from_migrate, kind_from_sqlx,
+    DbFailureInfo, DbFailureKind, DbInitError, BACKUP_DIR, BUSY_TIMEOUT,
 };
 
 /// The legacy backend's database, copied on first open when it exists.
@@ -82,25 +82,36 @@ impl DatabaseManager {
         Ok(DatabaseManager { pool })
     }
 
-    /// Open the database in `app_data_dir` at startup. On failure the
-    /// database (with its `-wal` and `-shm` files) is copied to
-    /// `app_data_dir/backups` first when the kind of failure calls for it,
-    /// the error is logged, and the error says what the UI should show.
-    /// Never deletes anything.
+    /// Open the database in `app_data_dir` at startup. A database that was
+    /// not closed cleanly (a `-wal` or `-journal` left behind) is copied to
+    /// `app_data_dir/backups` before it is opened, and the copy is removed
+    /// again when it opens. On failure without such a copy, the database
+    /// (with its `-wal` and `-shm` files) is copied when the kind of failure
+    /// calls for it. The error is logged and says what the UI should show.
+    /// Never deletes the database or its journals.
     pub async fn open(app_data_dir: &Path) -> std::result::Result<Self, DbInitError> {
         let started = Instant::now();
         let database_path = app_data_dir.join(crate::paths::DATABASE_FILE);
         let legacy_path = app_data_dir.join(LEGACY_DATABASE_FILE);
         log::info!("Database path: {}", database_path.display());
+        let backup_dir = Self::backup_dir(app_data_dir);
+        let safety_copy = backup_before_open(&database_path, &backup_dir);
 
         match Self::open_at(&database_path, &legacy_path, BUSY_TIMEOUT).await {
             Ok(db) => {
+                if let Some(copy) = safety_copy {
+                    copy.discard();
+                }
                 log::info!("Database opened in {} ms", started.elapsed().as_millis());
                 Ok(db)
             }
             Err(mut error) => {
                 log::error!("Database failed to open ({:?}): {}", error.kind(), error);
-                backup_after_failure(&mut error, &Self::backup_dir(app_data_dir));
+                match safety_copy {
+                    // The files as they were before SQLite touched them.
+                    Some(copy) => error.set_backup_path(Some(copy.folder().to_path_buf())),
+                    None => backup_after_failure(&mut error, &backup_dir),
+                }
                 Err(error)
             }
         }

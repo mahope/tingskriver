@@ -21,7 +21,7 @@ fn panic_in_background_thread_is_logged_with_backtrace() {
         .nth(1)
         .unwrap_or_else(|| panic!("no panic in the log:\n{logged}"));
     assert!(entry.starts_with(" 'lydoptager' at "), "{entry}");
-    assert!(entry.contains("tests/panic_hook.rs"), "location: {entry}");
+    assert!(entry.contains("panic_hook.rs:"), "location: {entry}");
     assert!(
         entry.contains("simulated crash in the recording thread"),
         "{entry}"

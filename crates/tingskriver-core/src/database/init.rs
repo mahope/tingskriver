@@ -249,13 +249,30 @@ fn kind_from_message(message: &str) -> DbFailureKind {
     }
 }
 
-/// The database file and the two files SQLite keeps next to it in WAL mode.
-pub fn database_files(database_path: &Path) -> [PathBuf; 3] {
-    let mut wal = database_path.as_os_str().to_owned();
-    wal.push("-wal");
-    let mut shm = database_path.as_os_str().to_owned();
-    shm.push("-shm");
-    [database_path.to_path_buf(), wal.into(), shm.into()]
+/// The database file, the two files SQLite keeps next to it in WAL mode
+/// and the rollback journal.
+pub fn database_files(database_path: &Path) -> [PathBuf; 4] {
+    let with_suffix = |suffix: &str| {
+        let mut path = database_path.as_os_str().to_owned();
+        path.push(suffix);
+        PathBuf::from(path)
+    };
+    [
+        database_path.to_path_buf(),
+        with_suffix("-wal"),
+        with_suffix("-shm"),
+        with_suffix("-journal"),
+    ]
+}
+
+/// Whether the last session left a `-wal` or `-journal` with content behind,
+/// i.e. ended without closing the database (a crash). A clean shutdown
+/// checkpoints the WAL and SQLite removes it.
+pub fn has_leftover_journal(database_path: &Path) -> bool {
+    let [_, wal, _, journal] = database_files(database_path);
+    [wal, journal]
+        .iter()
+        .any(|file| fs::metadata(file).map(|m| m.len() > 0).unwrap_or(false))
 }
 
 /// Folder name for a backup of `database_path`: the file name, its
@@ -270,11 +287,17 @@ fn backup_folder_name(database_path: &Path, modified: SystemTime, len: u64) -> S
     format!("{stem}-{}-{len}", modified.format("%Y%m%d-%H%M%S"))
 }
 
-/// Copy the database file and its `-wal`/`-shm` files to a new folder in
-/// `backup_root`. Returns the folder, or `None` when there is no database
-/// file to copy. A backup of the same file state (modification time and
-/// size) is reused instead of copied again.
+/// Copy the database file and its `-wal`, `-shm` and `-journal` files to a
+/// new folder in `backup_root`. Returns the folder, or `None` when there is
+/// no database file to copy. A backup of the same file state (modification
+/// time and size) is reused instead of copied again.
 pub fn backup_database(database_path: &Path, backup_root: &Path) -> io::Result<Option<PathBuf>> {
+    Ok(copy_database(database_path, backup_root)?.map(|(folder, _)| folder))
+}
+
+/// [`backup_database`], and whether this call made the copy (`false` when an
+/// existing backup of the same file state was reused).
+fn copy_database(database_path: &Path, backup_root: &Path) -> io::Result<Option<(PathBuf, bool)>> {
     let metadata = match fs::metadata(database_path) {
         Ok(metadata) => metadata,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -284,7 +307,7 @@ pub fn backup_database(database_path: &Path, backup_root: &Path) -> io::Result<O
     let folder = backup_root.join(backup_folder_name(database_path, modified, metadata.len()));
     let main_copy = folder.join(database_path.file_name().unwrap_or_default());
     if main_copy.exists() {
-        return Ok(Some(folder));
+        return Ok(Some((folder, false)));
     }
 
     // Copy into a temporary folder and rename it at the end, so a copy that
@@ -306,7 +329,58 @@ pub fn backup_database(database_path: &Path, backup_root: &Path) -> io::Result<O
         }
     }
     fs::rename(&partial, &folder)?;
-    Ok(Some(folder))
+    Ok(Some((folder, true)))
+}
+
+/// A copy taken before opening a database that was not closed cleanly.
+pub(crate) struct SafetyCopy {
+    folder: PathBuf,
+    created: bool,
+}
+
+impl SafetyCopy {
+    pub(crate) fn folder(&self) -> &Path {
+        &self.folder
+    }
+
+    /// The database opened: the copy is not needed. Only a copy made by
+    /// this start is removed, never an earlier backup.
+    pub(crate) fn discard(self) {
+        if self.created {
+            if let Err(e) = fs::remove_dir_all(&self.folder) {
+                log::warn!("Could not remove {}: {}", self.folder.display(), e);
+            }
+        }
+    }
+}
+
+/// Copy the database before opening it when the last session left a
+/// journal behind. SQLite replays a rollback journal, and checkpoints a WAL
+/// into the main file when the connection closes, even when the open then
+/// fails, so a copy taken after the failure would no longer show the files
+/// as they were.
+pub(crate) fn backup_before_open(database_path: &Path, backup_root: &Path) -> Option<SafetyCopy> {
+    if !has_leftover_journal(database_path) {
+        return None;
+    }
+    match copy_database(database_path, backup_root) {
+        Ok(Some((folder, created))) => {
+            log::info!(
+                "The database was not closed cleanly; copied it to {} before opening",
+                folder.display()
+            );
+            Some(SafetyCopy { folder, created })
+        }
+        Ok(None) => None,
+        Err(e) => {
+            log::warn!(
+                "Could not copy {} before opening: {}",
+                database_path.display(),
+                e
+            );
+            None
+        }
+    }
 }
 
 /// Take the backup an error asks for, log the outcome and record the
@@ -425,10 +499,11 @@ mod tests {
 
     #[test]
     fn database_files_include_wal_and_shm() {
-        let [db, wal, shm] = database_files(Path::new("/x/meeting_minutes.sqlite"));
+        let [db, wal, shm, journal] = database_files(Path::new("/x/meeting_minutes.sqlite"));
         assert_eq!(db, PathBuf::from("/x/meeting_minutes.sqlite"));
         assert_eq!(wal, PathBuf::from("/x/meeting_minutes.sqlite-wal"));
         assert_eq!(shm, PathBuf::from("/x/meeting_minutes.sqlite-shm"));
+        assert_eq!(journal, PathBuf::from("/x/meeting_minutes.sqlite-journal"));
     }
 
     #[test]
@@ -457,6 +532,38 @@ mod tests {
         let again = backup_database(&db, &root).unwrap().unwrap();
         assert_eq!(again, folder);
         assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn leftover_journals_are_detected_and_safety_copies_only_remove_their_own() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("meeting_minutes.sqlite");
+        let wal = dir.path().join("meeting_minutes.sqlite-wal");
+        let root = dir.path().join(BACKUP_DIR);
+        fs::write(&db, b"main").unwrap();
+        assert!(!has_leftover_journal(&db));
+        assert!(backup_before_open(&db, &root).is_none());
+        fs::write(&wal, b"").unwrap();
+        assert!(!has_leftover_journal(&db), "an empty WAL is a clean state");
+        fs::write(&wal, b"frames").unwrap();
+        assert!(has_leftover_journal(&db));
+
+        let copy = backup_before_open(&db, &root).unwrap();
+        let folder = copy.folder().to_path_buf();
+        assert_eq!(
+            fs::read(folder.join("meeting_minutes.sqlite-wal")).unwrap(),
+            b"frames"
+        );
+        copy.discard();
+        assert!(!folder.exists());
+
+        // A backup from an earlier failure of the same file state stays.
+        let earlier = backup_database(&db, &root).unwrap().unwrap();
+        let copy = backup_before_open(&db, &root).unwrap();
+        assert_eq!(copy.folder(), earlier);
+        copy.discard();
+        assert!(earlier.exists());
+        assert!(wal.exists(), "the WAL itself is never touched");
     }
 
     #[test]
