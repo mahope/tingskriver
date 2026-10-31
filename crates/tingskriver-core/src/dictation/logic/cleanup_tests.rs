@@ -492,6 +492,25 @@ fn addresses_table() {
         ),
         ("skriv til anna@eksempel.dk", "Skriv til anna@eksempel.dk"),
         ("se mahoje prik dk", "Se mahoje.dk"),
+        // A full stop after an address ends the sentence (#27 review).
+        (
+            "Skriv til anna@eksempel.dk. Vi ses i morgen.",
+            "Skriv til anna@eksempel.dk. Vi ses i morgen.",
+        ),
+        ("Mail anna@eksempel.dk. Tak.", "Mail anna@eksempel.dk. Tak."),
+        (
+            "skriv til anna snabel-a eksempel punktum dk punktum vi ses i morgen",
+            "Skriv til anna@eksempel.dk. Vi ses i morgen",
+        ),
+        (
+            "Mail til anna snabel-a eksempel. Dk. Tak.",
+            "Mail til anna@eksempel.dk. Tak.",
+        ),
+        ("Den er god. Com", "Den er god. Com"),
+        (
+            "ring til mig. anna snabel-a eksempel punktum dk",
+            "Ring til mig. anna@eksempel.dk",
+        ),
     ];
     for (input, expected) in cases {
         let out = normal(input);

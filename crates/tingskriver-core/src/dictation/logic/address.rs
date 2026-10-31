@@ -19,11 +19,21 @@ const BARE_TLDS: &[&str] = &[
     "dk", "com", "org", "net", "io", "eu", "ai", "dev", "app", "info", "fo", "gl", "uk", "biz",
 ];
 
+/// Labels that may be followed by another top-level domain ("co.uk",
+/// "com.au"). After any other complete domain a dot ends the address, so
+/// "anna@eksempel.dk. Vi ses" keeps its sentence boundary.
+const SECOND_LEVEL: &[&str] = &["co", "com", "org", "net", "ac", "gov", "edu"];
+
 #[derive(Clone, Debug, PartialEq)]
 enum Atom {
     Word(String),
     At,
+    /// A spoken "punktum" or a dot inside a word ("eksempel.dk").
     Dot,
+    /// A full stop the speech model wrote on its own ("eksempel. Dk"): a
+    /// dot inside an e-mail or www address, but a sentence end after a
+    /// bare name ("Den er god. Com").
+    Period,
     Dash,
     Underscore,
     Slash,
@@ -93,7 +103,7 @@ fn pieces(tokens: &[Tok]) -> Vec<Piece> {
     let mut i = 0;
     while i < tokens.len() {
         match &tokens[i] {
-            Tok::Punct('.') => out.push(piece(Atom::Dot, i, 1)),
+            Tok::Punct('.') => out.push(piece(Atom::Period, i, 1)),
             Tok::Word { text, kind } if *kind != WordKind::Exact || is_address_like(text) => {
                 let lower = text.to_lowercase();
                 // "snabel a" as two words.
@@ -152,7 +162,7 @@ fn label(atoms: &[Atom]) -> String {
         .iter()
         .map(|a| match a {
             Atom::Word(w) => w.as_str(),
-            Atom::Dot => ".",
+            Atom::Dot | Atom::Period => ".",
             Atom::At => "@",
             Atom::Dash => "-",
             Atom::Underscore => "_",
@@ -166,6 +176,8 @@ fn label(atoms: &[Atom]) -> String {
 /// ending in a top-level domain. Returns (atoms used, number of dots).
 fn domain(atoms: &[Atom], bare: bool) -> Option<usize> {
     let mut best = None;
+    // The top-level domain that ends `best`.
+    let mut best_tld = String::new();
     let mut i = 0;
     let mut in_label = false;
     let mut label_start = 0;
@@ -192,6 +204,7 @@ fn domain(atoms: &[Atom], bare: bool) -> Option<usize> {
                     let one_word = i == label_start;
                     if (one_word || spelled) && is_tld(&tld, bare && !spelled) {
                         best = Some(i + 1);
+                        best_tld = tld;
                     }
                 }
             }
@@ -200,8 +213,13 @@ fn domain(atoms: &[Atom], bare: bool) -> Option<usize> {
                     break;
                 }
             }
-            Atom::Dot => {
-                if !in_label {
+            Atom::Dot | Atom::Period => {
+                if !in_label || bare && atoms[i] == Atom::Period {
+                    break;
+                }
+                // "eksempel.dk" is complete: only "co" and friends take
+                // another label ("co.uk").
+                if best == Some(i) && !SECOND_LEVEL.contains(&best_tld.as_str()) {
                     break;
                 }
                 in_label = false;
@@ -284,7 +302,7 @@ fn find(atoms: &[Atom]) -> Option<(usize, usize, String)> {
         [Atom::Word(a), Atom::Word(b), Atom::Word(c), ..] if a == "w" && b == "w" && c == "w" => 3,
         _ => 0,
     };
-    if www_len > 0 && atoms.get(www_len) == Some(&Atom::Dot) {
+    if www_len > 0 && matches!(atoms.get(www_len), Some(Atom::Dot | Atom::Period)) {
         if let Some(len) = domain(&atoms[www_len + 1..], false) {
             let mut end = www_len + 1 + len;
             end += path(&atoms[end..]);
