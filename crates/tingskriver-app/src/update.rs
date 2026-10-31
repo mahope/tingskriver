@@ -3,8 +3,10 @@
 //! [`handle_installer_events`] runs first thing at startup: the installer
 //! starts the app with a hook argument after install, after update and
 //! before uninstall, and the app does its part (`tingskriver_core::install`)
-//! and exits. It also applies an update that was downloaded earlier, so an
-//! update takes effect at the next start.
+//! and exits. [`apply_pending_update`] runs once this process is the only
+//! instance and applies an update that was downloaded earlier, so an update
+//! takes effect at the next start without ever replacing the files of an
+//! instance that is still running (and perhaps recording).
 //!
 //! [`start_background_checks`] looks for a newer release on GitHub shortly
 //! after start and then every few hours, and downloads it in the background
@@ -12,6 +14,7 @@
 //! copy: `cargo run` and portable copies never update themselves.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -81,6 +84,10 @@ pub enum UpdateStatus {
     Inactive,
     Checking,
     UpToDate,
+    /// The feed had no release of this app. On GitHub that also happens when
+    /// more than ten newer releases of other kinds (Tauri, pre-releases for
+    /// a release build) hide it (`installer/README.md`, "Updates").
+    NoReleaseFound,
     Downloading { version: String },
     /// Downloaded; installs at the next start.
     ReadyAtRestart { version: String },
@@ -94,6 +101,9 @@ impl UpdateStatus {
             UpdateStatus::Inactive => "Automatisk opdatering er slået fra for denne kopi.".to_string(),
             UpdateStatus::Checking => "Søger efter opdateringer …".to_string(),
             UpdateStatus::UpToDate => "Du har den nyeste version.".to_string(),
+            UpdateStatus::NoReleaseFound => {
+                "Fandt ingen udgivelser at opdatere fra. Tingskriver prøver igen senere.".to_string()
+            }
             UpdateStatus::Downloading { version } => format!("Henter version {version} …"),
             UpdateStatus::ReadyAtRestart { version } => {
                 format!("Version {version} er klar og installeres, næste gang Tingskriver starter.")
@@ -138,9 +148,13 @@ pub fn is_hook_invocation(args: &[String]) -> bool {
     args.first().is_some_and(|arg| arg.to_ascii_lowercase().starts_with("--veloapp-"))
 }
 
-/// Run the installer's hooks and apply a downloaded update. Call first in
-/// `main`, after logging: a hook argument makes the process exit here, and
-/// a pending update restarts it.
+/// Set when Velopack restarted the app right after applying an update.
+static RESTARTED_AFTER_UPDATE: AtomicBool = AtomicBool::new(false);
+
+/// Run the installer's hooks. Call first in `main`, after logging: a hook
+/// argument makes the process exit here. A downloaded update is not applied
+/// here (a second launch must not stop the running instance), but by
+/// [`apply_pending_update`].
 pub fn handle_installer_events() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let installed = installed_exe();
@@ -158,6 +172,31 @@ pub fn handle_installer_events() {
         log::warn!("installer: hook {args:?} was not handled; exiting");
         std::process::exit(0);
     }
+}
+
+/// Should this start apply a downloaded update? Only an installed copy that
+/// is the sole instance, and not right after Velopack restarted it, so a
+/// failed apply cannot loop.
+pub fn should_apply_pending(installed: bool, primary: bool, restarted: bool) -> bool {
+    installed && primary && !restarted
+}
+
+/// Apply an update downloaded by an earlier run: Velopack's updater waits
+/// for this process to exit, installs the package and starts the app again
+/// with the same arguments (a `--hidden` start stays hidden). Call only
+/// once this process holds the single-instance claim (`primary`), before
+/// anything is recorded; returns when there is nothing to apply.
+pub fn apply_pending_update(primary: bool) {
+    let installed = installed_exe().is_some();
+    let restarted = RESTARTED_AFTER_UPDATE.load(Ordering::Relaxed);
+    if !should_apply_pending(installed, primary, restarted) {
+        if installed && !primary {
+            log::info!("update: not the only instance; a downloaded update waits");
+        }
+        return;
+    }
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    platform::apply_pending(&args);
 }
 
 /// Look for updates in the background while the app runs.
@@ -198,10 +237,12 @@ pub fn start_background_checks() {
 mod platform {
     use std::path::PathBuf;
 
-    use velopack::sources::{FileSource, GithubSource, HttpSource};
+    use std::sync::atomic::Ordering;
+
+    use velopack::sources::{FileSource, GithubSource, HttpSource, NoneSource};
     use velopack::{UpdateCheck, UpdateManager, VelopackApp};
 
-    use super::{set_status, Feed, UpdateStatus, REPO_URL};
+    use super::{set_status, Feed, UpdateStatus, REPO_URL, RESTARTED_AFTER_UPDATE};
 
     fn log_report(hook: &str, report: Vec<String>) {
         for line in report {
@@ -212,6 +253,8 @@ mod platform {
     pub fn run_velopack_app(exe: PathBuf) {
         let (install_exe, update_exe) = (exe.clone(), exe);
         VelopackApp::build()
+            // Applied by `apply_pending` once this is the only instance.
+            .set_auto_apply_on_startup(false)
             .on_after_install_fast_callback(move |version| {
                 log::info!("installer: installed {version}");
                 log_report("install", tingskriver_core::install::after_install(&install_exe));
@@ -224,8 +267,29 @@ mod platform {
                 log::info!("installer: uninstalling {version}");
                 log_report("uninstall", tingskriver_core::install::before_uninstall());
             })
-            .on_restarted(|version| log::info!("installer: restarted after updating to {version}"))
+            .on_restarted(|version| {
+                RESTARTED_AFTER_UPDATE.store(true, Ordering::Relaxed);
+                log::info!("installer: restarted after updating to {version}");
+            })
             .run();
+    }
+
+    pub fn apply_pending(args: &[String]) {
+        let manager = match UpdateManager::new(NoneSource {}, None, None) {
+            Ok(manager) => manager,
+            Err(e) => {
+                log::warn!("update: could not look for a downloaded update: {e}");
+                return;
+            }
+        };
+        let Some(pending) = manager.get_update_pending_restart() else {
+            return;
+        };
+        log::info!("update: applying {} and restarting", pending.Version);
+        // Exits the process when the updater starts.
+        if let Err(e) = manager.apply_updates_and_restart_with_args(&pending, args) {
+            log::warn!("update: could not apply {}: {e}", pending.Version);
+        }
     }
 
     fn manager(feed: &Feed) -> Result<UpdateManager, velopack::Error> {
@@ -251,7 +315,11 @@ mod platform {
         set_status(UpdateStatus::Checking);
         let update = match manager.check_for_updates() {
             Ok(UpdateCheck::UpdateAvailable(update)) => update,
-            Ok(UpdateCheck::NoUpdateAvailable | UpdateCheck::RemoteIsEmpty) => return UpdateStatus::UpToDate,
+            Ok(UpdateCheck::NoUpdateAvailable) => return UpdateStatus::UpToDate,
+            Ok(UpdateCheck::RemoteIsEmpty) => {
+                log::warn!("update: the feed has no release of this app; newer releases of other kinds may hide it");
+                return UpdateStatus::NoReleaseFound;
+            }
             Err(e) => return failed(e),
         };
         let version = update.TargetFullRelease.Version.clone();
@@ -272,6 +340,8 @@ mod platform {
     use super::{Feed, UpdateStatus};
 
     pub fn run_velopack_app(_exe: std::path::PathBuf) {}
+
+    pub fn apply_pending(_args: &[String]) {}
 
     pub fn check_and_download(_feed: &Feed) -> UpdateStatus {
         UpdateStatus::Inactive
@@ -329,6 +399,15 @@ mod tests {
     }
 
     #[test]
+    fn only_the_sole_installed_instance_applies_an_update() {
+        assert!(should_apply_pending(true, true, false));
+        // A second launch (Start menu while recording) leaves it alone.
+        assert!(!should_apply_pending(true, false, false));
+        assert!(!should_apply_pending(false, true, false));
+        assert!(!should_apply_pending(true, true, true));
+    }
+
+    #[test]
     fn checks_stop_once_an_update_waits_for_restart() {
         let ready = UpdateStatus::ReadyAtRestart {
             version: "0.5.2".to_string(),
@@ -336,6 +415,8 @@ mod tests {
         assert_eq!(ready.next_check(), None);
         assert_eq!(UpdateStatus::Inactive.next_check(), None);
         assert_eq!(UpdateStatus::UpToDate.next_check(), Some(CHECK_INTERVAL));
+        assert_eq!(UpdateStatus::NoReleaseFound.next_check(), Some(CHECK_INTERVAL));
+        assert_ne!(UpdateStatus::NoReleaseFound.label(), UpdateStatus::UpToDate.label());
         assert_eq!(
             UpdateStatus::Failed { detail: "offline".into() }.next_check(),
             Some(RETRY_DELAY)

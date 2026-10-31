@@ -117,11 +117,20 @@ jobs:
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           mkdir -p installer/Releases
-          vpk download github --repoUrl "https://github.com/${{ github.repository }}" --channel win --pre \
-            --token "$GITHUB_TOKEN" --outputDir installer/Releases \
-            || echo "::notice::No earlier Velopack release found; publishing a full package only"
+          # Only "no earlier release" may skip the delta; any other failure
+          # (network, API) fails the job instead of silently dropping it.
+          earlier=$(gh release list --repo "${{ github.repository }}" --limit 100 --json tagName \
+            --jq '[.[] | select(.tagName | startswith("app-v"))] | length')
+          if [ "$earlier" = "0" ]; then
+            echo "::notice::No earlier Velopack release found; publishing a full package only"
+          else
+            vpk download github --repoUrl "https://github.com/${{ github.repository }}" --channel win --pre \
+              --token "$GITHUB_TOKEN" --outputDir installer/Releases
+          fi
 
       - name: Pack
         shell: pwsh

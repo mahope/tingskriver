@@ -30,7 +30,7 @@ pub fn run() {
     let clock = StartupClock::start();
     let log_path = tingskriver_core::logging::init(LOG_FILE);
     crash::install_panic_hook(log_path.clone());
-    // Installer hooks exit here; a downloaded update restarts the app.
+    // Installer hooks exit here.
     update::handle_installer_events();
     let args = StartupArgs::from_env();
     log::info!(
@@ -80,6 +80,8 @@ pub fn run() {
             None
         }
     };
+    // Only the sole instance may replace the installed files.
+    update::apply_pending_update(messages.is_some());
     update::start_background_checks();
 
     let handle = runtime.handle().clone();
