@@ -1,16 +1,39 @@
 //! Layer 1 cleanup of dictated text (deterministic, no LLM).
 //!
-//! Removes Danish filler words, turns spoken punctuation into characters,
-//! fixes spacing before punctuation, capitalises sentence starts and applies
-//! the user's dictionary and snippets. Runs in well under a millisecond for
-//! normal dictation lengths.
+//! Passes, in order:
+//! 1. voice commands that are the whole dictation ("slet det") and a
+//!    trailing "stop diktering";
+//! 2. literal words ("skriv ordet komma" → "komma");
+//! 3. the user's snippets and dictionary;
+//! 4. e-mail and web addresses ([`super::address`]);
+//! 5. numbers, dates, times and amounts ([`super::numbers`]);
+//! 6. spoken punctuation and symbols ([`super::spoken`]);
+//! 7. Danish filler words;
+//! 8. the "press Enter" trigger word at the end (chat modes);
+//! 9. capital letters at sentence starts, spacing around punctuation.
+//!
+//! Runs in well under a millisecond for normal dictation lengths. Nothing is
+//! ever translated: words the passes don't recognise are kept as spoken,
+//! which is what keeps English terms in Danish sentences intact.
+
+use std::collections::HashMap;
+
+use serde::{Deserialize, Serialize};
+
+use super::address;
+use super::numbers;
+use super::spoken::{self, SpokenAction, SpokenTable, VoiceCommand, LITERAL_PREFIXES};
+use super::token::{Tok, WordKind};
 
 /// How much the text is touched. `Raw` is used in code editors and terminals.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Style {
     /// Fillers removed, sentence starts capitalised.
+    #[default]
     Normal,
     /// Only "øh"-type fillers are removed and nothing is capitalised.
+    #[serde(alias = "rå")]
     Raw,
 }
 
@@ -31,10 +54,14 @@ impl Style {
 }
 
 /// Spoken phrase that is replaced by a fixed spelling ("maho je" → "Mahoje").
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Replacement {
     pub from: String,
     pub to: String,
+    /// The dictionary word is English ("behold engelsk stavning"): its
+    /// spelling and case are kept exactly, also at the start of a sentence,
+    /// and it is never read as a command, number or sign.
+    pub keep_english: bool,
 }
 
 /// Spoken trigger that expands to a block of text ("min signatur").
@@ -48,6 +75,42 @@ pub struct Snippet {
 pub struct Rules {
     pub replacements: Vec<Replacement>,
     pub snippets: Vec<Snippet>,
+    /// Spoken punctuation, symbols and commands (built-in plus the user's file).
+    pub spoken: SpokenTable,
+}
+
+/// Everything that decides how one dictation is cleaned.
+#[derive(Clone, Copy, Debug)]
+pub struct Options<'a> {
+    pub style: Style,
+    pub rules: &'a Rules,
+    pub format_numbers: bool,
+    pub format_addresses: bool,
+    /// Words that press Enter when they end the dictation (chat modes).
+    pub enter_triggers: &'a [String],
+}
+
+impl<'a> Options<'a> {
+    /// Defaults for a style: formatting on, except in the raw style.
+    pub fn new(style: Style, rules: &'a Rules) -> Options<'a> {
+        Options {
+            style,
+            rules,
+            format_numbers: style == Style::Normal,
+            format_addresses: style == Style::Normal,
+            enter_triggers: &[],
+        }
+    }
+}
+
+/// The result of layer 1.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Cleaned {
+    pub text: String,
+    /// A voice command for the target program instead of (or after) text.
+    pub command: Option<VoiceCommand>,
+    /// Press Enter after inserting (the trigger word has been removed).
+    pub press_enter: bool,
 }
 
 /// Fillers removed everywhere (whole words only), in every style.
@@ -61,26 +124,19 @@ const SENTENCE_FILLERS: &[&str] = &["altså"];
 /// Abbreviations whose trailing period does not end a sentence.
 const ABBREVIATIONS: &[&str] = &[
     "f.eks", "fx", "bl.a", "ca", "dvs", "mht", "osv", "kl", "nr", "evt", "inkl", "ekskl", "mv",
-    "pga", "vedr", "jf", "ift", "hhv", "tlf", "etc", "mr", "hr", "fr",
+    "pga", "vedr", "jf", "ift", "hhv", "tlf", "etc", "mr", "hr", "fr", "kr", "pct", "mio", "mia",
 ];
 
 const TRAILING_PUNCT: &[char] = &['.', ',', '?', '!', ':', ';'];
 
-#[derive(Clone, Debug, PartialEq)]
-enum Tok {
-    Word { text: String, protected: bool },
-    Punct(char),
-    Break(u8),
-}
-
 #[derive(Clone, Debug)]
 enum Action {
-    Punct(char),
-    Break(u8),
+    Spoken(SpokenAction),
     /// Fixed text. `drop_following_punct` is set for snippets, whose trigger
     /// usually gets a period from the speech model.
     Text {
         text: String,
+        kind: WordKind,
         drop_following_punct: bool,
     },
 }
@@ -90,23 +146,75 @@ struct Matcher {
     action: Action,
 }
 
-/// Clean dictated text according to `style` and the user's `rules`.
+/// Clean dictated text according to `style` and the user's `rules`, with
+/// number and address formatting as the style's defaults.
 pub fn clean(input: &str, style: Style, rules: &Rules) -> String {
-    let tokens = tokenize(input);
-    let tokens = apply_phrases(tokens, &build_matchers(rules));
-    let tokens = remove_fillers(tokens, style);
-    let tokens = if style == Style::Normal {
+    clean_with(input, &Options::new(style, rules)).text
+}
+
+/// Clean dictated text and report voice commands and the Enter trigger.
+pub fn clean_with(input: &str, options: &Options) -> Cleaned {
+    let mut tokens = tokenize(input);
+    let mut command = None;
+    if let Some(c) = whole_command(&tokens, &options.rules.spoken) {
+        return Cleaned {
+            text: String::new(),
+            command: Some(c),
+            press_enter: false,
+        };
+    }
+    if let Some(cut) = trailing_stop(&tokens, &options.rules.spoken) {
+        tokens.truncate(cut);
+        while matches!(tokens.last(), Some(Tok::Punct(',' | ';' | ':'))) {
+            tokens.pop();
+        }
+        command = Some(VoiceCommand::StopDictation);
+    }
+
+    let tokens = apply_literals(tokens, &options.rules.spoken);
+    let tokens = apply_matchers(tokens, &user_matchers(options.rules));
+    let tokens = if options.format_addresses {
+        address::format(tokens)
+    } else {
+        tokens
+    };
+    let tokens = if options.format_numbers {
+        numbers::format(tokens)
+    } else {
+        tokens
+    };
+    let tokens = apply_matchers(tokens, &spoken_matchers(&options.rules.spoken));
+    let tokens = remove_fillers(tokens, options.style);
+    let (tokens, press_enter) = take_enter_trigger(tokens, options.enter_triggers);
+    let tokens = if options.style == Style::Normal {
         capitalize(tokens)
     } else {
         tokens
     };
-    render(&tokens)
+    let text = render(&tokens);
+    Cleaned {
+        press_enter: press_enter && !text.is_empty(),
+        text,
+        command,
+    }
 }
 
 /// Words sent to the speech model as a hint (dictionary words and their spelling).
 pub fn prompt_words(rules: &Rules) -> Vec<String> {
     let mut words: Vec<String> = Vec::new();
     for r in &rules.replacements {
+        let to = r.to.trim();
+        if !to.is_empty() && !words.iter().any(|w| w == to) {
+            words.push(to.to_string());
+        }
+    }
+    words
+}
+
+/// Dictionary words marked as English, for the polishing prompt.
+pub fn english_terms(rules: &Rules) -> Vec<String> {
+    let mut words: Vec<String> = Vec::new();
+    for r in rules.replacements.iter().filter(|r| r.keep_english) {
         let to = r.to.trim();
         if !to.is_empty() && !words.iter().any(|w| w == to) {
             words.push(to.to_string());
@@ -127,54 +235,82 @@ fn phrase_words(phrase: &str) -> Vec<String> {
         .collect()
 }
 
-fn build_matchers(rules: &Rules) -> Vec<Matcher> {
-    let mut matchers = Vec::new();
+/// Ways a phrase can arrive from the speech model: "snabel-a" as one word
+/// or as "snabel a".
+fn phrase_variants(phrase: &str) -> Vec<Vec<String>> {
+    let whole = phrase_words(phrase);
+    let split = spoken::phrase_words(phrase);
+    if split == whole || split.is_empty() {
+        vec![whole]
+    } else {
+        vec![whole, split]
+    }
+}
 
-    // User rules come first so they can override built-in commands.
+fn user_matchers(rules: &Rules) -> Vec<Matcher> {
+    let mut matchers = Vec::new();
     for s in &rules.snippets {
-        let words = phrase_words(&s.trigger);
-        if !words.is_empty() && !s.text.is_empty() {
-            matchers.push(Matcher {
-                words,
-                action: Action::Text {
-                    text: s.text.clone(),
-                    drop_following_punct: true,
-                },
-            });
+        if s.text.is_empty() {
+            continue;
+        }
+        for words in phrase_variants(&s.trigger) {
+            if !words.is_empty() {
+                matchers.push(Matcher {
+                    words,
+                    action: Action::Text {
+                        text: s.text.clone(),
+                        kind: WordKind::Exact,
+                        drop_following_punct: true,
+                    },
+                });
+            }
         }
     }
     for r in &rules.replacements {
-        let words = phrase_words(&r.from);
-        if !words.is_empty() && !r.to.trim().is_empty() {
-            matchers.push(Matcher {
-                words,
-                action: Action::Text {
-                    text: r.to.trim().to_string(),
-                    drop_following_punct: false,
-                },
-            });
+        let to = r.to.trim();
+        if to.is_empty() {
+            continue;
+        }
+        for words in phrase_variants(&r.from) {
+            if !words.is_empty() {
+                matchers.push(Matcher {
+                    words,
+                    action: Action::Text {
+                        text: to.to_string(),
+                        kind: if r.keep_english {
+                            WordKind::Exact
+                        } else {
+                            WordKind::Fixed
+                        },
+                        drop_following_punct: false,
+                    },
+                });
+            }
         }
     }
+    // Longest phrase wins; the sort is stable so snippets win ties.
+    matchers.sort_by(|a, b| b.words.len().cmp(&a.words.len()));
+    matchers
+}
 
-    let commands: &[(&str, Action)] = &[
-        ("punktum", Action::Punct('.')),
-        ("komma", Action::Punct(',')),
-        ("spørgsmålstegn", Action::Punct('?')),
-        ("udråbstegn", Action::Punct('!')),
-        ("kolon", Action::Punct(':')),
-        ("semikolon", Action::Punct(';')),
-        ("ny linje", Action::Break(1)),
-        ("ny linie", Action::Break(1)),
-        ("nyt afsnit", Action::Break(2)),
-    ];
-    for (phrase, action) in commands {
-        matchers.push(Matcher {
-            words: phrase_words(phrase),
-            action: action.clone(),
-        });
+fn spoken_matchers(table: &SpokenTable) -> Vec<Matcher> {
+    let mut matchers = Vec::new();
+    for entry in &table.entries {
+        // Commands are handled before the other passes.
+        if matches!(entry.action, SpokenAction::Command { .. }) {
+            continue;
+        }
+        for phrase in &entry.phrases {
+            for words in phrase_variants(phrase) {
+                if !words.is_empty() {
+                    matchers.push(Matcher {
+                        words,
+                        action: Action::Spoken(entry.action.clone()),
+                    });
+                }
+            }
+        }
     }
-
-    // Longest phrase wins; the sort is stable so user rules win ties.
     matchers.sort_by(|a, b| b.words.len().cmp(&a.words.len()));
     matchers
 }
@@ -197,10 +333,7 @@ fn tokenize(input: &str) -> Vec<Tok> {
             }
             let core = rest.trim_end_matches(|c| TRAILING_PUNCT.contains(&c));
             if !core.is_empty() {
-                tokens.push(Tok::Word {
-                    text: core.to_string(),
-                    protected: false,
-                });
+                tokens.push(Tok::plain(core));
             }
             for c in rest[core.len()..].chars() {
                 tokens.push(Tok::Punct(c));
@@ -210,34 +343,161 @@ fn tokenize(input: &str) -> Vec<Tok> {
     tokens
 }
 
-fn match_at<'m>(tokens: &[Tok], start: usize, matchers: &'m [Matcher]) -> Option<&'m Matcher> {
-    matchers.iter().find(|m| {
-        if start + m.words.len() > tokens.len() {
-            return false;
+/// Plain words without hesitations, with the token index of each.
+fn spoken_words(tokens: &[Tok]) -> Vec<(usize, String)> {
+    tokens
+        .iter()
+        .enumerate()
+        .filter_map(|(i, t)| t.plain_word().map(|w| (i, w)))
+        .filter(|(_, w)| !HESITATIONS.contains(&w.as_str()))
+        .collect()
+}
+
+fn command_phrases(table: &SpokenTable) -> Vec<(Vec<String>, VoiceCommand)> {
+    let mut out = Vec::new();
+    for entry in &table.entries {
+        if let SpokenAction::Command { command } = entry.action {
+            for phrase in &entry.phrases {
+                for words in phrase_variants(phrase) {
+                    out.push((words, command));
+                }
+            }
         }
-        m.words.iter().enumerate().all(|(offset, word)| match &tokens[start + offset] {
-            Tok::Word {
-                text,
-                protected: false,
-            } => normalize(text) == *word,
-            _ => false,
+    }
+    out
+}
+
+/// "slet det" and "vælg det" only count when they are all that was said.
+fn whole_command(tokens: &[Tok], table: &SpokenTable) -> Option<VoiceCommand> {
+    let words: Vec<String> = spoken_words(tokens).into_iter().map(|(_, w)| w).collect();
+    command_phrases(table)
+        .into_iter()
+        .find(|(phrase, _)| *phrase == words)
+        .map(|(_, command)| command)
+}
+
+/// Where a trailing "stop diktering" starts, so the text before it is kept.
+fn trailing_stop(tokens: &[Tok], table: &SpokenTable) -> Option<usize> {
+    let words = spoken_words(tokens);
+    command_phrases(table)
+        .into_iter()
+        .filter(|(_, c)| *c == VoiceCommand::StopDictation)
+        .find_map(|(phrase, _)| {
+            let n = phrase.len();
+            if n == 0 || words.len() < n {
+                return None;
+            }
+            let tail = &words[words.len() - n..];
+            tail.iter()
+                .map(|(_, w)| w)
+                .eq(phrase.iter())
+                .then(|| tail[0].0)
         })
+}
+
+/// "skriv ordet komma" → the word "komma"; "skriv ordet ny linje" → "ny linje".
+fn apply_literals(tokens: Vec<Tok>, table: &SpokenTable) -> Vec<Tok> {
+    let prefixes: Vec<Vec<String>> = LITERAL_PREFIXES.iter().map(|p| phrase_words(p)).collect();
+    let phrases = table.phrases();
+    let mut out: Vec<Tok> = Vec::with_capacity(tokens.len());
+    let mut i = 0;
+    while i < tokens.len() {
+        let prefix_len = prefixes
+            .iter()
+            .find(|p| {
+                p.iter()
+                    .enumerate()
+                    .all(|(k, w)| tokens.get(i + k).and_then(Tok::plain_word).as_ref() == Some(w))
+            })
+            .map(Vec::len);
+        let Some(prefix_len) = prefix_len else {
+            out.push(tokens[i].clone());
+            i += 1;
+            continue;
+        };
+        // The model may put a comma after "skriv ordet".
+        let mut start = i + prefix_len;
+        while matches!(tokens.get(start), Some(Tok::Punct(',' | ':'))) {
+            start += 1;
+        }
+        let run: Vec<String> = tokens[start.min(tokens.len())..]
+            .iter()
+            .map_while(Tok::plain_word)
+            .collect();
+        if run.is_empty() {
+            out.push(tokens[i].clone());
+            i += 1;
+            continue;
+        }
+        let len = phrases
+            .iter()
+            .map(|(w, _)| w)
+            .find(|w| run.starts_with(w))
+            .map(|w| w.len())
+            .unwrap_or(1);
+        let text: Vec<String> = tokens[start..start + len]
+            .iter()
+            .filter_map(|t| match t {
+                Tok::Word { text, .. } => Some(text.to_lowercase()),
+                _ => None,
+            })
+            .collect();
+        out.push(Tok::exact(text.join(" ")));
+        i = start + len;
+    }
+    out
+}
+
+/// Matchers grouped by their first word, longest phrase first.
+fn index_matchers(matchers: &[Matcher]) -> HashMap<&str, Vec<&Matcher>> {
+    let mut index: HashMap<&str, Vec<&Matcher>> = HashMap::new();
+    for m in matchers {
+        if let Some(first) = m.words.first() {
+            index.entry(first.as_str()).or_default().push(m);
+        }
+    }
+    index
+}
+
+/// `words` holds the lower-cased plain word of each token (see [`Tok::plain_word`]).
+fn match_at<'m>(
+    words: &[Option<String>],
+    start: usize,
+    index: &HashMap<&str, Vec<&'m Matcher>>,
+) -> Option<&'m Matcher> {
+    let first = words[start].as_deref()?;
+    index.get(first)?.iter().copied().find(|m| {
+        start + m.words.len() <= words.len()
+            && m.words
+                .iter()
+                .enumerate()
+                .all(|(offset, word)| words[start + offset].as_ref() == Some(word))
     })
 }
 
-fn apply_phrases(tokens: Vec<Tok>, matchers: &[Matcher]) -> Vec<Tok> {
+fn quote_is_open(out: &[Tok]) -> bool {
+    out.iter()
+        .filter(|t| matches!(t, Tok::Sym { text, .. } if text == "\""))
+        .count()
+        % 2
+        == 1
+}
+
+fn apply_matchers(tokens: Vec<Tok>, matchers: &[Matcher]) -> Vec<Tok> {
+    let words: Vec<Option<String>> = tokens.iter().map(Tok::plain_word).collect();
+    let index = index_matchers(matchers);
     let mut out: Vec<Tok> = Vec::with_capacity(tokens.len());
     let mut i = 0;
     while i < tokens.len() {
         let matched = match &tokens[i] {
-            Tok::Word { .. } => match_at(&tokens, i, matchers),
+            Tok::Word { .. } => match_at(&words, i, &index),
             _ => None,
         };
         let Some(m) = matched else {
             match &tokens[i] {
                 Tok::Punct(c) => push_punct(&mut out, *c),
                 Tok::Break(n) => push_break(&mut out, *n),
-                word => out.push(word.clone()),
+                other => out.push(other.clone()),
             }
             i += 1;
             continue;
@@ -245,25 +505,51 @@ fn apply_phrases(tokens: Vec<Tok>, matchers: &[Matcher]) -> Vec<Tok> {
 
         i += m.words.len();
         let drop_following = match &m.action {
-            Action::Punct(c) => {
-                push_punct(&mut out, *c);
+            Action::Spoken(SpokenAction::Punct { char }) => {
+                push_punct(&mut out, *char);
                 true
             }
-            Action::Break(n) => {
+            Action::Spoken(SpokenAction::Break { lines }) => {
                 // A comma the speech model put before "ny linje" is noise.
                 while matches!(out.last(), Some(Tok::Punct(',' | ';'))) {
                     out.pop();
                 }
-                push_break(&mut out, *n);
+                push_break(&mut out, *lines);
                 true
             }
+            Action::Spoken(SpokenAction::Symbol {
+                text,
+                space_before,
+                space_after,
+            }) => {
+                // "bindestreg" right after a comma from the model: drop the comma.
+                if !*space_before {
+                    while matches!(out.last(), Some(Tok::Punct(','))) {
+                        out.pop();
+                    }
+                }
+                out.push(Tok::sym(text, *space_before, *space_after));
+                // Commas the model put after an opening sign are noise.
+                !*space_after
+            }
+            Action::Spoken(SpokenAction::Quote) => {
+                if quote_is_open(&out) {
+                    out.push(Tok::sym("\"", false, true));
+                    false
+                } else {
+                    out.push(Tok::sym("\"", true, false));
+                    true
+                }
+            }
+            Action::Spoken(SpokenAction::Command { .. }) => false,
             Action::Text {
                 text,
+                kind,
                 drop_following_punct,
             } => {
                 out.push(Tok::Word {
                     text: text.clone(),
-                    protected: true,
+                    kind: *kind,
                 });
                 *drop_following_punct
             }
@@ -297,7 +583,13 @@ fn push_punct(out: &mut Vec<Tok>, c: char) {
                 out.push(Tok::Punct(c));
             }
         }
-        Some(Tok::Word { .. }) => out.push(Tok::Punct(c)),
+        // Nothing to attach to after an opening bracket or quote.
+        Some(Tok::Sym {
+            space_after: false,
+            space_before: true,
+            ..
+        }) => {}
+        Some(Tok::Word { .. } | Tok::Sym { .. }) => out.push(Tok::Punct(c)),
     }
 }
 
@@ -309,11 +601,28 @@ fn push_break(out: &mut Vec<Tok>, n: u8) {
     }
 }
 
+fn is_opening(tok: &Tok) -> bool {
+    matches!(
+        tok,
+        Tok::Sym {
+            space_before: true,
+            space_after: false,
+            ..
+        }
+    )
+}
+
 fn is_sentence_start(out: &[Tok]) -> bool {
+    let end = out
+        .iter()
+        .rposition(|t| !is_opening(t))
+        .map(|p| p + 1)
+        .unwrap_or(0);
+    let out = &out[..end];
     match out.last() {
         None | Some(Tok::Break(_)) => true,
         Some(Tok::Punct(c)) => matches!(c, '.' | '?' | '!') && !ends_with_abbreviation(out),
-        Some(Tok::Word { .. }) => false,
+        Some(Tok::Word { .. } | Tok::Sym { .. }) => false,
     }
 }
 
@@ -332,18 +641,14 @@ fn remove_fillers(tokens: Vec<Tok>, style: Style) -> Vec<Tok> {
     let mut i = 0;
     while i < tokens.len() {
         let tok = &tokens[i];
-        let is_filler = match tok {
-            Tok::Word {
-                text,
-                protected: false,
-            } => {
-                let w = normalize(text);
+        let is_filler = match tok.plain_word() {
+            Some(w) => {
                 HESITATIONS.contains(&w.as_str())
                     || (style == Style::Normal
                         && SENTENCE_FILLERS.contains(&w.as_str())
                         && is_sentence_start(&out))
             }
-            _ => false,
+            None => false,
         };
         if is_filler {
             i += 1;
@@ -356,11 +661,48 @@ fn remove_fillers(tokens: Vec<Tok>, style: Style) -> Vec<Tok> {
         match tok {
             Tok::Punct(c) => push_punct(&mut out, *c),
             Tok::Break(n) => push_break(&mut out, *n),
-            word => out.push(word.clone()),
+            other => out.push(other.clone()),
         }
         i += 1;
     }
     out
+}
+
+/// Remove an Enter trigger word ("send") that ends the dictation. In the
+/// middle of the text it is an ordinary word.
+fn take_enter_trigger(mut tokens: Vec<Tok>, triggers: &[String]) -> (Vec<Tok>, bool) {
+    if triggers.is_empty() {
+        return (tokens, false);
+    }
+    let Some(last_word) = tokens.iter().rposition(|t| !matches!(t, Tok::Punct(_))) else {
+        return (tokens, false);
+    };
+    let mut phrases: Vec<Vec<String>> = triggers
+        .iter()
+        .map(|t| phrase_words(t))
+        .filter(|w| !w.is_empty())
+        .collect();
+    phrases.sort_by(|a, b| b.len().cmp(&a.len()));
+    for phrase in phrases {
+        let n = phrase.len();
+        if last_word + 1 < n {
+            continue;
+        }
+        let start = last_word + 1 - n;
+        let matches = phrase
+            .iter()
+            .enumerate()
+            .all(|(k, w)| tokens[start + k].plain_word().as_ref() == Some(w));
+        if !matches {
+            continue;
+        }
+        tokens.truncate(start);
+        while matches!(tokens.last(), Some(Tok::Punct(',' | ';' | ':'))) {
+            tokens.pop();
+        }
+        return (tokens, true);
+    }
+    (tokens, false)
 }
 
 fn capitalize(tokens: Vec<Tok>) -> Vec<Tok> {
@@ -368,13 +710,12 @@ fn capitalize(tokens: Vec<Tok>) -> Vec<Tok> {
     for tok in tokens {
         let at_start = is_sentence_start(&out);
         match tok {
-            Tok::Word {
-                text,
-                protected: false,
-            } if at_start => out.push(Tok::Word {
-                text: upper_first(&text),
-                protected: false,
-            }),
+            Tok::Word { text, kind } if at_start && kind != WordKind::Exact => {
+                out.push(Tok::Word {
+                    text: upper_first(&text),
+                    kind,
+                })
+            }
             other => out.push(other),
         }
     }
@@ -402,8 +743,22 @@ fn render(tokens: &[Tok]) -> String {
                 need_space = true;
             }
             Tok::Punct(c) => {
-                out.push(*c);
+                // "5 kr." at the end of a sentence gets one period.
+                if !(*c == '.' && out.ends_with('.')) {
+                    out.push(*c);
+                }
                 need_space = true;
+            }
+            Tok::Sym {
+                text,
+                space_before,
+                space_after,
+            } => {
+                if need_space && *space_before {
+                    out.push(' ');
+                }
+                out.push_str(text);
+                need_space = *space_after;
             }
             Tok::Break(n) => {
                 while out.ends_with(' ') {
@@ -416,220 +771,11 @@ fn render(tokens: &[Tok]) -> String {
             }
         }
     }
-    out.trim_end_matches(' ').trim_start_matches(' ').to_string()
+    out.trim_end_matches(' ')
+        .trim_start_matches(' ')
+        .to_string()
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn normal(input: &str) -> String {
-        clean(input, Style::Normal, &Rules::default())
-    }
-
-    fn raw(input: &str) -> String {
-        clean(input, Style::Raw, &Rules::default())
-    }
-
-    fn rules() -> Rules {
-        Rules {
-            replacements: vec![
-                Replacement {
-                    from: "Mahoje".into(),
-                    to: "Mahoje".into(),
-                },
-                Replacement {
-                    from: "maho je".into(),
-                    to: "Mahoje".into(),
-                },
-                Replacement {
-                    from: "syv ai".into(),
-                    to: "Syv.ai".into(),
-                },
-            ],
-            snippets: vec![
-                Snippet {
-                    trigger: "min signatur".into(),
-                    text: "Mads\nMahope".into(),
-                },
-                Snippet {
-                    trigger: "mit cvr".into(),
-                    text: "39413892".into(),
-                },
-            ],
-        }
-    }
-
-    #[test]
-    fn empty_and_whitespace() {
-        assert_eq!(normal(""), "");
-        assert_eq!(normal("   "), "");
-    }
-
-    #[test]
-    fn removes_leading_fillers() {
-        assert_eq!(normal("øh jeg kommer i morgen"), "Jeg kommer i morgen");
-        assert_eq!(normal("Øhm, jeg kommer i morgen."), "Jeg kommer i morgen.");
-        assert_eq!(normal("Altså, det er fint."), "Det er fint.");
-        assert_eq!(normal("øh altså øhh det er fint"), "Det er fint");
-    }
-
-    #[test]
-    fn removes_fillers_between_sentences() {
-        assert_eq!(
-            normal("Det er godt. Øh, vi ses i morgen."),
-            "Det er godt. Vi ses i morgen."
-        );
-        assert_eq!(
-            normal("Det er godt. Altså, vi ses i morgen."),
-            "Det er godt. Vi ses i morgen."
-        );
-        assert_eq!(normal("jeg tror øh at det går"), "Jeg tror at det går");
-    }
-
-    #[test]
-    fn keeps_altsaa_mid_sentence() {
-        assert_eq!(normal("han er altså sød"), "Han er altså sød");
-    }
-
-    #[test]
-    fn filler_before_sentence_end_keeps_period() {
-        assert_eq!(normal("det var det øh."), "Det var det.");
-    }
-
-    #[test]
-    fn does_not_touch_fillers_inside_words() {
-        assert_eq!(normal("køhm og søhest"), "Køhm og søhest");
-        assert_eq!(normal("altsåi"), "Altsåi");
-    }
-
-    #[test]
-    fn spoken_punctuation() {
-        assert_eq!(
-            normal("hej Mads komma hvordan går det spørgsmålstegn"),
-            "Hej Mads, hvordan går det?"
-        );
-        assert_eq!(normal("det er fint punktum tak"), "Det er fint. Tak");
-        assert_eq!(normal("husk udråbstegn"), "Husk!");
-        assert_eq!(
-            normal("tre ting kolon mælk og brød"),
-            "Tre ting: mælk og brød"
-        );
-        assert_eq!(normal("a semikolon b"), "A; b");
-    }
-
-    #[test]
-    fn spoken_punctuation_with_model_punctuation() {
-        assert_eq!(
-            normal("Hej Mads, komma, hvordan går det, spørgsmålstegn."),
-            "Hej Mads, hvordan går det?"
-        );
-        assert_eq!(normal("Det er fint. Punktum."), "Det er fint.");
-        assert_eq!(normal("Komma, hej"), "Hej");
-    }
-
-    #[test]
-    fn new_line_and_paragraph() {
-        assert_eq!(normal("hej ny linje hvordan går det"), "Hej\nHvordan går det");
-        assert_eq!(normal("Hej, ny linje, tak."), "Hej\nTak.");
-        assert_eq!(normal("Hej. Nyt afsnit. Tak."), "Hej.\n\nTak.");
-        assert_eq!(normal("hej ny linje ny linje tak"), "Hej\n\nTak");
-        assert_eq!(normal("hej ny linie tak"), "Hej\nTak");
-    }
-
-    #[test]
-    fn fixes_space_before_punctuation() {
-        assert_eq!(normal("hej , du . hvad så ?"), "Hej, du. Hvad så?");
-        assert_eq!(normal("hej  med   dig"), "Hej med dig");
-    }
-
-    #[test]
-    fn capitalises_sentence_starts() {
-        assert_eq!(normal("hej. hvad så? godt! ja"), "Hej. Hvad så? Godt! Ja");
-        assert_eq!(normal("ældre æbler"), "Ældre æbler");
-        assert_eq!(normal("øl er godt"), "Øl er godt");
-    }
-
-    #[test]
-    fn abbreviations_do_not_end_sentences() {
-        assert_eq!(normal("vi ses kl. tre"), "Vi ses kl. tre");
-        assert_eq!(normal("frugt f.eks. æbler"), "Frugt f.eks. æbler");
-        assert_eq!(normal("ca. ti"), "Ca. ti");
-    }
-
-    #[test]
-    fn keeps_numbers_and_inner_punctuation() {
-        assert_eq!(normal("det koster 3.5 kroner"), "Det koster 3.5 kroner");
-        assert_eq!(normal("skriv til mads@mahoje.dk"), "Skriv til mads@mahoje.dk");
-    }
-
-    #[test]
-    fn dictionary_replacements() {
-        let r = rules();
-        assert_eq!(
-            clean("jeg arbejder hos maho je", Style::Normal, &r),
-            "Jeg arbejder hos Mahoje"
-        );
-        assert_eq!(
-            clean("mahoje bruger syv ai.", Style::Normal, &r),
-            "Mahoje bruger Syv.ai."
-        );
-        assert_eq!(
-            clean("MAHOJE", Style::Normal, &r),
-            "Mahoje"
-        );
-    }
-
-    #[test]
-    fn snippets() {
-        let r = rules();
-        assert_eq!(clean("Min signatur.", Style::Normal, &r), "Mads\nMahope");
-        assert_eq!(
-            clean("vores cvr er mit cvr punktum", Style::Normal, &r),
-            "Vores cvr er 39413892."
-        );
-    }
-
-    #[test]
-    fn raw_style() {
-        assert_eq!(raw("øh git status"), "git status");
-        assert_eq!(raw("altså npm install"), "altså npm install");
-        assert_eq!(raw("cargo test komma tak"), "cargo test, tak");
-        assert_eq!(raw("ls ny linje pwd"), "ls\npwd");
-    }
-
-    #[test]
-    fn model_newlines_are_kept() {
-        assert_eq!(normal("første linje\nanden linje"), "Første linje\nAnden linje");
-        assert_eq!(normal("a\n\n\n\nb"), "A\n\nB");
-    }
-
-    #[test]
-    fn only_fillers_gives_empty_text() {
-        assert_eq!(normal("øh øhm."), "");
-        assert_eq!(normal("Øh."), "");
-    }
-
-    #[test]
-    fn prompt_words_are_unique_targets() {
-        assert_eq!(prompt_words(&rules()), vec!["Mahoje", "Syv.ai"]);
-    }
-
-    #[test]
-    fn style_parsing() {
-        assert_eq!(Style::parse("raw"), Style::Raw);
-        assert_eq!(Style::parse("rå"), Style::Raw);
-        assert_eq!(Style::parse("normal"), Style::Normal);
-        assert_eq!(Style::parse("whatever"), Style::Normal);
-    }
-
-    #[test]
-    fn long_text_is_fast() {
-        let sentence = "øh jeg tror altså at det komma som vi sagde punktum ";
-        let input = sentence.repeat(200);
-        let start = std::time::Instant::now();
-        let out = clean(&input, Style::Normal, &rules());
-        assert!(!out.is_empty());
-        assert!(start.elapsed().as_millis() < 50, "took {:?}", start.elapsed());
-    }
-}
+#[path = "cleanup_tests.rs"]
+mod tests;
