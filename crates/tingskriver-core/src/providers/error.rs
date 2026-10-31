@@ -8,7 +8,11 @@ use std::time::Duration;
 use serde::Serialize;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(tag = "kind", rename_all = "kebab-case")]
+#[serde(
+    tag = "kind",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase"
+)]
 pub enum ProviderError {
     /// No key in Credential Manager for a provider that needs one.
     MissingKey,
@@ -183,6 +187,6 @@ mod tests {
             retry_after_secs: Some(5),
         })
         .unwrap();
-        assert_eq!(json, r#"{"kind":"rate-limited","retry_after_secs":5}"#);
+        assert_eq!(json, r#"{"kind":"rate-limited","retryAfterSecs":5}"#);
     }
 }

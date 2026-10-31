@@ -209,12 +209,19 @@ pub fn plan(legacy: &LegacySettings, dictation: Option<&DictationSettings>) -> M
             p.key(base_id, key);
         }
         transcription_ids.insert(old, base_id.to_string());
+        let transcription_id = format!("{base_id}-transcription");
+        if let Some(b) = transcript {
+            // Also where the old settings code reads the transcription key
+            // first, so deleting the summary key there leaves it alone.
+            p.key(&transcription_id, b);
+        }
         if let (Some(a), Some(b)) = (summary, transcript) {
             if a != b {
-                let id = format!("{base_id}-transcription");
-                p.ensure(make(&id, &format!("{base_name} (transskription)")));
-                p.key(&id, b);
-                transcription_ids.insert(old, id);
+                p.ensure(make(
+                    &transcription_id,
+                    &format!("{base_name} (transskription)"),
+                ));
+                transcription_ids.insert(old, transcription_id);
             }
         }
     }
@@ -360,11 +367,39 @@ pub fn plan(legacy: &LegacySettings, dictation: Option<&DictationSettings>) -> M
     if let Some(d) = dictation {
         plan_dictation(&mut p, d);
     }
+    drop_invalid(&mut p);
 
     MigrationPlan {
         config: p.config,
         keys: p.keys.into_iter().collect(),
         notes: p.notes,
+    }
+}
+
+/// Drop providers and chain links the settings UI would refuse, each with a
+/// note, so one bad old value does not throw the whole migration away.
+fn drop_invalid(p: &mut Planner) {
+    let mut dropped = Vec::new();
+    p.config
+        .providers
+        .retain(|provider| match model::validate_provider(provider) {
+            Ok(()) => true,
+            Err(e) => {
+                dropped.push(format!("{e}. Udbyderen er ikke flyttet med."));
+                false
+            }
+        });
+    p.notes.append(&mut dropped);
+
+    let config = p.config.clone();
+    for (function, chain) in p.config.functions.iter_mut() {
+        chain.retain(|link| match config.validate_link(*function, link) {
+            Ok(()) => true,
+            Err(e) => {
+                p.notes.push(format!("{e}. Leddet er fjernet."));
+                false
+            }
+        });
     }
 }
 
@@ -441,15 +476,29 @@ fn optional_string(row: &sqlx::sqlite::SqliteRow, column: &str) -> Option<String
     row.try_get::<Option<String>, _>(column).ok().flatten()
 }
 
+/// A row of an old table; a missing table counts as no row. Other errors
+/// (a locked database, ...) are returned, so the migration is not saved
+/// without the old settings.
+async fn legacy_row(
+    pool: &SqlitePool,
+    table: &str,
+) -> Result<Option<sqlx::sqlite::SqliteRow>, String> {
+    match sqlx::query(&format!("SELECT * FROM {table} WHERE id = '1' LIMIT 1"))
+        .fetch_optional(pool)
+        .await
+    {
+        Ok(row) => Ok(row),
+        Err(e) if e.to_string().contains("no such table") => Ok(None),
+        Err(e) => Err(format!("De gamle indstillinger kunne ikke læses: {e}")),
+    }
+}
+
 /// Read the old settings tables. Missing tables, rows or columns count as
 /// not set.
 pub async fn read_legacy(pool: &SqlitePool) -> Result<LegacySettings, String> {
     let mut legacy = LegacySettings::default();
 
-    let row = sqlx::query("SELECT * FROM settings WHERE id = '1' LIMIT 1")
-        .fetch_optional(pool)
-        .await;
-    if let Ok(Some(row)) = row {
+    if let Some(row) = legacy_row(pool, "settings").await? {
         legacy.has_summary_row = true;
         legacy.summary_provider = optional_string(&row, "provider");
         legacy.summary_model = optional_string(&row, "model");
@@ -481,10 +530,7 @@ pub async fn read_legacy(pool: &SqlitePool) -> Result<LegacySettings, String> {
         }
     }
 
-    let row = sqlx::query("SELECT * FROM transcript_settings WHERE id = '1' LIMIT 1")
-        .fetch_optional(pool)
-        .await;
-    if let Ok(Some(row)) = row {
+    if let Some(row) = legacy_row(pool, "transcript_settings").await? {
         legacy.has_transcript_row = true;
         legacy.transcript_provider = optional_string(&row, "provider");
         legacy.transcript_model = optional_string(&row, "model");
@@ -495,6 +541,63 @@ pub async fn read_legacy(pool: &SqlitePool) -> Result<LegacySettings, String> {
         }
     }
     Ok(legacy)
+}
+
+/// Old provider name for each key column, `settings` table.
+const SUMMARY_KEY_PROVIDERS: [(&str, &str); 6] = [
+    ("openaiApiKey", "openai"),
+    ("anthropicApiKey", "claude"),
+    ("groqApiKey", "groq"),
+    ("ollamaApiKey", "ollama"),
+    ("openRouterApiKey", "openrouter"),
+    ("geminiApiKey", "gemini"),
+];
+
+/// Old provider name for each key column, `transcript_settings` table.
+const TRANSCRIPT_KEY_PROVIDERS: [(&str, &str); 5] = [
+    ("whisperApiKey", "localWhisper"),
+    ("deepgramApiKey", "deepgram"),
+    ("elevenLabsApiKey", "elevenLabs"),
+    ("groqApiKey", "groq"),
+    ("openaiApiKey", "openai"),
+];
+
+/// Add the keys the old settings code already saved in Credential Manager
+/// (its column is then empty), so [`plan`] sees them like column keys.
+/// Only each column's own target is read, not the shared fallback.
+pub fn fill_from_store(legacy: &mut LegacySettings, store: &dyn KeyStore) -> Result<(), String> {
+    let read = |table: LegacyTable, provider: &str| -> Result<Option<ApiKey>, String> {
+        match legacy_write_target(table, provider) {
+            Some(target) => store.get(&target).map_err(|e| {
+                format!(
+                    "Nøglen til {target} kunne ikke læses fra Windows Legitimationsstyring: {e}"
+                )
+            }),
+            None => Ok(None),
+        }
+    };
+    if legacy.has_summary_row {
+        for (column, provider) in SUMMARY_KEY_PROVIDERS {
+            if !legacy.summary_keys.contains_key(column) {
+                if let Some(key) = read(LegacyTable::Summary, provider)? {
+                    legacy.summary_keys.insert(column.to_string(), key);
+                }
+            }
+        }
+        if legacy.custom_openai.is_some() && legacy.custom_openai_key.is_none() {
+            legacy.custom_openai_key = read(LegacyTable::Summary, "custom-openai")?;
+        }
+    }
+    if legacy.has_transcript_row {
+        for (column, provider) in TRANSCRIPT_KEY_PROVIDERS {
+            if !legacy.transcript_keys.contains_key(column) {
+                if let Some(key) = read(LegacyTable::Transcript, provider)? {
+                    legacy.transcript_keys.insert(column.to_string(), key);
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 trait ClassifyName {

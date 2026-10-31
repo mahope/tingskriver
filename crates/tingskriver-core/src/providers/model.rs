@@ -282,46 +282,58 @@ impl ProvidersConfig {
     pub fn validate(&self) -> Result<(), String> {
         let mut seen = std::collections::HashSet::new();
         for p in &self.providers {
-            validate_id(&p.id)?;
             if !seen.insert(p.id.as_str()) {
                 return Err(format!("Udbyderen \"{}\" findes to gange", p.id));
             }
-            if p.name.trim().is_empty() {
-                return Err(format!("Udbyderen \"{}\" mangler et navn", p.id));
-            }
-            if p.kind.is_remote() {
-                validate_base_url(p)?;
-            }
+            validate_provider(p)?;
         }
         for (function, chain) in &self.functions {
             for link in chain {
-                let Some(provider) = self.provider(&link.provider) else {
-                    return Err(format!(
-                        "{} bruger udbyderen \"{}\", som ikke findes",
-                        function.label(),
-                        link.provider
-                    ));
-                };
-                let capability = function.capability();
-                let has_model = link.model.as_deref().is_some_and(|m| !m.trim().is_empty())
-                    || provider.supports(capability);
-                if !has_model {
-                    return Err(format!(
-                        "{} bruger {}, men der er ikke valgt nogen model",
-                        function.label(),
-                        provider.name
-                    ));
-                }
-                if link.timeout_ms == Some(0) {
-                    return Err(format!(
-                        "{}: tidsgrænsen skal være over 0 ms",
-                        function.label()
-                    ));
-                }
+                self.validate_link(*function, link)?;
             }
         }
         Ok(())
     }
+
+    /// Check one link of `function`'s chain against the providers.
+    pub fn validate_link(&self, function: Function, link: &ChainLink) -> Result<(), String> {
+        let Some(provider) = self.provider(&link.provider) else {
+            return Err(format!(
+                "{} bruger udbyderen \"{}\", som ikke findes",
+                function.label(),
+                link.provider
+            ));
+        };
+        let capability = function.capability();
+        let has_model = link.model.as_deref().is_some_and(|m| !m.trim().is_empty())
+            || provider.supports(capability);
+        if !has_model {
+            return Err(format!(
+                "{} bruger {}, men der er ikke valgt nogen model",
+                function.label(),
+                provider.name
+            ));
+        }
+        if link.timeout_ms == Some(0) {
+            return Err(format!(
+                "{}: tidsgrænsen skal være over 0 ms",
+                function.label()
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Check one provider on its own: id, name and address.
+pub fn validate_provider(p: &Provider) -> Result<(), String> {
+    validate_id(&p.id)?;
+    if p.name.trim().is_empty() {
+        return Err(format!("Udbyderen \"{}\" mangler et navn", p.id));
+    }
+    if p.kind.is_remote() {
+        validate_base_url(p)?;
+    }
+    Ok(())
 }
 
 fn validate_id(id: &str) -> Result<(), String> {
@@ -341,9 +353,10 @@ fn validate_id(id: &str) -> Result<(), String> {
 
 fn validate_base_url(p: &Provider) -> Result<(), String> {
     let url = p.base_url.trim();
-    let local_http = ["http://localhost", "http://127.0.0.1", "http://[::1]"]
-        .iter()
-        .any(|prefix| url.starts_with(prefix));
+    // The host is compared exactly: "http://localhost.example.com" is not local
+    let local_http = reqwest::Url::parse(url).is_ok_and(|u| {
+        u.scheme() == "http" && matches!(u.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"))
+    });
     if url.starts_with("https://")
         || local_http
         || (p.kind.allows_plain_http() && url.starts_with("http://"))
@@ -461,6 +474,30 @@ pub fn normalize_base_url(url: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plain_http_only_to_this_machine_for_hosted_providers() {
+        let with = |url: &str| Provider {
+            base_url: url.to_string(),
+            ..presets().into_iter().find(|p| p.id == OPENAI_ID).unwrap()
+        };
+        for ok in [
+            "https://api.openai.com/v1",
+            "http://localhost:8000/v1",
+            "http://127.0.0.1/v1",
+            "http://[::1]:8080/v1",
+        ] {
+            assert!(validate_provider(&with(ok)).is_ok(), "{ok}");
+        }
+        for bad in [
+            "http://localhost.eksempel.com/v1",
+            "http://127.0.0.1.eksempel.com/v1",
+            "http://api.openai.com/v1",
+            "api.openai.com",
+        ] {
+            assert!(validate_provider(&with(bad)).is_err(), "{bad}");
+        }
+    }
 
     #[test]
     fn default_config_is_valid_and_prefers_syv_with_local_reserve() {

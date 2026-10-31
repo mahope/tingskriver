@@ -145,9 +145,20 @@ instead of keeping their own endpoints and keys.
   dictation endpoint into `providers.json`, moves every key to Credential
   Manager and then clears the old columns. Claude, Deepgram and ElevenLabs
   are no longer providers, but their keys are kept. If a key cannot be
-  stored, nothing is cleared and the migration runs again next time. The old
-  `SettingsRepository` key functions read Credential Manager when the column
-  is empty, so the current summary code keeps working.
+  stored, nothing is cleared and the migration runs again next time. An old
+  value the settings UI would refuse (an Ollama endpoint without `http://`,
+  an empty custom endpoint) drops only that provider and its links, with a
+  note; it never replaces the user's choices with the defaults.
+- **Old settings code**: the `SettingsRepository` key functions now save
+  keys to Credential Manager on Windows and NULL the column (elsewhere the
+  column is kept), read the column first and Credential Manager second, and
+  delete from Credential Manager too. Targets are those of the new model,
+  except that the transcription keys of OpenAI and Groq go to
+  `Tingskriver/udbyder/openai-transcription` and `groq-transcription` (read
+  before the shared `openai`/`groq` key). The migration also picks up keys
+  already saved there, and stores a transcription key under that target even
+  when it equals the summary key, so deleting the summary key in the old
+  screen leaves meeting transcription working.
 
 Using it from dictation or meetings:
 

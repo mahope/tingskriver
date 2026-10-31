@@ -886,6 +886,167 @@ fn migration_of_a_custom_syv_endpoint_and_builtin_summary() {
     );
 }
 
+/// A database with the old tables and the given rows, without the fixture.
+async fn pool_with(dir: &std::path::Path, sql: &str) -> sqlx::SqlitePool {
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(dir.join("meeting_minutes.sqlite"))
+        .create_if_missing(true);
+    let pool = sqlx::SqlitePool::connect_with(options).await.unwrap();
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    sqlx::raw_sql(sql).execute(&pool).await.unwrap();
+    pool
+}
+
+#[tokio::test]
+async fn keys_the_old_code_already_stored_are_migrated() {
+    let target = |id: &str| key_target(id);
+    let get = |keys: &MemoryKeyStore, t: &str| keys.get(t).unwrap().map(|k| k.expose().to_string());
+
+    // Local summary, OpenAI transcription; the transcription key was saved
+    // by the old settings screen after this change, so its column is empty.
+    let dir = tempfile::tempdir().unwrap();
+    let pool = pool_with(
+        dir.path(),
+        "INSERT INTO settings (id, provider, model, whisperModel) VALUES ('1', 'builtin-ai', 'gemma3:1b', 'large-v3');
+         INSERT INTO transcript_settings (id, provider, model) VALUES ('1', 'openai', 'whisper-1');",
+    )
+    .await;
+    let keys = Arc::new(MemoryKeyStore::default());
+    let old_key = ApiKey::new("sk-only-in-store").unwrap();
+    keys.set(&target("openai-transcription"), &old_key).unwrap();
+    let service = ProviderService::new(dir.path(), keys.clone());
+    let config = service.load_or_migrate(Some(&pool), None).await.unwrap();
+    let first = &config.chain(Function::Transcription)[0];
+    assert_eq!(
+        get(&keys, &target(&first.provider)).as_deref(),
+        Some("sk-only-in-store"),
+        "the transcription chain finds the key"
+    );
+
+    // Different summary and transcription keys, both already in the store:
+    // neither overwrites the other.
+    let dir = tempfile::tempdir().unwrap();
+    let pool = pool_with(
+        dir.path(),
+        "INSERT INTO settings (id, provider, model, whisperModel) VALUES ('1', 'openai', 'gpt-4o', 'large-v3');
+         INSERT INTO transcript_settings (id, provider, model) VALUES ('1', 'openai', 'whisper-1');",
+    )
+    .await;
+    let keys = Arc::new(MemoryKeyStore::default());
+    keys.set(&target(OPENAI_ID), &ApiKey::new("sk-summary").unwrap())
+        .unwrap();
+    keys.set(
+        &target("openai-transcription"),
+        &ApiKey::new("sk-transcription").unwrap(),
+    )
+    .unwrap();
+    let service = ProviderService::new(dir.path(), keys.clone());
+    let config = service.load_or_migrate(Some(&pool), None).await.unwrap();
+    assert_eq!(config.chain(Function::Summary)[0].provider, OPENAI_ID);
+    assert_eq!(
+        get(&keys, &target(OPENAI_ID)).as_deref(),
+        Some("sk-summary")
+    );
+    let first = &config.chain(Function::Transcription)[0];
+    assert_eq!(first.provider, "openai-transcription");
+    assert_eq!(
+        get(&keys, &target(&first.provider)).as_deref(),
+        Some("sk-transcription")
+    );
+}
+
+#[test]
+fn a_shared_key_stays_readable_for_transcription_after_the_summary_key_is_deleted() {
+    for (old, column) in [("openai", "openaiApiKey"), ("groq", "groqApiKey")] {
+        let key = ApiKey::new("sk-shared").unwrap();
+        let legacy = migrate::LegacySettings {
+            has_summary_row: true,
+            summary_provider: Some(old.into()),
+            summary_model: Some("m".into()),
+            summary_keys: [(column.to_string(), key.clone())].into(),
+            has_transcript_row: true,
+            transcript_provider: Some(old.into()),
+            transcript_keys: [(column.to_string(), key.clone())].into(),
+            ..Default::default()
+        };
+        let plan = migrate::plan(&legacy, None);
+        plan.config.validate().unwrap();
+        let store = MemoryKeyStore::default();
+        for (target, key) in &plan.keys {
+            store.set(target, key).unwrap();
+        }
+        // What SettingsRepository::delete_api_key deletes for the summary key
+        for target in migrate::legacy_read_targets(migrate::LegacyTable::Summary, old) {
+            store.delete(&target).unwrap();
+        }
+        let found = migrate::legacy_read_targets(migrate::LegacyTable::Transcript, old)
+            .iter()
+            .find_map(|t| store.get(t).unwrap());
+        assert_eq!(
+            found.map(|k| k.expose().to_string()).as_deref(),
+            Some("sk-shared"),
+            "{old}"
+        );
+    }
+}
+
+#[test]
+fn one_invalid_old_value_does_not_discard_the_migration() {
+    let legacy = migrate::LegacySettings {
+        has_summary_row: true,
+        summary_provider: Some("groq".into()),
+        summary_model: Some("llama-3.3-70b".into()),
+        ollama_endpoint: Some("gpu-box:11434".into()),
+        custom_openai: Some(migrate::LegacyCustomOpenAi {
+            endpoint: String::new(),
+            model: "llama".into(),
+            ..Default::default()
+        }),
+        has_transcript_row: true,
+        transcript_provider: Some("parakeet".into()),
+        transcript_model: Some("parakeet-tdt-0.6b-v3-int8".into()),
+        ..Default::default()
+    };
+    // Dictation uses Syv.ai; meetings must stay local.
+    let plan = migrate::plan(&legacy, Some(&DictationSettings::default()));
+    plan.config.validate().unwrap();
+    assert!(plan.config.provider("ollama").is_none());
+    assert!(plan.config.provider("custom-openai").is_none());
+    assert_eq!(plan.config.chain(Function::Summary)[0].provider, "groq");
+    assert_eq!(
+        plan.config.chain(Function::Transcription),
+        [ChainLink::new(LOCAL_ID).with_model("parakeet-tdt-0.6b-v3-int8")]
+    );
+    assert!(plan.notes.iter().any(|n| n.contains("Ollama")));
+    assert!(plan.notes.iter().any(|n| n.contains("Brugerdefineret")));
+
+    // A broken link is dropped, the rest of its chain stays.
+    let legacy = migrate::LegacySettings {
+        has_summary_row: true,
+        summary_provider: Some("custom-openai".into()),
+        custom_openai: Some(migrate::LegacyCustomOpenAi {
+            endpoint: "ftp://server".into(),
+            model: "llama".into(),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let plan = migrate::plan(&legacy, None);
+    plan.config.validate().unwrap();
+    assert_eq!(
+        plan.config.chain(Function::Summary),
+        [ChainLink::new(LOCAL_ID)]
+    );
+}
+
+#[tokio::test]
+async fn read_legacy_fails_on_database_errors_but_not_on_missing_tables() {
+    let empty = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+    assert!(migrate::read_legacy(&empty).await.unwrap().is_empty());
+    empty.close().await;
+    assert!(migrate::read_legacy(&empty).await.is_err());
+}
+
 #[test]
 fn no_old_odincore_domain_in_presets() {
     let json = serde_json::to_string(&ProvidersConfig::default()).unwrap();

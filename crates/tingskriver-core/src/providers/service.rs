@@ -115,11 +115,22 @@ impl ProviderService {
             return Ok(ProvidersConfig::default());
         };
 
-        let legacy = migrate::read_legacy(pool).await?;
+        let mut legacy = migrate::read_legacy(pool).await?;
+        if let Err(e) = migrate::fill_from_store(&mut legacy, self.keys.as_ref()) {
+            // A key saved by the old settings code would be missed; try again next time.
+            log::warn!("Providers: migration postponed: {e}");
+            return Ok(migrate::plan(&legacy, dictation).config);
+        }
         let plan = migrate::plan(&legacy, dictation);
         if let Err(e) = plan.config.validate() {
-            log::error!("Providers: migrated settings invalid ({e}); using defaults");
-            return Ok(ProvidersConfig::default());
+            // plan drops invalid entries, so this should not happen. Never
+            // fall back to the defaults, which send audio to Syv.ai.
+            log::error!("Providers: migrated settings invalid ({e}); using the local model only");
+            let mut config = ProvidersConfig::default();
+            for chain in config.functions.values_mut() {
+                chain.retain(|link| link.provider == super::model::LOCAL_ID);
+            }
+            return Ok(config);
         }
         if let Err(e) = migrate::apply(&plan, self.keys.as_ref(), Some(pool), &legacy).await {
             // Keys stay in the old columns; try again next time.
