@@ -60,6 +60,10 @@ cargo xwin check --target x86_64-pc-windows-msvc -p tingskriver
 
 Delete the stub before building an installer on that machine. CI runs the same xwin check (without the Tauri crate) in `.github/workflows/rust.yml`.
 
+### Windows installer for the GPUI app (Velopack)
+
+`installer/pack.ps1` packs `tingskriver-app.exe` with Velopack into `Tingskriver-Setup.exe` (per user, no administrator), full and delta packages and the update feed. CI does it in `.github/workflows/app-release.yml`, and a tag `app-v<workspace version>` publishes a GitHub Release. Hooks, updates, the release steps and a test recipe for a clean VM are in [installer/README.md](../installer/README.md).
+
 ### Dependency licences (cargo deny)
 
 `deny.toml` lists the licences a Cargo dependency may have. GPL, LGPL and AGPL crates are rejected, because they would end up in the MIT-licensed binary. CI runs the check in `.github/workflows/rust.yml`; run it locally with:

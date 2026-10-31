@@ -14,7 +14,7 @@ frontend/
   src/                        the React UI of the Tauri app
 llama-helper/                 local LLM sidecar used by the summary engine
 site/                         the project website, not built yet
-installer/                    the Velopack installer and updater, not built yet
+installer/                    the Velopack installer and updater (installer/README.md)
 ```
 
 ## Dependency direction
