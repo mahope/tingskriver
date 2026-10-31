@@ -441,8 +441,19 @@ async fn local_engine_available() -> bool {
 }
 
 impl Service {
-    async fn transcribe(&self, settings: &DictationSettings, samples: &[f32], rules: &Rules) -> Result<Transcript, String> {
-        let preference = EnginePreference::parse(&settings.engine);
+    /// `speech` is the mode chosen from the window; its engine, model and
+    /// language apply. "Kun lokal model" in the settings always wins.
+    async fn transcribe(
+        &self,
+        settings: &DictationSettings,
+        speech: &modes::Resolved,
+        samples: &[f32],
+        rules: &Rules,
+    ) -> Result<Transcript, String> {
+        let preference = match EnginePreference::parse(&settings.engine) {
+            EnginePreference::LocalOnly => EnginePreference::LocalOnly,
+            EnginePreference::Auto => EnginePreference::parse(&speech.engine),
+        };
         let key = match preference {
             EnginePreference::Auto => secrets::syv_key(),
             EnginePreference::LocalOnly => None,
@@ -462,9 +473,10 @@ impl Service {
         let mut syv_task = tokio::spawn({
             let client = self.http.clone();
             let endpoint = settings.syv_endpoint.clone();
-            let model = settings.syv_model.clone();
+            let model = speech.model.clone();
+            let language = speech.language.clone();
             let wav = audio::wav_bytes(samples, audio::TARGET_RATE);
-            async move { syv::transcribe(&client, &endpoint, &key, &model, wav, Some(prompt)).await }
+            async move { syv::transcribe_in(&client, &endpoint, &key, &model, &language, wav, Some(prompt)).await }
         });
 
         let deadline = Duration::from_millis(settings.fallback_after_ms);
@@ -610,7 +622,11 @@ impl Service {
         }
 
         let rules = self.rules();
-        let transcript = match self.transcribe(&settings, &samples, &rules).await {
+        // Trigger words are only known after transcription, so the engine,
+        // model and language come from the mode the window selects.
+        let (speech_mode, _) = pick_mode(&settings, &window, "");
+        let speech = modes::resolve(&speech_mode, &settings.mode_defaults());
+        let transcript = match self.transcribe(&settings, &speech, &samples, &rules).await {
             Ok(t) => t,
             Err(e) => {
                 log::warn!("Dictation transcription failed: {e}");
@@ -692,18 +708,7 @@ impl Service {
         window: &ForegroundWindow,
         transcript: &str,
     ) -> ChosenMode {
-        let builtin;
-        let list = if settings.modes.is_empty() {
-            builtin = modes::builtin_modes();
-            &builtin
-        } else {
-            &settings.modes
-        };
-        let choice = modes::choose(list, window, transcript, None, &settings.style_rules());
-        let (mode, trigger_words) = match &choice {
-            Some(c) => (list[c.index].clone(), c.trigger_words),
-            None => (modes::Mode::default(), 0),
-        };
+        let (mode, trigger_words) = pick_mode(settings, window, transcript);
         let resolved = modes::resolve(&mode, &settings.mode_defaults());
         if let Ok(mut slot) = self.active_mode.lock() {
             *slot = Some(resolved.mode_name.clone());
@@ -816,6 +821,25 @@ async fn insert(text: String, restore_ms: u64) -> Result<(&'static str, Instant)
 #[cfg(not(windows))]
 async fn insert(_text: String, _restore_ms: u64) -> Result<(&'static str, Instant), String> {
     Err("Indsættelse understøttes kun på Windows".to_string())
+}
+
+/// The mode for `window` and `transcript`, and the number of trigger words.
+fn pick_mode(
+    settings: &DictationSettings,
+    window: &ForegroundWindow,
+    transcript: &str,
+) -> (modes::Mode, usize) {
+    let builtin;
+    let list = if settings.modes.is_empty() {
+        builtin = modes::builtin_modes();
+        &builtin
+    } else {
+        &settings.modes
+    };
+    match modes::choose(list, window, transcript, None, &settings.style_rules()) {
+        Some(c) => (list[c.index].clone(), c.trigger_words),
+        None => (modes::Mode::default(), 0),
+    }
 }
 
 struct ChosenMode {

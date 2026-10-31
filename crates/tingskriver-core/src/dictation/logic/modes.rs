@@ -490,7 +490,8 @@ pub fn import_modes(json: &str) -> Result<Vec<Mode>, String> {
     validate(file.modes)
 }
 
-/// Trim names and ids and reject empty or duplicate modes.
+/// Trim names, ids and languages and reject empty or duplicate modes and
+/// rules that can't work yet (a shortcut per mode).
 pub fn validate(modes: Vec<Mode>) -> Result<Vec<Mode>, String> {
     let mut out: Vec<Mode> = Vec::with_capacity(modes.len());
     for mut mode in modes {
@@ -509,6 +510,20 @@ pub fn validate(modes: Vec<Mode>) -> Result<Vec<Mode>, String> {
         }
         if out.iter().any(|m| m.id == mode.id) {
             return Err(format!("Tilstanden \"{}\" findes to gange", mode.name));
+        }
+        mode.language = mode
+            .language
+            .map(|l| l.trim().to_lowercase())
+            .filter(|l| !l.is_empty());
+        if mode
+            .rules
+            .iter()
+            .any(|r| matches!(r, ModeRule::Shortcut(_)))
+        {
+            return Err(format!(
+                "Tilstanden \"{}\" har en genvej; genveje pr. tilstand understøttes ikke endnu",
+                mode.name
+            ));
         }
         if let Some(lang) = &mode.language {
             if !valid_language(lang) {
@@ -692,6 +707,25 @@ mod tests {
     }
 
     #[test]
+    fn validate_normalises_language_and_refuses_shortcuts() {
+        let mode = |language: Option<&str>, rules: Vec<ModeRule>| Mode {
+            name: "Engelsk".into(),
+            language: language.map(str::to_string),
+            rules,
+            ..Mode::default()
+        };
+        let out = validate(vec![mode(Some(" EN"), vec![])]).unwrap();
+        assert_eq!(out[0].language.as_deref(), Some("en"));
+        let out = validate(vec![mode(Some(" "), vec![])]).unwrap();
+        assert_eq!(out[0].language, None);
+        assert!(validate(vec![mode(
+            None,
+            vec![ModeRule::Shortcut("Ctrl+Win+E".into())]
+        )])
+        .is_err());
+    }
+
+    #[test]
     fn legacy_list_overrides_builtin_program_rules() {
         let modes = builtin_modes();
         let id = |process: &str, legacy: &[app_style::AppStyleRule]| {
@@ -780,7 +814,7 @@ mod tests {
     fn export_import_round_trip() {
         let mut modes = builtin_modes();
         modes[0].language = Some("en".into());
-        modes[1].rules.push(ModeRule::Shortcut("Ctrl+Win+F".into()));
+        modes[1].rules.push(ModeRule::TriggerWord("formelt".into()));
         let json = export_modes(&modes).unwrap();
         assert!(json.contains("\"version\": 1"));
         assert_eq!(import_modes(&json).unwrap(), modes);

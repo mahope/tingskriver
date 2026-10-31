@@ -62,10 +62,20 @@ output and formatting overrides, plus the rules that select it:
 }
 ```
 
-Rule types: `program`, `windowClass`, `titleContains`, `triggerWord` (said
-first; removed from the text) and `shortcut`. Order: shortcut, trigger word,
-program, window class, title, then Standard. A raw match in the older
-"style per program" list picks Kode/rå. Kode/rå never polishes, never formats
+Rule types: `program`, `windowClass`, `titleContains` and `triggerWord`
+(said first; removed from the text). Order: trigger word, program, window
+class, title, then Standard. A `shortcut` rule is refused on import until the
+hotkey can start a dictation in a given mode. The older "style per program"
+list in the settings decides for the programs it names: "raw" picks Kode/rå,
+"normal" (or removing a default editor from the list) keeps the program out
+of Kode/rå.
+
+`provider` (`"auto"` or `"local"`), `model` (Syv.ai model) and `language`
+apply to transcription. They come from the mode the window selects, because a
+trigger word is only known once the speech is transcribed, so a trigger word
+changes cleanup and polishing but not the engine or language. "Kun lokal
+model" in the settings always wins over a mode's `"auto"`. The local Parakeet
+model detects the language itself. Kode/rå never polishes, never formats
 numbers or addresses and never presses Enter. `Service::export_modes` and
 `Service::import_modes` read and write this format; a newer `version` is
 refused.
