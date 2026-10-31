@@ -70,25 +70,6 @@ export function useRecordingStart(
     }
   }, []);
 
-  // Check the selected local transcription provider, not a hardcoded engine.
-  const checkTranscriptionModelReady = useCallback(async (): Promise<boolean> => {
-    try {
-      const provider = await getTranscriptionProvider();
-      const commands = getProviderCommands(provider);
-
-      if (commands) {
-        await invoke(commands.initialize);
-        return await invoke<boolean>(commands.hasAvailableModels);
-      }
-
-      console.error(`Unsupported transcription provider: ${provider}`);
-      return false;
-    } catch (error) {
-      console.error('Failed to check transcription model status:', error);
-      return false;
-    }
-  }, [getTranscriptionProvider]);
-
   // Check download status for the selected local transcription provider.
   const checkIfModelDownloading = useCallback(async (): Promise<boolean> => {
     try {
@@ -104,8 +85,9 @@ export function useRecordingStart(
     }
   }, [getTranscriptionProvider]);
 
-  // The Rust recording command validates the same provider again before capture.
-  const checkModelReady = checkTranscriptionModelReady;
+  // Recording needs no transcription model: the audio is saved first and
+  // transcribed from the file after the meeting (issue #4).
+  const checkModelReady = useCallback(async (): Promise<boolean> => true, []);
 
   // Handle manual recording start (from button click)
   const handleRecordingStart = useCallback(async () => {
