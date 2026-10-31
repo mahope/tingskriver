@@ -100,3 +100,9 @@ only while the control that had focus after the previous insertion still has
 focus (`GetGUIThreadInfo`). Browsers and Electron apps draw all fields in one
 control, so there "the same field" means the same page or app window. The
 command sends Backspace or Shift+Left once per inserted character.
+
+"stop diktering" at the end of a dictation is removed from the text and
+reported as `stopDictation`, but nothing acts on it yet: the text is cleaned
+after the recording has stopped, so hands-free dictation still ends with a
+press of the shortcut. Stopping on the spoken phrase needs live recognition
+while recording.
