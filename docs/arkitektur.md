@@ -65,3 +65,23 @@ registers at startup.
 
 The GPUI app will implement `AppHost` on its own event channel and call the
 same core functions.
+
+## Speech models: loaded once, shared, unloaded when idle
+
+Meetings and dictation share the Parakeet and Whisper engines in core.
+
+- Inference never runs on a tokio worker or under an engine lock. Whisper
+  clones its context (`Arc`) and runs in `spawn_blocking` with its own state.
+  An ONNX session needs `&mut`, so Parakeet keeps a pool of up to two loaded
+  instances (`parakeet_engine::pool`): a short dictation during a long meeting
+  segment borrows the second instance instead of waiting. The second instance
+  is loaded the first time two calls overlap and then stays.
+- Stopping a meeting no longer unloads the model. The model keeper
+  (`dictation::warm`, decisions in `dictation::logic::residency`) unloads a
+  model after the idle time in the dictation settings (`modelIdleMinutes`,
+  default 10, 0 = never), keeps models listed in `keepWarmModels`, and
+  unloads after 30 s idle when less than 10 % of memory is free. It never
+  unloads during a call or a meeting recording, and logs process memory before
+  and after (`Model keeper: unloaded ...`).
+- Pressing the dictation shortcut prewarms the local model while the user
+  speaks. Dictation logs `model_load=none` when the model was already loaded.
