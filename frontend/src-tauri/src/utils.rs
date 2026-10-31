@@ -23,3 +23,18 @@ pub async fn open_system_settings(preference_pane: String) -> Result<(), String>
 
     Ok(())
 } 
+/// Open a folder in the system file manager.
+pub fn open_folder(path: &std::path::Path) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    let opener = "explorer";
+    #[cfg(target_os = "macos")]
+    let opener = "open";
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let opener = "xdg-open";
+
+    std::process::Command::new(opener)
+        .arg(path)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("Failed to open {}: {}", path.display(), e))
+}
