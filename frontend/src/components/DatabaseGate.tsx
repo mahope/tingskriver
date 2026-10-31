@@ -44,8 +44,10 @@ export function DatabaseGate({ children }: { children: ReactNode }) {
     const unlisten = listen<DatabaseStatus>('database-status', (event) => {
       if (!cancelled) setStatus(event.payload)
     })
-    // Ask after subscribing, so a status sent in between is not missed.
-    invoke<DatabaseStatus>('get_database_status')
+    // Ask once subscribed, so a status sent in between is not missed.
+    unlisten
+      .catch(() => undefined)
+      .then(() => invoke<DatabaseStatus>('get_database_status'))
       .then((current) => {
         if (!cancelled && current.state !== 'loading') setStatus(current)
       })
