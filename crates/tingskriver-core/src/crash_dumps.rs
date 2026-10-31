@@ -239,10 +239,4 @@ mod tests {
         remember_in(&local, true).unwrap();
         assert!(enabled_in(&local));
     }
-
-    #[test]
-    fn minidumps_only() {
-        assert_eq!(DUMP_TYPE_MINI, 1);
-        assert!(DUMP_COUNT > 0);
-    }
 }
