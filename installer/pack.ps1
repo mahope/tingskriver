@@ -66,7 +66,7 @@ foreach ($doc in @("LICENSE.md", "NOTICE.md", "THIRD_PARTY_LICENSES.md")) {
   Copy-Item (Join-Path $repo $doc) -Destination $staging
 }
 Write-Host "Staged files:"
-Get-ChildItem -Recurse $staging | ForEach-Object { Write-Host "  $($_.FullName.Substring($staging.Length + 1)) ($($_.Length) bytes)" }
+Get-ChildItem -Recurse -File $staging | ForEach-Object { Write-Host "  $($_.FullName.Substring($staging.Length + 1)) ($($_.Length) bytes)" }
 
 $vpkArgs = @(
   "pack",
