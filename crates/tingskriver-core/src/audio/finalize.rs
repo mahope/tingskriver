@@ -738,6 +738,91 @@ fn finish(raw_dir: &Path, mut outcome: FinalizeOutcome) -> FinalizeOutcome {
     outcome
 }
 
+/// Finalize attempts recorded in a stopped meeting's raw folder.
+const ATTEMPTS_FILE: &str = "finalize_attempts";
+
+/// Startup retries before a failing meeting is left for the user.
+pub const MAX_STARTUP_ATTEMPTS: u32 = 3;
+
+/// Meeting folders under `recordings_dir` whose recording was stopped
+/// normally but whose final files were never made: the app closed during
+/// the background encode, or FFmpeg failed. Crashed recordings (manifest not
+/// complete) are left to the recovery dialog, and `partial` results are
+/// final.
+pub fn pending_finalize_folders(recordings_dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(recordings_dir) else {
+        return Vec::new();
+    };
+    let mut folders: Vec<PathBuf> = entries
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|folder| {
+            let raw = folder.join(RAW_DIR);
+            has_raw_tracks(&raw)
+                && read_manifest(&raw).is_ok_and(|m| m.complete)
+                && matches!(read_verified_status(&raw), None | Some(AudioSaveStatus::Failed))
+                && read_attempts(&raw) < MAX_STARTUP_ATTEMPTS
+        })
+        .collect();
+    folders.sort();
+    folders
+}
+
+fn read_attempts(raw_dir: &Path) -> u32 {
+    std::fs::read_to_string(raw_dir.join(ATTEMPTS_FILE))
+        .ok()
+        .and_then(|t| t.trim().parse().ok())
+        .unwrap_or(0)
+}
+
+/// Finalize every folder from [`pending_finalize_folders`]. Blocking; run it
+/// on a blocking thread at startup, before a recording can start.
+pub fn finalize_pending_recordings(
+    recordings_dir: &Path,
+    ffmpeg: Option<&Path>,
+) -> Vec<(PathBuf, FinalizeOutcome)> {
+    pending_finalize_folders(recordings_dir)
+        .into_iter()
+        .map(|folder| {
+            let raw = folder.join(RAW_DIR);
+            let attempts = read_attempts(&raw) + 1;
+            if let Err(e) = std::fs::write(raw.join(ATTEMPTS_FILE), attempts.to_string()) {
+                log::warn!("Could not record the finalize attempt in {}: {e}", raw.display());
+            }
+            log::info!(
+                "Finishing the audio of {} (startup attempt {attempts})",
+                folder.display()
+            );
+            let outcome = finalize_raw_tracks(&folder, ffmpeg);
+            (folder, outcome)
+        })
+        .collect()
+}
+
+/// Run [`finalize_pending_recordings`] on the recordings folder. Call once at
+/// app startup.
+pub async fn finalize_pending_at_startup() {
+    let recordings = super::recording_preferences::get_default_recordings_folder();
+    let result = tokio::task::spawn_blocking(move || {
+        let ffmpeg = super::ffmpeg::find_ffmpeg_path();
+        finalize_pending_recordings(&recordings, ffmpeg.as_deref())
+    })
+    .await;
+    match result {
+        Ok(done) => {
+            for (folder, outcome) in done {
+                log::info!(
+                    "Startup finalize of {}: {} ({})",
+                    folder.display(),
+                    outcome.status.as_str(),
+                    outcome.message
+                );
+            }
+        }
+        Err(e) => log::error!("Startup finalize panicked: {e}"),
+    }
+}
+
 /// Status of the last finalize, read from the marker in the raw folder.
 pub fn read_verified_status(raw_dir: &Path) -> Option<AudioSaveStatus> {
     let text = std::fs::read_to_string(raw_dir.join(VERIFIED_MARKER)).ok()?;
@@ -908,6 +993,48 @@ mod tests {
         );
         assert!(has_raw_tracks(&dir.path().join(RAW_DIR)));
         assert!(!dir.path().join(MIXED_FILE).exists());
+    }
+
+    /// A stopped meeting whose background encode never ran (app closed) is
+    /// finished at the next startup; a crashed one is left to recovery, and a
+    /// meeting that keeps failing is retried a limited number of times.
+    #[test]
+    fn startup_finishes_stopped_meetings_only() {
+        let recordings = tempfile::tempdir().unwrap();
+        let stopped = recordings.path().join("stopped");
+        let crashed = recordings.path().join("crashed");
+        record(&stopped, 1);
+        record(&crashed, 1);
+        let raw = crashed.join(RAW_DIR);
+        let mut manifest = read_manifest(&raw).unwrap();
+        manifest.complete = false;
+        write_manifest(&raw, &manifest).unwrap();
+        std::fs::create_dir_all(recordings.path().join("empty")).unwrap();
+
+        assert_eq!(pending_finalize_folders(recordings.path()), vec![stopped.clone()]);
+
+        // FFmpeg missing: failed, kept, and retried only MAX_STARTUP_ATTEMPTS times.
+        let missing = recordings.path().join("no-such-ffmpeg");
+        for _ in 0..MAX_STARTUP_ATTEMPTS {
+            let done = finalize_pending_recordings(recordings.path(), Some(&missing));
+            assert_eq!(done.len(), 1);
+            assert_eq!(done[0].1.status, AudioSaveStatus::Failed);
+        }
+        assert!(pending_finalize_folders(recordings.path()).is_empty());
+        assert!(has_raw_tracks(&stopped.join(RAW_DIR)));
+        assert!(has_raw_tracks(&crashed.join(RAW_DIR)));
+
+        let Some(ffmpeg) = ffmpeg() else {
+            eprintln!("ffmpeg not available, skipping the encode");
+            return;
+        };
+        std::fs::remove_file(stopped.join(RAW_DIR).join(ATTEMPTS_FILE)).unwrap();
+        let done = finalize_pending_recordings(recordings.path(), Some(&ffmpeg));
+        assert_eq!(done.len(), 1);
+        assert_eq!(done[0].1.status, AudioSaveStatus::Ok, "{}", done[0].1.message);
+        assert!(stopped.join(MIXED_FILE).exists());
+        assert!(!stopped.join(RAW_DIR).exists());
+        assert!(pending_finalize_folders(recordings.path()).is_empty());
     }
 
     fn write_segment(path: &Path, samples: &[i16], header_samples: u64) {
