@@ -563,7 +563,9 @@ impl<S: TrackStorage> TrackWriter<S> {
         self.pending_sample_count += converted.len();
         self.pending.push_back(Block::Samples(converted));
         self.accepted += len;
-        self.enforce_pending_limit();
+        if self.failing {
+            self.enforce_pending_limit();
+        }
         started
     }
 
@@ -649,8 +651,9 @@ impl<S: TrackStorage> TrackWriter<S> {
         self.attempts
     }
 
-    /// Commit if `COMMIT_INTERVAL` has passed since the last commit, or at
-    /// most once per `RETRY_INTERVAL` while the storage fails.
+    /// Commit if `COMMIT_INTERVAL` has passed since the last commit or that
+    /// much audio is pending, or at most once per `RETRY_INTERVAL` while the
+    /// storage fails.
     pub fn tick(&mut self, now: Instant) -> Option<StorageEvent> {
         if self.pending.is_empty() {
             return None;
@@ -660,7 +663,11 @@ impl<S: TrackStorage> TrackWriter<S> {
                 return None;
             }
         } else if let Some(last) = self.last_commit {
-            if now.duration_since(last) < COMMIT_INTERVAL {
+            // Also due when a commit interval's worth of audio is waiting:
+            // audio can arrive faster than real time (a burst after a stall).
+            let due_by_size = self.pending_sample_count as f64
+                >= COMMIT_INTERVAL.as_secs_f64() * self.sample_rate as f64;
+            if now.duration_since(last) < COMMIT_INTERVAL && !due_by_size {
                 return None;
             }
         }

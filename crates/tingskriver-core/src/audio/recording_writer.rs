@@ -668,12 +668,29 @@ mod tests {
     }
 
     /// Stop-to-saved does not grow with the meeting: after five minutes of
-    /// audio, stop only drains what is still queued and commits it.
+    /// audio, stop only writes what was still queued or pending (at most a
+    /// couple of seconds), into the real WAV files. Measured as data written
+    /// after stop, because CI disks make wall-clock bounds flaky; the time is
+    /// printed and logged in the app as "Stop-to-saved".
     #[test]
     fn stop_to_saved_is_fast_after_a_long_recording() {
         let dir = tempfile::tempdir().unwrap();
-        let (tx, handle) =
-            spawn_writer(dir.path().to_path_buf(), 48000, Arc::new(LogObserver)).unwrap();
+        let written = Arc::new(AtomicU64::new(0));
+        let storage_dir = dir.path().to_path_buf();
+        let counter = written.clone();
+        let (tx, handle) = spawn_writer_with(
+            dir.path().to_path_buf(),
+            48000,
+            Arc::new(LogObserver),
+            CHANNEL_CAPACITY,
+            move |kind| {
+                Box::new(CountingStorage {
+                    inner: WavSegmentStorage::new(storage_dir.clone(), kind, 48000),
+                    written: counter.clone(),
+                }) as Box<dyn TrackStorage>
+            },
+        )
+        .unwrap();
         for i in 0..30_000u32 {
             let end = (i + 1) as f64 * 0.01;
             tx.send(TrackKind::Microphone, vec![0.2; 480], Some(end))
@@ -686,16 +703,41 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(1));
             }
         }
+        let before_stop = written.load(Ordering::SeqCst);
         let stop = Instant::now();
         drop(tx);
         let summary = handle.join().unwrap();
-        let elapsed = stop.elapsed();
-        // The acceptance bound for a 60 min meeting; well under a second on a
-        // normal disk, slower on CI runners with slow sync.
-        assert!(elapsed < Duration::from_secs(5), "stop took {elapsed:?}");
-        eprintln!("stop-to-saved after 300 s of audio: {elapsed:?}");
+        eprintln!("stop-to-saved after 300 s of audio: {:?}", stop.elapsed());
+        let after_stop = written.load(Ordering::SeqCst) - before_stop;
+        // Queue (<= 1 s for both tracks) + one commit interval per track.
+        assert!(
+            after_stop <= 3 * 2 * 48000,
+            "stop wrote {:.1}s of audio",
+            after_stop as f64 / 96000.0
+        );
         assert!((summary.duration_seconds() - 300.0).abs() < 1e-6);
         assert_eq!(summary.lost_samples(), 0);
+        assert_eq!(written.load(Ordering::SeqCst), 2 * 300 * 48000);
+    }
+
+    struct CountingStorage {
+        inner: WavSegmentStorage,
+        written: Arc<AtomicU64>,
+    }
+
+    impl TrackStorage for CountingStorage {
+        fn write(&mut self, samples: &[i16]) -> super::super::track_writer::WriteOutcome {
+            let outcome = self.inner.write(samples);
+            self.written
+                .fetch_add(outcome.committed as u64, Ordering::SeqCst);
+            outcome
+        }
+        fn segment_names(&self) -> Vec<String> {
+            self.inner.segment_names()
+        }
+        fn sync(&mut self) -> io::Result<()> {
+            self.inner.sync()
+        }
     }
 
     #[test]
