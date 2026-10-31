@@ -14,3 +14,7 @@ pub mod cleanup;
 pub mod engine;
 pub mod gesture;
 pub mod hotkey;
+pub mod order;
+pub mod paste;
+pub mod residency;
+pub mod timing;

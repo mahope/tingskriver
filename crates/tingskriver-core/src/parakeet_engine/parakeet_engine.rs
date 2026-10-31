@@ -1,4 +1,5 @@
 use crate::parakeet_engine::model::ParakeetModel;
+use crate::parakeet_engine::pool::{self, BoxedModel, ModelPool};
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -262,7 +263,8 @@ impl From<std::io::Error> for ParakeetEngineError {
 
 pub struct ParakeetEngine {
     models_dir: PathBuf,
-    current_model: Arc<RwLock<Option<ParakeetModel>>>,
+    /// The read lock is only held to clone the `Arc`, never during inference.
+    current_model: Arc<RwLock<Option<Arc<ModelPool>>>>,
     current_model_name: Arc<RwLock<Option<String>>>,
     model_lifecycle_lock: Mutex<()>,
     pub(crate) available_models: Arc<RwLock<HashMap<String, ModelInfo>>>,
@@ -471,6 +473,7 @@ impl ParakeetEngine {
                         runtime_handle.block_on(hook.continue_load.notified());
                     }
                     ParakeetModel::new(&model_path, quantized)
+                        .map(|model| Box::new(model) as BoxedModel)
                         .map_err(|error| error.to_string())
                 })
                 .await
@@ -485,7 +488,14 @@ impl ParakeetEngine {
                     anyhow!("Failed to load Parakeet model {}: {}", model_name, error)
                 })?;
 
-                *self.current_model.write().await = Some(model);
+                let loader_path = model_info.path.clone();
+                let loader: pool::Loader = Box::new(move || {
+                    ParakeetModel::new(&loader_path, quantized)
+                        .map(|model| Box::new(model) as BoxedModel)
+                        .map_err(|error| error.to_string())
+                });
+                *self.current_model.write().await =
+                    Some(Arc::new(ModelPool::new(model, loader, pool::MAX_INSTANCES)));
                 *self.current_model_name.write().await = Some(model_name.to_string());
 
                 log::info!(
@@ -539,11 +549,17 @@ impl ParakeetEngine {
         self.current_model.read().await.is_some()
     }
 
-    /// Transcribe audio samples using the loaded Parakeet model
+    /// Transcribe audio samples using the loaded Parakeet model.
+    ///
+    /// Runs on a blocking thread with its own model instance, so a short
+    /// dictation does not wait behind a long meeting segment, and loading,
+    /// unloading and status checks are never blocked by inference.
     pub async fn transcribe_audio(&self, audio_data: Vec<f32>) -> Result<String> {
-        let mut model_guard = self.current_model.write().await;
-        let model = model_guard
-            .as_mut()
+        let pool = self
+            .current_model
+            .read()
+            .await
+            .clone()
             .ok_or_else(|| anyhow!("No Parakeet model loaded. Please load a model first."))?;
 
         let duration_seconds = audio_data.len() as f64 / 16000.0; // Assuming 16kHz
@@ -553,14 +569,34 @@ impl ParakeetEngine {
             duration_seconds
         );
 
-        // Transcribe using Parakeet model
-        let result = model
-            .transcribe_samples(audio_data)
+        let text = tokio::task::spawn_blocking(move || pool.transcribe(audio_data))
+            .await
+            .map_err(|e| anyhow!("Parakeet transcription task failed: {}", e))?
             .map_err(|e| anyhow!("Parakeet transcription failed: {}", e))?;
 
-        log::debug!("Parakeet transcription result: '{}'", result.text);
+        log::debug!("Parakeet transcription result: '{}'", text);
 
-        Ok(result.text)
+        Ok(text)
+    }
+
+    /// When the loaded model last finished a call, and how many calls run now.
+    /// `None` when no model is loaded.
+    pub async fn usage(&self) -> Option<(Instant, usize)> {
+        let pool = self.current_model.read().await.clone()?;
+        Some((pool.last_used(), pool.busy()))
+    }
+
+    /// Count the loaded model as used now (a dictation is about to need it).
+    pub async fn mark_used(&self) {
+        if let Some(pool) = self.current_model.read().await.as_ref() {
+            pool.mark_used();
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn set_test_pool(&self, name: &str, pool: ModelPool) {
+        *self.current_model.write().await = Some(Arc::new(pool));
+        *self.current_model_name.write().await = Some(name.to_string());
     }
 
     /// Get the models directory path
@@ -2012,5 +2048,41 @@ mod tests {
         assert!(matches!(discovered_model.status, ModelStatus::Available));
         assert!(matches!(test_model_status(&engine).await, ModelStatus::Available));
         assert!(!engine.active_downloads.lock().await.downloads.contains_key(TEST_MODEL_NAME));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn concurrent_inference_is_not_serialized_on_the_engine() {
+        use std::sync::atomic::AtomicUsize;
+
+        let (_temp_dir, engine, _model_dir) = test_engine().await;
+        let loads = Arc::new(AtomicUsize::new(0));
+        engine
+            .set_test_pool(TEST_MODEL_NAME, pool::tests::fake_pool(loads))
+            .await;
+
+        let long = {
+            let engine = Arc::clone(&engine);
+            tokio::spawn(async move { engine.transcribe_audio(vec![800.0]).await })
+        };
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Status checks and a short call answer while the long call runs.
+        let started = Instant::now();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), engine.is_model_loaded())
+                .await
+                .expect("status check must not wait for inference")
+        );
+        let short = tokio::time::timeout(Duration::from_millis(400), engine.transcribe_audio(vec![10.0]))
+            .await
+            .expect("short call must not wait for the long call")
+            .expect("short call succeeds");
+        assert_eq!(short, "10 ms");
+        assert!(started.elapsed() < Duration::from_millis(400));
+        assert!(!long.is_finished());
+
+        assert_eq!(long.await.expect("join long call").expect("long call succeeds"), "800 ms");
+        let (_, busy) = engine.usage().await.expect("model loaded");
+        assert_eq!(busy, 0);
     }
 }

@@ -28,6 +28,14 @@ cargo test -p tingskriver-core dictation
 cargo test --workspace                  # everything; the Tauri crate needs the Linux Tauri libraries
 ```
 
+Dictation insertion has a test against a real window and the real clipboard. It only runs on a Windows desktop session and on request, since it types into a test window (do not touch the keyboard while it runs):
+
+```powershell
+cargo test -p tingskriver-core --lib insertion_window -- --ignored --test-threads=1
+```
+
+It inserts 50 dictations in a row with a 24 MB image and text on the clipboard and checks the text and the clipboard after each one, and checks that a field which ignores paste gets the text typed.
+
 The Tauri crate's build script checks that its sidecars exist. For a local `cargo check`/`cargo test` outside a full build, create an empty placeholder: `touch frontend/src-tauri/binaries/llama-helper-$(rustc -vV | sed -n 's/host: //p')`.
 
 ### Checking Windows code from Linux (cargo xwin)
