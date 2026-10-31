@@ -320,16 +320,61 @@ fn copy_database(database_path: &Path, backup_root: &Path) -> io::Result<Option<
         fs::remove_dir_all(&partial)?;
     }
     fs::create_dir_all(&partial)?;
-    for file in database_files(database_path) {
-        if !file.exists() {
-            continue;
+    let copied = database_files(database_path)
+        .iter()
+        .filter(|file| file.exists())
+        .try_for_each(|file| match file.file_name() {
+            Some(name) => fs::copy(file, partial.join(name)).map(|_| ()),
+            None => Ok(()),
+        })
+        .and_then(|()| fs::rename(&partial, &folder));
+    if let Err(e) = copied {
+        // Give the space back now: on a full disk the half copy is what
+        // stands between the user and the next recording.
+        if let Err(cleanup) = fs::remove_dir_all(&partial) {
+            log::warn!("Could not remove {}: {}", partial.display(), cleanup);
         }
-        if let Some(name) = file.file_name() {
-            fs::copy(&file, partial.join(name))?;
-        }
+        return Err(e);
     }
-    fs::rename(&partial, &folder)?;
     Ok(Some((folder, true)))
+}
+
+/// Total size of the database file and its journals.
+fn database_size(database_path: &Path) -> u64 {
+    database_files(database_path)
+        .iter()
+        .filter_map(|file| fs::metadata(file).ok())
+        .map(|m| m.len())
+        .sum()
+}
+
+/// Free space kept after a safety copy, so the copy never takes the last
+/// room a recording or SQLite itself needs.
+const SAFETY_COPY_HEADROOM: u64 = 512 * 1024 * 1024;
+
+/// Whether a copy of `needed` bytes fits on a disk with `available` bytes
+/// free. Unknown free space allows the copy; a failing copy is cleaned up.
+fn room_for_copy(needed: u64, available: Option<u64>) -> bool {
+    available.map_or(true, |available| {
+        needed
+            .checked_add(SAFETY_COPY_HEADROOM)
+            .is_some_and(|wanted| wanted <= available)
+    })
+}
+
+/// Free bytes on the disk that holds `path`: the disk with the longest
+/// mount point that `path` lies under.
+fn available_space(path: &Path) -> Option<u64> {
+    let path = path
+        .ancestors()
+        .find_map(|p| fs::canonicalize(p).ok())?;
+    let disks = sysinfo::Disks::new_with_refreshed_list();
+    disks
+        .list()
+        .iter()
+        .filter(|disk| path.starts_with(disk.mount_point()))
+        .max_by_key(|disk| disk.mount_point().as_os_str().len())
+        .map(|disk| disk.available_space())
 }
 
 /// A copy taken before opening a database that was not closed cleanly.
@@ -361,6 +406,17 @@ impl SafetyCopy {
 /// as they were.
 pub(crate) fn backup_before_open(database_path: &Path, backup_root: &Path) -> Option<SafetyCopy> {
     if !has_leftover_journal(database_path) {
+        return None;
+    }
+    let needed = database_size(database_path);
+    let available = available_space(backup_root);
+    if !room_for_copy(needed, available) {
+        log::warn!(
+            "Not copying {} before opening: {} bytes needed, {} bytes free",
+            database_path.display(),
+            needed,
+            available.unwrap_or_default()
+        );
         return None;
     }
     match copy_database(database_path, backup_root) {
@@ -564,6 +620,38 @@ mod tests {
         copy.discard();
         assert!(earlier.exists());
         assert!(wal.exists(), "the WAL itself is never touched");
+    }
+
+    #[test]
+    fn a_failed_copy_leaves_no_partial_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("meeting_minutes.sqlite");
+        fs::write(&db, b"main").unwrap();
+        // A folder where the WAL should be: the main file copies, the WAL
+        // copy fails halfway through the backup.
+        fs::create_dir(dir.path().join("meeting_minutes.sqlite-wal")).unwrap();
+        let root = dir.path().join(BACKUP_DIR);
+
+        assert!(backup_database(&db, &root).is_err());
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
+        assert!(db.exists());
+    }
+
+    #[test]
+    fn safety_copy_needs_room_for_the_files_and_headroom() {
+        assert!(room_for_copy(10, None));
+        assert!(room_for_copy(10, Some(10 + SAFETY_COPY_HEADROOM)));
+        assert!(!room_for_copy(10, Some(9 + SAFETY_COPY_HEADROOM)));
+        assert!(!room_for_copy(u64::MAX, Some(u64::MAX)));
+    }
+
+    #[test]
+    fn free_space_is_found_for_a_folder_that_does_not_exist_yet() {
+        let dir = tempfile::tempdir().unwrap();
+        // Containers may list no disks; then the copy is simply allowed.
+        if !sysinfo::Disks::new_with_refreshed_list().list().is_empty() {
+            assert!(available_space(&dir.path().join(BACKUP_DIR).join("x")).is_some());
+        }
     }
 
     #[test]
