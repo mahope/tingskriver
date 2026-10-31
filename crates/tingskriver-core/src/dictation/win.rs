@@ -1,13 +1,14 @@
 //! Windows-only pieces of dictation: the global keyboard hook, text insertion
-//! via the clipboard or `SendInput`, the foreground program, Credential
+//! via the clipboard (delayed rendering) or `SendInput`, the foreground program, Credential
 //! Manager and overlay window styles.
 //!
 //! Depends only on `std`, `log`, the `windows` crate and `logic`, so it can be
 //! type-checked for `x86_64-pc-windows-msvc` without the rest of the app.
 
+use std::cell::RefCell;
 use std::ffi::c_void;
 use std::sync::mpsc::Sender;
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -16,22 +17,28 @@ use windows::Win32::Foundation::{
     CloseHandle, GetLastError, GlobalFree, ERROR_NOT_FOUND, HANDLE, HGLOBAL, HWND, LPARAM, LRESULT, RECT,
     WPARAM,
 };
-use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTOPRIMARY};
+use windows::Win32::Graphics::Gdi::{
+    DeleteEnhMetaFile, GetEnhMetaFileBits, GetMonitorInfoW, MonitorFromWindow, SetEnhMetaFileBits, HENHMETAFILE,
+    MONITORINFO, MONITOR_DEFAULTTOPRIMARY,
+};
 use windows::Win32::Security::Credentials::{
     CredDeleteW, CredFree, CredReadW, CredWriteW, CREDENTIALW, CRED_FLAGS, CRED_PERSIST_LOCAL_MACHINE,
     CRED_TYPE_GENERIC,
 };
+use windows::Win32::Security::{
+    GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation, TokenIntegrityLevel, TOKEN_MANDATORY_LABEL,
+    TOKEN_QUERY,
+};
 use windows::Win32::System::DataExchange::{
     CloseClipboard, EmptyClipboard, EnumClipboardFormats, GetClipboardData, GetClipboardFormatNameW,
-    GetClipboardSequenceNumber,
-    OpenClipboard, RegisterClipboardFormatW, SetClipboardData,
+    GetClipboardOwner, IsClipboardFormatAvailable, OpenClipboard, RegisterClipboardFormatW, SetClipboardData,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE};
 use windows::Win32::System::Ole::CF_UNICODETEXT;
 use windows::Win32::System::Threading::{
-    GetCurrentThreadId, OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
-    PROCESS_QUERY_LIMITED_INFORMATION,
+    GetCurrentProcess, GetCurrentThreadId, OpenProcess, OpenProcessToken, QueryFullProcessImageNameW,
+    PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
@@ -40,14 +47,17 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     VK_RETURN, VK_RWIN, VK_SHIFT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, GetForegroundWindow, GetMessageW, GetWindowLongPtrW, GetWindowThreadProcessId,
-    PeekMessageW, PostThreadMessageW, SetWindowLongPtrW, SetWindowPos, SetWindowsHookExW, ShowWindow,
-    UnhookWindowsHookEx, GWL_EXSTYLE, HC_ACTION, HWND_TOPMOST, KBDLLHOOKSTRUCT, MSG, PM_NOREMOVE,
-    SWP_NOACTIVATE, SWP_SHOWWINDOW, SW_HIDE, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_QUIT,
-    WM_SYSKEYDOWN, WM_SYSKEYUP, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
+    CallNextHookEx, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetForegroundWindow,
+    GetMessageW, GetWindowLongPtrW, GetWindowThreadProcessId, PeekMessageW, PostThreadMessageW, RegisterClassW,
+    SetWindowLongPtrW, SetWindowPos, SetWindowsHookExW, ShowWindow, TranslateMessage, UnhookWindowsHookEx,
+    GWL_EXSTYLE, HC_ACTION, HWND_MESSAGE, HWND_TOPMOST, KBDLLHOOKSTRUCT, MSG, PM_NOREMOVE, PM_REMOVE,
+    SWP_NOACTIVATE, SWP_SHOWWINDOW, SW_HIDE, WH_KEYBOARD_LL, WINDOW_EX_STYLE, WINDOW_STYLE, WM_KEYDOWN, WM_KEYUP,
+    WM_QUIT, WM_RENDERALLFORMATS, WM_RENDERFORMAT, WM_SYSKEYDOWN, WM_SYSKEYUP, WNDCLASSW, WS_EX_NOACTIVATE,
+    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
 };
 
 use super::logic::hotkey::{Chord, ChordSignal, ChordTracker};
+use super::logic::paste::{self, FormatKind, Observed, Outcome, SaveCheck, TargetAccess, WhenBlocked};
 
 /// Marks input we inject ourselves, so the hook lets it straight through.
 const INJECT_MARKER: usize = 0x5453_4B52; // "TSKR"
@@ -249,47 +259,244 @@ impl InsertMethod {
     }
 }
 
-/// Formats that hold GDI handles rather than global memory; not copied.
-const GDI_FORMATS: &[u32] = &[2, 3, 9, 14, 0x80, 0x82, 0x83, 0x8E];
-const MAX_SAVED_BYTES: usize = 32 * 1024 * 1024;
-/// OLE bookkeeping formats hold pointers into the copying process; copying
-/// their bytes back would hand other programs dangling data.
-const SKIPPED_FORMAT_NAMES: &[&str] = &["DataObject", "Ole Private Data", "OwnerLink", "ObjectLink", "Link"];
-
-fn is_skipped_format(format: u32) -> bool {
-    if GDI_FORMATS.contains(&format) {
-        return true;
-    }
-    if format < 0xC000 {
-        return false;
-    }
-    let mut buf = [0u16; 128];
-    let len = unsafe { GetClipboardFormatNameW(format, &mut buf) };
-    if len <= 0 {
-        return false;
-    }
-    let name = String::from_utf16_lossy(&buf[..len as usize]);
-    SKIPPED_FORMAT_NAMES.contains(&name.as_str())
+#[derive(Clone, Debug)]
+pub struct InsertOptions {
+    /// Wait after the target read the text before restoring the clipboard.
+    pub restore_after: Duration,
+    /// How long the target gets to read the text after Ctrl+V. If it does
+    /// not, the field blocks paste and the text is typed.
+    pub paste_timeout: Duration,
+    /// Program name for messages, e.g. "Code.exe".
+    pub app: Option<String>,
 }
 
-struct SavedClipboard {
-    formats: Vec<(u32, Vec<u8>)>,
+/// Only one insertion at a time, so one never saves another's text as "the
+/// original clipboard".
+static INSERT_LOCK: Mutex<()> = Mutex::new(());
+
+const CLIPBOARD_CLASS: &str = "TingskriverClipboardOwner";
+/// Time between offering the text and sending Ctrl+V.
+const MONITOR_GRACE: Duration = Duration::from_millis(25);
+
+/// The text offered on the clipboard with delayed rendering, and what has
+/// happened to it. Lives on the inserting thread, which owns the window.
+struct Offer {
+    utf16: Vec<u16>,
+    paste_sent: bool,
+    read_before_paste: bool,
+    read_after_paste: Option<Instant>,
+    /// The text was typed instead: a late read gets an empty string.
+    withdrawn: bool,
 }
 
-struct ClipboardGuard;
+thread_local! {
+    static OFFER: RefCell<Option<Offer>> = const { RefCell::new(None) };
+}
 
-impl ClipboardGuard {
-    fn open() -> Result<ClipboardGuard, String> {
+/// Hand the offered text to Windows (inside `WM_RENDERFORMAT`, where the
+/// clipboard is already open for us). This is the read notification.
+fn render_offer() {
+    OFFER.with(|offer| {
+        let mut offer = offer.borrow_mut();
+        let Some(offer) = offer.as_mut() else {
+            return;
+        };
+        let units: &[u16] = if offer.withdrawn { &[0] } else { &offer.utf16 };
+        let bytes = unsafe { std::slice::from_raw_parts(units.as_ptr() as *const u8, units.len() * 2) };
+        if let Err(e) = unsafe { set_clipboard_bytes(CF_UNICODETEXT.0 as u32, bytes) } {
+            log::warn!("Dictation: could not render clipboard text: {e}");
+        }
+        if offer.paste_sent {
+            offer.read_after_paste.get_or_insert_with(Instant::now);
+        } else {
+            offer.read_before_paste = true;
+        }
+    });
+}
+
+unsafe extern "system" fn clipboard_owner_proc(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    match message {
+        WM_RENDERFORMAT => {
+            if wparam.0 as u32 == CF_UNICODETEXT.0 as u32 {
+                render_offer();
+            }
+            LRESULT(0)
+        }
+        WM_RENDERALLFORMATS => {
+            // The window goes away while the text is still only promised.
+            if OpenClipboard(Some(hwnd)).is_ok() {
+                if GetClipboardOwner().ok() == Some(hwnd) {
+                    render_offer();
+                }
+                let _ = CloseClipboard();
+            }
+            LRESULT(0)
+        }
+        _ => DefWindowProcW(hwnd, message, wparam, lparam),
+    }
+}
+
+fn register_owner_class() -> Result<(), String> {
+    static REGISTERED: OnceLock<Result<(), String>> = OnceLock::new();
+    REGISTERED
+        .get_or_init(|| unsafe {
+            let module = GetModuleHandleW(None).map_err(|e| format!("GetModuleHandleW: {e}"))?;
+            let name = wide(CLIPBOARD_CLASS);
+            let class = WNDCLASSW {
+                lpfnWndProc: Some(clipboard_owner_proc),
+                hInstance: module.into(),
+                lpszClassName: PCWSTR(name.as_ptr()),
+                ..Default::default()
+            };
+            // The class keeps the name pointer for the life of the process.
+            std::mem::forget(name);
+            if RegisterClassW(&class) == 0 {
+                return Err(format!("RegisterClassW: {}", windows::core::Error::from_win32()));
+            }
+            Ok(())
+        })
+        .clone()
+}
+
+/// A message-only window that owns the clipboard while the text is on it.
+struct ClipboardOwner {
+    hwnd: HWND,
+}
+
+impl ClipboardOwner {
+    fn create() -> Result<ClipboardOwner, String> {
+        register_owner_class()?;
+        let name = wide(CLIPBOARD_CLASS);
+        let hwnd = unsafe {
+            let module = GetModuleHandleW(None).map_err(|e| format!("GetModuleHandleW: {e}"))?;
+            CreateWindowExW(
+                WINDOW_EX_STYLE(0),
+                PCWSTR(name.as_ptr()),
+                PCWSTR::null(),
+                WINDOW_STYLE(0),
+                0,
+                0,
+                0,
+                0,
+                Some(HWND_MESSAGE),
+                None,
+                Some(module.into()),
+                None,
+            )
+        }
+        .map_err(|e| format!("CreateWindowExW: {e}"))?;
+        Ok(ClipboardOwner { hwnd })
+    }
+
+    fn open(&self) -> Result<ClipboardGuard, String> {
         // Another program may hold the clipboard for a moment.
-        for _ in 0..20 {
-            if unsafe { OpenClipboard(None) }.is_ok() {
+        for _ in 0..50 {
+            if unsafe { OpenClipboard(Some(self.hwnd)) }.is_ok() {
                 return Ok(ClipboardGuard);
             }
             std::thread::sleep(Duration::from_millis(10));
         }
         Err("could not open clipboard".to_string())
     }
+
+    fn owns_clipboard(&self) -> bool {
+        unsafe { GetClipboardOwner() }.ok() == Some(self.hwnd)
+    }
+
+    /// Handle messages sent to the window (WM_RENDERFORMAT).
+    fn pump(&self) {
+        let mut msg = MSG::default();
+        unsafe {
+            while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+                let _ = TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+        }
+    }
+
+    /// Put `text` on the clipboard as a promise (delayed rendering), marked
+    /// so clipboard history, cloud clipboard and monitors skip it.
+    fn offer(&self, text: &str) -> Result<(), String> {
+        OFFER.with(|offer| {
+            *offer.borrow_mut() = Some(Offer {
+                utf16: text.encode_utf16().chain(std::iter::once(0)).collect(),
+                paste_sent: false,
+                read_before_paste: false,
+                read_after_paste: None,
+                withdrawn: false,
+            })
+        });
+        let _guard = self.open()?;
+        unsafe {
+            EmptyClipboard().map_err(|e| format!("EmptyClipboard: {e}"))?;
+            // Ownership was taken by EmptyClipboard; a null handle promises
+            // the data and Windows asks for it on first read.
+            if let Err(e) = SetClipboardData(CF_UNICODETEXT.0 as u32, None) {
+                // Some Windows builds return an "error" with a null handle
+                // even though the promise is registered; check it is there.
+                if IsClipboardFormatAvailable(CF_UNICODETEXT.0 as u32).is_err() {
+                    return Err(format!("SetClipboardData (delayed): {e}"));
+                }
+            }
+            set_privacy_formats();
+        }
+        Ok(())
+    }
+
+    fn set_paste_sent(&self) {
+        OFFER.with(|offer| {
+            if let Some(offer) = offer.borrow_mut().as_mut() {
+                offer.paste_sent = true;
+            }
+        });
+    }
+
+    /// From now on a read gets an empty string instead of the text.
+    fn withdraw(&self) {
+        OFFER.with(|offer| {
+            if let Some(offer) = offer.borrow_mut().as_mut() {
+                offer.withdrawn = true;
+            }
+        });
+    }
+
+    fn observed(&self) -> (bool, Option<Instant>) {
+        OFFER.with(|offer| {
+            offer
+                .borrow()
+                .as_ref()
+                .map(|o| (o.read_before_paste, o.read_after_paste))
+                .unwrap_or((false, None))
+        })
+    }
 }
+
+impl Drop for ClipboardOwner {
+    fn drop(&mut self) {
+        unsafe {
+            // Renders a still pending promise (WM_RENDERALLFORMATS) first.
+            let _ = DestroyWindow(self.hwnd);
+        }
+        OFFER.with(|offer| *offer.borrow_mut() = None);
+    }
+}
+
+enum SavedData {
+    Memory(Vec<u8>),
+    EnhMetafile(Vec<u8>),
+}
+
+struct SavedClipboard {
+    formats: Vec<(u32, SavedData)>,
+}
+
+impl SavedClipboard {
+    fn has_format(&self, format: u32) -> bool {
+        self.formats.iter().any(|(f, _)| *f == format)
+    }
+}
+
+struct ClipboardGuard;
 
 impl Drop for ClipboardGuard {
     fn drop(&mut self) {
@@ -299,31 +506,73 @@ impl Drop for ClipboardGuard {
     }
 }
 
-fn save_clipboard() -> Result<SavedClipboard, String> {
-    let _guard = ClipboardGuard::open()?;
+fn format_name(format: u32) -> Option<String> {
+    if format < 0xC000 {
+        return None;
+    }
+    let mut buf = [0u16; 128];
+    let len = unsafe { GetClipboardFormatNameW(format, &mut buf) };
+    (len > 0).then(|| String::from_utf16_lossy(&buf[..len as usize]))
+}
+
+unsafe fn read_memory_format(format: u32) -> Option<Vec<u8>> {
+    let handle = GetClipboardData(format).ok()?;
+    let global = HGLOBAL(handle.0);
+    let size = GlobalSize(global);
+    let ptr = GlobalLock(global) as *const u8;
+    if ptr.is_null() {
+        return None;
+    }
+    let bytes = std::slice::from_raw_parts(ptr, size).to_vec();
+    let _ = GlobalUnlock(global);
+    Some(bytes)
+}
+
+unsafe fn read_enh_metafile() -> Option<Vec<u8>> {
+    let handle = GetClipboardData(paste::CF_ENHMETAFILE).ok()?;
+    let metafile = HENHMETAFILE(handle.0);
+    let size = GetEnhMetaFileBits(metafile, None);
+    if size == 0 {
+        return None;
+    }
+    let mut bytes = vec![0u8; size as usize];
+    (GetEnhMetaFileBits(metafile, Some(&mut bytes)) == size).then_some(bytes)
+}
+
+/// Save every readable format, or fail (too large) so the caller types
+/// instead and the original clipboard is never lost.
+fn save_clipboard(owner: &ClipboardOwner) -> Result<SavedClipboard, String> {
+    let _guard = owner.open()?;
     let mut formats = Vec::new();
     let mut total = 0usize;
     unsafe {
         let mut format = EnumClipboardFormats(0);
         while format != 0 {
-            if !is_skipped_format(format) {
-                if let Ok(handle) = GetClipboardData(format) {
-                    let global = HGLOBAL(handle.0);
-                    let size = GlobalSize(global);
-                    if size > 0 && total + size <= MAX_SAVED_BYTES {
-                        let ptr = GlobalLock(global) as *const u8;
-                        if !ptr.is_null() {
-                            formats.push((format, std::slice::from_raw_parts(ptr, size).to_vec()));
-                            total += size;
-                            let _ = GlobalUnlock(global);
-                        }
+            let data = match paste::format_kind(format, format_name(format).as_deref()) {
+                FormatKind::Skip => None,
+                FormatKind::Memory => Some(read_memory_format(format).map(SavedData::Memory)),
+                FormatKind::EnhMetafile => Some(read_enh_metafile().map(SavedData::EnhMetafile)),
+            };
+            match data {
+                Some(Some(data)) => {
+                    total += match &data {
+                        SavedData::Memory(b) | SavedData::EnhMetafile(b) => b.len(),
+                    };
+                    if total > paste::MAX_SAVED_BYTES {
+                        break;
                     }
+                    formats.push((format, data));
                 }
+                Some(None) => log::debug!("Dictation: clipboard format {format} could not be read; skipped"),
+                None => {}
             }
             format = EnumClipboardFormats(format);
         }
     }
-    Ok(SavedClipboard { formats })
+    match paste::check_saved(total) {
+        SaveCheck::Complete => Ok(SavedClipboard { formats }),
+        SaveCheck::TypeInstead(reason) => Err(reason),
+    }
 }
 
 unsafe fn set_clipboard_bytes(format: u32, bytes: &[u8]) -> Result<(), String> {
@@ -342,43 +591,57 @@ unsafe fn set_clipboard_bytes(format: u32, bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
+unsafe fn set_enh_metafile(bytes: &[u8]) -> Result<(), String> {
+    let metafile = SetEnhMetaFileBits(bytes);
+    if metafile.is_invalid() {
+        return Err("SetEnhMetaFileBits failed".to_string());
+    }
+    if let Err(e) = SetClipboardData(paste::CF_ENHMETAFILE, Some(HANDLE(metafile.0))) {
+        let _ = DeleteEnhMetaFile(Some(metafile));
+        return Err(format!("SetClipboardData (metafile): {e}"));
+    }
+    Ok(())
+}
+
 fn registered_format(name: &str) -> u32 {
     let name = wide(name);
     unsafe { RegisterClipboardFormatW(PCWSTR(name.as_ptr())) }
 }
 
-/// Put `text` on the clipboard, marked so clipboard history and cloud sync skip it.
-fn set_clipboard_text(text: &str) -> Result<u32, String> {
-    let guard = ClipboardGuard::open()?;
-    unsafe {
-        EmptyClipboard().map_err(|e| format!("EmptyClipboard: {e}"))?;
-        let utf16: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
-        let bytes = std::slice::from_raw_parts(utf16.as_ptr() as *const u8, utf16.len() * 2);
-        set_clipboard_bytes(CF_UNICODETEXT.0 as u32, bytes)?;
-        let zero = 0u32.to_le_bytes();
-        for name in [
-            "ExcludeClipboardContentFromMonitorProcessing",
-            "CanIncludeInClipboardHistory",
-            "CanUploadToCloudClipboard",
-        ] {
-            let format = registered_format(name);
-            if format != 0 {
-                let _ = set_clipboard_bytes(format, &zero);
-            }
+/// Keep the current clipboard entry out of Win+V history, cloud clipboard and
+/// clipboard monitors. The clipboard must be open and owned.
+unsafe fn set_privacy_formats() {
+    let zero = 0u32.to_le_bytes();
+    for name in paste::PRIVACY_FORMATS {
+        let format = registered_format(name);
+        if format != 0 {
+            let _ = set_clipboard_bytes(format, &zero);
         }
     }
-    // Read the number only after CloseClipboard, which may bump it.
-    drop(guard);
-    Ok(unsafe { GetClipboardSequenceNumber() })
 }
 
-fn restore_clipboard(saved: &SavedClipboard) -> Result<(), String> {
-    let _guard = ClipboardGuard::open()?;
+/// Put the saved formats back. They are kept out of clipboard history and
+/// cloud clipboard (which already have the original), so neither gets a
+/// duplicate; clipboard monitors do see the original again.
+fn restore_clipboard(owner: &ClipboardOwner, saved: &SavedClipboard) -> Result<(), String> {
+    let _guard = owner.open()?;
     unsafe {
         EmptyClipboard().map_err(|e| format!("EmptyClipboard: {e}"))?;
-        for (format, bytes) in &saved.formats {
-            if let Err(e) = set_clipboard_bytes(*format, bytes) {
-                log::debug!("Dictation: could not restore clipboard format {format}: {e}");
+        for (format, data) in &saved.formats {
+            let result = match data {
+                SavedData::Memory(bytes) => set_clipboard_bytes(*format, bytes),
+                SavedData::EnhMetafile(bytes) => set_enh_metafile(bytes),
+            };
+            if let Err(e) = result {
+                log::warn!("Dictation: could not restore clipboard format {format}: {e}");
+            }
+        }
+        if !saved.formats.is_empty() {
+            for name in paste::RESTORE_PRIVACY_FORMATS {
+                let format = registered_format(name);
+                if format != 0 && !saved.has_format(format) {
+                    let _ = set_clipboard_bytes(format, &0u32.to_le_bytes());
+                }
             }
         }
     }
@@ -447,60 +710,171 @@ pub fn type_text(text: &str) -> bool {
     })
 }
 
-/// Insert `text` in the focused program. Blocks for about `restore_after`.
-/// Returns how the text was inserted and when it reached the program.
+fn typed(text: &str) -> Result<(InsertMethod, Instant), String> {
+    if type_text(text) {
+        Ok((InsertMethod::Typed, Instant::now()))
+    } else {
+        Err("Windows afviste tastetryk fra Tingskriver (SendInput)".to_string())
+    }
+}
+
+/// Mandatory integrity level of a process (0x2000 medium, 0x3000 high).
+fn integrity_level(process: HANDLE) -> Option<u32> {
+    unsafe {
+        let mut token = HANDLE::default();
+        OpenProcessToken(process, TOKEN_QUERY, &mut token).ok()?;
+        let mut len = 0u32;
+        let _ = GetTokenInformation(token, TokenIntegrityLevel, None, 0, &mut len);
+        // u64 storage keeps TOKEN_MANDATORY_LABEL aligned.
+        let mut buf = vec![0u64; (len as usize).div_ceil(8).max(1)];
+        let read = GetTokenInformation(
+            token,
+            TokenIntegrityLevel,
+            Some(buf.as_mut_ptr() as *mut c_void),
+            (buf.len() * 8) as u32,
+            &mut len,
+        );
+        let _ = CloseHandle(token);
+        read.ok()?;
+        let label = &*(buf.as_ptr() as *const TOKEN_MANDATORY_LABEL);
+        let sid = label.Label.Sid;
+        let count = *GetSidSubAuthorityCount(sid);
+        if count == 0 {
+            return None;
+        }
+        Some(*GetSidSubAuthority(sid, (count - 1) as u32))
+    }
+}
+
+fn foreground_integrity_level() -> Option<u32> {
+    unsafe {
+        let hwnd = GetForegroundWindow();
+        if hwnd.0.is_null() {
+            return None;
+        }
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        if pid == 0 {
+            return None;
+        }
+        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+        let level = integrity_level(process);
+        let _ = CloseHandle(process);
+        level
+    }
+}
+
+/// Insert `text` in the focused program. Blocks until the original clipboard
+/// is back. Returns how the text was inserted and when the program got it.
 ///
-/// The clipboard is saved, replaced with the text, pasted with Ctrl+V and
-/// restored afterwards — unless something else changed it in the meantime.
-/// Falls back to typing if the clipboard can't be used.
-pub fn insert_text(text: &str, restore_after: Duration) -> Result<(InsertMethod, Instant), String> {
+/// The original clipboard (all formats, also images) is saved, the text is
+/// offered with delayed rendering and pasted with Ctrl+V. When the target
+/// reads it (`WM_RENDERFORMAT`), the original is restored `restore_after`
+/// later, unless another program changed the clipboard in between. If the
+/// target does not read it within `paste_timeout`, the field blocks paste:
+/// the text is typed with `SendInput`, and the original is restored after
+/// `paste::LATE_READ_GRACE` (a late read in between gets an empty string).
+pub fn insert_text(text: &str, options: &InsertOptions) -> Result<(InsertMethod, Instant), String> {
+    let _one_at_a_time = INSERT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     wait_for_modifiers_released(Duration::from_millis(1500));
 
-    let saved = match save_clipboard() {
+    let own = integrity_level(unsafe { GetCurrentProcess() });
+    let access = paste::target_access(own, foreground_integrity_level());
+    if access == TargetAccess::Elevated {
+        log::warn!("Dictation: target program runs as administrator; not inserting");
+        return Err(paste::elevated_message(options.app.as_deref()));
+    }
+
+    let owner = match ClipboardOwner::create() {
+        Ok(owner) => owner,
+        Err(e) => {
+            log::warn!("Dictation: no clipboard window ({e}); typing instead");
+            return typed(text);
+        }
+    };
+    let saved = match save_clipboard(&owner) {
         Ok(saved) => saved,
         Err(e) => {
-            log::warn!("Dictation: clipboard unavailable ({e}); typing instead");
-            return if type_text(text) {
-                Ok((InsertMethod::Typed, Instant::now()))
-            } else {
-                Err("SendInput was blocked".to_string())
-            };
+            log::warn!("Dictation: clipboard not saved ({e}); typing instead");
+            return typed(text);
         }
     };
+    if let Err(e) = owner.offer(text) {
+        log::warn!("Dictation: could not set clipboard ({e}); typing instead");
+        let _ = restore_clipboard(&owner, &saved);
+        return typed(text);
+    }
 
-    let sequence = match set_clipboard_text(text) {
-        Ok(seq) => seq,
-        Err(e) => {
-            log::warn!("Dictation: could not set clipboard ({e}); typing instead");
-            let _ = restore_clipboard(&saved);
-            return if type_text(text) {
-                Ok((InsertMethod::Typed, Instant::now()))
-            } else {
-                Err("SendInput was blocked".to_string())
-            };
+    // A clipboard monitor that ignores the exclusion format reads right after
+    // the clipboard changed; let it do so before Ctrl+V, so its read is not
+    // taken for the target's.
+    let offered_at = Instant::now();
+    while offered_at.elapsed() < MONITOR_GRACE {
+        owner.pump();
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    owner.set_paste_sent();
+    let sent_at = Instant::now();
+    let ctrl_v_sent = send_ctrl_v();
+    if ctrl_v_sent {
+        while sent_at.elapsed() < options.paste_timeout {
+            owner.pump();
+            if owner.observed().1.is_some() || !owner.owns_clipboard() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(2));
         }
+    }
+    let (read_before_paste, read_after_paste) = owner.observed();
+    let outcome = paste::outcome(Observed {
+        read_before_paste,
+        ctrl_v_sent,
+        read_after_paste: read_after_paste.is_some(),
+        replaced: !owner.owns_clipboard(),
+    });
+    log::info!(
+        "Dictation paste: {outcome:?} after {} ms (target read {})",
+        sent_at.elapsed().as_millis(),
+        read_after_paste
+            .map(|at| format!("{} ms after Ctrl+V", at.saturating_duration_since(sent_at).as_millis()))
+            .unwrap_or_else(|| "nothing".to_string())
+    );
+
+    // A blocked paste is typed while the promise is still on the clipboard:
+    // a busy target may handle its queued Ctrl+V late, and must then paste
+    // nothing rather than the original clipboard (or the text a second time).
+    let result = match outcome {
+        Outcome::Pasted => Ok((InsertMethod::Paste, read_after_paste.unwrap_or(sent_at))),
+        Outcome::PastedUnconfirmed | Outcome::Replaced { typed: false } => Ok((InsertMethod::Paste, sent_at)),
+        Outcome::Blocked | Outcome::Replaced { typed: true } => match paste::when_blocked(access) {
+            WhenBlocked::Type => {
+                log::info!("Dictation: the field did not take Ctrl+V; typing instead");
+                owner.withdraw();
+                typed(text)
+            }
+            WhenBlocked::Report => Err(paste::not_received_message(options.app.as_deref())),
+        },
     };
 
-    if !send_ctrl_v() {
-        log::warn!("Dictation: Ctrl+V could not be sent; typing instead");
-        let _ = restore_clipboard(&saved);
-        return if type_text(text) {
-            Ok((InsertMethod::Typed, Instant::now()))
+    if outcome.restore() {
+        let until = Instant::now() + paste::restore_wait(outcome, options.restore_after, options.paste_timeout);
+        while Instant::now() < until {
+            owner.pump();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        if outcome == Outcome::Blocked && owner.observed().1.is_some() {
+            log::info!("Dictation: the target read the clipboard late; it got nothing (text was typed)");
+        }
+        if owner.owns_clipboard() {
+            if let Err(e) = restore_clipboard(&owner, &saved) {
+                log::warn!("Dictation: could not restore clipboard: {e}");
+            }
         } else {
-            Err("SendInput was blocked".to_string())
-        };
+            log::info!("Dictation: clipboard changed after paste; not restoring");
+        }
     }
 
-    let inserted_at = Instant::now();
-    std::thread::sleep(restore_after);
-    if unsafe { GetClipboardSequenceNumber() } == sequence {
-        if let Err(e) = restore_clipboard(&saved) {
-            log::warn!("Dictation: could not restore clipboard: {e}");
-        }
-    } else {
-        log::info!("Dictation: clipboard changed after paste; not restoring");
-    }
-    Ok((InsertMethod::Paste, inserted_at))
+    result
 }
 
 // ---------------------------------------------------------------------------
@@ -609,5 +983,188 @@ pub fn show_overlay(raw: isize, width: i32, height: i32, margin: i32) {
 pub fn hide_overlay(raw: isize) {
     unsafe {
         let _ = ShowWindow(hwnd(raw), SW_HIDE);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Insertion test against a real window (Windows desktop only)
+// ---------------------------------------------------------------------------
+
+/// Runs only on request, on a Windows desktop session (it types into a test
+/// window and uses the real clipboard):
+///
+/// ```text
+/// cargo test -p tingskriver-core --lib insertion_window -- --ignored --test-threads=1
+/// ```
+#[cfg(test)]
+mod insertion_window {
+    use super::*;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CallWindowProcW, GetWindowTextLengthW, GetWindowTextW, SendMessageW, SetForegroundWindow,
+        SetWindowTextW, ShowWindow as Show, ES_AUTOHSCROLL, GWLP_WNDPROC, SW_SHOW, WM_PASTE, WNDPROC,
+        WS_OVERLAPPEDWINDOW, WS_VISIBLE,
+    };
+    use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
+
+    /// Raw handles cross threads as integers.
+    #[derive(Clone, Copy)]
+    struct Handles {
+        edit: isize,
+    }
+
+    static ORIGINAL_EDIT_PROC: OnceLock<isize> = OnceLock::new();
+
+    /// An edit field that ignores paste, like a password or "retype" field.
+    unsafe extern "system" fn paste_blocking_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+        if msg == WM_PASTE {
+            return LRESULT(0);
+        }
+        let original: WNDPROC = ORIGINAL_EDIT_PROC.get().and_then(|p| std::mem::transmute::<isize, WNDPROC>(*p));
+        CallWindowProcW(original, hwnd, msg, wparam, lparam)
+    }
+
+    /// Start a window with an edit field on its own thread with a message loop.
+    fn test_window(block_paste: bool) -> Handles {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || unsafe {
+            let edit_class = wide("EDIT");
+            let title = wide("Tingskriver insertion test");
+            let module = GetModuleHandleW(None).expect("module");
+            // A top-level edit control: the window and the field are one.
+            let edit = CreateWindowExW(
+                WINDOW_EX_STYLE(0),
+                PCWSTR(edit_class.as_ptr()),
+                PCWSTR(title.as_ptr()),
+                WS_OVERLAPPEDWINDOW | WS_VISIBLE | WINDOW_STYLE(ES_AUTOHSCROLL as u32),
+                200,
+                200,
+                700,
+                120,
+                None,
+                None,
+                Some(module.into()),
+                None,
+            )
+            .expect("edit window");
+            if block_paste {
+                let original = SetWindowLongPtrW(edit, GWLP_WNDPROC, paste_blocking_proc as *const () as isize);
+                let _ = ORIGINAL_EDIT_PROC.set(original);
+            }
+            let _ = Show(edit, SW_SHOW);
+            // An Alt tap lets a background process take the foreground.
+            send_inputs(&[
+                key_input(VK_MENU.0, 0, KEYBD_EVENT_FLAGS(0)),
+                key_input(VK_MENU.0, 0, KEYEVENTF_KEYUP),
+            ]);
+            let _ = SetForegroundWindow(edit);
+            let _ = SetFocus(Some(edit));
+            tx.send(Handles { edit: edit.0 as isize }).expect("report window");
+            let mut msg = MSG::default();
+            while GetMessageW(&mut msg, None, 0, 0).0 > 0 {
+                let _ = TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+        });
+        let handles = rx.recv_timeout(Duration::from_secs(5)).expect("test window started");
+        std::thread::sleep(Duration::from_millis(300));
+        handles
+    }
+
+    fn edit_text(handles: Handles) -> String {
+        unsafe {
+            let edit = hwnd(handles.edit);
+            let len = GetWindowTextLengthW(edit).max(0) as usize;
+            let mut buf = vec![0u16; len + 1];
+            let read = GetWindowTextW(edit, &mut buf).max(0) as usize;
+            String::from_utf16_lossy(&buf[..read])
+        }
+    }
+
+    fn clear(handles: Handles) {
+        let empty = wide("");
+        unsafe {
+            let _ = SetWindowTextW(hwnd(handles.edit), PCWSTR(empty.as_ptr()));
+            let _ = SendMessageW(hwnd(handles.edit), 0x00B1 /* EM_SETSEL */, Some(WPARAM(0)), Some(LPARAM(0)));
+        }
+    }
+
+    /// A 3000 x 2000 32-bit DIB (24 MB) and some text, like a screenshot
+    /// copied from an image editor.
+    fn put_original(owner: &ClipboardOwner) -> Vec<u8> {
+        let (w, h) = (3000i32, 2000i32);
+        let mut dib = Vec::with_capacity(40 + (w * h * 4) as usize);
+        for v in [40i32, w, h] {
+            dib.extend_from_slice(&v.to_le_bytes());
+        }
+        dib.extend_from_slice(&1u16.to_le_bytes()); // planes
+        dib.extend_from_slice(&32u16.to_le_bytes()); // bits per pixel
+        dib.extend_from_slice(&0u32.to_le_bytes()); // BI_RGB
+        dib.extend_from_slice(&((w * h * 4) as u32).to_le_bytes());
+        dib.extend_from_slice(&[0u8; 16]);
+        dib.extend((0..(w * h * 4) as usize).map(|i| (i % 251) as u8));
+        let text: Vec<u16> = "ORIGINAL æøå".encode_utf16().chain(std::iter::once(0)).collect();
+        let _guard = owner.open().expect("open clipboard");
+        unsafe {
+            EmptyClipboard().expect("empty clipboard");
+            set_clipboard_bytes(8 /* CF_DIB */, &dib).expect("set DIB");
+            let bytes = std::slice::from_raw_parts(text.as_ptr() as *const u8, text.len() * 2);
+            set_clipboard_bytes(CF_UNICODETEXT.0 as u32, bytes).expect("set text");
+        }
+        dib
+    }
+
+    fn read_back(owner: &ClipboardOwner) -> (String, Vec<u8>) {
+        let _guard = owner.open().expect("open clipboard");
+        unsafe {
+            let text = read_memory_format(CF_UNICODETEXT.0 as u32).unwrap_or_default();
+            let units: Vec<u16> = text.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+            let text = String::from_utf16_lossy(&units).trim_end_matches('\0').to_string();
+            (text, read_memory_format(8).unwrap_or_default())
+        }
+    }
+
+    fn options() -> InsertOptions {
+        InsertOptions {
+            restore_after: Duration::from_millis(300),
+            paste_timeout: Duration::from_millis(1000),
+            app: Some("test".into()),
+        }
+    }
+
+    #[test]
+    #[ignore = "needs a Windows desktop; types into a test window"]
+    fn fifty_dictations_in_a_row_keep_text_and_clipboard_right() {
+        let handles = test_window(false);
+        let setup = ClipboardOwner::create().expect("clipboard window");
+        let dib = put_original(&setup);
+        for i in 0..50 {
+            clear(handles);
+            let text = format!("Diktat nummer {i}: æøå, ÆØÅ og «citat».");
+            let (method, _) = insert_text(&text, &options()).expect("insert");
+            std::thread::sleep(Duration::from_millis(50));
+            assert_eq!(edit_text(handles), text, "dictation {i} gave wrong or stale text");
+            assert_eq!(method, InsertMethod::Paste, "dictation {i} was not pasted");
+            let (clip_text, clip_dib) = read_back(&setup);
+            assert_eq!(clip_text, "ORIGINAL æøå", "clipboard text changed after dictation {i}");
+            assert!(
+                clip_dib.len() >= dib.len() && clip_dib[..dib.len()] == dib[..],
+                "clipboard image changed after dictation {i}"
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "needs a Windows desktop; types into a test window"]
+    fn field_blocking_paste_gets_text_typed() {
+        let handles = test_window(true);
+        let setup = ClipboardOwner::create().expect("clipboard window");
+        put_original(&setup);
+        clear(handles);
+        let text = "Skrevet med SendInput: æøå";
+        let (method, _) = insert_text(text, &options()).expect("insert");
+        std::thread::sleep(Duration::from_millis(100));
+        assert_eq!(method, InsertMethod::Typed);
+        assert_eq!(edit_text(handles), text);
+        assert_eq!(read_back(&setup).0, "ORIGINAL æøå");
     }
 }

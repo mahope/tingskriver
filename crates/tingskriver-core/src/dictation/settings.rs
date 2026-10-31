@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use super::logic::app_style::{self, AppStyleRule};
 use super::logic::cleanup::Style;
 use super::logic::hotkey::Chord;
+use super::logic::residency::{self, Policy};
 
 pub const SYV_DEFAULT_ENDPOINT: &str = "https://platform.syv.ai/v1";
 pub const SYV_DEFAULT_MODEL: &str = "syv-transcribe";
@@ -37,8 +38,17 @@ pub struct DictationSettings {
     pub history_enabled: bool,
     /// Keep the recording for 24 hours alongside the history entry.
     pub keep_audio: bool,
+    /// Debug: wait after the target read the text before the original
+    /// clipboard is restored.
     pub restore_clipboard_ms: u64,
+    /// Debug: how long the target gets to read the text after Ctrl+V before
+    /// the field counts as blocking paste and the text is typed.
+    pub paste_timeout_ms: u64,
     pub app_styles: Vec<AppStyleSetting>,
+    /// Unload a local speech model after this many idle minutes (0 = never).
+    pub model_idle_minutes: u64,
+    /// Local models that stay loaded however long they are idle.
+    pub keep_warm_models: Vec<String>,
 }
 
 impl Default for DictationSettings {
@@ -58,6 +68,7 @@ impl Default for DictationSettings {
             history_enabled: true,
             keep_audio: true,
             restore_clipboard_ms: 300,
+            paste_timeout_ms: 1000,
             app_styles: app_style::default_rules()
                 .into_iter()
                 .map(|rule| AppStyleSetting {
@@ -65,6 +76,8 @@ impl Default for DictationSettings {
                     style: rule.style.as_str().to_string(),
                 })
                 .collect(),
+            model_idle_minutes: residency::DEFAULT_IDLE_MINUTES,
+            keep_warm_models: Vec::new(),
         }
     }
 }
@@ -83,6 +96,10 @@ impl DictationSettings {
                 style: Style::parse(&s.style),
             })
             .collect()
+    }
+
+    pub fn residency_policy(&self) -> Policy {
+        Policy::from_minutes(self.model_idle_minutes, self.keep_warm_models.clone())
     }
 
     /// Validate and normalise user input before saving.
@@ -104,11 +121,20 @@ impl DictationSettings {
         self.fallback_after_ms = self.fallback_after_ms.clamp(500, 10_000);
         self.polish_budget_ms = self.polish_budget_ms.clamp(500, 10_000);
         self.restore_clipboard_ms = self.restore_clipboard_ms.clamp(100, 2000);
+        self.paste_timeout_ms = self.paste_timeout_ms.clamp(200, 5000);
         for s in &mut self.app_styles {
             s.process = s.process.trim().to_string();
             s.style = Style::parse(&s.style).as_str().to_string();
         }
         self.app_styles.retain(|s| !s.process.is_empty());
+        self.model_idle_minutes = self.model_idle_minutes.min(24 * 60);
+        self.keep_warm_models = self
+            .keep_warm_models
+            .iter()
+            .map(|m| m.trim().to_string())
+            .filter(|m| !m.is_empty())
+            .collect();
+        self.keep_warm_models.dedup();
         Ok(self)
     }
 }
