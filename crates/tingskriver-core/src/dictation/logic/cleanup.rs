@@ -289,7 +289,7 @@ fn user_matchers(rules: &Rules) -> Vec<Matcher> {
         }
     }
     // Longest phrase wins; the sort is stable so snippets win ties.
-    matchers.sort_by(|a, b| b.words.len().cmp(&a.words.len()));
+    matchers.sort_by_key(|m| std::cmp::Reverse(m.words.len()));
     matchers
 }
 
@@ -311,7 +311,7 @@ fn spoken_matchers(table: &SpokenTable) -> Vec<Matcher> {
             }
         }
     }
-    matchers.sort_by(|a, b| b.words.len().cmp(&a.words.len()));
+    matchers.sort_by_key(|m| std::cmp::Reverse(m.words.len()));
     matchers
 }
 
@@ -682,7 +682,7 @@ fn take_enter_trigger(mut tokens: Vec<Tok>, triggers: &[String]) -> (Vec<Tok>, b
         .map(|t| phrase_words(t))
         .filter(|w| !w.is_empty())
         .collect();
-    phrases.sort_by(|a, b| b.len().cmp(&a.len()));
+    phrases.sort_by_key(|p| std::cmp::Reverse(p.len()));
     for phrase in phrases {
         let n = phrase.len();
         if last_word + 1 < n {

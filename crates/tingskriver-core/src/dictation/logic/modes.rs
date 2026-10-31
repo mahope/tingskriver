@@ -422,6 +422,27 @@ pub fn resolve(mode: &Mode, defaults: &Defaults) -> Resolved {
     }
 }
 
+/// Base instruction for LLM polishing (layer 2).
+pub const POLISH_BASE: &str = "Du retter dikteret dansk tekst. Ret grammatik og tegnsætning, \
+fjern gentagelser og selvrettelser (behold den rettede udgave), og lav punktopstilling hvis \
+teksten opremser flere ting. Bevar betydning, sprog og tone. Oversæt aldrig: engelske ord og \
+fagudtryk i en dansk sætning bliver stående med engelsk stavning. Svar kun med den rettede tekst.";
+
+/// The polishing prompt for a mode, with the dictionary's English words.
+pub fn polish_prompt(mode_prompt: &str, english_terms: &[String]) -> String {
+    let mut prompt = POLISH_BASE.to_string();
+    if !mode_prompt.trim().is_empty() {
+        prompt.push(' ');
+        prompt.push_str(mode_prompt.trim());
+    }
+    if !english_terms.is_empty() {
+        prompt.push_str(" Disse ord er engelske og skal stå præcis sådan: ");
+        prompt.push_str(&english_terms.join(", "));
+        prompt.push('.');
+    }
+    prompt
+}
+
 // ---------------------------------------------------------------------------
 // Export and import
 // ---------------------------------------------------------------------------
@@ -701,6 +722,18 @@ mod tests {
             ..builtin_modes()[3].clone()
         };
         assert!(resolve(&code, &defaults()).enter_triggers.is_empty());
+    }
+
+    #[test]
+    fn polish_prompt_never_translates_and_keeps_english_terms() {
+        let prompt = polish_prompt("", &[]);
+        assert!(prompt.contains("Oversæt aldrig"));
+        let prompt = polish_prompt(
+            &builtin_modes()[1].prompt,
+            &["pull request".into(), "deploy".into()],
+        );
+        assert!(prompt.contains("formel"));
+        assert!(prompt.ends_with("skal stå præcis sådan: pull request, deploy."));
     }
 
     #[test]

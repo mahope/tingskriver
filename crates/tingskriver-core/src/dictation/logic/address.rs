@@ -272,7 +272,7 @@ fn local_start(atoms: &[Atom], at: usize) -> Option<usize> {
 fn find(atoms: &[Atom]) -> Option<(usize, usize, String)> {
     // E-mail: local part, "@", domain.
     if let Some(at) = atoms.iter().position(|a| *a == Atom::At) {
-        if let (Some(start), Some(len)) = (local_start(&atoms, at), domain(&atoms[at + 1..], false))
+        if let (Some(start), Some(len)) = (local_start(atoms, at), domain(&atoms[at + 1..], false))
         {
             let end = at + 1 + len;
             return Some((start, end, label(&atoms[start..end])));
@@ -293,7 +293,7 @@ fn find(atoms: &[Atom]) -> Option<(usize, usize, String)> {
     }
     // Bare domain: "mahoje punktum dk".
     if matches!(atoms.first(), Some(Atom::Word(_))) {
-        if let Some(len) = domain(&atoms, true) {
+        if let Some(len) = domain(atoms, true) {
             let end = len + path(&atoms[len..]);
             return Some((0, end, label(&atoms[..end])));
         }

@@ -12,15 +12,16 @@ use std::time::{Duration, Instant};
 use crate::host::{HostExt, HostHandle};
 
 use super::capture::Recorder;
-use super::logic::app_style;
 use super::logic::audio;
-use super::logic::cleanup::{self, Rules, Style};
+use super::logic::cleanup::{self, Options, Rules, Style};
 use super::logic::engine::{self, Attempt, Engine, EnginePreference, Next};
 use super::logic::gesture::{Gesture, GestureAction, GestureConfig, GestureEvent};
 use super::logic::hotkey::ChordSignal;
+use super::logic::modes::{self, ForegroundWindow};
+use super::logic::spoken::{self, FieldId, LastInsertion, VoiceCommand};
 use super::overlay::{Overlay, OverlayState};
 use super::secrets;
-use super::settings::DictationSettings;
+use super::settings::{self, DictationSettings};
 use super::store::{NewHistoryEntry, Store};
 use super::syv;
 
@@ -54,6 +55,10 @@ pub struct Service {
     audio_dir: PathBuf,
     shortcut_active: AtomicBool,
     last_error: Mutex<Option<String>>,
+    /// What the previous dictation inserted, for "slet det" and "vælg det".
+    last_insertion: Mutex<Option<LastInsertion>>,
+    /// Name of the mode used by the latest dictation.
+    active_mode: Mutex<Option<String>>,
     #[cfg(windows)]
     hook: Mutex<Option<super::win::KeyboardHook>>,
 }
@@ -75,7 +80,9 @@ async fn init_inner(app: HostHandle, overlay: Arc<dyn Overlay>) -> Result<(), St
     let app_data_dir = app.app_data_dir()?;
     let store = Store::open(&app_data_dir.join("dictation.sqlite")).await?;
     let settings = store.settings().await?;
-    let rules = store.rules().await?;
+    let mut rules = store.rules().await?;
+    let (spoken, spoken_error) = settings::load_spoken_table(&app_data_dir);
+    rules.spoken = spoken;
     let service = Arc::new(Service {
         app: app.clone(),
         overlay,
@@ -87,6 +94,8 @@ async fn init_inner(app: HostHandle, overlay: Arc<dyn Overlay>) -> Result<(), St
         app_data_dir,
         shortcut_active: AtomicBool::new(false),
         last_error: Mutex::new(None),
+        last_insertion: Mutex::new(None),
+        active_mode: Mutex::new(None),
         #[cfg(windows)]
         hook: Mutex::new(None),
     });
@@ -95,6 +104,10 @@ async fn init_inner(app: HostHandle, overlay: Arc<dyn Overlay>) -> Result<(), St
         .map_err(|_| "dictation already initialised".to_string())?;
 
     service.apply_shortcut();
+    if let Some(e) = spoken_error {
+        log::warn!("Dictation: {e}");
+        service.set_error(Some(e));
+    }
     // Recordings must be gone 24 h after they were made, also when no new
     // dictation happens in between, so check every ten minutes.
     let mut interval = tokio::time::interval(Duration::from_secs(10 * 60));
@@ -141,7 +154,13 @@ impl Service {
     }
 
     pub async fn reload_rules(&self) -> Result<(), String> {
-        let rules = self.store.rules().await?;
+        let mut rules = self.store.rules().await?;
+        let (spoken, spoken_error) = settings::load_spoken_table(&self.app_data_dir);
+        rules.spoken = spoken;
+        if let Some(e) = spoken_error {
+            log::warn!("Dictation: {e}");
+            self.set_error(Some(e));
+        }
         if let Ok(mut slot) = self.rules.write() {
             *slot = rules;
         }
@@ -150,6 +169,29 @@ impl Service {
 
     pub fn preview(&self, text: &str, style: Style) -> String {
         cleanup::clean(text, style, &self.rules())
+    }
+
+    /// Name of the mode the latest dictation used.
+    pub fn active_mode(&self) -> Option<String> {
+        self.active_mode.lock().ok().and_then(|m| m.clone())
+    }
+
+    /// The modes as a versioned JSON file.
+    pub fn export_modes(&self) -> Result<String, String> {
+        modes::export_modes(&self.settings().modes)
+    }
+
+    /// Replace the modes with the ones in an exported JSON file.
+    pub async fn import_modes(self: &Arc<Self>, json: &str) -> Result<DictationSettings, String> {
+        let mut settings = self.settings();
+        settings.modes = modes::import_modes(json)?;
+        self.save_settings(settings).await
+    }
+
+    /// Mark a dictionary word as English ("behold engelsk stavning").
+    pub async fn set_word_english(&self, id: i64, english: bool) -> Result<(), String> {
+        self.store.set_word_english(id, english).await?;
+        self.reload_rules().await
     }
 
     pub fn delete_files(&self, paths: Vec<String>) {
@@ -233,6 +275,7 @@ impl Service {
 struct Session {
     recorder: Recorder,
     target_app: Option<String>,
+    window: ForegroundWindow,
 }
 
 fn gesture_event(signal: ChordSignal) -> GestureEvent {
@@ -250,6 +293,26 @@ fn foreground_process() -> Option<String> {
 
 #[cfg(not(windows))]
 fn foreground_process() -> Option<String> {
+    None
+}
+
+#[cfg(windows)]
+fn foreground_window() -> ForegroundWindow {
+    super::target_win::foreground_window()
+}
+
+#[cfg(not(windows))]
+fn foreground_window() -> ForegroundWindow {
+    ForegroundWindow::default()
+}
+
+#[cfg(windows)]
+fn focused_field() -> Option<FieldId> {
+    super::target_win::focused_field()
+}
+
+#[cfg(not(windows))]
+fn focused_field() -> Option<FieldId> {
     None
 }
 
@@ -288,10 +351,15 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant)>) {
                         continue;
                     }
                     let target_app = foreground_process();
+                    let window = foreground_window();
                     match Recorder::start() {
                         Ok(recorder) => {
                             DICTATING.store(true, Ordering::Relaxed);
-                            session = Some(Session { recorder, target_app });
+                            session = Some(Session {
+                                recorder,
+                                target_app,
+                                window,
+                            });
                         }
                         Err(e) => {
                             log::warn!("Dictation microphone failed: {e}");
@@ -315,8 +383,9 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant)>) {
                         service.overlay.set(OverlayState::Processing);
                         let service = service.clone();
                         let target_app = s.target_app;
+                        let window = s.window;
                         crate::runtime::spawn(async move {
-                            service.process(samples, target_app, at).await;
+                            service.process(samples, target_app, window, at).await;
                         });
                     }
                 }
@@ -370,10 +439,6 @@ async fn local_engine_available() -> bool {
         })
         .unwrap_or(false)
 }
-
-const POLISH_PROMPT: &str = "Du retter dikteret dansk tekst. Ret grammatik og tegnsætning, \
-fjern gentagelser og selvrettelser (behold den rettede udgave), og lav punktopstilling hvis \
-teksten opremser flere ting. Bevar betydning, sprog og tone. Svar kun med den rettede tekst.";
 
 impl Service {
     async fn transcribe(&self, settings: &DictationSettings, samples: &[f32], rules: &Rules) -> Result<Transcript, String> {
@@ -474,7 +539,7 @@ impl Service {
         }
     }
 
-    async fn polish(&self, settings: &DictationSettings, text: String) -> String {
+    async fn polish(&self, settings: &DictationSettings, prompt: &str, text: String) -> String {
         use crate::summary::llm_client::{generate_summary, LLMProvider};
 
         let provider = match settings.polish_provider.as_str() {
@@ -498,7 +563,7 @@ impl Service {
             &provider,
             &model,
             "",
-            POLISH_PROMPT,
+            prompt,
             &text,
             endpoint,
             None,
@@ -529,7 +594,13 @@ impl Service {
         (config.provider == "builtin-ai").then_some(config.model)
     }
 
-    async fn process(self: Arc<Self>, samples: Vec<f32>, target_app: Option<String>, released_at: Instant) {
+    async fn process(
+        self: Arc<Self>,
+        samples: Vec<f32>,
+        target_app: Option<String>,
+        window: ForegroundWindow,
+        released_at: Instant,
+    ) {
         let settings = self.settings();
         let audio_ms = audio::duration_ms(samples.len(), audio::TARGET_RATE);
         if audio_ms < 300 || !audio::has_signal(&samples) {
@@ -538,7 +609,6 @@ impl Service {
             return;
         }
 
-        let style = app_style::style_for(target_app.as_deref(), &settings.style_rules());
         let rules = self.rules();
         let transcript = match self.transcribe(&settings, &samples, &rules).await {
             Ok(t) => t,
@@ -550,9 +620,30 @@ impl Service {
             }
         };
 
-        let mut text = cleanup::clean(&transcript.text, style, &rules);
-        if settings.polish_enabled && style == Style::Normal && !text.is_empty() {
-            text = self.polish(&settings, text).await;
+        let mode = self.choose_mode(&settings, &window, &transcript.text);
+        let style = mode.resolved.style;
+        let cleaned = cleanup::clean_with(
+            &mode.text,
+            &Options {
+                style,
+                rules: &rules,
+                format_numbers: mode.resolved.format_numbers,
+                format_addresses: mode.resolved.format_addresses,
+                enter_triggers: &mode.resolved.enter_triggers,
+            },
+        );
+        if let Some(command @ (VoiceCommand::DeleteThat | VoiceCommand::SelectThat)) =
+            cleaned.command
+        {
+            self.overlay.set(OverlayState::Hidden);
+            self.run_edit_command(command).await;
+            return;
+        }
+        let mut text = cleaned.text;
+        if mode.resolved.polish && !text.is_empty() {
+            let prompt =
+                modes::polish_prompt(&mode.resolved.prompt, &cleanup::english_terms(&rules));
+            text = self.polish(&settings, &prompt, text).await;
         }
         self.overlay.set(OverlayState::Hidden);
         if text.trim().is_empty() {
@@ -564,6 +655,13 @@ impl Service {
         let (insert_method, latency_ms) = match inserted {
             Ok((method, at)) => {
                 self.set_error(None);
+                self.remember_insertion(&text).await;
+                if cleaned.press_enter {
+                    if let Err(e) = press_enter().await {
+                        log::warn!("Dictation: could not press Enter: {e}");
+                        self.set_error(Some(format!("Enter kunne ikke trykkes: {e}")));
+                    }
+                }
                 (Some(method), at.saturating_duration_since(released_at).as_millis() as i64)
             }
             Err(e) => {
@@ -573,16 +671,87 @@ impl Service {
             }
         };
         log::info!(
-            "Dictation: {latency_ms} ms from release to text (engine {}, {audio_ms} ms audio, {} chars, app {}, method {})",
+            "Dictation: {latency_ms} ms from release to text (engine {}, {audio_ms} ms audio, {} chars, app {}, mode {}, method {})",
             transcript.engine.as_str(),
             text.chars().count(),
             target_app.as_deref().unwrap_or("?"),
+            mode.resolved.mode_id,
             insert_method.unwrap_or("none"),
         );
 
         if settings.history_enabled {
             self.save_history(&settings, &samples, text, target_app, style, transcript, latency_ms, audio_ms, insert_method)
                 .await;
+        }
+    }
+
+    /// Pick the mode for this dictation and tell the pill about it.
+    fn choose_mode(
+        &self,
+        settings: &DictationSettings,
+        window: &ForegroundWindow,
+        transcript: &str,
+    ) -> ChosenMode {
+        let builtin;
+        let list = if settings.modes.is_empty() {
+            builtin = modes::builtin_modes();
+            &builtin
+        } else {
+            &settings.modes
+        };
+        let choice = modes::choose(list, window, transcript, None, &settings.style_rules());
+        let (mode, trigger_words) = match &choice {
+            Some(c) => (list[c.index].clone(), c.trigger_words),
+            None => (modes::Mode::default(), 0),
+        };
+        let resolved = modes::resolve(&mode, &settings.mode_defaults());
+        if let Ok(mut slot) = self.active_mode.lock() {
+            *slot = Some(resolved.mode_name.clone());
+        }
+        self.overlay.set_mode(&resolved.mode_name);
+        ChosenMode {
+            text: modes::strip_leading_words(transcript, trigger_words),
+            resolved,
+        }
+    }
+
+    async fn remember_insertion(&self, text: &str) {
+        let field = tokio::task::spawn_blocking(focused_field)
+            .await
+            .ok()
+            .flatten();
+        if let Ok(mut slot) = self.last_insertion.lock() {
+            *slot = field.map(|field| LastInsertion {
+                text: text.to_string(),
+                field,
+            });
+        }
+    }
+
+    /// "slet det" / "vælg det": only while the field of the previous
+    /// insertion still has focus.
+    async fn run_edit_command(&self, command: VoiceCommand) {
+        let current = tokio::task::spawn_blocking(focused_field)
+            .await
+            .ok()
+            .flatten();
+        let last = self.last_insertion.lock().ok().and_then(|l| l.clone());
+        let Some(plan) = spoken::plan_edit(command, last.as_ref(), current.as_ref()) else {
+            log::info!("Dictation: {command:?} ignored, the field changed or nothing was inserted");
+            return;
+        };
+        match apply_edit(plan).await {
+            Ok(()) => {
+                if command == VoiceCommand::DeleteThat {
+                    if let Ok(mut slot) = self.last_insertion.lock() {
+                        *slot = None;
+                    }
+                }
+            }
+            Err(e) => {
+                log::warn!("Dictation: {command:?} failed: {e}");
+                self.set_error(Some(e));
+            }
         }
     }
 
@@ -647,4 +816,34 @@ async fn insert(text: String, restore_ms: u64) -> Result<(&'static str, Instant)
 #[cfg(not(windows))]
 async fn insert(_text: String, _restore_ms: u64) -> Result<(&'static str, Instant), String> {
     Err("Indsættelse understøttes kun på Windows".to_string())
+}
+
+struct ChosenMode {
+    /// The transcript without a mode trigger word.
+    text: String,
+    resolved: modes::Resolved,
+}
+
+#[cfg(windows)]
+async fn apply_edit(plan: spoken::EditPlan) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || super::target_win::apply_edit(plan))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[cfg(not(windows))]
+async fn apply_edit(_plan: spoken::EditPlan) -> Result<(), String> {
+    Err("Stemmekommandoer understøttes kun på Windows".to_string())
+}
+
+#[cfg(windows)]
+async fn press_enter() -> Result<(), String> {
+    tokio::task::spawn_blocking(super::target_win::press_enter)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[cfg(not(windows))]
+async fn press_enter() -> Result<(), String> {
+    Err("Enter understøttes kun på Windows".to_string())
 }

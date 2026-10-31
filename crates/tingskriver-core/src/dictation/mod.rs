@@ -16,6 +16,8 @@ pub mod settings;
 pub mod store;
 pub mod syv;
 #[cfg(windows)]
+pub mod target_win;
+#[cfg(windows)]
 pub mod win;
 
 pub use service::{init, is_dictating, HISTORY_CHANGED_EVENT};

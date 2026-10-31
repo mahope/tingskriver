@@ -335,7 +335,7 @@ impl SpokenTable {
             .flat_map(|e| e.phrases.iter().map(move |p| (phrase_words(p), &e.action)))
             .filter(|(w, _)| !w.is_empty())
             .collect();
-        out.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+        out.sort_by_key(|(words, _)| std::cmp::Reverse(words.len()));
         out
     }
 }

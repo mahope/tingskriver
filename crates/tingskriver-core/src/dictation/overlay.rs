@@ -18,4 +18,8 @@ pub trait Overlay: Send + Sync + 'static {
 
     /// Show `state`, or hide the pill for [`OverlayState::Hidden`].
     fn set(&self, state: OverlayState);
+
+    /// The dictation mode in use ("Standard", "Chat", ...), set before the
+    /// text is processed. Pills that don't show it can ignore it.
+    fn set_mode(&self, _name: &str) {}
 }

@@ -614,10 +614,7 @@ fn phone_or_cvr(w: &[String], i: usize) -> Option<Rewrite> {
 fn loose_digits(w: &[String], i: usize) -> Option<Rewrite> {
     let mut digits = String::new();
     for word in w.iter().skip(i).take(8) {
-        match unit(word) {
-            Some(d) => digits.push_str(&d.to_string()),
-            None => return None,
-        }
+        digits.push_str(&unit(word)?.to_string());
     }
     (digits.len() == 8).then(|| Rewrite {
         keep: 0,
