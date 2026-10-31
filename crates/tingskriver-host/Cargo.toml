@@ -29,5 +29,9 @@ windows-sys = { version = "0.61", features = [
     "Win32_UI_WindowsAndMessaging",
 ] }
 
+[build-dependencies]
+# Same version gpui uses for its manifest; only the host's tests need it.
+embed-resource = "3.0.9"
+
 [dev-dependencies]
 tokio = { workspace = true }

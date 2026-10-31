@@ -1,0 +1,2 @@
+// The manifest of the host's own test programs (see build.rs).
+1 24 "tests.manifest.xml"

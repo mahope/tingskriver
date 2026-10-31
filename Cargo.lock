@@ -10819,6 +10819,7 @@ dependencies = [
 name = "tingskriver-host"
 version = "0.5.0-dev.2"
 dependencies = [
+ "embed-resource",
  "log",
  "serde_json",
  "tingskriver-core",
