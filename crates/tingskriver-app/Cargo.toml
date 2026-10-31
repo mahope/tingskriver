@@ -38,6 +38,9 @@ windows = { version = "0.61", features = [
     "Win32_System_Threading",
     "Win32_UI_WindowsAndMessaging",
 ] }
+# Installer hooks and updates from GitHub Releases (src/update.rs). Keep the
+# version equal to the vpk tool in .github/workflows/app-package.yml.
+velopack = "=1.2.161"
 
 [dev-dependencies]
 ttf-parser = "0.25"
