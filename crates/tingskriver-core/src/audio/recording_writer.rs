@@ -25,7 +25,8 @@ use crossbeam::channel::{bounded, Receiver, RecvTimeoutError, Sender, TrySendErr
 use serde::{Deserialize, Serialize};
 
 use super::track_writer::{
-    StorageErrorKind, StorageEvent, TrackKind, TrackStorage, TrackSummary, TrackWriter, WavSegmentStorage,
+    StorageErrorKind, StorageEvent, TrackKind, TrackStorage, TrackSummary, TrackWriter,
+    WavSegmentStorage,
 };
 
 /// Chunks the channel holds. Capture delivers roughly 100 chunks per second
@@ -97,11 +98,21 @@ pub struct StorageSender {
 impl StorageSender {
     /// Queue a chunk without blocking. `end_seconds` is the position of the
     /// chunk's last sample on the recording clock (pauses excluded).
-    pub fn send(&self, kind: TrackKind, samples: Vec<f32>, end_seconds: Option<f64>) -> Result<(), StorageSendError> {
+    pub fn send(
+        &self,
+        kind: TrackKind,
+        samples: Vec<f32>,
+        end_seconds: Option<f64>,
+    ) -> Result<(), StorageSendError> {
         let len = samples.len() as u64;
-        let end_position = end_seconds.map(|s| (s.max(0.0) * self.sample_rate as f64).round() as u64);
+        let end_position =
+            end_seconds.map(|s| (s.max(0.0) * self.sample_rate as f64).round() as u64);
         self.queued_samples.fetch_add(len, Ordering::Relaxed);
-        match self.tx.try_send(WriterMessage { kind, samples, end_position }) {
+        match self.tx.try_send(WriterMessage {
+            kind,
+            samples,
+            end_position,
+        }) {
             Ok(()) => Ok(()),
             Err(TrySendError::Full(_)) => {
                 self.queued_samples.fetch_sub(len, Ordering::Relaxed);
@@ -168,7 +179,7 @@ pub fn read_manifest(dir: &Path) -> io::Result<TrackManifest> {
 }
 
 pub fn write_manifest(dir: &Path, manifest: &TrackManifest) -> io::Result<()> {
-    let json = serde_json::to_string_pretty(manifest).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    let json = serde_json::to_string_pretty(manifest).map_err(io::Error::other)?;
     let tmp = dir.join(".tracks.json.tmp");
     std::fs::write(&tmp, json)?;
     std::fs::rename(&tmp, dir.join(MANIFEST_FILE))
@@ -218,7 +229,9 @@ impl WriterHandle {
     /// call from `spawn_blocking` in async code.
     pub fn join(mut self) -> Result<WriterSummary, String> {
         match self.thread.take() {
-            Some(thread) => thread.join().map_err(|_| WRITER_STOPPED_MESSAGE.to_string()),
+            Some(thread) => thread
+                .join()
+                .map_err(|_| WRITER_STOPPED_MESSAGE.to_string()),
             None => Err("writer already joined".to_string()),
         }
     }
@@ -230,7 +243,10 @@ impl WriterHandle {
 
     /// The storage error being shown to the user right now, if any.
     pub fn storage_error(&self) -> Option<String> {
-        self.status.lock().map(|s| s.clone()).unwrap_or_else(|e| e.into_inner().clone())
+        self.status
+            .lock()
+            .map(|s| s.clone())
+            .unwrap_or_else(|e| e.into_inner().clone())
     }
 }
 
@@ -242,7 +258,11 @@ pub fn spawn_writer(
 ) -> io::Result<(StorageSender, WriterHandle)> {
     let storage_dir = dir.clone();
     spawn_writer_with(dir, sample_rate, observer, CHANNEL_CAPACITY, move |kind| {
-        Box::new(WavSegmentStorage::new(storage_dir.clone(), kind, sample_rate)) as Box<dyn TrackStorage>
+        Box::new(WavSegmentStorage::new(
+            storage_dir.clone(),
+            kind,
+            sample_rate,
+        )) as Box<dyn TrackStorage>
     })
 }
 
@@ -284,7 +304,12 @@ where
                     status: thread_status,
                     make_storage,
                     tracks: BTreeMap::new(),
-                    manifest: TrackManifest { version: 1, sample_rate, tracks: Vec::new(), complete: false },
+                    manifest: TrackManifest {
+                        version: 1,
+                        sample_rate,
+                        tracks: Vec::new(),
+                        complete: false,
+                    },
                     failing: false,
                     last_backlog_warning: None,
                     last_dropped: 0,
@@ -307,7 +332,13 @@ where
                 }
             }
         })?;
-    Ok((sender, WriterHandle { thread: Some(thread), status }))
+    Ok((
+        sender,
+        WriterHandle {
+            thread: Some(thread),
+            status,
+        },
+    ))
 }
 
 fn set_status(status: &Mutex<Option<String>>, value: Option<String>) {
@@ -350,7 +381,11 @@ where
                 Err(RecvTimeoutError::Disconnected) => break,
             }
             let now = Instant::now();
-            let events: Vec<StorageEvent> = self.tracks.values_mut().filter_map(|w| w.tick(now)).collect();
+            let events: Vec<StorageEvent> = self
+                .tracks
+                .values_mut()
+                .filter_map(|w| w.tick(now))
+                .collect();
             for event in events {
                 self.handle(event);
             }
@@ -360,7 +395,8 @@ where
     }
 
     fn accept(&mut self, message: WriterMessage) {
-        self.queued.fetch_sub(message.samples.len() as u64, Ordering::Relaxed);
+        self.queued
+            .fetch_sub(message.samples.len() as u64, Ordering::Relaxed);
         let sample_rate = self.sample_rate;
         let make_storage = &self.make_storage;
         let writer = self
@@ -400,7 +436,8 @@ where
     }
 
     fn check_queue(&mut self, now: Instant) {
-        let due = |last: Option<Instant>| last.map_or(true, |t| now.duration_since(t) >= WARNING_REPEAT);
+        let due =
+            |last: Option<Instant>| last.map_or(true, |t| now.duration_since(t) >= WARNING_REPEAT);
         let queued = self.queued.load(Ordering::Relaxed) as f64 / self.sample_rate as f64;
         if queued > BACKLOG_WARNING.as_secs_f64() && due(self.last_backlog_warning) {
             self.last_backlog_warning = Some(now);
@@ -416,7 +453,8 @@ where
             self.last_dropped = dropped;
             self.last_drop_warning = Some(now);
             set_status(&self.status, Some(QUEUE_FULL_MESSAGE.to_string()));
-            self.observer.storage_failed(QUEUE_FULL_MESSAGE, StorageErrorKind::Other);
+            self.observer
+                .storage_failed(QUEUE_FULL_MESSAGE, StorageErrorKind::Other);
         }
     }
 
@@ -465,7 +503,13 @@ where
                 t.lost_samples as f64 / self.sample_rate as f64,
             );
         }
-        WriterSummary { sample_rate: self.sample_rate, tracks, dropped_samples: dropped, storage_error, crashed: false }
+        WriterSummary {
+            sample_rate: self.sample_rate,
+            tracks,
+            dropped_samples: dropped,
+            storage_error,
+            crashed: false,
+        }
     }
 }
 
@@ -503,9 +547,13 @@ mod tests {
     ) -> (StorageSender, WriterHandle, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
         let storages = storages.clone();
-        let (tx, handle) = spawn_writer_with(dir.path().to_path_buf(), 1000, observer, capacity, move |kind| {
-            Box::new(storages[&kind].clone()) as Box<dyn TrackStorage>
-        })
+        let (tx, handle) = spawn_writer_with(
+            dir.path().to_path_buf(),
+            1000,
+            observer,
+            capacity,
+            move |kind| Box::new(storages[&kind].clone()) as Box<dyn TrackStorage>,
+        )
         .unwrap();
         (tx, handle, dir)
     }
@@ -513,7 +561,15 @@ mod tests {
     fn storages(delay: Option<Duration>) -> HashMap<TrackKind, MemoryStorage> {
         TrackKind::ALL
             .iter()
-            .map(|&k| (k, MemoryStorage { delay, ..MemoryStorage::default() }))
+            .map(|&k| {
+                (
+                    k,
+                    MemoryStorage {
+                        delay,
+                        ..MemoryStorage::default()
+                    },
+                )
+            })
             .collect()
     }
 
@@ -523,10 +579,16 @@ mod tests {
     fn stop_keeps_every_chunk_even_with_slow_storage() {
         for delay in [None, Some(Duration::from_millis(30))] {
             let storages = storages(delay);
-            let (tx, handle, _dir) = memory_writer(&storages, Arc::new(LogObserver), CHANNEL_CAPACITY);
+            let (tx, handle, _dir) =
+                memory_writer(&storages, Arc::new(LogObserver), CHANNEL_CAPACITY);
             let n = 500;
             for i in 0..n {
-                tx.send(TrackKind::Microphone, vec![(i % 100) as f32 / 200.0 + 0.01; 10], None).unwrap();
+                tx.send(
+                    TrackKind::Microphone,
+                    vec![(i % 100) as f32 / 200.0 + 0.01; 10],
+                    None,
+                )
+                .unwrap();
             }
             // The last, incomplete window: 3 samples.
             tx.send(TrackKind::Microphone, vec![0.9; 3], None).unwrap();
@@ -552,16 +614,26 @@ mod tests {
         // System starts 0.2 s later and stops 0.1 s earlier.
         for i in 0..100u32 {
             let end = (i + 1) as f64 * 0.01;
-            tx.send(TrackKind::Microphone, vec![0.1; 10], Some(end)).unwrap();
+            tx.send(TrackKind::Microphone, vec![0.1; 10], Some(end))
+                .unwrap();
             if (20..90).contains(&i) {
-                tx.send(TrackKind::System, vec![0.1; 10], Some(end)).unwrap();
+                tx.send(TrackKind::System, vec![0.1; 10], Some(end))
+                    .unwrap();
             }
         }
         drop(tx);
         let summary = handle.join().unwrap();
-        let ends: Vec<u64> = summary.tracks.iter().map(|(_, t)| t.offset_samples + t.written_samples).collect();
+        let ends: Vec<u64> = summary
+            .tracks
+            .iter()
+            .map(|(_, t)| t.offset_samples + t.written_samples)
+            .collect();
         assert_eq!(ends, vec![1000, 1000]);
-        let system = summary.tracks.iter().find(|(k, _)| *k == TrackKind::System).unwrap();
+        let system = summary
+            .tracks
+            .iter()
+            .find(|(k, _)| *k == TrackKind::System)
+            .unwrap();
         assert_eq!(system.1.offset_samples, 200);
         assert!((summary.duration_seconds() - 1.0).abs() < 1e-9);
     }
@@ -569,11 +641,14 @@ mod tests {
     #[test]
     fn writes_wav_segments_and_manifest() {
         let dir = tempfile::tempdir().unwrap();
-        let (tx, handle) = spawn_writer(dir.path().to_path_buf(), 48000, Arc::new(LogObserver)).unwrap();
+        let (tx, handle) =
+            spawn_writer(dir.path().to_path_buf(), 48000, Arc::new(LogObserver)).unwrap();
         for i in 0..200u32 {
             let end = (i + 1) as f64 * 0.01;
-            tx.send(TrackKind::Microphone, vec![0.2; 480], Some(end)).unwrap();
-            tx.send(TrackKind::System, vec![-0.2; 480], Some(end)).unwrap();
+            tx.send(TrackKind::Microphone, vec![0.2; 480], Some(end))
+                .unwrap();
+            tx.send(TrackKind::System, vec![-0.2; 480], Some(end))
+                .unwrap();
         }
         drop(tx);
         let summary = handle.join().unwrap();
@@ -586,7 +661,38 @@ mod tests {
         let manifest = read_manifest(dir.path()).unwrap();
         assert!(manifest.complete);
         assert_eq!(manifest.tracks.len(), 2);
-        assert!(manifest.tracks.iter().all(|t| t.recorded_samples == Some(96_000) && t.offset_samples == 0));
+        assert!(manifest
+            .tracks
+            .iter()
+            .all(|t| t.recorded_samples == Some(96_000) && t.offset_samples == 0));
+    }
+
+    /// Stop-to-saved does not grow with the meeting: after five minutes of
+    /// audio, stop only drains what is still queued and commits it.
+    #[test]
+    fn stop_to_saved_is_fast_after_a_long_recording() {
+        let dir = tempfile::tempdir().unwrap();
+        let (tx, handle) =
+            spawn_writer(dir.path().to_path_buf(), 48000, Arc::new(LogObserver)).unwrap();
+        for i in 0..30_000u32 {
+            let end = (i + 1) as f64 * 0.01;
+            tx.send(TrackKind::Microphone, vec![0.2; 480], Some(end))
+                .unwrap();
+            tx.send(TrackKind::System, vec![-0.2; 480], Some(end))
+                .unwrap();
+            // Faster than real time, but never more than a second ahead of
+            // the disk (as in a real recording).
+            while tx.queued_seconds() > 1.0 {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        }
+        let stop = Instant::now();
+        drop(tx);
+        let summary = handle.join().unwrap();
+        let elapsed = stop.elapsed();
+        assert!(elapsed < Duration::from_secs(2), "stop took {elapsed:?}");
+        assert!((summary.duration_seconds() - 300.0).abs() < 1e-6);
+        assert_eq!(summary.lost_samples(), 0);
     }
 
     #[test]
@@ -604,13 +710,22 @@ mod tests {
         while observer.failed.lock().unwrap().is_empty() && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(10));
         }
-        assert_eq!(*observer.failed.lock().unwrap(), vec!["Lyden gemmes ikke: disken er fuld".to_string()]);
-        assert_eq!(handle.storage_error().as_deref(), Some("Lyden gemmes ikke: disken er fuld"));
+        assert_eq!(
+            *observer.failed.lock().unwrap(),
+            vec!["Lyden gemmes ikke: disken er fuld".to_string()]
+        );
+        assert_eq!(
+            handle.storage_error().as_deref(),
+            Some("Lyden gemmes ikke: disken er fuld")
+        );
         // Stop while the disk is still full: nothing on disk, the loss is counted.
         drop(tx);
         let summary = handle.join().unwrap();
         assert_eq!(summary.lost_samples(), 200);
-        assert_eq!(summary.storage_error.as_deref(), Some("Lyden gemmes ikke: disken er fuld"));
+        assert_eq!(
+            summary.storage_error.as_deref(),
+            Some("Lyden gemmes ikke: disken er fuld")
+        );
     }
 
     #[test]
@@ -625,12 +740,20 @@ mod tests {
                 full += 1;
             }
         }
-        assert!(started.elapsed() < Duration::from_millis(100), "send never blocks");
+        assert!(
+            started.elapsed() < Duration::from_millis(100),
+            "send never blocks"
+        );
         assert!(full > 0);
         drop(tx);
         let summary = handle.join().unwrap();
         assert!(summary.dropped_samples > 0);
-        assert!(observer.failed.lock().unwrap().iter().any(|m| m == QUEUE_FULL_MESSAGE));
+        assert!(observer
+            .failed
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|m| m == QUEUE_FULL_MESSAGE));
     }
 
     #[test]
@@ -647,7 +770,12 @@ mod tests {
         while observer.backlog.lock().unwrap().is_empty() && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(10));
         }
-        assert!(observer.backlog.lock().unwrap().first().is_some_and(|&s| s > 5.0));
+        assert!(observer
+            .backlog
+            .lock()
+            .unwrap()
+            .first()
+            .is_some_and(|&s| s > 5.0));
         drop(tx);
         handle.join().unwrap();
     }
@@ -667,26 +795,40 @@ mod tests {
         }
         drop(tx);
         handle.join().unwrap();
-        assert_eq!(storages[&TrackKind::Microphone].samples.lock().unwrap().len(), 2000);
+        assert_eq!(
+            storages[&TrackKind::Microphone]
+                .samples
+                .lock()
+                .unwrap()
+                .len(),
+            2000
+        );
     }
 
     #[test]
     fn a_dead_writer_closes_the_channel() {
         let dir = tempfile::tempdir().unwrap();
         let observer = Arc::new(RecordingObserver::default());
-        let (tx, handle) = spawn_writer_with(dir.path().to_path_buf(), 1000, observer.clone(), 16, |_| {
-            Box::new(PanickingStorage) as Box<dyn TrackStorage>
-        })
-        .unwrap();
+        let (tx, handle) =
+            spawn_writer_with(dir.path().to_path_buf(), 1000, observer.clone(), 16, |_| {
+                Box::new(PanickingStorage) as Box<dyn TrackStorage>
+            })
+            .unwrap();
         let _ = tx.send(TrackKind::Microphone, vec![0.1; 10], None);
         let deadline = Instant::now() + Duration::from_secs(5);
         while !handle.is_finished() && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(10));
         }
-        assert_eq!(tx.send(TrackKind::Microphone, vec![0.1; 10], None), Err(StorageSendError::Closed));
+        assert_eq!(
+            tx.send(TrackKind::Microphone, vec![0.1; 10], None),
+            Err(StorageSendError::Closed)
+        );
         let summary = handle.join().unwrap();
         assert!(summary.crashed);
-        assert_eq!(*observer.failed.lock().unwrap(), vec![WRITER_STOPPED_MESSAGE.to_string()]);
+        assert_eq!(
+            *observer.failed.lock().unwrap(),
+            vec![WRITER_STOPPED_MESSAGE.to_string()]
+        );
     }
 
     struct PanickingStorage;

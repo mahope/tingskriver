@@ -82,7 +82,10 @@ pub struct WriteOutcome {
 
 impl WriteOutcome {
     fn ok(committed: usize) -> Self {
-        Self { committed, error: None }
+        Self {
+            committed,
+            error: None,
+        }
     }
 }
 
@@ -173,7 +176,7 @@ impl WavSegmentStorage {
             self.bytes.extend_from_slice(&s.to_le_bytes());
         }
         let Some(segment) = self.current.as_mut() else {
-            return Err(io::Error::new(io::ErrorKind::Other, "no open segment"));
+            return Err(io::Error::other("no open segment"));
         };
         let end = WAV_HEADER_LEN + segment.committed * 2;
         segment.file.seek(SeekFrom::Start(end))?;
@@ -196,7 +199,10 @@ impl TrackStorage for WavSegmentStorage {
                 .map_or(true, |s| s.committed >= self.segment_capacity);
             if full {
                 if let Err(e) = self.open_next() {
-                    return WriteOutcome { committed: done, error: Some(e) };
+                    return WriteOutcome {
+                        committed: done,
+                        error: Some(e),
+                    };
                 }
             }
             let room = self
@@ -205,7 +211,10 @@ impl TrackStorage for WavSegmentStorage {
                 .map_or(0, |s| self.segment_capacity.saturating_sub(s.committed));
             let take = (samples.len() - done).min(room as usize);
             if let Err(e) = self.write_into_current(&samples[done..done + take]) {
-                return WriteOutcome { committed: done, error: Some(e) };
+                return WriteOutcome {
+                    committed: done,
+                    error: Some(e),
+                };
             }
             done += take;
         }
@@ -218,7 +227,11 @@ impl TrackStorage for WavSegmentStorage {
 }
 
 /// A 44-byte PCM WAV header: mono, 16-bit, `data_bytes` of samples.
-pub fn write_wav_header(out: &mut (impl Write + Seek), sample_rate: u32, data_bytes: u64) -> io::Result<()> {
+pub fn write_wav_header(
+    out: &mut (impl Write + Seek),
+    sample_rate: u32,
+    data_bytes: u64,
+) -> io::Result<()> {
     let data = data_bytes.min(u32::MAX as u64 - 36) as u32;
     let mut header = Vec::with_capacity(WAV_HEADER_LEN as usize);
     header.extend_from_slice(b"RIFF");
@@ -287,8 +300,13 @@ pub fn inspect_wav(path: &Path) -> io::Result<WavInspection> {
     let mut header = [0u8; WAV_HEADER_LEN as usize];
     file.read_exact(&mut header)?;
     let u16_at = |i: usize| u16::from_le_bytes([header[i], header[i + 1]]);
-    let u32_at = |i: usize| u32::from_le_bytes([header[i], header[i + 1], header[i + 2], header[i + 3]]);
-    if &header[0..4] != b"RIFF" || &header[8..12] != b"WAVE" || &header[12..16] != b"fmt " || &header[36..40] != b"data" {
+    let u32_at =
+        |i: usize| u32::from_le_bytes([header[i], header[i + 1], header[i + 2], header[i + 3]]);
+    if &header[0..4] != b"RIFF"
+        || &header[8..12] != b"WAVE"
+        || &header[12..16] != b"fmt "
+        || &header[36..40] != b"data"
+    {
         return Err(invalid("not a WAV file"));
     }
     if u16_at(20) != 1 || u16_at(22) != 1 || u16_at(34) != 16 {
@@ -311,7 +329,12 @@ fn invalid(msg: &str) -> io::Error {
 }
 
 /// Read up to `max` samples starting at sample `start` of a segment.
-pub fn read_wav_samples(file: &mut File, start: u64, max: usize, out: &mut Vec<i16>) -> io::Result<usize> {
+pub fn read_wav_samples(
+    file: &mut File,
+    start: u64,
+    max: usize,
+    out: &mut Vec<i16>,
+) -> io::Result<usize> {
     let mut bytes = vec![0u8; max * 2];
     file.seek(SeekFrom::Start(WAV_HEADER_LEN + start * 2))?;
     let mut filled = 0;
@@ -324,7 +347,11 @@ pub fn read_wav_samples(file: &mut File, start: u64, max: usize, out: &mut Vec<i
     }
     let samples = filled / 2;
     out.clear();
-    out.extend(bytes[..samples * 2].chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]])));
+    out.extend(
+        bytes[..samples * 2]
+            .chunks_exact(2)
+            .map(|b| i16::from_le_bytes([b[0], b[1]])),
+    );
     Ok(samples)
 }
 
@@ -370,7 +397,10 @@ pub fn storage_error_kind(error: &io::Error) -> StorageErrorKind {
 /// A storage state change worth telling the user about.
 #[derive(Debug, Clone, PartialEq)]
 pub enum StorageEvent {
-    Failed { message: String, kind: StorageErrorKind },
+    Failed {
+        message: String,
+        kind: StorageErrorKind,
+    },
     Recovered,
 }
 
@@ -502,7 +532,11 @@ impl<S: TrackStorage> TrackWriter<S> {
     fn enforce_pending_limit(&mut self) {
         let mut replaced = 0usize;
         while self.pending_sample_count > self.max_pending_samples {
-            let Some(index) = self.pending.iter().position(|b| matches!(b, Block::Samples(_))) else {
+            let Some(index) = self
+                .pending
+                .iter()
+                .position(|b| matches!(b, Block::Samples(_)))
+            else {
                 break;
             };
             let n = self.pending.get(index).map_or(0, Block::len);
@@ -517,7 +551,9 @@ impl<S: TrackStorage> TrackWriter<S> {
             // Merge the new silence with silence on either side.
             let mut i = index.saturating_sub(1);
             while i <= index && i + 1 < self.pending.len() {
-                if let (Some(Block::Silence(a)), Some(Block::Silence(b))) = (self.pending.get(i), self.pending.get(i + 1)) {
+                if let (Some(Block::Silence(a)), Some(Block::Silence(b))) =
+                    (self.pending.get(i), self.pending.get(i + 1))
+                {
                     let sum = a + b;
                     self.pending.remove(i + 1);
                     self.pending[i] = Block::Silence(sum);
@@ -527,7 +563,10 @@ impl<S: TrackStorage> TrackWriter<S> {
             }
         }
         if replaced > 0 && !self.failing {
-            log::warn!("Track buffer full: {:.2}s of audio replaced by silence", replaced as f64 / self.sample_rate as f64);
+            log::warn!(
+                "Track buffer full: {:.2}s of audio replaced by silence",
+                replaced as f64 / self.sample_rate as f64
+            );
         }
     }
 
@@ -597,7 +636,10 @@ impl<S: TrackStorage> TrackWriter<S> {
                 log::error!("{message} ({e})");
                 if !self.failing {
                     self.failing = true;
-                    return Some(StorageEvent::Failed { message, kind: storage_error_kind(&e) });
+                    return Some(StorageEvent::Failed {
+                        message,
+                        kind: storage_error_kind(&e),
+                    });
                 }
                 None
             }
@@ -618,7 +660,9 @@ impl<S: TrackStorage> TrackWriter<S> {
                 }
                 match block {
                     Block::Samples(s) => self.scratch.extend_from_slice(&s[..s.len().min(room)]),
-                    Block::Silence(n) => self.scratch.resize(self.scratch.len() + (*n).min(room as u64) as usize, 0),
+                    Block::Silence(n) => self
+                        .scratch
+                        .resize(self.scratch.len() + (*n).min(room as u64) as usize, 0),
                 }
             }
             let outcome = self.storage.write(&self.scratch);
@@ -634,7 +678,9 @@ impl<S: TrackStorage> TrackWriter<S> {
     fn consume(&mut self, mut n: usize) {
         self.written += n as u64;
         while n > 0 {
-            let Some(block) = self.pending.front_mut() else { break };
+            let Some(block) = self.pending.front_mut() else {
+                break;
+            };
             match block {
                 Block::Samples(s) => {
                     let take = n.min(s.len());
@@ -674,7 +720,11 @@ impl<S: TrackStorage> TrackWriter<S> {
 }
 
 pub fn f32_to_i16(x: f32) -> i16 {
-    let clamped = if x.is_finite() { x.clamp(-1.0, 1.0) } else { 0.0 };
+    let clamped = if x.is_finite() {
+        x.clamp(-1.0, 1.0)
+    } else {
+        0.0
+    };
     (clamped * i16::MAX as f32).round() as i16
 }
 
@@ -700,7 +750,10 @@ pub(crate) mod tests {
                 std::thread::sleep(delay);
             }
             if let Some(code) = *self.fail.lock().unwrap() {
-                return WriteOutcome { committed: 0, error: Some(io::Error::from_raw_os_error(code)) };
+                return WriteOutcome {
+                    committed: 0,
+                    error: Some(io::Error::from_raw_os_error(code)),
+                };
             }
             self.samples.lock().unwrap().extend_from_slice(samples);
             WriteOutcome::ok(samples.len())
@@ -725,7 +778,11 @@ pub(crate) mod tests {
         assert_eq!(storage.samples.lock().unwrap().len(), 480);
         w.push(&[0.5; 480], None);
         w.tick(t0 + Duration::from_millis(500));
-        assert_eq!(storage.samples.lock().unwrap().len(), 480, "no commit before the interval");
+        assert_eq!(
+            storage.samples.lock().unwrap().len(),
+            480,
+            "no commit before the interval"
+        );
         w.tick(t0 + Duration::from_millis(1000));
         assert_eq!(storage.samples.lock().unwrap().len(), 960);
     }
@@ -768,12 +825,21 @@ pub(crate) mod tests {
         // Attempts at 0, 10, 20, 30, 40, 50 s.
         assert_eq!(w.attempts(), 6);
         assert_eq!(events.len(), 1, "the failure is reported once");
-        assert!(matches!(&events[0], StorageEvent::Failed { kind: StorageErrorKind::DiskFull, message } if message == "Lyden gemmes ikke: disken er fuld"));
+        assert!(
+            matches!(&events[0], StorageEvent::Failed { kind: StorageErrorKind::DiskFull, message } if message == "Lyden gemmes ikke: disken er fuld")
+        );
 
         // Space is freed: the next attempt succeeds and reports recovery.
         *storage.fail.lock().unwrap() = None;
-        assert_eq!(w.tick(t0 + Duration::from_secs(59)), None, "still waiting for the retry time");
-        assert_eq!(w.tick(t0 + Duration::from_secs(60)), Some(StorageEvent::Recovered));
+        assert_eq!(
+            w.tick(t0 + Duration::from_secs(59)),
+            None,
+            "still waiting for the retry time"
+        );
+        assert_eq!(
+            w.tick(t0 + Duration::from_secs(60)),
+            Some(StorageEvent::Recovered)
+        );
         // The timeline is intact: 60 s of audio, of which the oldest beyond
         // MAX_PENDING became silence.
         let data = storage.samples.lock().unwrap();
@@ -830,7 +896,12 @@ pub(crate) mod tests {
     #[test]
     fn wav_segments_roll_over_and_survive_a_crash() {
         let dir = tempfile::tempdir().unwrap();
-        let storage = WavSegmentStorage::with_segment_length(dir.path(), TrackKind::Microphone, 1000, Duration::from_secs(2));
+        let storage = WavSegmentStorage::with_segment_length(
+            dir.path(),
+            TrackKind::Microphone,
+            1000,
+            Duration::from_secs(2),
+        );
         let mut w = TrackWriter::new(storage, 1000);
         let t0 = Instant::now();
         // 5.5 s of audio in 100 ms chunks, ticking along.
@@ -840,7 +911,9 @@ pub(crate) mod tests {
         }
         // Crash: no finish, no Drop.
         std::mem::forget(w);
-        let names: Vec<_> = (0..3).map(|i| dir.path().join(segment_file_name(TrackKind::Microphone, i))).collect();
+        let names: Vec<_> = (0..3)
+            .map(|i| dir.path().join(segment_file_name(TrackKind::Microphone, i)))
+            .collect();
         let inspected: Vec<_> = names.iter().map(|p| inspect_wav(p).unwrap()).collect();
         assert_eq!(inspected[0].samples(), 2000);
         assert_eq!(inspected[1].samples(), 2000);
@@ -874,9 +947,15 @@ pub(crate) mod tests {
     #[test]
     fn storage_error_messages_are_danish() {
         let full = io::Error::from_raw_os_error(DISK_FULL);
-        assert_eq!(storage_error_message(&full), "Lyden gemmes ikke: disken er fuld");
+        assert_eq!(
+            storage_error_message(&full),
+            "Lyden gemmes ikke: disken er fuld"
+        );
         let denied = io::Error::new(io::ErrorKind::PermissionDenied, "nope");
-        assert_eq!(storage_error_message(&denied), "Lyden gemmes ikke: filen er låst eller utilgængelig");
+        assert_eq!(
+            storage_error_message(&denied),
+            "Lyden gemmes ikke: filen er låst eller utilgængelig"
+        );
     }
 
     #[test]

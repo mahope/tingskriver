@@ -23,7 +23,9 @@ use serde::{Deserialize, Serialize};
 
 use super::encode::encode_pcm_s16;
 use super::recording_writer::{read_manifest, TrackManifest};
-use super::track_writer::{inspect_wav, read_wav_samples, update_wav_sizes, TrackKind, SEGMENT_LENGTH};
+use super::track_writer::{
+    inspect_wav, read_wav_samples, update_wav_sizes, TrackKind, SEGMENT_LENGTH,
+};
 
 /// Raw tracks live here inside the meeting folder (the name predates the
 /// WAV writer; the frontend's recovery looks for it).
@@ -144,7 +146,9 @@ impl ScannedTracks {
 
 /// `true` if the raw folder holds WAV segments from the track writer.
 pub fn has_raw_tracks(raw_dir: &Path) -> bool {
-    list_segments(raw_dir).map(|s| !s.is_empty()).unwrap_or(false)
+    list_segments(raw_dir)
+        .map(|s| !s.is_empty())
+        .unwrap_or(false)
 }
 
 /// `(kind, index, path)` of every `microphone_NNN.wav` / `system_NNN.wav`.
@@ -164,7 +168,7 @@ fn list_segments(raw_dir: &Path) -> io::Result<Vec<(TrackKind, u32, PathBuf)>> {
             }
         }
     }
-    found.sort_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)));
+    found.sort_by_key(|a| (a.0, a.1));
     Ok(found)
 }
 
@@ -192,9 +196,15 @@ pub fn scan_raw_tracks(raw_dir: &Path, repair: bool) -> io::Result<ScannedTracks
         let mut expected_index = 0u32;
         for (position, (_, index, path)) in files.iter().enumerate() {
             let is_last = position + 1 == files.len();
-            let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
             while expected_index < *index {
-                problems.push(format!("{} mangler", super::track_writer::segment_file_name(kind, expected_index)));
+                problems.push(format!(
+                    "{} mangler",
+                    super::track_writer::segment_file_name(kind, expected_index)
+                ));
                 sources.push(Source::Silence(segment_samples(sample_rate)));
                 expected_index += 1;
             }
@@ -225,16 +235,28 @@ pub fn scan_raw_tracks(raw_dir: &Path, repair: bool) -> io::Result<ScannedTracks
                         if let Err(e) = repair_header(path, wav.actual_data_bytes) {
                             log::warn!("Could not repair the header of {}: {e}", path.display());
                         } else {
-                            log::info!("Repaired header of {} ({} samples)", path.display(), wav.samples());
+                            log::info!(
+                                "Repaired header of {} ({} samples)",
+                                path.display(),
+                                wav.samples()
+                            );
                         }
                     }
-                    sources.push(Source::File { path: (*path).clone(), samples: wav.samples() });
+                    sources.push(Source::File {
+                        path: (*path).clone(),
+                        samples: wav.samples(),
+                    });
                 }
             }
         }
-        let entry = manifest.as_ref().and_then(|m| m.tracks.iter().find(|t| t.kind == kind));
+        let entry = manifest
+            .as_ref()
+            .and_then(|m| m.tracks.iter().find(|t| t.kind == kind));
         if manifest.is_some() && entry.is_none() {
-            log::warn!("{} track is not in tracks.json; assuming offset 0", kind.file_stem());
+            log::warn!(
+                "{} track is not in tracks.json; assuming offset 0",
+                kind.file_stem()
+            );
         }
         let track = ScannedTrack {
             kind,
@@ -275,7 +297,7 @@ pub fn scan_raw_tracks(raw_dir: &Path, repair: bool) -> io::Result<ScannedTracks
         sample_rate: sample_rate.unwrap_or(48000),
         tracks,
         problems,
-        complete: manifest.map_or(false, |m: TrackManifest| m.complete),
+        complete: manifest.is_some_and(|m: TrackManifest| m.complete),
     })
 }
 
@@ -307,14 +329,22 @@ pub struct SourceReader {
 
 impl SourceReader {
     pub fn new(sources: Vec<Source>) -> Self {
-        Self { sources, index: 0, position: 0, file: None, scratch: Vec::new() }
+        Self {
+            sources,
+            index: 0,
+            position: 0,
+            file: None,
+            scratch: Vec::new(),
+        }
     }
 
     /// Fill `out` with up to `max` samples; `Ok(false)` at the end.
     pub fn read_block(&mut self, out: &mut Vec<i16>, max: usize) -> io::Result<bool> {
         out.clear();
         while out.len() < max {
-            let Some(source) = self.sources.get(self.index) else { break };
+            let Some(source) = self.sources.get(self.index) else {
+                break;
+            };
             let remaining = source.len() - self.position;
             if remaining == 0 {
                 self.index += 1;
@@ -332,7 +362,9 @@ impl SourceReader {
                     if self.file.is_none() {
                         self.file = Some(File::open(path)?);
                     }
-                    let Some(file) = self.file.as_mut() else { break };
+                    let Some(file) = self.file.as_mut() else {
+                        break;
+                    };
                     let got = read_wav_samples(file, self.position, want, &mut self.scratch)?;
                     if got == 0 {
                         // The file shrank since the scan: treat the rest as silence.
@@ -363,19 +395,34 @@ fn timeline_sources(track: &ScannedTrack) -> Vec<Source> {
 /// to full scale (the live mixer's rule).
 pub fn mix_samples(a: i16, b: i16) -> i16 {
     let sum = a as f32 / i16::MAX as f32 + b as f32 / i16::MAX as f32;
-    let scaled = if sum.abs() > 1.0 { sum / sum.abs() } else { sum };
+    let scaled = if sum.abs() > 1.0 {
+        sum / sum.abs()
+    } else {
+        sum
+    };
     (scaled * i16::MAX as f32).round() as i16
 }
 
 const BLOCK: usize = 48_000;
 
-fn encode_track(ffmpeg: &Path, sample_rate: u32, track: &ScannedTrack, output: &Path) -> anyhow::Result<()> {
+fn encode_track(
+    ffmpeg: &Path,
+    sample_rate: u32,
+    track: &ScannedTrack,
+    output: &Path,
+) -> anyhow::Result<()> {
     let mut reader = SourceReader::new(timeline_sources(track));
-    encode_pcm_s16(ffmpeg, sample_rate, "96k", output, |block| reader.read_block(block, BLOCK))
+    encode_pcm_s16(ffmpeg, sample_rate, "96k", output, |block| {
+        reader.read_block(block, BLOCK)
+    })
 }
 
 fn encode_mix(ffmpeg: &Path, scanned: &ScannedTracks, output: &Path) -> anyhow::Result<()> {
-    let mut readers: Vec<SourceReader> = scanned.tracks.iter().map(|t| SourceReader::new(timeline_sources(t))).collect();
+    let mut readers: Vec<SourceReader> = scanned
+        .tracks
+        .iter()
+        .map(|t| SourceReader::new(timeline_sources(t)))
+        .collect();
     let mut part = Vec::new();
     encode_pcm_s16(ffmpeg, scanned.sample_rate, "128k", output, |block| {
         block.clear();
@@ -409,7 +456,12 @@ pub fn decoded_duration_seconds(path: &Path) -> anyhow::Result<f64> {
         hint.with_extension(ext);
     }
     let probed = symphonia::default::get_probe()
-        .format(&hint, mss, &FormatOptions::default(), &MetadataOptions::default())
+        .format(
+            &hint,
+            mss,
+            &FormatOptions::default(),
+            &MetadataOptions::default(),
+        )
         .map_err(|e| anyhow::anyhow!("cannot read {}: {e}", path.display()))?;
     let mut format = probed.format;
     let track = format
@@ -438,7 +490,9 @@ pub fn decoded_duration_seconds(path: &Path) -> anyhow::Result<f64> {
                 frames += decoded.frames() as u64;
                 rate = decoded.spec().rate;
             }
-            Err(SymphoniaError::DecodeError(e)) => log::warn!("Decode error in {}: {e}", path.display()),
+            Err(SymphoniaError::DecodeError(e)) => {
+                log::warn!("Decode error in {}: {e}", path.display())
+            }
             Err(e) => return Err(anyhow::anyhow!("decoding {} failed: {e}", path.display())),
         }
     }
@@ -525,7 +579,13 @@ pub fn finalize_raw_tracks(meeting_folder: &Path, ffmpeg: Option<&Path>) -> Fina
     }
     let Some(ffmpeg) = ffmpeg else {
         log::error!("FFmpeg not found; raw tracks kept in {}", raw_dir.display());
-        return finish(&raw_dir, FinalizeOutcome::failed(format!("{KEPT_MESSAGE} FFmpeg blev ikke fundet."), Some(&scanned)));
+        return finish(
+            &raw_dir,
+            FinalizeOutcome::failed(
+                format!("{KEPT_MESSAGE} FFmpeg blev ikke fundet."),
+                Some(&scanned),
+            ),
+        );
     };
 
     let expected = scanned.duration_seconds();
@@ -551,16 +611,25 @@ pub fn finalize_raw_tracks(meeting_folder: &Path, ffmpeg: Option<&Path>) -> Fina
     }
     if let Some(error) = encode_error {
         remove_temps(&outputs);
-        return finish(&raw_dir, FinalizeOutcome::failed(format!("{KEPT_MESSAGE} ({error})"), Some(&scanned)));
+        return finish(
+            &raw_dir,
+            FinalizeOutcome::failed(format!("{KEPT_MESSAGE} ({error})"), Some(&scanned)),
+        );
     }
 
     for (_, tmp) in &outputs {
         match decoded_duration_seconds(tmp) {
             Ok(actual) if (actual - expected).abs() <= MAX_DURATION_DEVIATION => {
-                log::info!("Verified {}: {actual:.2}s (recorded {expected:.2}s)", tmp.display());
+                log::info!(
+                    "Verified {}: {actual:.2}s (recorded {expected:.2}s)",
+                    tmp.display()
+                );
             }
             Ok(actual) => {
-                log::error!("{} is {actual:.2}s but {expected:.2}s were recorded; raw tracks kept", tmp.display());
+                log::error!(
+                    "{} is {actual:.2}s but {expected:.2}s were recorded; raw tracks kept",
+                    tmp.display()
+                );
                 remove_temps(&outputs);
                 return finish(
                     &raw_dir,
@@ -573,7 +642,10 @@ pub fn finalize_raw_tracks(meeting_folder: &Path, ffmpeg: Option<&Path>) -> Fina
             Err(e) => {
                 log::error!("Cannot verify {}: {e:#}", tmp.display());
                 remove_temps(&outputs);
-                return finish(&raw_dir, FinalizeOutcome::failed(format!("{KEPT_MESSAGE} ({e})"), Some(&scanned)));
+                return finish(
+                    &raw_dir,
+                    FinalizeOutcome::failed(format!("{KEPT_MESSAGE} ({e})"), Some(&scanned)),
+                );
             }
         }
     }
@@ -581,14 +653,24 @@ pub fn finalize_raw_tracks(meeting_folder: &Path, ffmpeg: Option<&Path>) -> Fina
         if let Err(e) = std::fs::rename(tmp, file) {
             log::error!("Cannot move {} into place: {e}", file.display());
             remove_temps(&outputs);
-            return finish(&raw_dir, FinalizeOutcome::failed(format!("{KEPT_MESSAGE} ({e})"), Some(&scanned)));
+            return finish(
+                &raw_dir,
+                FinalizeOutcome::failed(format!("{KEPT_MESSAGE} ({e})"), Some(&scanned)),
+            );
         }
     }
 
-    let status = if scanned.problems.is_empty() { AudioSaveStatus::Ok } else { AudioSaveStatus::Partial };
+    let status = if scanned.problems.is_empty() {
+        AudioSaveStatus::Ok
+    } else {
+        AudioSaveStatus::Partial
+    };
     let message = match status {
         AudioSaveStatus::Ok => "Lyden er gemt.".to_string(),
-        _ => format!("Lyden er delvist gemt: {}. Originalen er gemt.", scanned.problems.join(", ")),
+        _ => format!(
+            "Lyden er delvist gemt: {}. Originalen er gemt.",
+            scanned.problems.join(", ")
+        ),
     };
     log::info!(
         "Finalized {} in {:.1}s: status {}, {:.1}s of audio",
@@ -601,7 +683,11 @@ pub fn finalize_raw_tracks(meeting_folder: &Path, ffmpeg: Option<&Path>) -> Fina
         status,
         message,
         audio_file: Some(mixed),
-        track_files: outputs.iter().take(scanned.tracks.len()).map(|(f, _)| f.clone()).collect(),
+        track_files: outputs
+            .iter()
+            .take(scanned.tracks.len())
+            .map(|(f, _)| f.clone())
+            .collect(),
         duration_seconds: expected,
         segment_count: scanned.segment_count(),
         raw_kept: true,
@@ -624,16 +710,29 @@ fn finish(raw_dir: &Path, mut outcome: FinalizeOutcome) -> FinalizeOutcome {
         match std::fs::remove_dir_all(raw_dir) {
             Ok(()) => {
                 outcome.raw_kept = false;
-                log::info!("Raw tracks deleted after verification: {}", raw_dir.display());
+                log::info!(
+                    "Raw tracks deleted after verification: {}",
+                    raw_dir.display()
+                );
             }
-            Err(e) => log::warn!("Could not delete the raw tracks in {}: {e}", raw_dir.display()),
+            Err(e) => log::warn!(
+                "Could not delete the raw tracks in {}: {e}",
+                raw_dir.display()
+            ),
         }
     } else {
-        log::warn!("Raw tracks kept in {} (status {})", raw_dir.display(), outcome.status.as_str());
+        log::warn!(
+            "Raw tracks kept in {} (status {})",
+            raw_dir.display(),
+            outcome.status.as_str()
+        );
     }
     if let Some(folder) = raw_dir.parent() {
         if let Err(e) = update_metadata(folder, &outcome) {
-            log::warn!("Could not update metadata.json in {}: {e}", folder.display());
+            log::warn!(
+                "Could not update metadata.json in {}: {e}",
+                folder.display()
+            );
         }
     }
     outcome
@@ -642,7 +741,9 @@ fn finish(raw_dir: &Path, mut outcome: FinalizeOutcome) -> FinalizeOutcome {
 /// Status of the last finalize, read from the marker in the raw folder.
 pub fn read_verified_status(raw_dir: &Path) -> Option<AudioSaveStatus> {
     let text = std::fs::read_to_string(raw_dir.join(VERIFIED_MARKER)).ok()?;
-    serde_json::from_str::<FinalizeOutcome>(&text).ok().map(|o| o.status)
+    serde_json::from_str::<FinalizeOutcome>(&text)
+        .ok()
+        .map(|o| o.status)
 }
 
 /// Add the audio outcome to the meeting's metadata.json (if it exists).
@@ -655,7 +756,9 @@ fn update_metadata(folder: &Path, outcome: &FinalizeOutcome) -> io::Result<()> {
     };
     let mut value: serde_json::Value =
         serde_json::from_str(&text).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-    let Some(map) = value.as_object_mut() else { return Ok(()) };
+    let Some(map) = value.as_object_mut() else {
+        return Ok(());
+    };
     let file_name = |p: &PathBuf| p.file_name().map(|n| n.to_string_lossy().to_string());
     map.insert("audio_status".into(), outcome.status.as_str().into());
     map.insert("audio_message".into(), outcome.message.clone().into());
@@ -664,14 +767,17 @@ fn update_metadata(folder: &Path, outcome: &FinalizeOutcome) -> io::Result<()> {
     }
     let tracks: Vec<String> = outcome.track_files.iter().filter_map(file_name).collect();
     map.insert("track_files".into(), tracks.into());
-    let json = serde_json::to_string_pretty(&value).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    let json = serde_json::to_string_pretty(&value).map_err(io::Error::other)?;
     let tmp = folder.join(".metadata.json.tmp");
     std::fs::write(&tmp, json)?;
     std::fs::rename(&tmp, &path)
 }
 
 fn temp_path(file: &Path) -> PathBuf {
-    let name = file.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    let name = file
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
     file.with_file_name(format!(".{name}.tmp"))
 }
 
@@ -684,7 +790,9 @@ fn remove_temps(outputs: &[(PathBuf, PathBuf)]) {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use super::super::recording_writer::{spawn_writer, write_manifest, LogObserver, ManifestTrack};
+    use super::super::recording_writer::{
+        spawn_writer, write_manifest, LogObserver, ManifestTrack,
+    };
     use super::super::track_writer::{segment_file_name, write_wav_header};
     use super::*;
     use std::io::Write;
@@ -701,8 +809,11 @@ mod tests {
         let (tx, handle) = spawn_writer(raw, 48000, Arc::new(LogObserver)).unwrap();
         for i in 0..seconds * 100 {
             let end = (i + 1) as f64 * 0.01;
-            let tone: Vec<f32> = (0..480).map(|n| ((i * 480 + n) as f32 * 0.05).sin() * 0.3).collect();
-            tx.send(TrackKind::Microphone, tone.clone(), Some(end)).unwrap();
+            let tone: Vec<f32> = (0..480)
+                .map(|n| ((i * 480 + n) as f32 * 0.05).sin() * 0.3)
+                .collect();
+            tx.send(TrackKind::Microphone, tone.clone(), Some(end))
+                .unwrap();
             tx.send(TrackKind::System, tone, Some(end)).unwrap();
         }
         drop(tx);
@@ -743,11 +854,18 @@ mod tests {
         let missing = dir.path().join("no-such-ffmpeg");
         let outcome = finalize_raw_tracks(dir.path(), Some(&missing));
         assert_eq!(outcome.status, AudioSaveStatus::Failed);
-        assert!(outcome.message.starts_with(KEPT_MESSAGE), "{}", outcome.message);
+        assert!(
+            outcome.message.starts_with(KEPT_MESSAGE),
+            "{}",
+            outcome.message
+        );
         assert!(outcome.raw_kept);
         assert!(has_raw_tracks(&dir.path().join(RAW_DIR)));
         assert!(!dir.path().join(MIXED_FILE).exists());
-        assert_eq!(read_verified_status(&dir.path().join(RAW_DIR)), Some(AudioSaveStatus::Failed));
+        assert_eq!(
+            read_verified_status(&dir.path().join(RAW_DIR)),
+            Some(AudioSaveStatus::Failed)
+        );
 
         let not_found = finalize_raw_tracks(dir.path(), None);
         assert_eq!(not_found.status, AudioSaveStatus::Failed);
@@ -777,8 +895,17 @@ mod tests {
         std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
 
         let outcome = finalize_raw_tracks(dir.path(), Some(&fake));
-        assert_eq!(outcome.status, AudioSaveStatus::Failed, "{}", outcome.message);
-        assert!(outcome.message.contains("der blev optaget"), "{}", outcome.message);
+        assert_eq!(
+            outcome.status,
+            AudioSaveStatus::Failed,
+            "{}",
+            outcome.message
+        );
+        assert!(
+            outcome.message.contains("der blev optaget"),
+            "{}",
+            outcome.message
+        );
         assert!(has_raw_tracks(&dir.path().join(RAW_DIR)));
         assert!(!dir.path().join(MIXED_FILE).exists());
     }
@@ -824,28 +951,59 @@ mod tests {
             },
         )
         .unwrap();
-        write_segment(&dir.path().join(segment_file_name(TrackKind::Microphone, 0)), &[1; 4800], 4800);
-        write_segment(&dir.path().join(segment_file_name(TrackKind::Microphone, 1)), &[2; 4800], 4800);
+        write_segment(
+            &dir.path().join(segment_file_name(TrackKind::Microphone, 0)),
+            &[1; 4800],
+            4800,
+        );
+        write_segment(
+            &dir.path().join(segment_file_name(TrackKind::Microphone, 1)),
+            &[2; 4800],
+            4800,
+        );
         // Last segment: header claims 4800 samples, only 1000 made it.
-        write_segment(&dir.path().join(segment_file_name(TrackKind::Microphone, 2)), &[3; 1000], 4800);
+        write_segment(
+            &dir.path().join(segment_file_name(TrackKind::Microphone, 2)),
+            &[3; 1000],
+            4800,
+        );
         let scanned = scan_raw_tracks(dir.path(), false).unwrap();
-        assert_eq!(scanned.problems, vec!["microphone_002.wav er afkortet".to_string()]);
+        assert_eq!(
+            scanned.problems,
+            vec!["microphone_002.wav er afkortet".to_string()]
+        );
         assert_eq!(scanned.tracks[0].samples(), 4800 + 4800 + 1000);
 
         // Unreadable last segment: skipped, the others remain.
-        std::fs::write(dir.path().join(segment_file_name(TrackKind::Microphone, 2)), b"garbage").unwrap();
+        std::fs::write(
+            dir.path().join(segment_file_name(TrackKind::Microphone, 2)),
+            b"garbage",
+        )
+        .unwrap();
         let scanned = scan_raw_tracks(dir.path(), false).unwrap();
-        assert_eq!(scanned.problems, vec!["microphone_002.wav er ødelagt".to_string()]);
+        assert_eq!(
+            scanned.problems,
+            vec!["microphone_002.wav er ødelagt".to_string()]
+        );
         assert_eq!(scanned.tracks[0].samples(), 9600);
 
         if let Some(ffmpeg) = ffmpeg() {
-            let folder = dir.path().parent().unwrap().join(format!("meeting-{}", std::process::id()));
+            let folder = dir
+                .path()
+                .parent()
+                .unwrap()
+                .join(format!("meeting-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&folder);
             std::fs::create_dir_all(&folder).unwrap();
             let raw = folder.join(RAW_DIR);
             std::fs::rename(dir.path(), &raw).unwrap();
             let outcome = finalize_raw_tracks(&folder, Some(&ffmpeg));
-            assert_eq!(outcome.status, AudioSaveStatus::Partial, "{}", outcome.message);
+            assert_eq!(
+                outcome.status,
+                AudioSaveStatus::Partial,
+                "{}",
+                outcome.message
+            );
             assert!(outcome.raw_kept, "raw tracks are only deleted on ok");
             assert!(raw.exists());
             assert!(folder.join(MIXED_FILE).exists());
@@ -858,11 +1016,22 @@ mod tests {
     #[test]
     fn missing_middle_segment_keeps_the_time_axis() {
         let dir = tempfile::tempdir().unwrap();
-        write_segment(&dir.path().join(segment_file_name(TrackKind::System, 0)), &[1; 100], 100);
-        write_segment(&dir.path().join(segment_file_name(TrackKind::System, 2)), &[1; 100], 100);
+        write_segment(
+            &dir.path().join(segment_file_name(TrackKind::System, 0)),
+            &[1; 100],
+            100,
+        );
+        write_segment(
+            &dir.path().join(segment_file_name(TrackKind::System, 2)),
+            &[1; 100],
+            100,
+        );
         let scanned = scan_raw_tracks(dir.path(), false).unwrap();
         assert_eq!(scanned.problems, vec!["system_001.wav mangler".to_string()]);
-        assert_eq!(scanned.tracks[0].samples(), 200 + SEGMENT_LENGTH.as_secs() * 48000);
+        assert_eq!(
+            scanned.tracks[0].samples(),
+            200 + SEGMENT_LENGTH.as_secs() * 48000
+        );
     }
 
     #[test]
@@ -878,8 +1047,10 @@ mod tests {
         // Real time, so commits happen as in the app.
         while started.elapsed() < std::time::Duration::from_secs(10) {
             let end = (fed + 1) as f64 * 0.01;
-            tx.send(TrackKind::Microphone, vec![0.2; 480], Some(end)).unwrap();
-            tx.send(TrackKind::System, vec![0.1; 480], Some(end)).unwrap();
+            tx.send(TrackKind::Microphone, vec![0.2; 480], Some(end))
+                .unwrap();
+            tx.send(TrackKind::System, vec![0.1; 480], Some(end))
+                .unwrap();
             fed += 1;
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
@@ -887,7 +1058,10 @@ mod tests {
         // "Kill": scan what is on disk while the writer still holds data.
         let scanned = scan_raw_tracks(&raw, true).unwrap();
         let recovered = scanned.duration_seconds();
-        assert!(fed_seconds - recovered <= 2.0, "fed {fed_seconds:.2}s, recovered {recovered:.2}s");
+        assert!(
+            fed_seconds - recovered <= 2.0,
+            "fed {fed_seconds:.2}s, recovered {recovered:.2}s"
+        );
         for track in &scanned.tracks {
             assert!(fed_seconds - track.end() as f64 / 48000.0 <= 2.0);
         }

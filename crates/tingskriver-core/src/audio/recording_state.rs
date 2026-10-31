@@ -1,11 +1,12 @@
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
-use tokio::sync::mpsc;
 use anyhow::Result;
 
 use super::devices::AudioDevice;
 use super::buffer_pool::AudioBufferPool;
+use super::recording_writer::{StorageSendError, StorageSender};
+use super::track_writer::TrackKind;
 
 /// Reference point for the millisecond timestamps kept in atomics.
 fn clock_ms() -> u64 {
@@ -115,8 +116,8 @@ pub struct RecordingState {
     microphone_device: Mutex<Option<Arc<AudioDevice>>>,
     system_device: Mutex<Option<Arc<AudioDevice>>>,
 
-    // Audio pipeline
-    audio_sender: Mutex<Option<mpsc::UnboundedSender<AudioChunk>>>,
+    // Disk writer for the recording's tracks
+    audio_sender: Mutex<Option<StorageSender>>,
 
     // Memory optimization
     buffer_pool: AudioBufferPool,
@@ -310,28 +311,48 @@ impl RecordingState {
         self.system_device.lock().unwrap().clone()
     }
 
-    // Audio pipeline management
-    pub fn set_audio_sender(&self, sender: mpsc::UnboundedSender<AudioChunk>) {
-        *self.audio_sender.lock().unwrap() = Some(sender);
+    // Recording writer
+    pub fn set_audio_sender(&self, sender: StorageSender) {
+        *self.audio_sender.lock().unwrap_or_else(|e| e.into_inner()) = Some(sender);
     }
 
+    /// Drop the writer's sender so it drains its queue and finishes.
+    pub fn close_audio_sender(&self) {
+        *self.audio_sender.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+
+    /// Hand a captured chunk to the disk writer without blocking. A full
+    /// queue drops the chunk and is reported by the writer, not here, so a
+    /// slow disk never counts towards the "too many errors" stop.
     pub fn send_audio_chunk(&self, chunk: AudioChunk) -> Result<()> {
         // Don't send audio chunks when paused
         if self.is_paused() {
             return Ok(()); // Silently discard chunks while paused
         }
 
-        if let Some(sender) = self.audio_sender.lock().unwrap().as_ref() {
-            sender.send(chunk).map_err(|_| anyhow::anyhow!("Failed to send audio chunk"))?;
-
-            // Update statistics
-            let mut stats = self.stats.lock().unwrap();
-            stats.chunks_processed += 1;
-            stats.last_activity = Some(Instant::now());
-            Ok(())
-        } else {
-            // Return an error when no sender is available (pipeline not ready)
-            Err(anyhow::anyhow!("Audio pipeline not ready - no sender available"))
+        // Position on the recording clock without pauses, so a pause leaves
+        // no gap in the tracks.
+        let position = self.get_active_recording_duration();
+        let kind = match chunk.device_type {
+            DeviceType::Microphone => TrackKind::Microphone,
+            DeviceType::System => TrackKind::System,
+        };
+        let result = {
+            let guard = self.audio_sender.lock().unwrap_or_else(|e| e.into_inner());
+            let Some(sender) = guard.as_ref() else {
+                // Return an error when no sender is available (pipeline not ready)
+                return Err(anyhow::anyhow!("Audio pipeline not ready - no sender available"));
+            };
+            sender.send(kind, chunk.data, position)
+        };
+        match result {
+            Ok(()) | Err(StorageSendError::Full) => {
+                let mut stats = self.stats.lock().unwrap_or_else(|e| e.into_inner());
+                stats.chunks_processed += 1;
+                stats.last_activity = Some(Instant::now());
+                Ok(())
+            }
+            Err(StorageSendError::Closed) => Err(anyhow::anyhow!("Recording writer channel closed")),
         }
     }
 

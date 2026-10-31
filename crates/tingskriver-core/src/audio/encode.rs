@@ -29,7 +29,10 @@ pub fn encode_single_audio(
     channels: u16,
     output_path: &PathBuf,
 ) -> anyhow::Result<()> {
-    debug!("Starting FFmpeg process for {} bytes of audio data", data.len());
+    debug!(
+        "Starting FFmpeg process for {} bytes of audio data",
+        data.len()
+    );
 
     if data.is_empty() {
         return Err(anyhow::anyhow!("No audio data provided for encoding"));
@@ -42,7 +45,14 @@ pub fn encode_single_audio(
     let mut done = false;
     run_ffmpeg_pipe(
         &ffmpeg_path,
-        &["-f", "f32le", "-ar", &sample_rate.to_string(), "-ac", &channels.to_string()],
+        &[
+            "-f",
+            "f32le",
+            "-ar",
+            &sample_rate.to_string(),
+            "-ac",
+            &channels.to_string(),
+        ],
         "192k",
         output_path,
         |stdin| {
@@ -103,7 +113,16 @@ fn run_ffmpeg_pipe(
     command
         .args(["-nostats", "-loglevel", "error", "-y"])
         .args(input_format)
-        .args(["-i", "pipe:0", "-c:a", "aac", "-b:a", bitrate, "-profile:a", "aac_low"])
+        .args([
+            "-i",
+            "pipe:0",
+            "-c:a",
+            "aac",
+            "-b:a",
+            bitrate,
+            "-profile:a",
+            "aac_low",
+        ])
         .args(["-movflags", "+faststart", "-f", "mp4", output_str])
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
@@ -145,22 +164,32 @@ fn run_ffmpeg_pipe(
             drop(stdin);
             result
         }
-        None => Err(std::io::Error::new(std::io::ErrorKind::Other, "FFmpeg stdin unavailable")),
+        None => Err(std::io::Error::other("FFmpeg stdin unavailable")),
     };
     if feed_result.is_err() {
         // Input failed (or FFmpeg died): stop it rather than leave a half file.
         let _ = child.kill();
     }
 
-    let status = child.wait().map_err(|e| anyhow::anyhow!("Waiting for FFmpeg failed: {e}"))?;
-    let stderr = stderr_reader.and_then(|t| t.join().ok()).unwrap_or_default();
+    let status = child
+        .wait()
+        .map_err(|e| anyhow::anyhow!("Waiting for FFmpeg failed: {e}"))?;
+    let stderr = stderr_reader
+        .and_then(|t| t.join().ok())
+        .unwrap_or_default();
     if let Err(e) = feed_result {
         error!("Feeding FFmpeg failed: {e}; stderr: {stderr}");
-        return Err(anyhow::anyhow!("Feeding FFmpeg failed: {e} {}", stderr.trim()));
+        return Err(anyhow::anyhow!(
+            "Feeding FFmpeg failed: {e} {}",
+            stderr.trim()
+        ));
     }
     if !status.success() {
         error!("FFmpeg failed with status {status}: {stderr}");
-        return Err(anyhow::anyhow!("FFmpeg failed with status {status}: {}", stderr.trim()));
+        return Err(anyhow::anyhow!(
+            "FFmpeg failed with status {status}: {}",
+            stderr.trim()
+        ));
     }
     Ok(())
 }
