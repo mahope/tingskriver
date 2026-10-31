@@ -414,7 +414,7 @@ struct Rewrite {
 }
 
 fn rewrite(w: &[String], i: usize, prev: Option<&str>) -> Option<Rewrite> {
-    date(w, i)
+    date(w, i, prev)
         .or_else(|| time(w, i))
         .or_else(|| week(w, i))
         .or_else(|| phone_or_cvr(w, i))
@@ -424,7 +424,11 @@ fn rewrite(w: &[String], i: usize, prev: Option<&str>) -> Option<Rewrite> {
 }
 
 /// "tredje november [to tusind og seksogtyve]" → "3. november [2026]".
-fn date(w: &[String], i: usize) -> Option<Rewrite> {
+/// After "en"/"et" the ordinal is a word: "en anden maj" (another May).
+fn date(w: &[String], i: usize, prev: Option<&str>) -> Option<Rewrite> {
+    if matches!(prev, Some("en" | "et")) {
+        return None;
+    }
     let day = ordinal(&w[i]).filter(|d| (1..=31).contains(d))?;
     let month = w.get(i + 1).filter(|m| MONTHS.contains(&m.as_str()))?;
     let mut tokens = vec![Tok::exact(format!("{day}.")), Tok::plain(month)];

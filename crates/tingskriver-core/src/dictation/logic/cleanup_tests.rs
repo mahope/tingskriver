@@ -598,6 +598,11 @@ fn danish_number_formats() {
             "Den 4. juli 1980",
         ),
         ("den femte maj tyve seksogtyve", "Den 5. maj 2026"),
+        (
+            "det bliver en anden maj end sidst",
+            "Det bliver en anden maj end sidst",
+        ),
+        ("vi ses den anden maj", "Vi ses den 2. maj"),
         ("den tredje", "Den tredje"),
         ("mødet er klokken fjorten tredive", "Mødet er kl. 14.30"),
         ("klokken otte", "Kl. 8"),
