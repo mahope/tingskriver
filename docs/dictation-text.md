@@ -55,7 +55,7 @@ output and formatting overrides, plus the rules that select it:
       "rules": [
         { "type": "program", "value": "slack.exe" },
         { "type": "titleContains", "value": "Slack" },
-        { "type": "triggerWord", "value": "chat" }
+        { "type": "triggerWord", "value": "chatbesked" }
       ]
     }
   ]

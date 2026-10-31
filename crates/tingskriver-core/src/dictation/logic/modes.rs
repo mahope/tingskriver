@@ -110,7 +110,6 @@ pub fn builtin_modes() -> Vec<Mode> {
         "WINWORD.EXE",
     ]);
     formel_rules.extend(titles(&["Outlook", "Gmail"]));
-    formel_rules.push(ModeRule::TriggerWord("formel".into()));
 
     let mut chat_rules = programs(&[
         "slack.exe",
@@ -624,7 +623,13 @@ mod tests {
 
     #[test]
     fn trigger_word_and_shortcut() {
-        let modes = builtin_modes();
+        // No built-in mode has a trigger word ("Formel 1 er sjovt" must stay text).
+        assert_eq!(
+            chosen(&window("notepad.exe", ""), "Formel 1 er sjovt"),
+            "standard"
+        );
+        let mut modes = builtin_modes();
+        modes[1].rules.push(ModeRule::TriggerWord("formel".into()));
         let c = choose(
             &modes,
             &window("notepad.exe", ""),
@@ -638,13 +643,14 @@ mod tests {
             strip_leading_words("Formel, kære Anna", c.trigger_words),
             "kære Anna"
         );
-        // The trigger word alone is ordinary text.
-        assert_eq!(chosen(&window("notepad.exe", ""), "formel"), "standard");
-        // In the middle it is ordinary text too.
-        assert_eq!(
-            chosen(&window("notepad.exe", ""), "det er formel tekst"),
-            "standard"
-        );
+        // The trigger word alone, or in the middle, is ordinary text.
+        for text in ["formel", "det er formel tekst"] {
+            let c = choose(&modes, &window("notepad.exe", ""), text, None, &[]).unwrap();
+            assert_eq!(
+                (modes[c.index].id.as_str(), c.trigger_words),
+                ("standard", 0)
+            );
+        }
 
         let mut modes = builtin_modes();
         modes[2].rules.push(ModeRule::Shortcut("Ctrl+Win+C".into()));
