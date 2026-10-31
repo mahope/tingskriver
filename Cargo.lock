@@ -10746,9 +10746,19 @@ dependencies = [
 name = "tingskriver-app"
 version = "0.5.0-dev.2"
 dependencies = [
+ "anyhow",
+ "dirs 5.0.1",
  "gpui-component",
+ "gpui-kit-assets",
  "gpui-pre",
  "gpui-pre-platform",
+ "log",
+ "serde",
+ "serde_json",
+ "tingskriver-core",
+ "tokio",
+ "ttf-parser",
+ "windows 0.61.3",
 ]
 
 [[package]]
@@ -10807,6 +10817,13 @@ dependencies = [
 [[package]]
 name = "tingskriver-overlay"
 version = "0.5.0-dev.2"
+dependencies = [
+ "log",
+ "swash",
+ "tingskriver-core",
+ "tiny-skia",
+ "windows-sys 0.61.2",
+]
 
 [[package]]
 name = "tiny-keccak"
