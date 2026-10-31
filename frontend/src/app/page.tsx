@@ -15,7 +15,7 @@ import { useModalState } from '@/hooks/useModalState';
 import { useRecordingStateSync } from '@/hooks/useRecordingStateSync';
 import { useRecordingStart } from '@/hooks/useRecordingStart';
 import { useRecordingStop } from '@/hooks/useRecordingStop';
-import { useTranscriptRecovery } from '@/hooks/useTranscriptRecovery';
+import { useTranscriptRecovery, recoveryDescription } from '@/hooks/useTranscriptRecovery';
 import { TranscriptRecovery } from '@/components/TranscriptRecovery';
 import { indexedDBService } from '@/services/indexedDBService';
 import { toast } from 'sonner';
@@ -124,9 +124,7 @@ export default function Home() {
 
       if (result.success) {
         toast.success('Mødet er gendannet', {
-          description: result.audioRecoveryStatus?.status === 'success'
-            ? 'Transskription og lyd er gendannet'
-            : 'Transskriptionen er gendannet (der var ingen lyd at gendanne)',
+          description: recoveryDescription(result),
           action: result.meetingId ? {
             label: 'Åbn mødet',
             onClick: () => {
