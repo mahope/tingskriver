@@ -59,9 +59,36 @@ registers at startup.
   convert `AppHandle` to a host handle and `State<T>` to `&T` and call core.
 - Code that needs Tauri itself: windows and the webview dictation overlay,
   the tray, notifications (`tauri-plugin-notification`), the file dialogs
-  (`tauri-plugin-dialog`), database initialisation that registers `AppState`
-  with `manage`, onboarding, the updater, logging setup and the commands for
-  the archived FastAPI backend.
+  (`tauri-plugin-dialog`), registering the opened database as `AppState`
+  with `manage`, onboarding, the updater and the commands for the archived
+  FastAPI backend.
+
+## Startup, database and logs
+
+- `tingskriver_core::logging::init(<file>)` installs the logger (stderr and
+  a rotating file in `%LOCALAPPDATA%\dk.mahoje.tingskriver\logs`) and a
+  panic hook that writes thread, message and backtrace to the log, from any
+  thread. `logging::startup_phase("...")` logs `Startup: <phase> after N ms`
+  from process start; the Tauri app marks `process start`, `tray ready`,
+  `DB ready` and `window ready`, so `grep Startup:` gives the timeline.
+- `DatabaseManager::open(app_data_dir)` never panics. It returns
+  `DbInitError` (`Locked`, `Corrupt`, `DiskFull`, `Migration`, `Other`) with
+  the database path, the log file and, for corrupt databases and failed
+  migrations, a copy of the database and its `-wal`/`-shm` files in
+  `backups/`. Nothing deletes `-wal` or `-shm` files: a WAL holds committed
+  transactions. `summary_da()` and `advice_da()` give the error page text.
+- Connections use WAL, `synchronous=NORMAL`, `busy_timeout=5s` and foreign
+  keys (`database::manager::connect_options`).
+- The Tauri app opens the database in a background task after the window is
+  shown. The React `DatabaseGate` shows a loading state, and if opening fails
+  an error page with the log and the backup, from the `database-status`
+  event and the `get_database_status` command.
+- `crash_dumps::apply_in_background()` sets the per-user Windows Error
+  Reporting `LocalDumps` key for the running exe, so a native crash leaves a
+  minidump in `%LOCALAPPDATA%\dk.mahoje.tingskriver\dumps`. The release
+  profile keeps line tables in a separate PDB (`split-debuginfo`), which CI
+  uploads as the `...-symbols-...` artifact. The GPUI app should call
+  `apply_in_background()` at startup as well.
 
 The GPUI app will implement `AppHost` on its own event channel and call the
 same core functions. Today it calls core only on its own tokio runtime (the
