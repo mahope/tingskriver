@@ -79,8 +79,20 @@ jobs:
         env:
           ORT_DYLIB_PATH: ${{ github.workspace }}\frontend\src-tauri\binaries\onnxruntime\onnxruntime.dll
         run: >-
-          .github/scripts/annotate-errors.sh cargo test --workspace --locked --no-fail-fast --
+          .github/scripts/annotate-errors.sh cargo test --workspace --locked --no-fail-fast
+          --exclude tingskriver-host --
           --skip audio::playback_monitor::tests::test_get_output_device
+
+      # The host's tests register system-wide shortcuts and a tray icon; one at
+      # a time, with output, so a crash shows which test was running.
+      - name: Test tingskriver-host
+        if: ${{ !cancelled() }}
+        shell: bash
+        env:
+          ORT_DYLIB_PATH: ${{ github.workspace }}\frontend\src-tauri\binaries\onnxruntime\onnxruntime.dll
+        run: >-
+          .github/scripts/annotate-errors.sh cargo test --locked -p tingskriver-host --
+          --test-threads=1 --nocapture
 
   linux-core:
     name: Core tests and crate boundaries (Linux)
