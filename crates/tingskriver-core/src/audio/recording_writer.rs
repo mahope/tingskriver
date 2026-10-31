@@ -42,6 +42,9 @@ pub const WARNING_REPEAT: Duration = Duration::from_secs(10);
 /// How often the thread wakes up without audio to commit and retry.
 const IDLE_TICK: Duration = Duration::from_millis(100);
 
+/// The queue-full error clears once no chunk has been dropped for this long.
+const QUEUE_RECOVERY: Duration = Duration::from_secs(2);
+
 pub const MANIFEST_FILE: &str = "tracks.json";
 
 /// User message when the writer cannot keep up and capture had to drop audio.
@@ -314,6 +317,7 @@ where
                     last_backlog_warning: None,
                     last_dropped: 0,
                     last_drop_warning: None,
+                    queue_full_at: None,
                 }
                 .run()
             }));
@@ -363,6 +367,8 @@ struct WriterLoop<F> {
     last_backlog_warning: Option<Instant>,
     last_dropped: u64,
     last_drop_warning: Option<Instant>,
+    /// When a dropped chunk was last seen; `None` once the queue has recovered.
+    queue_full_at: Option<Instant>,
 }
 
 impl<F> WriterLoop<F>
@@ -428,8 +434,12 @@ where
             StorageEvent::Recovered => {
                 if self.failing && !self.tracks.values().any(|w| w.is_failing()) {
                     self.failing = false;
-                    set_status(&self.status, None);
-                    self.observer.storage_recovered();
+                    if self.queue_full_at.is_some() {
+                        set_status(&self.status, Some(QUEUE_FULL_MESSAGE.to_string()));
+                    } else {
+                        set_status(&self.status, None);
+                        self.observer.storage_recovered();
+                    }
                 }
             }
         }
@@ -445,16 +455,32 @@ where
             self.observer.backlog(queued);
         }
         let dropped = self.dropped.load(Ordering::Relaxed);
-        if dropped > self.last_dropped && due(self.last_drop_warning) {
-            log::error!(
-                "Storage queue full: {:.2}s of audio dropped so far",
-                dropped as f64 / self.sample_rate as f64
-            );
+        if dropped > self.last_dropped {
             self.last_dropped = dropped;
-            self.last_drop_warning = Some(now);
-            set_status(&self.status, Some(QUEUE_FULL_MESSAGE.to_string()));
-            self.observer
-                .storage_failed(QUEUE_FULL_MESSAGE, StorageErrorKind::Other);
+            self.queue_full_at = Some(now);
+            if due(self.last_drop_warning) {
+                log::error!(
+                    "Storage queue full: {:.2}s of audio dropped so far",
+                    dropped as f64 / self.sample_rate as f64
+                );
+                self.last_drop_warning = Some(now);
+                if !self.failing {
+                    set_status(&self.status, Some(QUEUE_FULL_MESSAGE.to_string()));
+                    self.observer
+                        .storage_failed(QUEUE_FULL_MESSAGE, StorageErrorKind::Other);
+                }
+            }
+        } else if let Some(since) = self.queue_full_at {
+            if now.duration_since(since) >= QUEUE_RECOVERY {
+                log::info!("Storage queue has caught up; nothing dropped for {QUEUE_RECOVERY:?}");
+                self.queue_full_at = None;
+                // The next drop warns at once instead of waiting out the repeat.
+                self.last_drop_warning = None;
+                if !self.failing {
+                    set_status(&self.status, None);
+                    self.observer.storage_recovered();
+                }
+            }
         }
     }
 
@@ -492,6 +518,9 @@ where
             log::warn!("Could not write {MANIFEST_FILE}: {e}");
         }
         let dropped = self.dropped.load(Ordering::Relaxed);
+        if dropped > 0 && storage_error.is_none() {
+            storage_error = Some(QUEUE_FULL_MESSAGE.to_string());
+        }
         for (kind, t) in &tracks {
             log::info!(
                 "{} track saved: {:.2}s from {:.3}s, {} segment(s), {:.2}s silence filled, {:.2}s lost",
@@ -799,6 +828,34 @@ mod tests {
             .unwrap()
             .iter()
             .any(|m| m == QUEUE_FULL_MESSAGE));
+    }
+
+    #[test]
+    fn queue_full_error_clears_once_the_queue_catches_up() {
+        let storages = storages(Some(Duration::from_millis(50)));
+        let observer = Arc::new(RecordingObserver::default());
+        let (tx, handle, _dir) = memory_writer(&storages, observer.clone(), 4);
+        for _ in 0..50 {
+            let _ = tx.send(TrackKind::System, vec![0.1; 1000], None);
+        }
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while *observer.recovered.lock().unwrap() == 0 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(observer
+            .failed
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|m| m == QUEUE_FULL_MESSAGE));
+        assert_eq!(*observer.recovered.lock().unwrap(), 1, "recovery is reported");
+        assert_eq!(handle.storage_error(), None, "the live state is clear again");
+        // The rest of the meeting is saved; the loss still marks the result.
+        tx.send(TrackKind::System, vec![0.1; 1000], None).unwrap();
+        drop(tx);
+        let summary = handle.join().unwrap();
+        assert!(summary.dropped_samples > 0);
+        assert_eq!(summary.storage_error.as_deref(), Some(QUEUE_FULL_MESSAGE));
     }
 
     #[test]
