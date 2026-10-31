@@ -16,8 +16,12 @@ use std::time::Duration;
 use tingskriver_core::shortcuts::{Conflict, Registration};
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
+use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::Foundation::{
     GetLastError, ERROR_HOTKEY_ALREADY_REGISTERED, HWND, LPARAM, LRESULT, WPARAM,
+};
+use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+    CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{RegisterHotKey, UnregisterHotKey};
@@ -106,6 +110,32 @@ impl Drop for HostThread {
             let _ = thread.join();
         }
     }
+}
+
+/// Executable names of the running processes.
+pub(crate) fn process_names() -> Vec<String> {
+    let mut names = Vec::new();
+    // SAFETY: a process snapshot read with a correctly sized entry, then closed.
+    unsafe {
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if snapshot == INVALID_HANDLE_VALUE {
+            return names;
+        }
+        let mut entry: PROCESSENTRY32W = std::mem::zeroed();
+        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        let mut ok = Process32FirstW(snapshot, &mut entry) != 0;
+        while ok {
+            let len = entry
+                .szExeFile
+                .iter()
+                .position(|&c| c == 0)
+                .unwrap_or(entry.szExeFile.len());
+            names.push(String::from_utf16_lossy(&entry.szExeFile[..len]));
+            ok = Process32NextW(snapshot, &mut entry) != 0;
+        }
+        CloseHandle(snapshot);
+    }
+    names
 }
 
 struct Win32Registrar {
@@ -387,6 +417,18 @@ mod tests {
 
     fn registration(text: &str) -> Registration {
         shortcuts::registration(Chord::parse(text).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn lists_running_processes() {
+        let names = process_names();
+        let own = std::env::current_exe().unwrap();
+        let own = own.file_name().unwrap().to_string_lossy();
+        assert!(
+            names.iter().any(|n| n.eq_ignore_ascii_case(&own)),
+            "{own} not in {} processes",
+            names.len()
+        );
     }
 
     #[test]

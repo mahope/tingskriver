@@ -117,6 +117,13 @@ says whether the shortcut cannot be saved.
 `Host::save_shortcuts` saves and returns the check; the watcher registers
 the new set within a second.
 
+## Next to the Tauri app
+
+During the migration both apps can be installed. If the Tauri app
+(`tingskriver.exe`) runs when the GPUI app starts, the host does not start
+dictation, logs why, and the tray shows "Den gamle Tingskriver dikterer
+allerede. Luk den, og start denne igen". Tray and shortcuts still run.
+
 ## Single instance
 
 The shell's named pipe (`single_instance`) makes a second start of the exe
@@ -148,7 +155,9 @@ programmer".
 
 Use the `tingskriver-app-windows-x64` artifact from the branch's Rust
 workflow (or `cargo build --release -p tingskriver-app`). Quit the Tauri
-Tingskriver first: both apps install a hook on Ctrl+Win.
+Tingskriver first: while `tingskriver.exe` runs, the GPUI app does not start
+its own dictation (two hooks on Ctrl+Win would insert everything twice) and
+the tray says so.
 
 1. **Hook timing (10,000 key presses).** In a terminal in the repository,
    with nothing else typing:

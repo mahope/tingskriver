@@ -70,6 +70,8 @@ pub struct Host {
     shared: Arc<Shared>,
     runtime: Handle,
     tasks: Vec<JoinHandle<()>>,
+    /// The Tauri app runs, so this one does not dictate.
+    dictation_blocked: bool,
     #[cfg(windows)]
     thread: Option<Arc<win::HostThread>>,
 }
@@ -98,6 +100,7 @@ impl Host {
             shared: shared.clone(),
             runtime: runtime.clone(),
             tasks: Vec::new(),
+            dictation_blocked: false,
             #[cfg(windows)]
             thread: None,
         };
@@ -119,8 +122,16 @@ impl Host {
         #[cfg(not(windows))]
         drop(on_trigger);
 
-        // The pill is drawn by the overlay crate; core's service decides what it shows.
-        dictation::init(handle.clone(), overlay());
+        // Two hooks on Ctrl+Win would insert every dictation twice.
+        if old_app_running(process_names()) {
+            log::warn!(
+                "The Tauri Tingskriver ({OLD_APP_EXE}) runs; dictation stays off here until it is closed and this app restarted"
+            );
+            host.dictation_blocked = true;
+        } else {
+            // The pill is drawn by the overlay crate; core's service decides what it shows.
+            dictation::init(handle.clone(), overlay());
+        }
 
         ensure_shortcut_file(&bridge);
         host.start_watchers();
@@ -132,7 +143,9 @@ impl Host {
         #[cfg(windows)]
         let thread = self.thread.clone();
         self.tasks.push(self.runtime.spawn(watch::watch_status(
-            CoreProbe,
+            CoreProbe {
+                dictation_blocked: self.dictation_blocked,
+            },
             shared.clone(),
             move |status| {
                 #[cfg(windows)]
@@ -286,8 +299,29 @@ fn ensure_shortcut_file(bridge: &Bridge) {
     }
 }
 
+/// The Tauri app's executable. It has its own dictation hook.
+pub const OLD_APP_EXE: &str = "tingskriver.exe";
+
+fn old_app_running(process_names: Vec<String>) -> bool {
+    process_names
+        .iter()
+        .any(|name| name.eq_ignore_ascii_case(OLD_APP_EXE))
+}
+
+#[cfg(windows)]
+fn process_names() -> Vec<String> {
+    win::process_names()
+}
+
+#[cfg(not(windows))]
+fn process_names() -> Vec<String> {
+    Vec::new()
+}
+
 /// Status from core: the meeting recording and the dictation service.
-struct CoreProbe;
+struct CoreProbe {
+    dictation_blocked: bool,
+}
 
 impl Probe for CoreProbe {
     async fn recording(&self) -> Recording {
@@ -302,6 +336,11 @@ impl Probe for CoreProbe {
     }
 
     fn dictation(&self) -> Dictation {
+        if self.dictation_blocked {
+            return Dictation::Failed(
+                "Den gamle Tingskriver dikterer allerede. Luk den, og start denne igen".into(),
+            );
+        }
         let Ok(service) = dictation::service::get() else {
             return Dictation::Starting;
         };
@@ -408,6 +447,21 @@ mod tests {
         );
         // Dictation is handled by the host (and fails quietly without the service).
         assert_eq!(run(Trigger::Menu(MenuEntry::Dictate)), None);
+    }
+
+    #[test]
+    fn the_tauri_app_is_recognised_by_its_exe() {
+        let names = |list: &[&str]| list.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+        assert!(old_app_running(names(&["explorer.exe", "Tingskriver.exe"])));
+        assert!(!old_app_running(names(&[
+            "tingskriver-app.exe",
+            "explorer.exe"
+        ])));
+        assert!(!old_app_running(Vec::new()));
+        let probe = CoreProbe {
+            dictation_blocked: true,
+        };
+        assert!(matches!(probe.dictation(), Dictation::Failed(m) if m.contains("Luk den")));
     }
 
     #[test]
