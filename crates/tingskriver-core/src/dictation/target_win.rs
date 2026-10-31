@@ -42,10 +42,57 @@ pub fn foreground_window() -> ForegroundWindow {
     }
 }
 
-/// The control with keyboard focus in the foreground window.
-///
-/// Browsers and Electron apps draw all their text fields in one control, so
-/// there "the same field" means the same page or app window.
+/// UI Automation runtime id of the focused element. Browsers and Electron
+/// apps draw all their text fields in one control; this tells them apart.
+fn focused_element_id() -> Option<Vec<i32>> {
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
+        COINIT_MULTITHREADED,
+    };
+    use windows::Win32::System::Ole::{
+        SafeArrayAccessData, SafeArrayDestroy, SafeArrayGetLBound, SafeArrayGetUBound,
+        SafeArrayUnaccessData,
+    };
+    use windows::Win32::UI::Accessibility::{CUIAutomation, IUIAutomation};
+
+    unsafe {
+        // A successful CoInitializeEx is paired with CoUninitialize; on a
+        // thread that already has COM, the existing apartment is used.
+        let init = CoInitializeEx(None, COINIT_MULTITHREADED);
+        let id = (|| {
+            let automation: IUIAutomation =
+                CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
+            let element = automation.GetFocusedElement().ok()?;
+            let array = element.GetRuntimeId().ok()?;
+            if array.is_null() {
+                return None;
+            }
+            let read = (|| {
+                let lower = SafeArrayGetLBound(array, 1).ok()?;
+                let upper = SafeArrayGetUBound(array, 1).ok()?;
+                let len = usize::try_from(upper - lower + 1).ok()?;
+                let mut data: *mut core::ffi::c_void = std::ptr::null_mut();
+                SafeArrayAccessData(array, &mut data).ok()?;
+                let id = if data.is_null() {
+                    None
+                } else {
+                    Some(std::slice::from_raw_parts(data as *const i32, len).to_vec())
+                };
+                let _ = SafeArrayUnaccessData(array);
+                id
+            })();
+            let _ = SafeArrayDestroy(array);
+            read.filter(|id| !id.is_empty())
+        })();
+        if init.is_ok() {
+            CoUninitialize();
+        }
+        id
+    }
+}
+
+/// The control with keyboard focus in the foreground window, and the UI
+/// Automation element inside it.
 pub fn focused_field() -> Option<FieldId> {
     let process = super::win::foreground_process()?;
     unsafe {
@@ -66,6 +113,7 @@ pub fn focused_field() -> Option<FieldId> {
             process,
             window: window.0 as isize,
             control: control.0 as isize,
+            element: focused_element_id(),
         })
     }
 }

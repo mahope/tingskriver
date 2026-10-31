@@ -107,9 +107,13 @@ The file is read at start and when the dictionary changes.
 
 "slet det" and "vælg det" act only when they are the whole dictation, and
 only while the control that had focus after the previous insertion still has
-focus (`GetGUIThreadInfo`). Browsers and Electron apps draw all fields in one
-control, so there "the same field" means the same page or app window. The
-command sends Backspace or Shift+Left once per inserted character.
+focus (`GetGUIThreadInfo`), and at most 60 seconds after the insertion.
+Browsers and Electron apps draw all fields in one control, so the focused UI
+Automation element's runtime id is compared too; if UI Automation answered at
+insertion but not now, nothing happens. After Chat's Enter the insertion is
+forgotten. Typing or moving the cursor inside the same field within the 60
+seconds is not detected. The command sends Backspace or Shift+Left once per
+inserted character.
 
 "stop diktering" at the end of a dictation is removed from the text and
 reported as `stopDictation`, but nothing acts on it yet: the text is cleaned

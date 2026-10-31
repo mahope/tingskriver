@@ -673,9 +673,13 @@ impl Service {
                 self.set_error(None);
                 self.remember_insertion(&text).await;
                 if cleaned.press_enter {
-                    if let Err(e) = press_enter().await {
-                        log::warn!("Dictation: could not press Enter: {e}");
-                        self.set_error(Some(format!("Enter kunne ikke trykkes: {e}")));
+                    match press_enter().await {
+                        // The message is sent: "slet det" must not reach into the emptied field.
+                        Ok(()) => self.forget_insertion(),
+                        Err(e) => {
+                            log::warn!("Dictation: could not press Enter: {e}");
+                            self.set_error(Some(format!("Enter kunne ikke trykkes: {e}")));
+                        }
                     }
                 }
                 (Some(method), at.saturating_duration_since(released_at).as_millis() as i64)
@@ -729,7 +733,14 @@ impl Service {
             *slot = field.map(|field| LastInsertion {
                 text: text.to_string(),
                 field,
+                at: Instant::now(),
             });
+        }
+    }
+
+    fn forget_insertion(&self) {
+        if let Ok(mut slot) = self.last_insertion.lock() {
+            *slot = None;
         }
     }
 
@@ -741,16 +752,14 @@ impl Service {
             .ok()
             .flatten();
         let last = self.last_insertion.lock().ok().and_then(|l| l.clone());
-        let Some(plan) = spoken::plan_edit(command, last.as_ref(), current.as_ref()) else {
-            log::info!("Dictation: {command:?} ignored, the field changed or nothing was inserted");
+        let Some(plan) = spoken::plan_edit(command, last.as_ref(), current.as_ref(), Instant::now()) else {
+            log::info!("Dictation: {command:?} ignored, the field changed, too old or nothing was inserted");
             return;
         };
         match apply_edit(plan).await {
             Ok(()) => {
                 if command == VoiceCommand::DeleteThat {
-                    if let Ok(mut slot) = self.last_insertion.lock() {
-                        *slot = None;
-                    }
+                    self.forget_insertion();
                 }
             }
             Err(e) => {

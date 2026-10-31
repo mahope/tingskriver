@@ -10,6 +10,7 @@
 //! ([`plan_edit`]).
 
 use serde::{Deserialize, Serialize};
+use std::time::{Duration, Instant};
 
 /// A command that acts on the target program instead of inserting text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -344,21 +345,31 @@ impl SpokenTable {
 // "slet det" / "vælg det"
 // ---------------------------------------------------------------------------
 
-/// The text field that had focus: the program, its top-level window and
-/// the focused control inside it (window handles as integers).
+/// The text field that had focus: the program, its top-level window, the
+/// focused control inside it (window handles as integers) and the UI
+/// Automation runtime id of the focused element. Browsers and Electron apps
+/// draw every field in one control; the runtime id tells their fields apart.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FieldId {
     pub process: String,
     pub window: isize,
     pub control: isize,
+    /// `None` when UI Automation can't tell; a field that had an id and
+    /// now has none counts as another field.
+    pub element: Option<Vec<i32>>,
 }
 
-/// What the previous dictation inserted, and where.
+/// What the previous dictation inserted, where and when.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LastInsertion {
     pub text: String,
     pub field: FieldId,
+    pub at: Instant,
 }
+
+/// How long "slet det"/"vælg det" can reach back. Later, the user has most
+/// likely typed or moved the cursor in the field.
+pub const EDIT_WINDOW: Duration = Duration::from_secs(60);
 
 /// Keys to send for a command.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -376,15 +387,17 @@ pub fn caret_length(text: &str) -> usize {
 }
 
 /// Decide what "slet det"/"vælg det" does. Nothing happens unless the
-/// previous insertion is known and the same field still has focus.
+/// previous insertion is known, at most [`EDIT_WINDOW`] old, and the same
+/// field still has focus.
 pub fn plan_edit(
     command: VoiceCommand,
     last: Option<&LastInsertion>,
     current: Option<&FieldId>,
+    now: Instant,
 ) -> Option<EditPlan> {
     let last = last?;
     let current = current?;
-    if *current != last.field {
+    if *current != last.field || now.saturating_duration_since(last.at) > EDIT_WINDOW {
         return None;
     }
     let n = caret_length(&last.text);
@@ -533,22 +546,29 @@ mod tests {
             process: "notepad.exe".into(),
             window: 10,
             control,
+            element: None,
+        }
+    }
+
+    fn last(text: &str, field: FieldId) -> LastInsertion {
+        LastInsertion {
+            text: text.into(),
+            field,
+            at: Instant::now(),
         }
     }
 
     #[test]
     fn delete_that_only_in_the_same_field() {
-        let last = LastInsertion {
-            text: "Hej Anna.".into(),
-            field: field(1),
-        };
+        let last = last("Hej Anna.", field(1));
+        let now = last.at;
         assert_eq!(
-            plan_edit(VoiceCommand::DeleteThat, Some(&last), Some(&field(1))),
+            plan_edit(VoiceCommand::DeleteThat, Some(&last), Some(&field(1)), now),
             Some(EditPlan::Backspace(9))
         );
         // Another field in the same window.
         assert_eq!(
-            plan_edit(VoiceCommand::DeleteThat, Some(&last), Some(&field(2))),
+            plan_edit(VoiceCommand::DeleteThat, Some(&last), Some(&field(2)), now),
             None
         );
         // Another program.
@@ -557,29 +577,99 @@ mod tests {
             ..field(1)
         };
         assert_eq!(
-            plan_edit(VoiceCommand::DeleteThat, Some(&last), Some(&other)),
+            plan_edit(VoiceCommand::DeleteThat, Some(&last), Some(&other), now),
             None
         );
         // Focus unknown or nothing inserted yet.
-        assert_eq!(plan_edit(VoiceCommand::DeleteThat, Some(&last), None), None);
         assert_eq!(
-            plan_edit(VoiceCommand::DeleteThat, None, Some(&field(1))),
+            plan_edit(VoiceCommand::DeleteThat, Some(&last), None, now),
+            None
+        );
+        assert_eq!(
+            plan_edit(VoiceCommand::DeleteThat, None, Some(&field(1)), now),
+            None
+        );
+    }
+
+    #[test]
+    fn delete_that_tells_browser_fields_apart() {
+        // Chrome: one control, two fields on the page.
+        let chrome = |element: Option<Vec<i32>>| FieldId {
+            process: "chrome.exe".into(),
+            element,
+            ..field(1)
+        };
+        let last = last("Hej.", chrome(Some(vec![42, 7])));
+        let now = last.at;
+        assert_eq!(
+            plan_edit(
+                VoiceCommand::DeleteThat,
+                Some(&last),
+                Some(&chrome(Some(vec![42, 7]))),
+                now
+            ),
+            Some(EditPlan::Backspace(4))
+        );
+        assert_eq!(
+            plan_edit(
+                VoiceCommand::DeleteThat,
+                Some(&last),
+                Some(&chrome(Some(vec![42, 8]))),
+                now
+            ),
+            None
+        );
+        // UI Automation no longer answers: don't guess.
+        assert_eq!(
+            plan_edit(
+                VoiceCommand::DeleteThat,
+                Some(&last),
+                Some(&chrome(None)),
+                now
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn delete_that_expires() {
+        let last = last("Hej.", field(1));
+        let later = |secs| last.at + Duration::from_secs(secs);
+        assert_eq!(
+            plan_edit(
+                VoiceCommand::DeleteThat,
+                Some(&last),
+                Some(&field(1)),
+                later(30)
+            ),
+            Some(EditPlan::Backspace(4))
+        );
+        assert_eq!(
+            plan_edit(
+                VoiceCommand::DeleteThat,
+                Some(&last),
+                Some(&field(1)),
+                later(61)
+            ),
             None
         );
     }
 
     #[test]
     fn select_that_and_line_breaks() {
-        let last = LastInsertion {
-            text: "a\r\nb\nc".into(),
-            field: field(1),
-        };
+        let last = last("a\r\nb\nc", field(1));
+        let now = last.at;
         assert_eq!(
-            plan_edit(VoiceCommand::SelectThat, Some(&last), Some(&field(1))),
+            plan_edit(VoiceCommand::SelectThat, Some(&last), Some(&field(1)), now),
             Some(EditPlan::SelectLeft(5))
         );
         assert_eq!(
-            plan_edit(VoiceCommand::StopDictation, Some(&last), Some(&field(1))),
+            plan_edit(
+                VoiceCommand::StopDictation,
+                Some(&last),
+                Some(&field(1)),
+                now
+            ),
             None
         );
     }
