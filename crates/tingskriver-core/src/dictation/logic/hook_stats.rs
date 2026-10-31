@@ -49,13 +49,21 @@ impl HookTimes {
 
     /// Summary of the calls so far, without resetting.
     pub fn summary(&self) -> HookSummary {
-        let counts: Vec<u32> = self.buckets.iter().map(|b| b.load(Ordering::Relaxed)).collect();
+        let counts: Vec<u32> = self
+            .buckets
+            .iter()
+            .map(|b| b.load(Ordering::Relaxed))
+            .collect();
         HookSummary::from_buckets(&counts, self.max_ns.load(Ordering::Relaxed))
     }
 
     /// Summary of the calls so far, and start a new window.
     pub fn take(&self) -> HookSummary {
-        let counts: Vec<u32> = self.buckets.iter().map(|b| b.swap(0, Ordering::Relaxed)).collect();
+        let counts: Vec<u32> = self
+            .buckets
+            .iter()
+            .map(|b| b.swap(0, Ordering::Relaxed))
+            .collect();
         let max_ns = self.max_ns.swap(0, Ordering::Relaxed);
         self.count.store(0, Ordering::Relaxed);
         HookSummary::from_buckets(&counts, max_ns)

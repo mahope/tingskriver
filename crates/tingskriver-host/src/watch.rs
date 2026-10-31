@@ -52,13 +52,21 @@ pub async fn read_status<P: Probe>(probe: &P, shared: &Shared) -> TrayStatus {
     TrayStatus {
         recording: probe.recording().await,
         dictation: probe.dictation(),
-        shortcut_problems: shared.shortcut_problems.lock().map(|p| p.clone()).unwrap_or_default(),
+        shortcut_problems: shared
+            .shortcut_problems
+            .lock()
+            .map(|p| p.clone())
+            .unwrap_or_default(),
         elevated: shared.elevated,
     }
 }
 
 /// Runs until the task is aborted. `show` gets every changed status.
-pub async fn watch_status<P: Probe>(probe: P, shared: Arc<Shared>, show: impl Fn(TrayStatus) + Send) {
+pub async fn watch_status<P: Probe>(
+    probe: P,
+    shared: Arc<Shared>,
+    show: impl Fn(TrayStatus) + Send,
+) {
     let mut last: Option<TrayStatus> = None;
     loop {
         let status = read_status(&probe, &shared).await;
@@ -102,7 +110,11 @@ where
                         log::warn!("Shortcut problem: {}", problem.message());
                     }
                     if let Ok(mut slot) = shared.shortcut_problems.lock() {
-                        *slot = problems.iter().filter(|p| p.blocks()).map(Conflict::message).collect();
+                        *slot = problems
+                            .iter()
+                            .filter(|p| p.blocks())
+                            .map(Conflict::message)
+                            .collect();
                     }
                     shared.wake.notify_one();
                     last = Some(wanted);
@@ -110,7 +122,9 @@ where
             }
             Err(e) => {
                 if last_error.as_deref() != Some(e.as_str()) {
-                    log::warn!("Shortcut settings could not be read; keeping the current ones: {e}");
+                    log::warn!(
+                        "Shortcut settings could not be read; keeping the current ones: {e}"
+                    );
                     last_error = Some(e);
                 }
             }
@@ -162,10 +176,16 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(37)).await;
             let changed = Instant::now();
             probe.recording.store(flag, Ordering::SeqCst);
-            let (status, shown) = tokio::time::timeout(Duration::from_secs(2), rx.recv()).await.unwrap().unwrap();
+            let (status, shown) = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+                .await
+                .unwrap()
+                .unwrap();
             assert_eq!(status.recording, expected);
             let delay = shown.duration_since(changed);
-            assert!(delay < Duration::from_millis(200), "tray updated after {delay:?}");
+            assert!(
+                delay < Duration::from_millis(200),
+                "tray updated after {delay:?}"
+            );
         }
 
         // With refresh_status_ui (wake) it is immediate.
@@ -177,7 +197,9 @@ mod tests {
         assert!(shown.duration_since(changed) < Duration::from_millis(50));
 
         // Unchanged state sends nothing.
-        assert!(tokio::time::timeout(Duration::from_millis(300), rx.recv()).await.is_err());
+        assert!(tokio::time::timeout(Duration::from_millis(300), rx.recv())
+            .await
+            .is_err());
         task.abort();
     }
 

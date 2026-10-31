@@ -3,8 +3,8 @@
 //! Colours are the pill's design tokens (`tingskriver_overlay::theme`), so
 //! the tray and the pill show recording in the same red.
 
-use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, Transform};
 use tingskriver_overlay::theme;
+use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, Transform};
 
 use crate::status::IconState;
 
@@ -17,7 +17,10 @@ const APP_ICON: &[u8] = include_bytes!("../assets/tray-32.png");
 const DOT_RADIUS: f32 = 7.0;
 const DOT_RING: f32 = 2.0;
 const PROBLEM_RING: f32 = 2.5;
-const DOT_CENTRE: (f32, f32) = (SIZE as f32 - DOT_RADIUS - 1.0, SIZE as f32 - DOT_RADIUS - 1.0);
+const DOT_CENTRE: (f32, f32) = (
+    SIZE as f32 - DOT_RADIUS - 1.0,
+    SIZE as f32 - DOT_RADIUS - 1.0,
+);
 
 /// The dot colour for a state; `None` draws no dot.
 pub fn dot_color(state: IconState) -> Option<Color> {
@@ -42,11 +45,23 @@ pub fn rgba(state: IconState) -> Vec<u8> {
     if let Some(color) = dot_color(state) {
         let (cx, cy) = DOT_CENTRE;
         // A ring in the card colour keeps the dot readable on the icon.
-        fill_circle(&mut pixmap, cx, cy, DOT_RADIUS + DOT_RING, theme::CARD.color());
+        fill_circle(
+            &mut pixmap,
+            cx,
+            cy,
+            DOT_RADIUS + DOT_RING,
+            theme::CARD.color(),
+        );
         fill_circle(&mut pixmap, cx, cy, DOT_RADIUS, color);
         // A problem is a hollow ring, so it never reads as "recording".
         if state == IconState::Problem {
-            fill_circle(&mut pixmap, cx, cy, DOT_RADIUS - PROBLEM_RING, theme::CARD.color());
+            fill_circle(
+                &mut pixmap,
+                cx,
+                cy,
+                DOT_RADIUS - PROBLEM_RING,
+                theme::CARD.color(),
+            );
         }
     }
     pixmap
@@ -66,7 +81,13 @@ fn fill_circle(pixmap: &mut Pixmap, cx: f32, cy: f32, r: f32, color: Color) {
     let mut paint = Paint::default();
     paint.set_color(color);
     paint.anti_alias = true;
-    pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+    pixmap.fill_path(
+        &path,
+        &paint,
+        FillRule::Winding,
+        Transform::identity(),
+        None,
+    );
 }
 
 #[cfg(test)]
@@ -91,7 +112,12 @@ mod tests {
 
     #[test]
     fn every_state_has_a_full_icon() {
-        for state in [IconState::Idle, IconState::Recording, IconState::Paused, IconState::Problem] {
+        for state in [
+            IconState::Idle,
+            IconState::Recording,
+            IconState::Paused,
+            IconState::Problem,
+        ] {
             assert_eq!(rgba(state).len(), (SIZE * SIZE * 4) as usize);
         }
     }
@@ -102,9 +128,18 @@ mod tests {
         let idle = rgba(IconState::Idle);
         let recording = rgba(IconState::Recording);
         let paused = rgba(IconState::Paused);
-        assert_eq!(pixel(&recording, cx, cy), color_u8(theme::RECORDING.color()));
-        assert_eq!(pixel(&paused, cx, cy), color_u8(theme::MUTED_FOREGROUND.color()));
-        assert_eq!(pixel(&rgba(IconState::Problem), cx, cy), color_u8(theme::CARD.color()));
+        assert_eq!(
+            pixel(&recording, cx, cy),
+            color_u8(theme::RECORDING.color())
+        );
+        assert_eq!(
+            pixel(&paused, cx, cy),
+            color_u8(theme::MUTED_FOREGROUND.color())
+        );
+        assert_eq!(
+            pixel(&rgba(IconState::Problem), cx, cy),
+            color_u8(theme::CARD.color())
+        );
         assert_ne!(pixel(&idle, cx, cy), pixel(&recording, cx, cy));
         // Away from the dot the icon is unchanged.
         assert_eq!(pixel(&idle, 6, 6), pixel(&recording, 6, 6));

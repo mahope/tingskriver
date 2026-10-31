@@ -80,7 +80,7 @@ logged, because tokio catches panics in core tasks.
 | `startup` | Startup clock (on Windows from process creation via `GetProcessTimes`), the first-frame log line against the 500 ms budget, and the database open with Danish error texts. |
 | `window_state` | Window position and size in `%APPDATA%\dk.mahoje.tingskriver\gpui-window.json`, saved 0.5 s after the last move and on close, restored only when at least 120×40 px land on a connected display. |
 | `single_instance` | Per-user named pipe `\\.\pipe\dk.mahoje.tingskriver.gpui-<user>` (Unix socket elsewhere). A second launch asks the running app to show its window and exits. |
-| `args` | `--hidden` (start without a window; the app stays running when the window closes, and a later launch shows it), `--page meetings|dictation|settings`. |
+| `args` | `--hidden` (start without a window; a later launch or the tray shows it), `--page meetings|dictation|settings`. With a tray icon the app stays running when the window closes. |
 | `crash` | Panic hook for graphics failures, see above. |
 | `probe` | The test field on the Diktering page lists every special character with its code point and warns when a dead key was not composed. |
 
@@ -150,7 +150,8 @@ the same time; both use the same database with the same migrations.
 7. **Single instance and `--hidden`.** Start the exe twice: the second start
    brings the first window to the front and exits. Start with `--hidden`:
    no window; start the exe normally: the window appears. Close it: the app
-   keeps running (Task Manager); Indstillinger, "Afslut Tingskriver" ends it.
+   keeps running in the tray; the tray menu's "Afslut" ends it. The tray and
+   shortcut tests are in [host.md](host.md#manual-test-on-windows).
 8. **Database error** (on a test folder, never on the real meetings). In
    PowerShell:
    ```powershell
@@ -186,11 +187,9 @@ gpui-component's next release; the rest are fixable in the app.
 
 ## Known limitations
 
-- No tray icon yet; with `--hidden` the window is reached by starting the app
-  again. The tray belongs to the overlay and tray work.
 - The database error texts classify the sqlx error message. When issue #5
   adds `DbInitError` to core, the error page should map its variants and add
   "Åbn backup".
 - The pages are placeholders: no meeting list, settings or dictation yet.
-- The shell does not implement `AppHost` yet; it will when the first screen
-  that needs core events moves over.
+- `AppHost` is implemented by `tingskriver-host`'s bridge ([host.md](host.md));
+  the pages do not subscribe to its events yet.

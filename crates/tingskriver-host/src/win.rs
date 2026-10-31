@@ -16,12 +16,15 @@ use std::time::Duration;
 use tingskriver_core::shortcuts::{Conflict, Registration};
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
-use windows_sys::Win32::Foundation::{GetLastError, ERROR_HOTKEY_ALREADY_REGISTERED, HWND, LPARAM, LRESULT, WPARAM};
+use windows_sys::Win32::Foundation::{
+    GetLastError, ERROR_HOTKEY_ALREADY_REGISTERED, HWND, LPARAM, LRESULT, WPARAM,
+};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{RegisterHotKey, UnregisterHotKey};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW, PostMessageW, PostQuitMessage,
-    RegisterClassExW, TranslateMessage, HWND_MESSAGE, MSG, WM_APP, WM_CLOSE, WM_DESTROY, WM_HOTKEY, WNDCLASSEXW,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW, PostMessageW,
+    PostQuitMessage, RegisterClassExW, TranslateMessage, HWND_MESSAGE, MSG, WM_APP, WM_CLOSE,
+    WM_DESTROY, WM_HOTKEY, WNDCLASSEXW,
 };
 
 use crate::hotkeys::{Hotkeys, RegisterError, Registrar};
@@ -43,6 +46,7 @@ type Sink = Arc<dyn Fn(Trigger) + Send + Sync>;
 /// shortcuts and ends the thread.
 pub(crate) struct HostThread {
     hwnd: isize,
+    has_tray: bool,
     commands: std::sync::Mutex<Sender<Command>>,
     thread: Option<JoinHandle<()>>,
 }
@@ -50,14 +54,15 @@ pub(crate) struct HostThread {
 impl HostThread {
     pub fn start(sink: Sink) -> Result<HostThread, String> {
         let (tx, rx) = channel();
-        let (ready_tx, ready_rx) = channel::<Result<isize, String>>();
+        let (ready_tx, ready_rx) = channel::<Result<(isize, bool), String>>();
         let thread = std::thread::Builder::new()
             .name("tingskriver-host".into())
             .spawn(move || host_thread(rx, sink, ready_tx))
             .map_err(|e| format!("could not start the host thread: {e}"))?;
         match ready_rx.recv_timeout(Duration::from_secs(10)) {
-            Ok(Ok(hwnd)) => Ok(HostThread {
+            Ok(Ok((hwnd, has_tray))) => Ok(HostThread {
                 hwnd,
+                has_tray,
                 commands: std::sync::Mutex::new(tx),
                 thread: Some(thread),
             }),
@@ -67,11 +72,19 @@ impl HostThread {
     }
 
     fn send(&self, command: Command) {
-        let sent = self.commands.lock().map(|tx| tx.send(command).is_ok()).unwrap_or(false);
+        let sent = self
+            .commands
+            .lock()
+            .map(|tx| tx.send(command).is_ok())
+            .unwrap_or(false);
         if sent {
             // SAFETY: posting to a window this process owns; a stale handle only fails.
             unsafe { PostMessageW(self.hwnd as HWND, WM_HOST_COMMAND, 0, 0) };
         }
+    }
+
+    pub fn has_tray(&self) -> bool {
+        self.has_tray
     }
 
     pub fn set_status(&self, status: TrayStatus) {
@@ -151,7 +164,11 @@ fn tray_icon(state: IconState) -> Option<Icon> {
     }
 }
 
-fn host_thread(commands: Receiver<Command>, sink: Sink, ready: Sender<Result<isize, String>>) {
+fn host_thread(
+    commands: Receiver<Command>,
+    sink: Sink,
+    ready: Sender<Result<(isize, bool), String>>,
+) {
     let hwnd = match create_window() {
         Ok(hwnd) => hwnd,
         Err(e) => {
@@ -164,7 +181,10 @@ fn host_thread(commands: Receiver<Command>, sink: Sink, ready: Sender<Result<isi
     {
         let menu_sink = sink.clone();
         MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
-            if let Some(entry) = MenuEntry::ALL.into_iter().find(|e| event.id.0 == menu_id(*e)) {
+            if let Some(entry) = MenuEntry::ALL
+                .into_iter()
+                .find(|e| event.id.0 == menu_id(*e))
+            {
                 menu_sink(Trigger::Menu(entry));
             }
         }));
@@ -211,6 +231,7 @@ fn host_thread(commands: Receiver<Command>, sink: Sink, ready: Sender<Result<isi
         }
     };
 
+    let has_tray = tray.is_some();
     STATE.with(|s| {
         *s.borrow_mut() = Some(State {
             commands,
@@ -222,7 +243,7 @@ fn host_thread(commands: Receiver<Command>, sink: Sink, ready: Sender<Result<isi
             hotkeys: Hotkeys::new(Win32Registrar { hwnd }),
         })
     });
-    let _ = ready.send(Ok(hwnd as isize));
+    let _ = ready.send(Ok((hwnd as isize, has_tray)));
     log::info!("Host thread running: tray and shortcuts");
 
     // SAFETY: the standard message loop of the thread that owns the window.
@@ -277,9 +298,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         WM_HOTKEY => {
             // Look up first and call the sink after the borrow ends.
             let fired = STATE.with(|s| {
-                s.borrow()
-                    .as_ref()
-                    .and_then(|state| Some((state.hotkeys.action(wparam as i32)?, state.sink.clone())))
+                s.borrow().as_ref().and_then(|state| {
+                    Some((state.hotkeys.action(wparam as i32)?, state.sink.clone()))
+                })
             });
             if let Some((action, sink)) = fired {
                 sink(Trigger::Shortcut(action));
@@ -319,7 +340,9 @@ impl State {
             match command {
                 Command::Status(status) => self.show(&status),
                 Command::Shortcuts(wanted, reply) => {
-                    let problems = self.hotkeys.apply(wanted.dictation.as_deref(), &wanted.settings);
+                    let problems = self
+                        .hotkeys
+                        .apply(wanted.dictation.as_deref(), &wanted.settings);
                     let _ = reply.send(problems);
                 }
             }
@@ -369,7 +392,10 @@ mod tests {
     #[test]
     fn host_thread_registers_and_swaps_shortcuts_while_running() {
         let thread = HostThread::start(Arc::new(|_| {})).expect("host thread");
-        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
         // Unusual keys, so the test never collides with a real program.
         let first = ShortcutSettings {
             open_window: Some("Ctrl+Alt+Shift+F23".into()),
@@ -384,7 +410,10 @@ mod tests {
         // Another window (as another program would) cannot take it now.
         let other = create_window().unwrap();
         let mut probe = Win32Registrar { hwnd: other };
-        assert_eq!(probe.register(77, registration("Ctrl+Alt+Shift+F23")), Err(RegisterError::Taken));
+        assert_eq!(
+            probe.register(77, registration("Ctrl+Alt+Shift+F23")),
+            Err(RegisterError::Taken)
+        );
 
         // Change it while running: the old one is free, the new one taken.
         let second = ShortcutSettings {
@@ -396,12 +425,21 @@ mod tests {
             settings: second,
         }));
         assert!(problems.is_empty(), "{problems:?}");
-        assert_eq!(probe.register(77, registration("Ctrl+Alt+Shift+F23")), Ok(()));
+        assert_eq!(
+            probe.register(77, registration("Ctrl+Alt+Shift+F23")),
+            Ok(())
+        );
         probe.unregister(77);
-        assert_eq!(probe.register(78, registration("Ctrl+Alt+Shift+F24")), Err(RegisterError::Taken));
+        assert_eq!(
+            probe.register(78, registration("Ctrl+Alt+Shift+F24")),
+            Err(RegisterError::Taken)
+        );
 
         // A shortcut another program holds is reported, not silently lost.
-        assert_eq!(probe.register(79, registration("Ctrl+Alt+Shift+F22")), Ok(()));
+        assert_eq!(
+            probe.register(79, registration("Ctrl+Alt+Shift+F22")),
+            Ok(())
+        );
         let problems = runtime.block_on(thread.apply_shortcuts(Wanted {
             dictation: None,
             settings: ShortcutSettings {
@@ -418,7 +456,10 @@ mod tests {
         drop(thread);
         let other = create_window().unwrap();
         let mut probe = Win32Registrar { hwnd: other };
-        assert_eq!(probe.register(80, registration("Ctrl+Alt+Shift+F24")), Ok(()));
+        assert_eq!(
+            probe.register(80, registration("Ctrl+Alt+Shift+F24")),
+            Ok(())
+        );
         probe.unregister(80);
         unsafe { DestroyWindow(other) };
     }

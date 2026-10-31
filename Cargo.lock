@@ -10756,6 +10756,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tingskriver-core",
+ "tingskriver-host",
  "tokio",
  "ttf-parser",
  "windows 0.61.3",

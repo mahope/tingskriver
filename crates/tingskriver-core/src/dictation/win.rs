@@ -183,7 +183,12 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
     let started = Instant::now();
     let result = handle_key(code, wparam, lparam);
     if HOOK_TIMES.record(started.elapsed().as_nanos() as u64) {
-        let _ = PostThreadMessageW(HOOK_THREAD.load(Ordering::Relaxed), WM_HOOK_SUMMARY, WPARAM(0), LPARAM(0));
+        let _ = PostThreadMessageW(
+            HOOK_THREAD.load(Ordering::Relaxed),
+            WM_HOOK_SUMMARY,
+            WPARAM(0),
+            LPARAM(0),
+        );
     }
     result
 }

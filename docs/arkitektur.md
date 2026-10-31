@@ -9,6 +9,7 @@ crates/
   tingskriver-core/           audio, transcription, database, AI providers, dictation, summaries
   tingskriver-app/            GPUI app (gpui + gpui-component): shell with navigation, see gpui.md
   tingskriver-overlay/        pill and recording indicator: native Win32 layered window (Windows)
+  tingskriver-host/           host outside GPUI: dictation hook, global shortcuts, tray, AppHost bridge
 frontend/
   src-tauri/                  the current Tauri app: commands, windows, tray, notifications
   src/                        the React UI of the Tauri app
@@ -20,16 +21,18 @@ installer/                    the Velopack installer and updater, not built yet
 ## Dependency direction
 
 ```
-tingskriver-app ─────┐
-tingskriver-overlay ─┼──▶ tingskriver-core ──▶ (whisper-rs, ort, cpal, sqlx, reqwest, windows, ...)
-frontend/src-tauri ──┘
+tingskriver-app ──▶ tingskriver-host ──┬──▶ tingskriver-overlay ──┐
+                                       └──────────────────────────┼──▶ tingskriver-core ──▶ (whisper-rs, ort, cpal, sqlx, reqwest, windows, ...)
+frontend/src-tauri ───────────────────────────────────────────────┘
 ```
 
 - `tingskriver-core` depends on no UI crate: no `tauri`, `tauri-*`, `gpui`,
   `gpui-*`, `wry` or `webview2`. The Linux job in `.github/workflows/rust.yml`
   fails if `cargo tree -p tingskriver-core` contains one of them.
-- The UI crates depend on core, never the other way round, and not on each
-  other.
+- The UI crates depend on core, never the other way round. The host joins
+  core, the pill and the tray for the GPUI app, so it depends on the overlay;
+  it has no GPUI or Tauri dependency (the tray is the `tray-icon` crate), and
+  the overlay does not depend on the app.
 
 ## How core talks to the UI
 
@@ -67,6 +70,15 @@ The GPUI app will implement `AppHost` on its own event channel and call the
 same core functions. Today it calls core only on its own tokio runtime (the
 database open at startup), never on the UI thread; see [gpui.md](gpui.md)
 for the shell and the GPUI version lock.
+
+## The host: keyboard hook, shortcuts and tray
+
+`crates/tingskriver-host` runs what must not wait for GPUI's event loop: the
+dictation hook (core's `WH_KEYBOARD_LL` thread), a host thread with its own
+Win32 message loop for the tray icon and the `RegisterHotKey` shortcuts, and
+the pill. Its `Bridge` is the GPUI app's `AppHost`. Details, the shortcut
+settings file, the hook timing log and the Windows test are in
+[host.md](host.md).
 
 ## The pill overlay
 

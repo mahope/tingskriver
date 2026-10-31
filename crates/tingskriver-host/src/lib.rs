@@ -131,14 +131,18 @@ impl Host {
         let shared = self.shared.clone();
         #[cfg(windows)]
         let thread = self.thread.clone();
-        self.tasks.push(self.runtime.spawn(watch::watch_status(CoreProbe, shared.clone(), move |status| {
-            #[cfg(windows)]
-            if let Some(thread) = &thread {
-                thread.set_status(status);
-            }
-            #[cfg(not(windows))]
-            let _ = status;
-        })));
+        self.tasks.push(self.runtime.spawn(watch::watch_status(
+            CoreProbe,
+            shared.clone(),
+            move |status| {
+                #[cfg(windows)]
+                if let Some(thread) = &thread {
+                    thread.set_status(status);
+                }
+                #[cfg(not(windows))]
+                let _ = status;
+            },
+        )));
 
         let bridge = self.bridge.clone();
         #[cfg(windows)]
@@ -162,6 +166,15 @@ impl Host {
         )));
     }
 
+    /// A tray icon is showing (Windows), so closing the window should hide
+    /// the app instead of quitting.
+    pub fn has_tray(&self) -> bool {
+        #[cfg(windows)]
+        return self.thread.as_ref().is_some_and(|t| t.has_tray());
+        #[cfg(not(windows))]
+        false
+    }
+
     /// The `AppHost` core functions take.
     pub fn handle(&self) -> HostHandle {
         self.bridge.clone()
@@ -175,7 +188,8 @@ impl Host {
     /// restart; the returned list is the conflict check of the new set
     /// (`TakenByOtherProgram` shows up in the tray once registered).
     pub fn save_shortcuts(&self, settings: &ShortcutSettings) -> Result<Vec<Conflict>, String> {
-        let problems = tingskriver_core::shortcuts::check(dictation_shortcut().as_deref(), settings);
+        let problems =
+            tingskriver_core::shortcuts::check(dictation_shortcut().as_deref(), settings);
         settings.save(self.bridge.as_ref())?;
         Ok(problems)
     }
@@ -191,12 +205,18 @@ impl Drop for Host {
     }
 }
 
-fn handle_trigger(trigger: Trigger, handle: &HostHandle, runtime: &Handle, requests: &UnboundedSender<Request>) {
+fn handle_trigger(
+    trigger: Trigger,
+    handle: &HostHandle,
+    runtime: &Handle,
+    requests: &UnboundedSender<Request>,
+) {
     let request = match trigger {
-        Trigger::TrayClicked | Trigger::Menu(MenuEntry::Open) | Trigger::Shortcut(ShortcutAction::OpenWindow) => {
-            Some(Request::ShowWindow)
-        }
-        Trigger::Menu(MenuEntry::NewRecording) | Trigger::Shortcut(ShortcutAction::NewRecording) => {
+        Trigger::TrayClicked
+        | Trigger::Menu(MenuEntry::Open)
+        | Trigger::Shortcut(ShortcutAction::OpenWindow) => Some(Request::ShowWindow),
+        Trigger::Menu(MenuEntry::NewRecording)
+        | Trigger::Shortcut(ShortcutAction::NewRecording) => {
             // The same entry stops a running recording. Stopping needs no UI.
             let handle = handle.clone();
             let requests = requests.clone();
@@ -222,7 +242,9 @@ fn handle_trigger(trigger: Trigger, handle: &HostHandle, runtime: &Handle, reque
             }
             None
         }
-        Trigger::Menu(MenuEntry::Ask) | Trigger::Shortcut(ShortcutAction::Ask) => Some(Request::Ask),
+        Trigger::Menu(MenuEntry::Ask) | Trigger::Shortcut(ShortcutAction::Ask) => {
+            Some(Request::Ask)
+        }
         Trigger::Menu(MenuEntry::Quit) => Some(Request::Quit),
     };
     if let Some(request) = request {
@@ -234,7 +256,12 @@ fn handle_trigger(trigger: Trigger, handle: &HostHandle, runtime: &Handle, reque
 fn dictation_shortcut() -> Option<String> {
     let service = dictation::service::get().ok()?;
     let settings = service.settings();
-    settings.enabled.then(|| settings.chord().map(|c| c.label()).unwrap_or(settings.shortcut))
+    settings.enabled.then(|| {
+        settings
+            .chord()
+            .map(|c| c.label())
+            .unwrap_or(settings.shortcut)
+    })
 }
 
 fn read_wanted(bridge: &Bridge) -> Result<Wanted, String> {
@@ -282,7 +309,10 @@ impl Probe for CoreProbe {
         if !settings.enabled {
             return Dictation::Off;
         }
-        let label = settings.chord().map(|c| c.label()).unwrap_or(settings.shortcut);
+        let label = settings
+            .chord()
+            .map(|c| c.label())
+            .unwrap_or(settings.shortcut);
         if service.shortcut_active() {
             if dictation::is_dictating() {
                 Dictation::Listening(label)
@@ -319,7 +349,8 @@ fn overlay() -> Arc<dyn dictation::overlay::Overlay> {
 #[cfg(windows)]
 fn runs_elevated() -> bool {
     use tingskriver_core::dictation::logic::paste::INTEGRITY_HIGH;
-    tingskriver_core::dictation::win::own_integrity_level().is_some_and(|level| level >= INTEGRITY_HIGH)
+    tingskriver_core::dictation::win::own_integrity_level()
+        .is_some_and(|level| level >= INTEGRITY_HIGH)
 }
 
 #[cfg(not(windows))]
@@ -332,8 +363,12 @@ mod tests {
     use super::*;
 
     fn run(trigger: Trigger) -> Option<Request> {
-        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-        let dir = std::env::temp_dir().join(format!("tingskriver-host-trigger-{}", std::process::id()));
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let dir =
+            std::env::temp_dir().join(format!("tingskriver-host-trigger-{}", std::process::id()));
         let handle: HostHandle = Arc::new(Bridge::new(dir));
         let (tx, mut rx) = unbounded_channel();
         handle_trigger(trigger, &handle, runtime.handle(), &tx);
@@ -348,14 +383,29 @@ mod tests {
     #[test]
     fn triggers_map_to_requests() {
         assert_eq!(run(Trigger::TrayClicked), Some(Request::ShowWindow));
-        assert_eq!(run(Trigger::Menu(MenuEntry::Open)), Some(Request::ShowWindow));
-        assert_eq!(run(Trigger::Shortcut(ShortcutAction::OpenWindow)), Some(Request::ShowWindow));
+        assert_eq!(
+            run(Trigger::Menu(MenuEntry::Open)),
+            Some(Request::ShowWindow)
+        );
+        assert_eq!(
+            run(Trigger::Shortcut(ShortcutAction::OpenWindow)),
+            Some(Request::ShowWindow)
+        );
         assert_eq!(run(Trigger::Menu(MenuEntry::Quit)), Some(Request::Quit));
         assert_eq!(run(Trigger::Menu(MenuEntry::Ask)), Some(Request::Ask));
-        assert_eq!(run(Trigger::Shortcut(ShortcutAction::Ask)), Some(Request::Ask));
+        assert_eq!(
+            run(Trigger::Shortcut(ShortcutAction::Ask)),
+            Some(Request::Ask)
+        );
         // Not recording: the app is asked to start one.
-        assert_eq!(run(Trigger::Menu(MenuEntry::NewRecording)), Some(Request::NewRecording));
-        assert_eq!(run(Trigger::Shortcut(ShortcutAction::NewRecording)), Some(Request::NewRecording));
+        assert_eq!(
+            run(Trigger::Menu(MenuEntry::NewRecording)),
+            Some(Request::NewRecording)
+        );
+        assert_eq!(
+            run(Trigger::Shortcut(ShortcutAction::NewRecording)),
+            Some(Request::NewRecording)
+        );
         // Dictation is handled by the host (and fails quietly without the service).
         assert_eq!(run(Trigger::Menu(MenuEntry::Dictate)), None);
     }
@@ -363,13 +413,17 @@ mod tests {
     #[test]
     fn shortcut_file_is_created_and_read() {
         use tingskriver_core::host::AppHost;
-        let dir = std::env::temp_dir().join(format!("tingskriver-host-shortcuts-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("tingskriver-host-shortcuts-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let bridge = Bridge::new(dir.clone());
         ensure_shortcut_file(&bridge);
         let text = std::fs::read_to_string(dir.join(STORE)).unwrap();
         assert!(text.contains("\"newRecording\": null"), "{text}");
-        assert_eq!(read_wanted(&bridge).unwrap().settings, ShortcutSettings::default());
+        assert_eq!(
+            read_wanted(&bridge).unwrap().settings,
+            ShortcutSettings::default()
+        );
 
         // An edited file is read as is.
         std::fs::write(

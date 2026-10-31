@@ -70,7 +70,12 @@ impl Bridge {
 
     fn store_path(&self, store: &str) -> Result<PathBuf, String> {
         // A store is a plain file name; never let it point elsewhere.
-        if store.is_empty() || Path::new(store).file_name().map(|n| n != store).unwrap_or(true) {
+        if store.is_empty()
+            || Path::new(store)
+                .file_name()
+                .map(|n| n != store)
+                .unwrap_or(true)
+        {
             return Err(format!("invalid settings store name {store:?}"));
         }
         Ok(self.app_data_dir.join(store))
@@ -154,8 +159,10 @@ impl AppHost for Bridge {
             .map_err(|e| format!("could not create {}: {e}", self.app_data_dir.display()))?;
         // Write next to the file and rename, so a crash never leaves half a file.
         let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, text).map_err(|e| format!("could not write {}: {e}", tmp.display()))?;
-        std::fs::rename(&tmp, &path).map_err(|e| format!("could not replace {}: {e}", path.display()))
+        std::fs::write(&tmp, text)
+            .map_err(|e| format!("could not write {}: {e}", tmp.display()))?;
+        std::fs::rename(&tmp, &path)
+            .map_err(|e| format!("could not replace {}: {e}", path.display()))
     }
 
     fn refresh_status_ui(&self) {
@@ -172,7 +179,8 @@ mod tests {
     use tingskriver_core::host::{HostExt, HostHandle};
 
     fn temp_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("tingskriver-host-{name}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("tingskriver-host-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir
     }
@@ -182,11 +190,18 @@ mod tests {
         let bridge = Bridge::new(temp_dir("listen"));
         let seen = Arc::new(Mutex::new(Vec::new()));
         let s = seen.clone();
-        let id = bridge.listen("transcript-update", Box::new(move |p| s.lock().unwrap().push(p.to_string())));
-        bridge.emit_json("transcript-update", r#"{"text":"a"}"#).unwrap();
+        let id = bridge.listen(
+            "transcript-update",
+            Box::new(move |p| s.lock().unwrap().push(p.to_string())),
+        );
+        bridge
+            .emit_json("transcript-update", r#"{"text":"a"}"#)
+            .unwrap();
         bridge.emit_json("other", "1").unwrap();
         bridge.unlisten(id);
-        bridge.emit_json("transcript-update", r#"{"text":"b"}"#).unwrap();
+        bridge
+            .emit_json("transcript-update", r#"{"text":"b"}"#)
+            .unwrap();
         assert_eq!(*seen.lock().unwrap(), vec![r#"{"text":"a"}"#.to_string()]);
     }
 
@@ -216,7 +231,9 @@ mod tests {
         let b = bridge.subscribe();
         drop(b);
         let handle: HostHandle = Arc::new(bridge);
-        handle.emit("recording-started", serde_json::json!({"workers": 3})).unwrap();
+        handle
+            .emit("recording-started", serde_json::json!({"workers": 3}))
+            .unwrap();
         assert_eq!(
             a.try_recv().unwrap(),
             Event {
@@ -230,18 +247,30 @@ mod tests {
     fn settings_persist_per_store_and_key() {
         let dir = temp_dir("settings");
         let bridge = Bridge::new(dir.clone());
-        assert_eq!(bridge.read_setting("shortcuts.json", "shortcuts").unwrap(), None);
+        assert_eq!(
+            bridge.read_setting("shortcuts.json", "shortcuts").unwrap(),
+            None
+        );
         bridge
-            .write_setting("shortcuts.json", "shortcuts", serde_json::json!({"ask": "Ctrl+Alt+Space"}))
+            .write_setting(
+                "shortcuts.json",
+                "shortcuts",
+                serde_json::json!({"ask": "Ctrl+Alt+Space"}),
+            )
             .unwrap();
-        bridge.write_setting("shortcuts.json", "other", serde_json::json!(1)).unwrap();
+        bridge
+            .write_setting("shortcuts.json", "other", serde_json::json!(1))
+            .unwrap();
         // A new bridge reads the same file.
         let again = Bridge::new(dir.clone());
         assert_eq!(
             again.read_setting("shortcuts.json", "shortcuts").unwrap(),
             Some(serde_json::json!({"ask": "Ctrl+Alt+Space"}))
         );
-        assert_eq!(again.read_setting("shortcuts.json", "other").unwrap(), Some(serde_json::json!(1)));
+        assert_eq!(
+            again.read_setting("shortcuts.json", "other").unwrap(),
+            Some(serde_json::json!(1))
+        );
         assert!(!dir.join("shortcuts.json.tmp").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -255,7 +284,10 @@ mod tests {
         assert!(bridge.read_setting("bad.json", "x").is_err());
         // A broken file is not overwritten with an empty object.
         assert!(bridge.write_setting("bad.json", "x", Value::Null).is_err());
-        assert_eq!(std::fs::read_to_string(dir.join("bad.json")).unwrap(), "{nope");
+        assert_eq!(
+            std::fs::read_to_string(dir.join("bad.json")).unwrap(),
+            "{nope"
+        );
         assert!(bridge.read_setting("../evil.json", "x").is_err());
         assert!(bridge.write_setting("", "x", Value::Null).is_err());
         let _ = std::fs::remove_dir_all(&dir);

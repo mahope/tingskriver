@@ -91,7 +91,10 @@ impl TrayStatus {
     /// The most important thing that does not work, if any.
     fn problem(&self) -> Option<String> {
         if self.elevated {
-            return Some("Kører som administrator, så genveje og indsættelse virker ikke i alle programmer".into());
+            return Some(
+                "Kører som administrator, så genveje og indsættelse virker ikke i alle programmer"
+                    .into(),
+            );
         }
         if let Dictation::Failed(reason) = &self.dictation {
             return Some(reason.clone());
@@ -106,7 +109,9 @@ impl TrayStatus {
             (Recording::Idle, Dictation::Listening(shortcut)) => {
                 format!("Tingskriver lytter. Tryk {shortcut} for at indsætte")
             }
-            (Recording::Idle, Dictation::Ready(shortcut)) => format!("Tingskriver\nHold {shortcut} for at diktere"),
+            (Recording::Idle, Dictation::Ready(shortcut)) => {
+                format!("Tingskriver\nHold {shortcut} for at diktere")
+            }
             (Recording::Idle, _) => "Tingskriver".to_string(),
         };
         let text = match self.problem() {
@@ -130,7 +135,9 @@ impl TrayStatus {
             // is; the menu would insert it into the menu's own window.
             MenuEntry::Dictate => match &self.dictation {
                 Dictation::Ready(_) => label("Diktér", true),
-                Dictation::Listening(shortcut) => label(&format!("Tryk {shortcut} for at indsætte"), false),
+                Dictation::Listening(shortcut) => {
+                    label(&format!("Tryk {shortcut} for at indsætte"), false)
+                }
                 _ => label("Diktér", false),
             },
             MenuEntry::Ask => label("Spørg (kommer senere)", false),
@@ -196,7 +203,10 @@ mod tests {
             dictation: Dictation::Listening("Ctrl+Win".into()),
             ..TrayStatus::default()
         };
-        assert_eq!(s.tooltip(), "Tingskriver lytter. Tryk Ctrl+Win for at indsætte");
+        assert_eq!(
+            s.tooltip(),
+            "Tingskriver lytter. Tryk Ctrl+Win for at indsætte"
+        );
         assert_eq!(
             s.menu(MenuEntry::Dictate),
             MenuLabel {
@@ -204,7 +214,11 @@ mod tests {
                 enabled: false
             }
         );
-        for d in [Dictation::Starting, Dictation::Off, Dictation::Failed("x".into())] {
+        for d in [
+            Dictation::Starting,
+            Dictation::Off,
+            Dictation::Failed("x".into()),
+        ] {
             let s = TrayStatus {
                 dictation: d,
                 ..TrayStatus::default()

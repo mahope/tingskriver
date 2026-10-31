@@ -127,6 +127,10 @@ jobs:
       - name: Test tingskriver-overlay
         run: .github/scripts/annotate-errors.sh cargo test --locked -p tingskriver-overlay
 
+      # The host's bridge, tray status, icon, shortcut registry and watchers.
+      - name: Test tingskriver-host
+        run: .github/scripts/annotate-errors.sh cargo test --locked -p tingskriver-host
+
   # Release build of the GPUI app for the manual Windows tests in
   # docs/gpui.md (text input, IME, UI Automation, DPI, start time, no GPU).
   windows-gpui-app:
@@ -218,4 +222,4 @@ jobs:
           prefix-key: tingskriver-xwin-v1
 
       - name: cargo xwin check
-        run: .github/scripts/annotate-errors.sh cargo xwin check --locked --target x86_64-pc-windows-msvc -p tingskriver-core -p tingskriver-overlay -p tingskriver-app
+        run: .github/scripts/annotate-errors.sh cargo xwin check --locked --target x86_64-pc-windows-msvc -p tingskriver-core -p tingskriver-overlay -p tingskriver-host -p tingskriver-app
