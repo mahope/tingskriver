@@ -1,4 +1,5 @@
 use crate::database::models::{Setting, TranscriptSetting};
+use crate::providers::migrate::{delete_legacy_key, legacy_key, store_legacy_key, LegacyTable};
 use crate::summary::CustomOpenAIConfig;
 use sqlx::SqlitePool;
 
@@ -27,6 +28,9 @@ pub struct SettingsRepository;
 // Transcript providers: localWhisper, deepgram, elevenLabs, groq, openai
 // Summary providers: openai, claude, ollama, groq, added openrouter
 // NOTE: Handle data exclusion in the higher layer as this is database abstraction layer(using SELECT *)
+// API keys: stored in Windows Credential Manager when possible (the column is
+// then NULL), read from the column first and Credential Manager second. See
+// crate::providers::migrate.
 
 impl SettingsRepository {
     pub async fn get_model_config(
@@ -102,7 +106,8 @@ impl SettingsRepository {
             "#,
             api_key_column, api_key_column
         );
-        sqlx::query(&query).bind(api_key).execute(pool).await?;
+        let in_column = (!store_legacy_key(LegacyTable::Summary, provider, api_key)).then_some(api_key);
+        sqlx::query(&query).bind(in_column).execute(pool).await?;
 
         Ok(())
     }
@@ -114,6 +119,7 @@ impl SettingsRepository {
         // Custom OpenAI uses JSON config - extract API key from there
         if provider == "custom-openai" {
             let config = Self::get_custom_openai_config(pool).await?;
+            // get_custom_openai_config fills the key from Credential Manager
             return Ok(config.and_then(|c| c.api_key));
         }
 
@@ -135,8 +141,12 @@ impl SettingsRepository {
             "SELECT {} FROM settings WHERE id = '1' LIMIT 1",
             api_key_column
         );
-        let api_key = sqlx::query_scalar(&query).fetch_optional(pool).await?;
-        Ok(api_key)
+        let api_key: Option<String> = sqlx::query_scalar::<_, Option<String>>(&query)
+            .fetch_optional(pool)
+            .await?
+            .flatten()
+            .filter(|k| !k.trim().is_empty());
+        Ok(api_key.or_else(|| legacy_key(LegacyTable::Summary, provider)))
     }
 
     pub async fn get_transcript_config(
@@ -200,7 +210,8 @@ impl SettingsRepository {
             "#,
             api_key_column, crate::config::DEFAULT_PARAKEET_MODEL, api_key_column
         );
-        sqlx::query(&query).bind(api_key).execute(pool).await?;
+        let in_column = (!store_legacy_key(LegacyTable::Transcript, provider, api_key)).then_some(api_key);
+        sqlx::query(&query).bind(in_column).execute(pool).await?;
 
         Ok(())
     }
@@ -227,8 +238,12 @@ impl SettingsRepository {
             "SELECT {} FROM transcript_settings WHERE id = '1' LIMIT 1",
             api_key_column
         );
-        let api_key = sqlx::query_scalar(&query).fetch_optional(pool).await?;
-        Ok(api_key)
+        let api_key: Option<String> = sqlx::query_scalar::<_, Option<String>>(&query)
+            .fetch_optional(pool)
+            .await?
+            .flatten()
+            .filter(|k| !k.trim().is_empty());
+        Ok(api_key.or_else(|| legacy_key(LegacyTable::Transcript, provider)))
     }
 
     pub async fn delete_api_key(
@@ -240,6 +255,7 @@ impl SettingsRepository {
             sqlx::query("UPDATE settings SET customOpenAIConfig = NULL WHERE id = '1'")
                 .execute(pool)
                 .await?;
+            delete_legacy_key(LegacyTable::Summary, provider);
             return Ok(());
         }
 
@@ -262,6 +278,7 @@ impl SettingsRepository {
             api_key_column
         );
         sqlx::query(&query).execute(pool).await?;
+        delete_legacy_key(LegacyTable::Summary, provider);
 
         Ok(())
     }
@@ -296,10 +313,13 @@ impl SettingsRepository {
 
                 if let Some(json) = config_json {
                     // Parse JSON into CustomOpenAIConfig
-                    let config: CustomOpenAIConfig = serde_json::from_str(&json)
+                    let mut config: CustomOpenAIConfig = serde_json::from_str(&json)
                         .map_err(|e| sqlx::Error::Protocol(
                             format!("Invalid JSON in customOpenAIConfig: {}", e).into()
                         ))?;
+                    if config.api_key.as_deref().map_or(true, |k| k.trim().is_empty()) {
+                        config.api_key = legacy_key(LegacyTable::Summary, "custom-openai");
+                    }
 
                     Ok(Some(config))
                 } else {
@@ -323,8 +343,16 @@ impl SettingsRepository {
         pool: &SqlitePool,
         config: &CustomOpenAIConfig,
     ) -> std::result::Result<(), sqlx::Error> {
+        // The key goes to Credential Manager when possible, not into the JSON
+        let mut config = config.clone();
+        if let Some(key) = config.api_key.as_deref() {
+            if store_legacy_key(LegacyTable::Summary, "custom-openai", key) {
+                config.api_key = None;
+            }
+        }
+
         // Serialize config to JSON
-        let config_json = serde_json::to_string(config)
+        let config_json = serde_json::to_string(&config)
             .map_err(|e| sqlx::Error::Protocol(
                 format!("Failed to serialize config to JSON: {}", e).into()
             ))?;
