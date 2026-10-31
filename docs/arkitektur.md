@@ -105,3 +105,66 @@ Meetings and dictation share the Parakeet and Whisper engines in core.
   and after (`Model keeper: unloaded ...`).
 - Pressing the dictation shortcut prewarms the local model while the user
   speaks. Dictation logs `model_load=none` when the model was already loaded.
+
+## AI providers: one model, a chain per function
+
+`tingskriver_core::providers` is the one place that knows which AI services
+exist (SPEC D1). Meetings and dictation ask it for a provider per function
+instead of keeping their own endpoints and keys.
+
+- **Providers** (`providers::model`): name, base URL, model ids, kind
+  (`syv-ai`, `openai`, `odincore`, `open-ai-compatible`, `ollama`, `local`)
+  and whether the service labels speakers. Presets: Syv.ai
+  (`https://platform.syv.ai/v1`, with diarization), OpenAI, OdinCore
+  (`https://api.odincore.ai/v1`, `ordbogen/whisper` and `odin-2`, no
+  diarization) and the built-in local model. Everything else, also Groq and
+  OpenRouter, is a custom OpenAI-compatible provider.
+- **Chains**: each function (`transcription`, `dictation`, `summary`,
+  `assistant`, `dictation-polish`) has an ordered list of provider and model,
+  with an optional time limit per link. Defaults: Syv.ai then local for
+  transcription and dictation (Syv.ai gives up after 2 s for dictation), the
+  local model for summaries and the assistant, polishing off. A link that
+  needs a key it does not have is skipped without a call.
+- **Keys** live only in Windows Credential Manager, under `Tingskriver/syv.ai`
+  (unchanged from dictation) and `Tingskriver/udbyder/<id>`. `providers.json`
+  in the app data folder holds no key; `ApiKey` has no `Serialize` and a
+  `Debug` that prints `***`.
+- **Calls** (`providers::client`): `/audio/transcriptions`,
+  `/chat/completions` and `/models` with a time limit around the whole call,
+  so a server that hangs mid-answer counts as a timeout. Errors are
+  classified (`ProviderError`: missing key, 401/403, 404, 429 with
+  `Retry-After`, timeout, unreachable, ...) and explained in Danish without
+  the key.
+- **Fallback** (`providers::chain`): the next link is used on an error or a
+  time limit. The result says who delivered (`Delivered::delivered_by()`,
+  "leveret af Syv.ai (syv-transcribe)") and lists the failed links; both are
+  logged. A transcript from a link without diarization has
+  `speakers_missing = true` when speakers were asked for.
+- **Migration** (`providers::migrate`): the first lookup after the database
+  exists turns the old `settings`/`transcript_settings` rows and the
+  dictation endpoint into `providers.json`, moves every key to Credential
+  Manager and then clears the old columns. Claude, Deepgram and ElevenLabs
+  are no longer providers, but their keys are kept. If a key cannot be
+  stored, nothing is cleared and the migration runs again next time. The old
+  `SettingsRepository` key functions read Credential Manager when the column
+  is empty, so the current summary code keeps working.
+
+Using it from dictation or meetings:
+
+```rust
+use tingskriver_core::providers::{self, Function, ProviderError, TranscriptionRequest};
+
+let request = TranscriptionRequest { wav, file_name: "diktering.wav".into(), language: Some("da".into()), prompt, diarize: false };
+let delivered = providers::transcribe(&host, Function::Dictation, request, |link, req| async move {
+    // Only links on the built-in model end up here; link.model names it.
+    local_parakeet(&link.model, req.wav).await.map_err(ProviderError::local)
+})
+.await?; // LookupError explains every failed link in Danish
+log::info!("dictation {}", delivered.delivered_by());
+```
+
+`providers::chat` works the same way for summaries, the assistant and
+polishing. `providers::chain_for` returns the resolved links for callers that
+need their own loop. The settings UI uses `config`, `save_config`,
+`statuses`, `set_key`, `delete_key` and `test_provider` (a real `GET /models`
+with the measured round trip).

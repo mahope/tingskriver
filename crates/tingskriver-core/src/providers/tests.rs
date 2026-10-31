@@ -893,3 +893,24 @@ fn no_old_odincore_domain_in_presets() {
     assert!(json.contains("odincore.ai"));
     assert!(!json.contains(&["odincore", "dk"].join(".")));
 }
+
+#[test]
+fn no_log_statement_formats_a_key() {
+    let sources = [
+        ("chain.rs", include_str!("chain.rs")),
+        ("client.rs", include_str!("client.rs")),
+        ("migrate.rs", include_str!("migrate.rs")),
+        ("service.rs", include_str!("service.rs")),
+        ("secrets.rs", include_str!("secrets.rs")),
+        ("mod.rs", include_str!("mod.rs")),
+    ];
+    for (file, source) in sources {
+        for statement in source.split("log::").skip(1) {
+            let statement = statement.split(';').next().unwrap_or_default();
+            assert!(
+                !statement.contains("expose") && !statement.contains("api_key"),
+                "{file}: log statement may print a key: log::{statement}"
+            );
+        }
+    }
+}
