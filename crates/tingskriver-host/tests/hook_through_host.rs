@@ -79,15 +79,50 @@ fn ten_thousand_presses_through_the_host() {
         std::thread::sleep(Duration::from_millis(50));
     }
 
-    // 10,000 presses = 20,000 hook calls (down and up): two summaries.
-    for _ in 0..10_000 {
+    // 10,000 presses = 20,000 hook calls (down and up). The first summary is
+    // logged a few calls late (hook calls go before the posted summary
+    // message), so the second window is due a little after 20,000 calls:
+    // keep pressing until it is logged.
+    let summary_count = || {
+        LINES
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|l| l.contains("Keyboard hook timing"))
+            .count()
+    };
+    let press = || {
         let inputs = [key(0), key(KEYEVENTF_KEYUP)];
         let sent = unsafe { SendInput(2, inputs.as_ptr(), std::mem::size_of::<INPUT>() as i32) };
         assert_eq!(sent, 2, "SendInput was blocked (UIPI or no desktop)");
+    };
+    for _ in 0..10_000 {
+        press();
     }
-    // Let the hook thread log the last summary.
-    std::thread::sleep(Duration::from_millis(500));
+    let mut extra = 0;
+    while summary_count() < 2 {
+        assert!(
+            extra < 5_000,
+            "no second timing summary after {extra} extra presses"
+        );
+        press();
+        extra += 1;
+        if extra % 100 == 0 {
+            // Let the hook thread reach the posted summary message.
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
     drop(host);
+    // Dropping the host removes the hook, which logs the rest of its window.
+    assert!(
+        !tingskriver_core::dictation::service::get().is_ok_and(|s| s.shortcut_active()),
+        "the hook still runs after the host was dropped"
+    );
+    assert_eq!(
+        tingskriver_core::dictation::win::hook_times().count,
+        0,
+        "the hook's last window was not logged when it stopped"
+    );
     drop(runtime);
 
     let lines = LINES.lock().unwrap().clone();

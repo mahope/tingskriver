@@ -83,8 +83,10 @@ pub fn run() {
         }
     };
 
-    // Tray, shortcuts and dictation, on their own threads. Only the first
-    // instance gets here, so there is one keyboard hook per user.
+    // Tray, shortcuts and dictation, on their own threads. Normally only the
+    // first instance gets here, so there is one keyboard hook per user; if
+    // the single-instance check failed, a second instance would add a second
+    // hook and insert every dictation twice.
     let data_dir = startup::app_data_dir(std::env::var_os(startup::DATA_DIR_ENV));
     let (host, requests) = match data_dir {
         Some(dir) => {

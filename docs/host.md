@@ -84,15 +84,17 @@ With a tray icon, closing the main window hides the app to the tray.
 ```json
 {
   "shortcuts": {
-    "newRecording": "Ctrl+Alt+N",
+    "newRecording": null,
     "ask": null,
-    "openWindow": "Ctrl+Alt+T"
+    "openWindow": null
   }
 }
 ```
 
 The host reads the file every second and registers what changed, so an
-edited shortcut works without a restart; unchanged ones stay registered. A
+edited shortcut works without a restart; unchanged ones stay registered.
+A shortcut another program holds is tried again every 10 seconds, so it
+works (and leaves the tray) once that program quits. A
 file that does not parse keeps the current shortcuts and logs a warning
 once. A changed dictation shortcut (`Service::save_settings`) reinstalls the
 hook at once.

@@ -5,13 +5,14 @@
 //!   new [`TrayStatus`] only when something changed.
 //! - [`watch_shortcuts`] re-reads the shortcut settings every
 //!   [`SHORTCUT_POLL`] and re-registers them when they changed, so an edited
-//!   shortcut works without a restart.
+//!   shortcut works without a restart. A shortcut another program holds is
+//!   tried again every [`TAKEN_RETRY`], so it works once that program quits.
 
 use std::future::Future;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tingskriver_core::shortcuts::{Conflict, ShortcutSettings};
+use tingskriver_core::shortcuts::{Conflict, ConflictKind, ShortcutSettings};
 use tokio::sync::Notify;
 
 use crate::status::{Dictation, Recording, TrayStatus};
@@ -21,6 +22,8 @@ use crate::status::{Dictation, Recording, TrayStatus};
 pub const STATUS_POLL: Duration = Duration::from_millis(100);
 /// How often the shortcut settings file is read.
 pub const SHORTCUT_POLL: Duration = Duration::from_secs(1);
+/// How often a shortcut another program holds is registered again.
+pub const TAKEN_RETRY: Duration = Duration::from_secs(10);
 
 /// Where the status comes from (core in the app, a fake in tests).
 pub trait Probe: Send + Sync + 'static {
@@ -100,14 +103,20 @@ where
 {
     let mut last: Option<Wanted> = None;
     let mut last_error: Option<String> = None;
+    let mut last_problems: Vec<Conflict> = Vec::new();
+    // Set while a shortcut is taken by another program.
+    let mut retry_at: Option<tokio::time::Instant> = None;
     loop {
         match read() {
             Ok(wanted) => {
                 last_error = None;
-                if last.as_ref() != Some(&wanted) {
+                let retry_due = retry_at.is_some_and(|at| tokio::time::Instant::now() >= at);
+                if last.as_ref() != Some(&wanted) || retry_due {
                     let problems = apply(wanted.clone()).await;
-                    for problem in &problems {
-                        log::warn!("Shortcut problem: {}", problem.message());
+                    if problems != last_problems {
+                        for problem in &problems {
+                            log::warn!("Shortcut problem: {}", problem.message());
+                        }
                     }
                     if let Ok(mut slot) = shared.shortcut_problems.lock() {
                         *slot = problems
@@ -116,8 +125,13 @@ where
                             .map(Conflict::message)
                             .collect();
                     }
+                    retry_at = problems
+                        .iter()
+                        .any(|p| p.kind == ConflictKind::TakenByOtherProgram)
+                        .then(|| tokio::time::Instant::now() + TAKEN_RETRY);
                     shared.wake.notify_one();
                     last = Some(wanted);
+                    last_problems = problems;
                 }
             }
             Err(e) => {
@@ -263,6 +277,62 @@ mod tests {
             *shared.shortcut_problems.lock().unwrap(),
             vec!["Et andet program bruger allerede Ctrl+Alt+X".to_string()]
         );
+        task.abort();
+    }
+
+    /// A shortcut another program held is registered again once it is free,
+    /// without a change to the settings.
+    #[tokio::test(start_paused = true)]
+    async fn taken_shortcuts_are_tried_again() {
+        let shared = Arc::new(Shared::default());
+        let taken = Arc::new(AtomicBool::new(true));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let (t, c) = (taken.clone(), calls.clone());
+        let task = tokio::spawn(watch_shortcuts(
+            shared.clone(),
+            || {
+                Ok(Wanted {
+                    dictation: None,
+                    settings: ShortcutSettings {
+                        new_recording: Some("Ctrl+Alt+N".into()),
+                        ..ShortcutSettings::default()
+                    },
+                })
+            },
+            move |_| {
+                let t = t.clone();
+                let c = c.clone();
+                async move {
+                    c.fetch_add(1, Ordering::SeqCst);
+                    if t.load(Ordering::SeqCst) {
+                        vec![Conflict {
+                            action: ShortcutAction::NewRecording,
+                            shortcut: "Ctrl+Alt+N".into(),
+                            kind: tingskriver_core::shortcuts::ConflictKind::TakenByOtherProgram,
+                        }]
+                    } else {
+                        Vec::new()
+                    }
+                }
+            },
+        ));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(shared.shortcut_problems.lock().unwrap().len(), 1);
+
+        // Not before the retry interval.
+        tokio::time::sleep(TAKEN_RETRY / 2).await;
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        // The other program quit: the next retry registers it and clears the tray.
+        taken.store(false, Ordering::SeqCst);
+        tokio::time::sleep(TAKEN_RETRY).await;
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert!(shared.shortcut_problems.lock().unwrap().is_empty());
+
+        // Once registered, nothing is retried.
+        tokio::time::sleep(TAKEN_RETRY * 3).await;
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
         task.abort();
     }
 }

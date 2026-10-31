@@ -213,6 +213,12 @@ impl Drop for Host {
         for task in self.tasks.drain(..) {
             task.abort();
         }
+        // The service lives in a static, so its hook would outlive the host.
+        if !self.dictation_blocked {
+            if let Ok(service) = dictation::service::get() {
+                service.stop_shortcut();
+            }
+        }
         #[cfg(windows)]
         self.thread.take();
     }

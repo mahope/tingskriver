@@ -317,6 +317,24 @@ impl Service {
         Ok(())
     }
 
+    /// Remove the keyboard hook for good (the app quits). The hook thread
+    /// logs the rest of its timing window when it unhooks.
+    #[cfg(windows)]
+    pub fn stop_shortcut(&self) {
+        if let Ok(mut slot) = self.hook.lock() {
+            slot.take();
+        }
+        if let Ok(mut trigger) = self.trigger.lock() {
+            trigger.take();
+        }
+        self.shortcut_active.store(false, Ordering::Relaxed);
+    }
+
+    #[cfg(not(windows))]
+    pub fn stop_shortcut(&self) {
+        self.shortcut_active.store(false, Ordering::Relaxed);
+    }
+
     #[cfg(not(windows))]
     pub fn toggle_hands_free(&self) -> Result<(), String> {
         Err("Diktering findes kun på Windows".to_string())

@@ -189,7 +189,7 @@ pub enum ConflictKind {
     StartsDictation,
     /// Windows uses this shortcut itself (`what` says for what).
     Windows(&'static str),
-    /// It would type text (a letter without Ctrl, Alt or Win).
+    /// A typing key (a letter, Enter, an arrow …) without Ctrl, Alt or Win.
     TypesText,
     /// Most programs use it; registered globally it stops working there.
     Common(&'static str),
@@ -236,7 +236,7 @@ impl Conflict {
                 "{s} begynder med genvejen til Diktér. Dikteringen starter et øjeblik og stopper igen, når du trykker den"
             ),
             ConflictKind::Windows(what) => format!("Windows bruger selv {s} til {what}"),
-            ConflictKind::TypesText => format!("{s} skriver bare tekst. Vælg en genvej med Ctrl, Alt eller Win"),
+            ConflictKind::TypesText => format!("{s} bruges, når du skriver. Vælg en genvej med Ctrl, Alt eller Win"),
             ConflictKind::Common(what) => format!(
                 "{s} bruges til {what} i de fleste programmer og virker ikke længere dér, mens Tingskriver kører"
             ),
