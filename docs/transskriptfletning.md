@@ -71,3 +71,58 @@ og beviser, at proptests runner afviser en mutation, som sorterer på sluttid.
 ```sh
 cargo test -p tingskriver-core transcript_merge --lib
 ```
+
+## Afhængighedsvurdering og verifikation (issue #18)
+
+Eneste direkte tilføjelse er dev-afhængigheden `proptest = "1"`, låst til
+1.9.0 for at undgå opgraderinger af eksisterende pakker. Fem nye pakker i
+lockfilen; ingen eksisterende versioner ændres. Vurderet mod crates.io-indekset
+og de lokalt tilgængelige pakkekilder:
+
+- `proptest` 1.9.0: proptest-rs/ Jason Lingle, eksisteret siden juni 2017,
+  valgt udgivelse 26. oktober 2025; nyeste 1.12.0 fra 10. oktober 2026.
+  Ingen build-script eller proc-makro i standardfeatures. Læser `PROPTEST_*`
+  til testkonfiguration; ingen netværkskald ved indlæsning. Kræver Rust 1.82
+  til tests (arbejdsmiljø og CI bruger stable). Konklusion: installér som dev-afhængighed.
+- `quick-error` 1.2.3: Paul Colomiets/Colin Kiegel, siden september 2015,
+  valgt udgivelse januar 2020; nyeste 2.0.1 fra maj 2021.
+  Deklarative makroer, intet build-script eller proc-makro. Konklusion: installér transitivt.
+- `rand_xorshift` 0.4.0: Rand Project, siden oktober 2018, valgt udgivelse
+  januar 2025; nyeste 0.5.0 fra februar 2026. Ingen build-script eller
+  proc-makro. Konklusion: installér transitivt.
+- `rusty-fork` 0.3.1: Jason Lingle, siden februar 2018, seneste udgivelse
+  4. oktober 2025. Ingen build-script eller proc-makro; procesisolering og
+  timeout ved eksplicit testkørsel. Konklusion: installér transitivt.
+- `unarray` 0.1.4: proptest-rs (repository i pakkemanifest), siden juni 2022,
+  seneste udgivelse november 2022. Ingen build-script eller proc-makro.
+  Konklusion: installér transitivt.
+
+De fire transitive tilføjelser laver ikke netværkskald ved indlæsning.
+Ingen af de seneste udgivelser er under tre døgn gamle. De eksisterende
+transitive pakker genbruges; licenser og bans passerer `cargo deny --locked
+check licenses bans` (`bans ok, licenses ok`).
+
+Verificeret på Linux med stable Rust:
+
+- Målrettet: `cargo test --locked -p tingskriver-core transcript_merge --lib`:
+  **5 passed; 0 failed**, inklusive 14 fixtures og mutationskontrol.
+- Fuld suite: `cargo test --locked -p tingskriver-core`:
+  **484 passed; 0 failed; 2 ignored**. Doc-tests: **1 passed; 0 failed; 1 ignored**.
+- `cargo xwin check --locked --target x86_64-pc-windows-msvc -p tingskriver-core
+  -p tingskriver-overlay -p tingskriver-app`: bestået med LLVM 19 på PATH.
+- De to nye Rust-filer passerer `rustfmt --edition 2021 --check`.
+  `cargo clippy --locked -p tingskriver-core --lib --tests` har ingen fund i
+  modulet, men stopper på tre fejl i urørte filer: `backend_config.rs:55`
+  (`inherent_to_string_shadow_display`) og `whisper_engine.rs:1690,1890`
+  (`unused_io_amount`). Begge filer er identiske med grenens main-base.
+
+Ingen ændringer i audio, database, dictation eller arkitekturdokumentet.
+De delte filer har kun én moduleksport og den nye dev-afhængighed med lockfil.
+Tilføj senere denne linje til `docs/arkitektur.md`:
+
+> `transcript_merge`: ren tidsfletning af mikrofon- og systemsegmenter med talerlabels og overlapmarkering; se [transskriptfletning.md](transskriptfletning.md).
+
+Manuel Windows-kontrol: kør `cargo test --locked -p tingskriver-core
+transcript_merge --lib` fra en udviklerterminal og kontrollér fem beståede tests.
+Der er endnu ingen UI-integration eller adapter, som kan afprøves i appen.
+Fresh-context PR-review udføres fra Mads' PC efter opgavens fælles regler.

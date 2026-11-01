@@ -150,3 +150,38 @@ fn labels_use_configuration_and_identity_is_independent_of_label() {
     assert_eq!(Taler::Ukendt.label(&config), "Mangler");
     assert_eq!(Taler::Nummereret(2).label(&config), "Taler 2");
 }
+
+#[test]
+fn whitespace_id_is_missing_and_zero_length_does_not_hide_overlap() {
+    let mic = vec![Segment {
+        start_ms: 0,
+        slut_ms: 100,
+        tekst: "outer".into(),
+        taler: None,
+    }];
+    let system = vec![
+        Segment {
+            start_ms: 1,
+            slut_ms: 1,
+            tekst: "point".into(),
+            taler: Some("   ".into()),
+        },
+        Segment {
+            start_ms: 2,
+            slut_ms: 3,
+            tekst: "inner".into(),
+            taler: Some("x".into()),
+        },
+    ];
+    let config = MergeConfig {
+        system_diariseret: true,
+        ..Default::default()
+    };
+    let out = merge(&mic, &system, &config);
+    assert!(out[0].overlapper);
+    assert!(!out[1].overlapper);
+    assert!(out[1].taler_mangler);
+    assert_eq!(out[1].taler, Taler::Ukendt);
+    assert!(out[2].overlapper);
+    assert_eq!(out[2].taler, Taler::Nummereret(1));
+}
