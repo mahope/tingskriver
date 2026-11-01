@@ -9,27 +9,30 @@ crates/
   tingskriver-core/           audio, transcription, database, AI providers, dictation, summaries
   tingskriver-app/            GPUI app (gpui + gpui-component): shell with navigation, see gpui.md
   tingskriver-overlay/        pill and recording indicator: native Win32 layered window (Windows)
+  tingskriver-host/           host outside GPUI: dictation hook, global shortcuts, tray, AppHost bridge
 frontend/
   src-tauri/                  the current Tauri app: commands, windows, tray, notifications
   src/                        the React UI of the Tauri app
 llama-helper/                 local LLM sidecar used by the summary engine
 site/                         the project website, not built yet
-installer/                    the Velopack installer and updater, not built yet
+installer/                    the Velopack installer and updater (installer/README.md)
 ```
 
 ## Dependency direction
 
 ```
-tingskriver-app ─────┐
-tingskriver-overlay ─┼──▶ tingskriver-core ──▶ (whisper-rs, ort, cpal, sqlx, reqwest, windows, ...)
-frontend/src-tauri ──┘
+tingskriver-app ──▶ tingskriver-host ──┬──▶ tingskriver-overlay ──┐
+                                       └──────────────────────────┼──▶ tingskriver-core ──▶ (whisper-rs, ort, cpal, sqlx, reqwest, windows, ...)
+frontend/src-tauri ───────────────────────────────────────────────┘
 ```
 
 - `tingskriver-core` depends on no UI crate: no `tauri`, `tauri-*`, `gpui`,
   `gpui-*`, `wry` or `webview2`. The Linux job in `.github/workflows/rust.yml`
   fails if `cargo tree -p tingskriver-core` contains one of them.
-- The UI crates depend on core, never the other way round, and not on each
-  other.
+- The UI crates depend on core, never the other way round. The host joins
+  core, the pill and the tray for the GPUI app, so it depends on the overlay;
+  it has no GPUI or Tauri dependency (the tray is the `tray-icon` crate), and
+  the overlay does not depend on the app.
 
 ## How core talks to the UI
 
@@ -67,6 +70,15 @@ The GPUI app will implement `AppHost` on its own event channel and call the
 same core functions. Today it calls core only on its own tokio runtime (the
 database open at startup), never on the UI thread; see [gpui.md](gpui.md)
 for the shell and the GPUI version lock.
+
+## The host: keyboard hook, shortcuts and tray
+
+`crates/tingskriver-host` runs what must not wait for GPUI's event loop: the
+dictation hook (core's `WH_KEYBOARD_LL` thread), a host thread with its own
+Win32 message loop for the tray icon and the `RegisterHotKey` shortcuts, and
+the pill. Its `Bridge` is the GPUI app's `AppHost`. Details, the shortcut
+settings file, the hook timing log and the Windows test are in
+[host.md](host.md).
 
 ## The pill overlay
 
@@ -151,3 +163,77 @@ summary run after the meeting from the saved files, so a crash in a model
   headers that lag their data are repaired, a truncated segment keeps its
   readable part, an unreadable one is skipped (silence keeps later segments
   in place), and any of these gives `delvis` with the other pieces.
+
+## AI providers: one model, a chain per function
+
+`tingskriver_core::providers` is the one place that knows which AI services
+exist (SPEC D1). Meetings and dictation ask it for a provider per function
+instead of keeping their own endpoints and keys.
+
+- **Providers** (`providers::model`): name, base URL, model ids, kind
+  (`syv-ai`, `openai`, `odincore`, `open-ai-compatible`, `ollama`, `local`)
+  and whether the service labels speakers. Presets: Syv.ai
+  (`https://platform.syv.ai/v1`, with diarization), OpenAI, OdinCore
+  (`https://api.odincore.ai/v1`, `ordbogen/whisper` and `odin-2`, no
+  diarization) and the built-in local model. Everything else, also Groq and
+  OpenRouter, is a custom OpenAI-compatible provider.
+- **Chains**: each function (`transcription`, `dictation`, `summary`,
+  `assistant`, `dictation-polish`) has an ordered list of provider and model,
+  with an optional time limit per link. Defaults: Syv.ai then local for
+  transcription and dictation (Syv.ai gives up after 2 s for dictation), the
+  local model for summaries and the assistant, polishing off. A link that
+  needs a key it does not have is skipped without a call.
+- **Keys** live only in Windows Credential Manager, under `Tingskriver/syv.ai`
+  (unchanged from dictation) and `Tingskriver/udbyder/<id>`. `providers.json`
+  in the app data folder holds no key; `ApiKey` has no `Serialize` and a
+  `Debug` that prints `***`.
+- **Calls** (`providers::client`): `/audio/transcriptions`,
+  `/chat/completions` and `/models` with a time limit around the whole call,
+  so a server that hangs mid-answer counts as a timeout. Errors are
+  classified (`ProviderError`: missing key, 401/403, 404, 429 with
+  `Retry-After`, timeout, unreachable, ...) and explained in Danish without
+  the key.
+- **Fallback** (`providers::chain`): the next link is used on an error or a
+  time limit. The result says who delivered (`Delivered::delivered_by()`,
+  "leveret af Syv.ai (syv-transcribe)") and lists the failed links; both are
+  logged. A transcript from a link without diarization has
+  `speakers_missing = true` when speakers were asked for.
+- **Migration** (`providers::migrate`): the first lookup after the database
+  exists turns the old `settings`/`transcript_settings` rows and the
+  dictation endpoint into `providers.json`, moves every key to Credential
+  Manager and then clears the old columns. Claude, Deepgram and ElevenLabs
+  are no longer providers, but their keys are kept. If a key cannot be
+  stored, nothing is cleared and the migration runs again next time. An old
+  value the settings UI would refuse (an Ollama endpoint without `http://`,
+  an empty custom endpoint) drops only that provider and its links, with a
+  note; it never replaces the user's choices with the defaults.
+- **Old settings code**: the `SettingsRepository` key functions now save
+  keys to Credential Manager on Windows and NULL the column (elsewhere the
+  column is kept), read the column first and Credential Manager second, and
+  delete from Credential Manager too. Targets are those of the new model,
+  except that the transcription keys of OpenAI and Groq go to
+  `Tingskriver/udbyder/openai-transcription` and `groq-transcription` (read
+  before the shared `openai`/`groq` key). The migration also picks up keys
+  already saved there, and stores a transcription key under that target even
+  when it equals the summary key, so deleting the summary key in the old
+  screen leaves meeting transcription working.
+
+Using it from dictation or meetings:
+
+```rust
+use tingskriver_core::providers::{self, Function, ProviderError, TranscriptionRequest};
+
+let request = TranscriptionRequest { wav, file_name: "diktering.wav".into(), language: Some("da".into()), prompt, diarize: false };
+let delivered = providers::transcribe(&host, Function::Dictation, request, |link, req| async move {
+    // Only links on the built-in model end up here; link.model names it.
+    local_parakeet(&link.model, req.wav).await.map_err(ProviderError::local)
+})
+.await?; // LookupError explains every failed link in Danish
+log::info!("dictation {}", delivered.delivered_by());
+```
+
+`providers::chat` works the same way for summaries, the assistant and
+polishing. `providers::chain_for` returns the resolved links for callers that
+need their own loop. The settings UI uses `config`, `save_config`,
+`statuses`, `set_key`, `delete_key` and `test_provider` (a real `GET /models`
+with the measured round trip).
