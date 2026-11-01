@@ -95,7 +95,8 @@ giver `null`. `estimated_output_tokens` bruger tegnestimatet på alle svar;
 Estimerede og faktiske tal må ikke blandes.
 
 `requested_backend` er kun Mads' kørselsmærkat. `vulkan_active` er `true` kun ved
-både Vulkan- og positiv offload-evidens i helperens diagnostik. Ellers `null`:
+både en positiv `VulkanN model buffer size` og positiv offload-evidens i
+helperens diagnostik. Fund af en Vulkan-enhed alene er ikke nok. Ellers `null`:
 ukendt, også ved CPU-build. Et Vulkan-build beviser ikke, at Vulkan blev brugt.
 Hvis det forbliver ukendt, noter det og verificer backend med GPU-overvågning på
 referencemaskinen. Issue #20 ejer en eventuel stabil protokol for disse oplysninger;

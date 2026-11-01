@@ -28,7 +28,7 @@ export PATH=$HOME/.cargo/bin:$PATH CARGO_TARGET_DIR=$HOME/dev/cargo-target/tings
   **6 passed; 0 failed**.
 - `cargo test -p tingskriver-core --example lokal_model_eval`:
   **1 passed; 0 failed**. Tester komplette/manglende helperstatistikker,
-  nul afrundet generationstid og kravet om positiv Vulkan-offload.
+  nul afrundet generationstid og kravet om positiv Vulkan-bufferallokering samt offload (ikke blot fund af en enhed).
 - Fake-CLI blev kørt med generatorens 2-, 30- og 90-minutters testfiler.
   JSON og Markdown blev skrevet, og særskilte referatfiler blev gemt. Alle tre
   gav de forventede to plantede beslutninger og to opgaver. Faktiske tokens/s
@@ -67,8 +67,29 @@ i `summary/mod.rs` samt den lille lokale gren og to `pub(crate)`-synligheder for
 promptgenbrug i `processor.rs`. `sidecar.rs`, `llama-helper/`, `providers/`,
 `dictation/`, Cargo-manifester og lockfil er urørte.
 
-Nye pakker: **ingen**. Eksisterende `async-trait`, `serde`, `tokio`, `sysinfo`
-og `tempfile` genbruges. Ingen installation, opgradering eller modeldownload.
+Nye Cargo-pakker: **ingen**. Eksisterende `async-trait`, `serde`, `tokio`, `sysinfo`
+og `tempfile` genbruges. Ingen Cargo-installation, opgradering af repoets afhængigheder eller modeldownload.
+
+Sandboxens Clang 18 kunne ikke læse den hentede MSVC-STL (`STL1000`, kræver
+Clang 19). Derfor blev CI's LLVM 19-værktøjer installeret fra Ubuntus officielle
+noble-updates/universe: version `1:19.1.1-1ubuntu1~24.04.2`, changelog dateret
+5. december 2024, vedligeholdt af Ubuntu Developers/LLVM. Simuleringen viste
+syv nye pakker, ingen opgraderinger eller fjernelser. De downloadede pakkers
+kontrolarkiver havde ingen pre/post-installationsscripts; delte biblioteker
+aktiverer den normale `ldconfig`-trigger. Ingen `build.rs` eller proc-makroer.
+Compilerne bruger almindelige værktøjskæde-miljøvariable og laver ikke model-
+eller netværkskald ved indlæsning. APT hentede de signatur-/checksumkontrollerede
+binærpakker (54,9 MB download, 260 MB installeret).
+
+| Systempakke | Formål | Konklusion |
+|---|---|---|
+| clang-19 | Kompatibel C/C++-compiler | Installér |
+| lld-19 | Matchende Windows-linker | Installér |
+| libllvm19 | Compilerens fælles LLVM-bibliotek | Installér som nødvendig afhængighed |
+| libclang-cpp19 | Clangs C++-bibliotek | Installér som nødvendig afhængighed |
+| libclang-common-19-dev | Compilerens standardheaders | Installér som nødvendig afhængighed |
+| libclang1-19 | Bindgens Clang-bibliotek | Installér som nødvendig afhængighed |
+| llvm-19-linker-tools | LLVM-linkerhjælpere | Installér som nødvendig afhængighed |
 
 Foreslået enkelt linje til `docs/arkitektur.md` (filen er ikke ændret):
 

@@ -175,9 +175,20 @@ fn helper_stats(stderr: &str, record: &mut Record) {
         }
     }
     // Merely finding a Vulkan device does not prove tensor offload.
-    let has_vulkan = stderr
-        .lines()
-        .any(|line| line.contains("Vulkan") || line.contains("VULKAN"));
+    let has_vulkan = stderr.lines().any(|line| {
+        let Some((prefix, size)) = line.split_once(" model buffer size =") else {
+            return false;
+        };
+        let device = prefix.split_whitespace().last().unwrap_or("");
+        device
+            .strip_prefix("Vulkan")
+            .is_some_and(|id| !id.is_empty() && id.chars().all(|c| c.is_ascii_digit()))
+            && size
+                .split_whitespace()
+                .next()
+                .and_then(|n| n.parse::<f64>().ok())
+                .is_some_and(|n| n > 0.0)
+    });
     let offloaded = stderr.lines().any(|line| {
         line.contains("offloaded")
             && line.split_whitespace().any(|word| {
@@ -371,7 +382,15 @@ mod tests {
         assert_eq!(result.generated_tokens, Some(100));
         assert_eq!(result.tokens_per_second, Some(50.0));
         assert_eq!(result.vulkan_active, None);
-        helper_stats("Vulkan\noffloaded 12/32 layers\n", &mut result);
+        helper_stats(
+            "Vulkan device found\nCUDA0 model buffer size = 123.00 MiB\noffloaded 12/32 layers\n",
+            &mut result,
+        );
+        assert_eq!(result.vulkan_active, None);
+        helper_stats(
+            "Vulkan0 model buffer size = 123.00 MiB\noffloaded 12/32 layers\n",
+            &mut result,
+        );
         assert_eq!(result.vulkan_active, Some(true));
         let mut missing = record();
         helper_stats(
