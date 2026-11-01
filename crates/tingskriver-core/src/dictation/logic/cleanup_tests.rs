@@ -216,15 +216,34 @@ fn style_parsing() {
 
 #[test]
 fn long_text_is_fast() {
+    use std::time::{Duration, Instant};
+
     let sentence = "øh jeg tror altså at det komma som vi sagde punktum ";
-    let input = sentence.repeat(200);
-    let start = std::time::Instant::now();
-    let out = clean(&input, Style::Normal, &rules());
-    assert!(!out.is_empty());
+    let expected = "Jeg tror altså at det, som vi sagde.";
+    let rules = rules();
+    let measure = |count| {
+        let input = sentence.repeat(count);
+        let expected = vec![expected; count].join(" ");
+        // Best of three reduces scheduler noise on shared debug-build runners.
+        (0..3)
+            .map(|_| {
+                let start = Instant::now();
+                let out = clean(&input, Style::Normal, &rules);
+                let elapsed = start.elapsed();
+                assert_eq!(out, expected);
+                elapsed
+            })
+            .min()
+            .unwrap()
+    };
+    let short = measure(200);
+    let long = measure(3200);
+    assert!(short < Duration::from_secs(1), "200 sentences took {short:?}");
+    // 16x input should scale near 16x, not the 256x of quadratic work.
+    // Allow 4x scaling headroom plus a fixed scheduling allowance.
     assert!(
-        start.elapsed().as_millis() < 50,
-        "took {:?}",
-        start.elapsed()
+        long < short * 64 + Duration::from_millis(50),
+        "cleanup scales poorly: 200 sentences {short:?}, 3200 sentences {long:?}"
     );
 }
 

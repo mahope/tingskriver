@@ -3,6 +3,11 @@
 Layer 1 is the deterministic cleanup every dictation gets before the
 optional LLM polishing. It lives in `crates/tingskriver-core/src/dictation/logic/`
 and is tested with `cargo test -p tingskriver-core dictation`.
+The long-text regression checks exact output for 200 and 3,200 sentences,
+with best-of-three timings. It allows one second for 200 sentences in a
+shared runner's debug build and checks that 16 times the input takes less
+than 64 times as long (plus 50 ms scheduler allowance), to catch quadratic
+scaling without enforcing a release-build latency on CI.
 
 | Pass | Module | Example |
 |---|---|---|
