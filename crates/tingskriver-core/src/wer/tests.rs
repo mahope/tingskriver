@@ -62,6 +62,7 @@ normalization_test!(numbers_not_expanded, "tolv 12", "tolv 12");
 normalization_test!(aa_not_folded, "Aarhus Århus", "aarhus århus");
 normalization_test!(hyphen_boundary, "rød-grøn", "rød grøn");
 normalization_test!(apostrophe_boundary, "ta'r", "ta r");
+normalization_test!(combining_alphabetic, "a\u{0345}b", "a\u{0345}b");
 normalization_test!(empty_input, "", "");
 normalization_test!(punctuation_only, "...!?", "");
 normalization_test!(no_unicode_composition, "a\u{030a}", "a");

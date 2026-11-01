@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Compare micro-averaged WER. Exit 0 pass, 1 regression, 2 invalid/missing input."""
 import argparse
+from bisect import bisect_right
 import json
 from pathlib import Path
 import re
@@ -16,8 +17,22 @@ def require(condition):
         raise InvalidReport("Ugyldig eller usammenlignelig WER-rapport")
 
 
+# Generated from Rust char::is_alphanumeric; Python str.isalnum uses a
+# different Unicode property. The contract test checks every scalar value.
+ALPHANUMERIC_RANGES = json.loads(
+    Path(__file__).with_name("wer-unicode-alphanumeric.json").read_text(encoding="utf-8")
+)
+ALPHANUMERIC_STARTS = [start for start, _ in ALPHANUMERIC_RANGES]
+
+
+def is_alphanumeric(character):
+    codepoint = ord(character)
+    index = bisect_right(ALPHANUMERIC_STARTS, codepoint) - 1
+    return index >= 0 and codepoint <= ALPHANUMERIC_RANGES[index][1]
+
+
 def words(text):
-    return "".join(c if c.isalnum() else " " for c in text.lower()).split()
+    return "".join(c if is_alphanumeric(c) else " " for c in text.lower()).split()
 
 
 def validate(report):

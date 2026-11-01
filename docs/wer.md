@@ -13,7 +13,14 @@ bevares. Eksempel: `HEJ, ø!` bliver `hej ø`; `rød-grøn` bliver `rød grøn`.
 Apostroffer deler også ord. Decimaltegn deler tal (`1,5` bliver `1 5`).
 Tal omskrives ikke til ord, `aa` og `å` slås ikke sammen, og der sker ingen
 Unicode NFC/NFKC, dialektnormalisering, fjernelse af fyldord eller sproglig
-polering. Kombinerende accenter er ikke alfanumeriske og bliver ordgrænser.
+polering. Klassifikationen følger Rusts `char::is_alphanumeric` (Unicode Alphabetic
+eller Number). De fleste kombinerende accenter bliver ordgrænser, men fx
+U+0345 er Alphabetic og bevares. Gaten bruger den indcheckede intervaltabel
+`scripts/wer-unicode-alphanumeric.json`, genereret fra Rust.
+`python3 scripts/test-wer-gate.py` sammenholder alle Unicode-skalærværdier
+med Rust; ved Unicode-ændringer i toolchain skal tabellen regenereres med
+`rustc scripts/wer-unicode-contract.rs -o /tmp/wer-unicode-contract` og derefter
+`/tmp/wer-unicode-contract > scripts/wer-unicode-alphanumeric.json`.
 Versionen hedder `unicode-alphanumeric-lower-v1`; skift den ved regelændringer.
 
 Ord-Levenshtein tæller substitutioner, indsættelser og sletninger. Ved samme

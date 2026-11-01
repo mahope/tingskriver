@@ -20,6 +20,36 @@ def report(error_count):
 
 
 class GateTests(unittest.TestCase):
+    def test_rust_unicode_contract(self):
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / "unicode-contract"
+            subprocess.run([str(Path.home() / ".cargo/bin/rustc"), "--edition=2021",
+                            str(root / "scripts/wer-unicode-contract.rs"), "-o", str(binary)], check=True)
+            result = subprocess.run([str(binary)], capture_output=True, text=True, check=True)
+        expected = [n for start, end in gate.json.loads(result.stdout)
+                    for n in range(start, end + 1)]
+        actual = [n for n in range(0x110000) if gate.is_alphanumeric(chr(n))]
+        self.assertEqual(actual, expected)
+
+    def test_combining_alphabetic_report(self):
+        current = report(0)
+        clip = current["clips"][0]
+        clip["reference"] = clip["hypothesis"] = "a\u0345b"
+        clip["score"]["reference_words"] = 1
+        current["total"]["reference_words"] = 1
+        gate.validate(current)
+        self.assertFalse(gate.compare(current, current)[0])
+        self.assertEqual(gate.words("a\u0345b"), ["a\u0345b"])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path, baseline = root / "report.json", root / "baseline.json"
+            path.write_text(gate.json.dumps(current), encoding="utf-8")
+            command = [sys.executable, str(Path(__file__).with_name("wer-gate.py")),
+                       "--rapport", str(path), "--baseline", str(baseline)]
+            self.assertEqual(subprocess.run(command + ["--skriv-baseline"], capture_output=True).returncode, 0)
+            self.assertEqual(subprocess.run(command, capture_output=True).returncode, 0)
+
     def test_exactly_one_pp_passes(self):
         self.assertFalse(gate.compare(report(100), report(110))[0])
 
