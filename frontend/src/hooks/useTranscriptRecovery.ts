@@ -20,12 +20,33 @@ interface AudioRecoveryStatus {
   message: string;
 }
 
+export interface RecoveryResult {
+  success: boolean;
+  audioRecoveryStatus?: AudioRecoveryStatus | null;
+  meetingId?: string;
+  transcriptCount?: number;
+}
+
+/** Toast text for a finished recovery: what came back, transcript and/or audio. */
+export function recoveryDescription(result: RecoveryResult): string {
+  const audio = result.audioRecoveryStatus?.status;
+  const hasTranscript = (result.transcriptCount ?? 0) > 0;
+  if (!hasTranscript) {
+    return audio === 'partial'
+      ? 'Lyden er delvist gendannet. Dele af optagelsen kunne ikke reddes.'
+      : 'Lyden er gendannet og gemt i mødets mappe.';
+  }
+  if (audio === 'success') return 'Transskription og lyd er gendannet';
+  if (audio === 'partial') return 'Transskriptionen og en del af lyden er gendannet';
+  return 'Transskriptionen er gendannet (der var ingen lyd at gendanne)';
+}
+
 export interface UseTranscriptRecoveryReturn {
   recoverableMeetings: MeetingMetadata[];
   isLoading: boolean;
   isRecovering: boolean;
   checkForRecoverableTranscripts: () => Promise<void>;
-  recoverMeeting: (meetingId: string) => Promise<{ success: boolean; audioRecoveryStatus?: AudioRecoveryStatus | null; meetingId?: string }>;
+  recoverMeeting: (meetingId: string) => Promise<RecoveryResult>;
   loadMeetingTranscripts: (meetingId: string) => Promise<StoredTranscript[]>;
   deleteRecoverableMeeting: (meetingId: string) => Promise<void>;
 }
@@ -107,7 +128,7 @@ export function useTranscriptRecovery(): UseTranscriptRecoveryReturn {
   /**
    * Recover a meeting from IndexedDB
    */
-  const recoverMeeting = useCallback(async (meetingId: string): Promise<{ success: boolean; audioRecoveryStatus?: AudioRecoveryStatus | null; meetingId?: string }> => {
+  const recoverMeeting = useCallback(async (meetingId: string): Promise<RecoveryResult> => {
     setIsRecovering(true);
     try {
       // 1. Load meeting metadata
@@ -116,11 +137,10 @@ export function useTranscriptRecovery(): UseTranscriptRecoveryReturn {
         throw new Error('Mødets oplysninger blev ikke fundet');
       }
 
-      // 2. Load all transcripts
+      // 2. Load all transcripts. Recordings no longer transcribe live, so a
+      // meeting can have audio and no transcripts; that is recovered from the
+      // audio alone.
       const transcripts = await loadMeetingTranscripts(meetingId);
-      if (transcripts.length === 0) {
-        throw new Error('Der blev ikke fundet noget transskript for mødet');
-      }
 
       // 3. Check for folder path
       let folderPath = metadata.folderPath;
@@ -159,6 +179,13 @@ export function useTranscriptRecovery(): UseTranscriptRecoveryReturn {
           estimated_duration_seconds: 0,
           message: 'Mappen blev ikke fundet'
         };
+      }
+
+      const audioRecovered = audioRecoveryStatus.status === 'success'
+        || audioRecoveryStatus.status === 'partial';
+      if (transcripts.length === 0 && !audioRecovered) {
+        // Nothing to save: keep the meeting in the list so recovery can be retried.
+        throw new Error(audioRecoveryStatus.message || 'Der blev hverken fundet transskript eller lyd for mødet');
       }
 
       // 5. Convert StoredTranscripts to the format expected by storageService
@@ -213,7 +240,8 @@ export function useTranscriptRecovery(): UseTranscriptRecoveryReturn {
       return {
         success: true,
         audioRecoveryStatus,
-        meetingId: savedMeetingId
+        meetingId: savedMeetingId,
+        transcriptCount: transcripts.length,
       };
     } catch (error) {
       console.error('Failed to recover meeting:', error);

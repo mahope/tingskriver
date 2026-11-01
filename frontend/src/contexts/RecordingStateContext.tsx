@@ -3,6 +3,7 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { recordingService } from '@/services/recordingService';
 import { toast } from 'sonner';
+import { listen } from '@tauri-apps/api/event';
 
 /**
  * Recording state synchronized with backend
@@ -355,6 +356,51 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
       unlistenFailed?.();
       unlistenMicUnavailable?.();
       unlistenExhausted?.();
+    };
+  }, []);
+
+  // Storage problems from the recording writer and the final encode (core
+  // audio::recording_writer / audio::finalize). Messages are Danish already.
+  useEffect(() => {
+    let cancelled = false;
+    const unlisteners: Array<() => void> = [];
+
+    const setup = async () => {
+      try {
+        const subscriptions = [
+          listen<{ message: string }>('recording-storage-error', (event) => {
+            toast.error(event.payload.message, { id: 'recording-storage', duration: Infinity });
+          }),
+          listen<{ message: string }>('recording-storage-recovered', (event) => {
+            toast.success(event.payload.message, { id: 'recording-storage', duration: 5000 });
+          }),
+          listen<{ message: string }>('recording-storage-backlog', (event) => {
+            toast.warning(event.payload.message, { id: 'recording-storage-backlog', duration: 8000 });
+          }),
+          listen<{ status: string; message: string }>('recording-audio-finalized', (event) => {
+            if (event.payload.status !== 'ok') {
+              toast.error(event.payload.message, { duration: 15000 });
+            }
+          }),
+        ];
+        for (const subscription of subscriptions) {
+          const unlisten = await subscription;
+          if (cancelled) {
+            unlisten();
+          } else {
+            unlisteners.push(unlisten);
+          }
+        }
+      } catch (e) {
+        console.error('[RecordingStateContext] Failed to set up storage listeners:', e);
+      }
+    };
+
+    setup();
+
+    return () => {
+      cancelled = true;
+      unlisteners.forEach((unlisten) => unlisten());
     };
   }, []);
 
