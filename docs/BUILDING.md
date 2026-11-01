@@ -20,13 +20,21 @@ Frozen installation keeps the lockfile and installed dependency set aligned. Whe
 
 ## Workspace, tests and CI for agents
 
-The repository is a Cargo workspace (see [arkitektur.md](arkitektur.md)): `crates/tingskriver-core` holds the logic, `crates/tingskriver-app` the GPUI app, `crates/tingskriver-overlay` the Windows overlay and `frontend/src-tauri` the current Tauri app.
+The repository is a Cargo workspace (see [arkitektur.md](arkitektur.md)): `crates/tingskriver-core` holds the logic, `crates/tingskriver-app` the GPUI app, `crates/tingskriver-overlay` the Windows overlay, `crates/tingskriver-host` the hook, shortcut and tray host and `frontend/src-tauri` the current Tauri app.
 
 ```bash
 cargo test -p tingskriver-core          # platform independent tests, runs on Linux
 cargo test -p tingskriver-core dictation
 cargo test --workspace                  # everything; the Tauri crate needs the Linux Tauri libraries
 ```
+
+Dictation insertion has a test against a real window and the real clipboard. It only runs on a Windows desktop session and on request, since it types into a test window (do not touch the keyboard while it runs):
+
+```powershell
+cargo test -p tingskriver-core --lib insertion_window -- --ignored --test-threads=1
+```
+
+It inserts 50 dictations in a row with a 24 MB image and text on the clipboard and checks the text and the clipboard after each one, and checks that a field which ignores paste gets the text typed.
 
 The Tauri crate's build script checks that its sidecars exist. For a local `cargo check`/`cargo test` outside a full build, create an empty placeholder: `touch frontend/src-tauri/binaries/llama-helper-$(rustc -vV | sed -n 's/host: //p')`.
 
@@ -38,7 +46,7 @@ Most new Rust code is Windows-only (`#[cfg(windows)]`), and Linux `cargo check` 
 rustup target add x86_64-pc-windows-msvc
 cargo install cargo-xwin --locked
 sudo apt-get install clang llvm lld ninja-build cmake   # Debian: llvm-19 lld-19, then add /usr/lib/llvm-19/bin to PATH
-cargo xwin check --target x86_64-pc-windows-msvc -p tingskriver-core -p tingskriver-overlay -p tingskriver-app
+cargo xwin check --target x86_64-pc-windows-msvc -p tingskriver-core -p tingskriver-overlay -p tingskriver-host -p tingskriver-app
 ```
 
 whisper.cpp builds fine this way. The Tauri crate itself does not: its build script verifies the downloaded `ffmpeg.exe` by running it. For a local check only, a stub that answers `-version` gets past that:
@@ -51,6 +59,10 @@ cargo xwin check --target x86_64-pc-windows-msvc -p tingskriver
 ```
 
 Delete the stub before building an installer on that machine. CI runs the same xwin check (without the Tauri crate) in `.github/workflows/rust.yml`.
+
+### Windows installer for the GPUI app (Velopack)
+
+`installer/pack.ps1` packs `tingskriver-app.exe` with Velopack into `Tingskriver-Setup.exe` (per user, no administrator), full and delta packages and the update feed. CI does it in `.github/workflows/app-release.yml`, and a tag `app-v<workspace version>` publishes a GitHub Release. Hooks, updates, the release steps and a test recipe for a clean VM are in [installer/README.md](../installer/README.md).
 
 ### Dependency licences (cargo deny)
 

@@ -7,7 +7,7 @@ Agents work on Linux and cannot build or run the Windows app. These commands are
 cargo test -p tingskriver-core
 
 # Type-check the Windows code (#[cfg(windows)]) from Linux
-cargo xwin check --target x86_64-pc-windows-msvc -p tingskriver-core -p tingskriver-overlay -p tingskriver-app
+cargo xwin check --target x86_64-pc-windows-msvc -p tingskriver-core -p tingskriver-overlay -p tingskriver-host -p tingskriver-app
 
 # Dependency licences (deny.toml)
 cargo deny --locked check licenses bans

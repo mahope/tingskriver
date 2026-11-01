@@ -36,8 +36,17 @@ fn modifier_bit(vk_code: u32) -> Option<u8> {
     }
 }
 
+/// The modifiers of a [`Chord`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Modifiers {
+    pub ctrl: bool,
+    pub win: bool,
+    pub alt: bool,
+    pub shift: bool,
+}
+
 /// A shortcut: a set of modifiers plus at most one ordinary key.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Chord {
     modifiers: u8,
     key: Option<u32>,
@@ -79,6 +88,22 @@ impl Chord {
 
     pub fn uses_win(&self) -> bool {
         self.modifiers & MOD_WIN != 0
+    }
+
+    /// Which modifiers the shortcut holds.
+    pub fn modifiers(&self) -> Modifiers {
+        Modifiers {
+            ctrl: self.modifiers & MOD_CTRL != 0,
+            win: self.modifiers & MOD_WIN != 0,
+            alt: self.modifiers & MOD_ALT != 0,
+            shift: self.modifiers & MOD_SHIFT != 0,
+        }
+    }
+
+    /// Virtual-key code of the ordinary key, `None` for a shortcut of
+    /// modifiers only (like Ctrl+Win).
+    pub fn key(&self) -> Option<u32> {
+        self.key
     }
 
     /// Canonical text form, e.g. "Ctrl+Win".
@@ -407,6 +432,23 @@ mod tests {
         assert!(t.is_active());
         assert_eq!(t.resync(|vk| vk == vk::CONTROL), Some(ChordSignal::Interrupted));
         assert!(!t.is_active());
+    }
+
+    #[test]
+    fn exposes_modifiers_and_key() {
+        let chord = Chord::parse("Ctrl+Alt+Space").unwrap();
+        assert_eq!(
+            chord.modifiers(),
+            Modifiers {
+                ctrl: true,
+                alt: true,
+                ..Modifiers::default()
+            }
+        );
+        assert_eq!(chord.key(), Some(vk::SPACE));
+        let chord = Chord::parse("Ctrl+Win").unwrap();
+        assert!(chord.modifiers().win && chord.modifiers().ctrl);
+        assert_eq!(chord.key(), None);
     }
 
     #[test]
