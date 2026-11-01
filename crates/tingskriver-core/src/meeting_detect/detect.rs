@@ -185,6 +185,9 @@ pub fn detect(snapshot: &Snapshot, previous: &DetectorState) -> (Decision, Detec
                     && elapsed(snapshot.now, speech, SILENCE_SECONDS)
             });
             if lost || silent {
+                if lost || decision.source != active.session.source {
+                    decision = empty(Reason::NoMeeting);
+                }
                 decision.source = active.session.source;
                 decision.action = Action::Stop;
                 decision.reason = if lost {

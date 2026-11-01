@@ -52,6 +52,7 @@ Discord, ukendte processer og Tingskrivers egen proces er ikke mødekilder.
 kan aldrig opfylde et mødes procesmatch. Korte mikrofonudbrud, vinduer uden
 mikrofon, YouTube/Netflix, Teams-chat og Meet/Zoom-forsider giver ingen start.
 Årsager og signaler er faste enums uden vinduestitler eller mødenavne.
+Stopbeslutninger medtager ikke årsagssignaler fra en anden mødekilde.
 Snapshottene indeholder titler og bør derfor ikke logges.
 
 Mødeidentitet er kilde, mikrofonproces og mikrofonstart. Hvis indsamleren lader
@@ -87,8 +88,8 @@ Et nyt forløb kan starte normalt. Værten bør behandle stop før næste snapsh
 `cargo test -p tingskriver-core meeting_detect --lib` indlæser alle JSON-filer i
 `tests/fixtures/meeting_detect/`. Testen kræver mindst 30 filer, mindst ét trin
 pr. fil, vellykket parsing og præcis beslutning pr. trin. Hvert kald gentages
-med samme input for at kontrollere determinisme, og tilstanden serde-rundtures.
-De 55 fixtures indeholder 85 snapshots. Alle fixturetitler er syntetiske.
+med samme input for at kontrollere determinisme, og tilstanden serialiseres og læses tilbage.
+De 56 fixtures indeholder 88 snapshots. Alle fixturetitler er syntetiske.
 Tidsforløbene bruger falsk tid, herunder
 mikrofonens femsekundersgrænse, 29/30/31 sekunders fravær, kalenderfrist,
 ny tale og et nyt møde umiddelbart efter.
