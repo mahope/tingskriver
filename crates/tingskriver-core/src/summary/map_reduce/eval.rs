@@ -50,12 +50,14 @@ pub fn fixture(minutes: usize) -> Fixture {
         tasks: vec![
             vec![
                 "Birk Måneskov".into(),
+                "bestiller".into(),
                 "12".into(),
                 "mapper".into(),
                 "2026-12-04".into(),
             ],
             vec![
                 "Alma Vinterdal".into(),
+                "sender".into(),
                 "invitation".into(),
                 "2026-12-08".into(),
             ],
@@ -176,6 +178,21 @@ pub async fn danish_report<M: Model>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn tasks_require_actions_as_well_as_owners_objects_and_deadlines() {
+        let fixture = fixture(2);
+        let summary =
+            "Birk Måneskov: 12 mapper, 2026-12-04\nAlma Vinterdal: invitation, 2026-12-08";
+        assert_eq!(quality(&fixture, summary).tasks_found, 0);
+        assert_eq!(
+            quality(
+                &fixture,
+                "Birk Måneskov bestiller 12 mapper senest 2026-12-04.\nAlma Vinterdal sender invitation senest 2026-12-08."
+            )
+            .tasks_found,
+            2
+        );
+    }
     #[tokio::test]
     async fn fake_runs_actual_report_prompts_and_scores_facts() {
         let fixture = fixture(2);

@@ -53,7 +53,8 @@ end naturlige møder. En god score her erstatter ikke en senere vurdering af
 varieret tale, rettelser, uenighed og støjfyldt transskription.
 
 Beslutninger og opgaver tælles, når alle plantede felter findes på samme linje
-(ufølsomt for store/små bogstaver). Opgaver kræver ejer, handling og frist.
+(ufølsomt for store/små bogstaver). Opgaver kræver ejer, handling (markørerne
+“bestiller” og “sender”), objekt/antal og frist.
 Parafraser, oversatte navne eller felter på forskellige linjer kan give falske
 negative. Ord i samme linje kan give falske positive. Kontroller manuelt.
 Tal, der kun findes i referatet, og par af ord med stort begyndelsesbogstav,
