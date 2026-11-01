@@ -220,7 +220,7 @@ async fn legacy_fixtures_preserve_original_and_are_idempotent() {
     let report = migrate_legacy_notes(&pool).await.unwrap();
     assert_eq!(report.migrated, originals.len());
     assert_eq!(report.failed, 1);
-    assert_eq!(report.unsupported_blocks, 3);
+    assert_eq!(report.unsupported_blocks, 4);
     let store = NotesStore::new(pool.clone());
     for (id, json) in originals {
         let original: String =

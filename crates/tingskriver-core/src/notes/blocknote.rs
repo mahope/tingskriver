@@ -37,7 +37,23 @@ fn inline(value: &Value, spans: &mut Vec<Span>) {
                     key.as_str(),
                     "text" | "styles" | "type" | "id" | "url" | "href"
                 ) {
-                    inline(child, spans);
+                    if matches!(key.as_str(), "rows" | "cells") {
+                        if let Some(items) = child.as_array() {
+                            for (index, item) in items.iter().enumerate() {
+                                if index > 0 {
+                                    spans.push(Span {
+                                        text: " ".into(),
+                                        ..Span::default()
+                                    });
+                                }
+                                inline(item, spans);
+                            }
+                        } else {
+                            inline(child, spans);
+                        }
+                    } else {
+                        inline(child, spans);
+                    }
                 }
             }
         }

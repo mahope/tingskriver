@@ -67,7 +67,8 @@ skrives ikke til logs eller fejlbeskeder. Fejlede møder forsøges igen næste g
 BlockNote 0.36-arrays understøttes: `type`, `props`, inline `content`/`styles`
 og rekursive `children`. Indrykning flades ud i læserækkefølge, da målmodellen
 ikke har en indrykningsdybde. Ukendte typer bliver afsnit; tekst i indhold,
-tabellens rækker/celler, billedtekster og filnavne bevares. Styling ud over
+tabellens rækker/celler, billedtekster og filnavne bevares. Tabelrækker og
+celler adskilles med mellemrum, så ordene forbliver læsbare og søgbare. Styling ud over
 fed/kursiv, links, billeder og tabellayout gemmes fortsat i original-JSON.
 Uden JSON importeres den eksisterende markdown-kopi.
 
@@ -115,7 +116,7 @@ snippets bør vises via modellen, hvis markørerne skal skjules.
 ## Test
 
 `cargo test -p tingskriver-core --test notes` dækker alle bloktyper og escaping,
-512 property-eksempler med vilkårlig Unicode, 11 syntetiske BlockNote-fixtures
+512 property-eksempler med vilkårlig Unicode, 12 syntetiske BlockNote-fixtures
 med faste markdown-facit, bevaring af original-JSON, idempotens, isoleret fejl,
 doven migrering, transaktionsrollback, cascade, tidsgrænser og autosave.
 Databaseprøver bruger in-memory SQLite med hele det rigtige migrationssæt.
