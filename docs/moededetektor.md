@@ -40,7 +40,8 @@ browserbeslutning er derfor et forslag uden kalenderstøtte.
   ikke til match. Ved overlap vælges den tidligste slutdato deterministisk.
 - Forgrundsvindue er et ekstra årsagssignal og bruges som prioritet ved flere
   kandidater. Høj sikkerhed prioriteres først, derefter forgrund, derefter den
-  faste `Source`-rækkefølge og seneste mikrofonstart. Inputrækkefølgen er uden betydning.
+  faste `Source`-rækkefølge, seneste mikrofonstart og procesnavn som sidste
+  lighedsbryder. Inputrækkefølgen er uden betydning.
 - `start_modes` vælger pr. kilde `automatic` (standard), `ask` eller `off`.
   Automatic starter ved høj sikkerhed og foreslår ved middel. Ask foreslår altid;
   off giver ingen start. En eksisterende optagelse får ingen ny startbeslutning.
@@ -83,7 +84,8 @@ Et nyt forløb kan starte normalt. Værten bør behandle stop før næste snapsh
 `tests/fixtures/meeting_detect/`. Testen kræver mindst 30 filer, mindst ét trin
 pr. fil, vellykket parsing og præcis beslutning pr. trin. Hvert kald gentages
 med samme input for at kontrollere determinisme, og tilstanden serde-rundtures.
-Alle fixturetitler er syntetiske. Tidsforløbene bruger falsk tid, herunder
+De 55 fixtures indeholder 85 snapshots. Alle fixturetitler er syntetiske.
+Tidsforløbene bruger falsk tid, herunder
 mikrofonens femsekundersgrænse, 29/30/31 sekunders fravær, kalenderfrist,
 ny tale og et nyt møde umiddelbart efter.
 
