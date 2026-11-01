@@ -33,6 +33,11 @@ pub struct ContinuousVadProcessor {
 }
 
 impl ContinuousVadProcessor {
+    #[cfg(test)]
+    pub(crate) fn buffered_session_samples(&self) -> usize {
+        self.session.session_audio_samples()
+    }
+
     pub fn new(input_sample_rate: u32, redemption_time_ms: u32) -> Result<Self> {
         crate::ensure_onnx_runtime_available()?;
 
@@ -110,6 +115,18 @@ impl ContinuousVadProcessor {
         while self.buffer.len() >= self.chunk_size {
             let chunk: Vec<f32> = self.buffer.drain(..self.chunk_size).collect();
             self.process_chunk(&chunk)?;
+
+            // Keep pending speech (before SpeechStart) and the network's
+            // unprocessed tail. Trimming to session_time with zero padding
+            // would discard samples the network has not processed yet.
+            let padding = self.session.config_mut().pre_speech_pad;
+            let keep =
+                padding + self.session.config_mut().min_speech_time + Duration::from_millis(64);
+            if self.session.session_time() > keep {
+                self.session.config_mut().pre_speech_pad = keep;
+                self.session.trim_start_silence();
+                self.session.config_mut().pre_speech_pad = padding;
+            }
 
             // Extract any completed speech segments
             while let Some(segment) = self.speech_segments.pop_front() {

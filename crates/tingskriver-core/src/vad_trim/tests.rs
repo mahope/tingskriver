@@ -439,3 +439,44 @@ async fn text_provider_receives_only_trimmed_audio_in_one_call() {
     assert_eq!(result.audio.samples, trimmed.samples);
     assert!(result.audio.samples.len() < audio.len());
 }
+
+#[tokio::test]
+async fn stationary_broadband_noise_above_initial_gate_skips_provider() {
+    let mut seed = 37u32;
+    let noise: Vec<f32> = (0..480_000)
+        .map(|_| {
+            seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+            ((seed >> 8) as f32 / 16_777_216.0 * 2.0 - 1.0) * 0.01
+        })
+        .collect();
+    let fake = Fake {
+        calls: AtomicUsize::new(0),
+        expected_samples: 0,
+    };
+    let result = transcribe_trimmed(&fake, &noise, &config(), None)
+        .await
+        .unwrap();
+    assert!(result.transcript.text.is_empty());
+    assert_eq!(fake.calls.load(Ordering::SeqCst), 0);
+    let (mut audio, truth) = clip(0.06);
+    for (i, sample) in audio.iter_mut().enumerate() {
+        *sample += noise[i % noise.len()];
+    }
+    let result = trim(&audio, &config()).unwrap();
+    for (start, end) in truth {
+        assert!(result
+            .segments
+            .iter()
+            .any(|s| s.orig_start <= start && s.orig_end >= end));
+    }
+}
+
+#[test]
+fn silero_streaming_silence_has_bounded_session_storage() {
+    let mut processor = super::trim::silero(&config()).unwrap();
+    for _ in 0..10_000 {
+        assert!(processor.process_audio(&[0.0; 480]).unwrap().is_empty());
+        assert!(processor.buffered_session_samples() <= 4000);
+    }
+    assert!(processor.flush().unwrap().is_empty());
+}

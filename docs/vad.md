@@ -28,8 +28,11 @@ Both make two streaming passes: detect intervals, then collect selected audio.
 Memory contains the speech output, interval index, and a decoder packet/frame,
 not the entire original file. Thus an all-speech file still requires memory
 proportional to its speech. Inputs must remain unchanged between passes.
-Silero also retains the current utterance internally. The legacy meeting
-retranscription path still decodes/resamples its source into memory first; it
+Silero also retains the current utterance internally. After each frame it drops
+old silence while retaining pre-speech padding, the minimum speech duration
+and 64 ms for pending speech and unprocessed network input. Silence storage
+therefore stays bounded, including when configured padding is zero. The legacy
+meeting retranscription path still decodes/resamples its source into memory first; it
 does not yet call the streaming file API.
 
 ## Backend and fallback
@@ -56,10 +59,16 @@ are configurable without changing the old constructor's behavior.
 Energy VAD uses 30 ms frames, a 200 Hz high-pass RMS, a slowly adapting noise
 floor, and a first-difference energy ratio to reject narrow low-frequency hum.
 The threshold raises both the absolute RMS gate and its required ratio above
-the noise floor. Only broadband nonspeech frames update that floor, so hum and sustained speech
-do not teach the detector to suppress itself. The same interval builder
-bridges pauses, rejects short events, pads intervals, merges overlapping pads,
-and retains speech at EOF. This is a conservative fallback, not a semantic
+the noise floor. Broadband nonspeech frames update that floor slowly.
+Independently, four frames (120 ms) whose high-pass RMS differs by less than
+15% and stays below 0.006 raise the floor to their minimum RMS if the current
+frame is broadband. This learns
+stationary low background noise even when it exceeds the initial gate, before
+the default 150 ms speech minimum qualifies an utterance. RMS variation above
+15% and louder input do not qualify for this stationary-background update.
+A shorter configured speech minimum may retain the initial calibration frames.
+The same interval builder bridges pauses, rejects short events, pads intervals,
+merges overlapping pads, and retains speech at EOF. This is a conservative fallback, not a semantic
 speech classifier: loud broadband noise/music may still pass, and very quiet
 or narrow-band speech may be missed. Device-specific calibration is not proved
 by the synthetic tests.
@@ -77,7 +86,7 @@ by the synthetic tests.
 The meeting compatibility adapter keeps the caller's existing 2000 ms silence
 minimum. Silero's negative threshold is `max(threshold - 0.15, 0)`.
 In the energy backend the RMS gate is `max(0.0015 + threshold * 0.003,
-noise_floor * (2 + threshold * 4))`; the initial floor is `0.0003`.
+noise_floor * (1.5 + threshold))`; the initial floor is `0.0003`.
 First-difference energy must exceed 2% of raw energy to reject mains hum.
 Synthetic noise speech bursts at amplitudes 0.012 through 0.4 are covered.
 
@@ -136,7 +145,10 @@ The tests cover 30 s silence/low noise with zero fake-provider calls; five
 pause-containing synthetic clips with 100% known speech-sample coverage; word
 and segment timestamp restoration within 100 ms; monotonic/boundary mapping;
 missing-runtime selection; parameters; EOF/padding; streaming PCM and WAV;
-wrong file rate; invalid samples; cancellation/progress; Silero silent startup.
+wrong file rate; invalid samples; cancellation/progress; Silero silent startup;
+300 s of streamed silence with a real Silero session and a bounded internal
+sample count; stationary broadband noise at amplitude 0.01 with zero provider
+calls and subsequent modulated speech coverage.
 
 There is **no real speech fixture in this repository**. Synthetic bursts prove
 interval coverage, not word recognition or Silero recall. The Silero smoke test
