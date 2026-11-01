@@ -45,7 +45,18 @@ pub struct WhisperContextAcceleration {
 }
 
 impl WhisperContextAcceleration {
+    pub fn with_diagnose_policy(mut self, cpu_required: bool) -> Self {
+        if cpu_required {
+            self.use_gpu = false;
+            self.flash_attn = false;
+        }
+        self
+    }
+
     pub fn status_label(self) -> &'static str {
+        if !self.use_gpu {
+            return "CPU processing only";
+        }
         match (self.compiled_backend, self.flash_attn) {
             (WhisperCompiledBackend::Metal, true) => "Metal GPU with Flash Attention (Ultra-Fast)",
             (WhisperCompiledBackend::Metal, false) => "Metal GPU acceleration",
@@ -64,10 +75,15 @@ pub fn whisper_context_acceleration_for(
     performance_tier: PerformanceTier,
 ) -> WhisperContextAcceleration {
     let use_gpu = !matches!(compiled_backend, WhisperCompiledBackend::Cpu);
-    let fast_tier = matches!(performance_tier, PerformanceTier::High | PerformanceTier::Ultra);
+    let fast_tier = matches!(
+        performance_tier,
+        PerformanceTier::High | PerformanceTier::Ultra
+    );
     let flash_attn = match compiled_backend {
         WhisperCompiledBackend::Metal | WhisperCompiledBackend::Cuda => fast_tier,
-        WhisperCompiledBackend::Vulkan | WhisperCompiledBackend::HipBlas | WhisperCompiledBackend::Cpu => false,
+        WhisperCompiledBackend::Vulkan
+        | WhisperCompiledBackend::HipBlas
+        | WhisperCompiledBackend::Cpu => false,
     };
 
     WhisperContextAcceleration {
@@ -139,6 +155,29 @@ mod tests {
 
             assert!(!params.use_gpu);
             assert!(!params.flash_attn);
+        }
+    }
+}
+
+#[cfg(test)]
+mod diagnose_tests {
+    use super::*;
+    #[test]
+    fn diagnose_cpu_policy_reaches_context_flags() {
+        for backend in [
+            WhisperCompiledBackend::Cpu,
+            WhisperCompiledBackend::Vulkan,
+            WhisperCompiledBackend::Cuda,
+            WhisperCompiledBackend::Metal,
+            WhisperCompiledBackend::HipBlas,
+        ] {
+            let original =
+                whisper_context_acceleration_for(backend, GpuType::Vulkan, PerformanceTier::High);
+            assert_eq!(original.with_diagnose_policy(false), original);
+            let cpu = original.with_diagnose_policy(true);
+            assert!(!cpu.use_gpu);
+            assert!(!cpu.flash_attn);
+            assert_eq!(cpu.compiled_backend, backend);
         }
     }
 }
