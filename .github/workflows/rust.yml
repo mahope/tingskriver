@@ -79,8 +79,20 @@ jobs:
         env:
           ORT_DYLIB_PATH: ${{ github.workspace }}\frontend\src-tauri\binaries\onnxruntime\onnxruntime.dll
         run: >-
-          .github/scripts/annotate-errors.sh cargo test --workspace --locked --no-fail-fast --
+          .github/scripts/annotate-errors.sh cargo test --workspace --locked --no-fail-fast
+          --exclude tingskriver-host --
           --skip audio::playback_monitor::tests::test_get_output_device
+
+      # The host's tests register system-wide shortcuts and a tray icon; one at
+      # a time, with output, so a crash shows which test was running.
+      - name: Test tingskriver-host
+        if: ${{ !cancelled() }}
+        shell: bash
+        env:
+          ORT_DYLIB_PATH: ${{ github.workspace }}\frontend\src-tauri\binaries\onnxruntime\onnxruntime.dll
+        run: >-
+          .github/scripts/annotate-errors.sh cargo test --locked -p tingskriver-host --
+          --test-threads=1 --nocapture
 
   linux-core:
     name: Core tests and crate boundaries (Linux)
@@ -126,6 +138,10 @@ jobs:
       # The overlay's state model, layout and renderer are platform independent.
       - name: Test tingskriver-overlay
         run: .github/scripts/annotate-errors.sh cargo test --locked -p tingskriver-overlay
+
+      # The host's bridge, tray status, icon, shortcut registry and watchers.
+      - name: Test tingskriver-host
+        run: .github/scripts/annotate-errors.sh cargo test --locked -p tingskriver-host
 
   # Release build of the GPUI app for the manual Windows tests in
   # docs/gpui.md (text input, IME, UI Automation, DPI, start time, no GPU).
@@ -218,4 +234,4 @@ jobs:
           prefix-key: tingskriver-xwin-v1
 
       - name: cargo xwin check
-        run: .github/scripts/annotate-errors.sh cargo xwin check --locked --target x86_64-pc-windows-msvc -p tingskriver-core -p tingskriver-overlay -p tingskriver-app
+        run: .github/scripts/annotate-errors.sh cargo xwin check --locked --target x86_64-pc-windows-msvc -p tingskriver-core -p tingskriver-overlay -p tingskriver-host -p tingskriver-app

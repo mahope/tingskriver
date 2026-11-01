@@ -132,6 +132,11 @@ impl Store {
         Ok(Store { pool })
     }
 
+    /// The pool, for tables kept in their own module (`timings`).
+    pub fn pool(&self) -> SqlitePool {
+        self.pool.clone()
+    }
+
     // -- settings ----------------------------------------------------------
 
     pub async fn settings(&self) -> Result<DictationSettings, String> {
