@@ -14,9 +14,12 @@ eller en grøn CI-kørsel erstatter ikke dette trin.
 
   ```powershell
   powershell -ExecutionPolicy Bypass -File scripts\maal-ydeevne.ps1 | Out-File -Encoding utf8 maaling.md
-  python scripts/ydeevne-port.py maaling.md > ydeevne-rapport.md
+  cmd /c "python scripts/ydeevne-port.py maaling.md > ydeevne-rapport.md"
   if ($LASTEXITCODE -ne 0) { throw 'Ydeevne-porten stoppede releasen' }
   ```
+
+`cmd /c` bevarer Python-rapportens UTF-8-bytes ved omdirigering, også i
+PowerShell 5.1.
 
 - [ ] Kontrollér, at forventede målinger faktisk er med. `null` eller manglende
   nøgler står som "ikke målt" og kan ikke bevise, at en måling overholder grænsen.
