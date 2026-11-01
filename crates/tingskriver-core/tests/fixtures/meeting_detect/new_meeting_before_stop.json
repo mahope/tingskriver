@@ -44,6 +44,24 @@
     },
     {
       "snapshot": {
+        "now": 210,
+        "microphone_users": [],
+        "windows": [],
+        "calendar": [],
+        "dictation_active": false,
+        "recording_active": true,
+        "last_speech_at": null
+      },
+      "expected": {
+        "source": "unknown",
+        "confidence": "low",
+        "signals": [],
+        "action": "none",
+        "reason": "no_meeting"
+      }
+    },
+    {
+      "snapshot": {
         "now": 501,
         "microphone_users": [
           {

@@ -82,6 +82,8 @@ pub fn detect(snapshot: &Snapshot, previous: &DetectorState) -> (Decision, Detec
         })
         .max_by_key(|c| {
             (
+                snapshot.recording_active
+                    || snapshot.start_modes.get(&c.source) != Some(&StartMode::Off),
                 c.stable,
                 end.is_some() || !browser_source(c.source),
                 c.foreground,
@@ -138,11 +140,17 @@ pub fn detect(snapshot: &Snapshot, previous: &DetectorState) -> (Decision, Detec
                 decision.action = Action::None;
                 decision.reason = Reason::MeetingAlreadyStopped;
             } else {
-                let same = state
-                    .active
-                    .as_ref()
-                    .is_some_and(|active| active.session == session);
-                if !same {
+                let same = state.active.as_ref().is_some_and(|active| {
+                    active.session == session
+                        || (active.session.source == session.source
+                            && active.session.microphone_process == session.microphone_process
+                            && active.signals_missing_since.is_none())
+                });
+                if same {
+                    if let Some(active) = state.active.as_mut() {
+                        active.session = session;
+                    }
+                } else {
                     state.active = Some(ActiveMeeting {
                         session,
                         observed_at: snapshot.now,
@@ -158,6 +166,9 @@ pub fn detect(snapshot: &Snapshot, previous: &DetectorState) -> (Decision, Detec
     }
     if snapshot.recording_active {
         if let Some(active) = state.active.as_mut() {
+            if active.calendar_end.is_none() {
+                active.calendar_end = end;
+            }
             let window_present = snapshot
                 .windows
                 .iter()
