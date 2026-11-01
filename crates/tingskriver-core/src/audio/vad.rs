@@ -63,6 +63,12 @@ impl ContinuousVadProcessor {
         debug!("Creating VAD session with: sample_rate={}Hz, redemption={}ms, min_speech={}ms, input_rate={}Hz",
                VAD_SAMPLE_RATE, redemption_time_ms, 250, input_sample_rate);
 
+        Self::with_config(input_sample_rate, config)
+    }
+
+    /// Create a batch processor with caller-controlled segmentation parameters.
+    pub fn with_config(input_sample_rate: u32, config: VadConfig) -> Result<Self> {
+        crate::ensure_onnx_runtime_available()?;
         let session = VadSession::new(config)
             .map_err(|e| anyhow!("Failed to create VAD session: {:?}", e))?;
 

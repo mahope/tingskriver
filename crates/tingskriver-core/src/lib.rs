@@ -37,6 +37,7 @@ pub mod analytics;
 pub mod anthropic;
 pub mod api;
 pub mod audio;
+pub mod vad_trim;
 pub mod config;
 pub mod database;
 pub mod dictation;
