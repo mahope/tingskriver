@@ -60,7 +60,8 @@ strengliteraler med bogstaver i `child`, `label`, `title`, `placeholder`,
 `tooltip`, `Label::new`, `SharedString::from`, `format!` og de eksisterende
 tekst-wrappere i `ui.rs`. Fejl viser fil og linje og henviser til kataloget.
 Positive kontroller bruger syntetiske kilder med rå tekst, katalogkald,
-logmakroer, miljømakroer og kommentarer. Linten ændrer ikke kildefiler.
+logmakroer, miljømakroer og kommentarer. Betingede tekster i `Label::new` og
+`SharedString::from` kontrolleres også. Linten ændrer ikke kildefiler.
 
 Undtagelser står kun i `ALLOW` i samme testfil som eksakte par af relativ
 filsti og literal. Listen omfatter tekniske IPC-stier, element-id'er,

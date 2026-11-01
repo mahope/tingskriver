@@ -86,7 +86,21 @@ fn violations(source: &str, file: &str) -> Vec<String> {
             } else {
                 previous
             };
-            stack.push(name);
+            let qualified_name = match (i.checked_sub(3), i.checked_sub(2), name) {
+                (Some(owner), Some(separator), "new")
+                    if tokens[owner].as_str() == "Label" && tokens[separator].as_str() == "::" =>
+                {
+                    "Label::new"
+                }
+                (Some(owner), Some(separator), "from")
+                    if tokens[owner].as_str() == "SharedString"
+                        && tokens[separator].as_str() == "::" =>
+                {
+                    "SharedString::from"
+                }
+                _ => name,
+            };
+            stack.push(qualified_name);
         } else if text == ")" {
             stack.pop();
         } else if text.starts_with('"') || text.starts_with("r#") || text.starts_with("r\"") {
@@ -97,7 +111,9 @@ fn violations(source: &str, file: &str) -> Vec<String> {
             let visible = stack.last().is_some_and(|name| {
                 matches!(
                     *name,
-                    "child"
+                    "Label::new"
+                        | "SharedString::from"
+                        | "child"
                         | "label"
                         | "title"
                         | "placeholder"
@@ -112,20 +128,7 @@ fn violations(source: &str, file: &str) -> Vec<String> {
                         | "loading"
                         | "page"
                 )
-            }) || stack.last().is_some_and(|name| {
-                *name == "new"
-                    && i >= 4
-                    && tokens[..i]
-                        .iter()
-                        .rev()
-                        .take(4)
-                        .any(|t| t.as_str() == "Label")
-            }) || (stack.last() == Some(&"from")
-                && tokens[..i]
-                    .iter()
-                    .rev()
-                    .take(4)
-                    .any(|t| t.as_str() == "SharedString"));
+            });
             let exempt = stack.iter().any(|name| {
                 matches!(
                     *name,
@@ -192,6 +195,8 @@ fn raw_ui_string_positive_control() {
         r#"x.label( "Hello")"#,
         r#"Label::new("Hello")"#,
         r#"SharedString::from("Hello")"#,
+        r#"Label::new(if ready { "Klar" } else { "Venter" })"#,
+        r#"SharedString::from(if ready { "Klar" } else { "Venter" })"#,
         r#"format!("Hello {}", name)"#,
         "x.placeholder(\n r#\"Hello\"#)",
     ] {
@@ -203,6 +208,8 @@ fn raw_ui_string_positive_control() {
     for source in [
         "div().child(strings::MEETINGS)",
         "x.label(strings::version(version))",
+        "Label::new(if ready { strings::MEETINGS } else { strings::SETTINGS })",
+        "SharedString::from(if ready { strings::MEETINGS } else { strings::SETTINGS })",
         r#"log::info!("Hello")"#,
         r#"x.child(env!("VERSION"))"#,
         r#"// x.child("Hello")"#,
@@ -214,6 +221,20 @@ fn raw_ui_string_positive_control() {
         );
     }
     assert_eq!(violations("#[cfg(test)] mod tests { fn x() { div().child(\"Test\"); } } fn production() { div().child(\"Hello\"); }", "fixture.rs").len(), 1);
+}
+
+#[test]
+fn conditional_ui_strings_are_checked_in_both_branches() {
+    for constructor in ["Label::new", "SharedString::from"] {
+        let source = format!("{constructor}(if ready {{ \"Klar\" }} else {{ \"Venter\" }})");
+        assert_eq!(violations(&source, "fixture.rs").len(), 2, "{source}");
+    }
+    for source in [
+        r#"Other::new(if ready { "Klar" } else { "Venter" })"#,
+        r#"Other::from(if ready { "Klar" } else { "Venter" })"#,
+    ] {
+        assert!(violations(source, "fixture.rs").is_empty(), "{source}");
+    }
 }
 
 #[test]
