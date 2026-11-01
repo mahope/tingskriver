@@ -30,14 +30,22 @@ class GateTests(unittest.TestCase):
         self.assertFalse(gate.compare(report(100), report(90))[0])
 
     def test_missing_clip_rejected(self):
-        current = report(100)
-        current["clips"] = []
+        baseline = report(100)
+        extra = gate.json.loads(gate.json.dumps(baseline["clips"][0]))
+        extra["id"] = "second"
+        baseline["clips"].append(extra)
+        baseline["total"] = {key: value * 2 for key, value in baseline["total"].items()}
+        gate.validate(baseline)
         with self.assertRaises(gate.InvalidReport):
-            gate.compare(report(100), current)
+            gate.compare(baseline, report(100))
 
     def test_new_clip_rejected(self):
         current = report(100)
-        current["clips"][0]["id"] = "new"
+        extra = gate.json.loads(gate.json.dumps(current["clips"][0]))
+        extra["id"] = "new"
+        current["clips"].append(extra)
+        current["total"] = {key: value * 2 for key, value in current["total"].items()}
+        gate.validate(current)
         with self.assertRaises(gate.InvalidReport):
             gate.compare(report(100), current)
 

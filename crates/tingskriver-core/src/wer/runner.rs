@@ -5,26 +5,32 @@ use super::{
     report::Report,
 };
 use anyhow::{bail, Context, Result};
-use std::path::{Path, PathBuf};
+use std::{
+    future::Future,
+    path::{Path, PathBuf},
+    pin::Pin,
+};
 
-#[async_trait::async_trait]
+pub type Transcription<'a> = Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>>;
+
 pub trait Engine: Send + Sync {
     fn name(&self) -> String;
-    async fn transcribe(&self, clip: &Clip, root: &Path) -> Result<String>;
+    fn transcribe<'a>(&'a self, clip: &'a Clip, root: &'a Path) -> Transcription<'a>;
 }
 
 pub struct FixtureEngine {
     pub hypotheses: PathBuf,
 }
 
-#[async_trait::async_trait]
 impl Engine for FixtureEngine {
     fn name(&self) -> String {
         "fixture".into()
     }
-    async fn transcribe(&self, clip: &Clip, _root: &Path) -> Result<String> {
-        let path = relative_file(&self.hypotheses, &format!("{}.txt", clip.id))?;
-        std::fs::read_to_string(path).context("Cannot read fixture hypothesis")
+    fn transcribe<'a>(&'a self, clip: &'a Clip, _root: &'a Path) -> Transcription<'a> {
+        Box::pin(async move {
+            let path = relative_file(&self.hypotheses, &format!("{}.txt", clip.id))?;
+            std::fs::read_to_string(path).context("Cannot read fixture hypothesis")
+        })
     }
 }
 
@@ -62,7 +68,6 @@ impl ModelEngine {
     }
 }
 
-#[async_trait::async_trait]
 impl Engine for ModelEngine {
     fn name(&self) -> String {
         match self {
@@ -70,13 +75,17 @@ impl Engine for ModelEngine {
             Self::Whisper(_, model) => format!("whisper:{model}:da"),
         }
     }
-    async fn transcribe(&self, clip: &Clip, root: &Path) -> Result<String> {
-        let samples = read_pcm16(&relative_file(root, &clip.file)?)?;
-        let result = match self {
-            Self::Parakeet(engine, _) => engine.transcribe_audio(samples).await,
-            Self::Whisper(engine, _) => engine.transcribe_audio(samples, Some("da".into())).await,
-        };
-        result.map_err(|_| anyhow::anyhow!("Model transcription failed"))
+    fn transcribe<'a>(&'a self, clip: &'a Clip, root: &'a Path) -> Transcription<'a> {
+        Box::pin(async move {
+            let samples = read_pcm16(&relative_file(root, &clip.file)?)?;
+            let result = match self {
+                Self::Parakeet(engine, _) => engine.transcribe_audio(samples).await,
+                Self::Whisper(engine, _) => {
+                    engine.transcribe_audio(samples, Some("da".into())).await
+                }
+            };
+            result.map_err(|_| anyhow::anyhow!("Model transcription failed"))
+        })
     }
 }
 

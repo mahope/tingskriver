@@ -169,3 +169,8 @@ fn wav_validation_checks_format_duration_and_truncation() {
         assert!(runner::read_pcm16(&path).is_err());
     }
 }
+
+#[test]
+fn empty_asset_root_means_current_directory() {
+    assert!(manifest::relative_file(std::path::Path::new(""), "Cargo.toml").is_ok());
+}

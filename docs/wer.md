@@ -3,7 +3,7 @@
 `tingskriver_core::wer::{normalize, score, Score}` er den lille, fælles API
 for ordfejlrate, som også kan genbruges af appens kommende måleværktøj (#69).
 Der tilføjes ingen pakker eller talemodeller. JSON-kørslen bruger eksisterende
-`serde`, `chrono`, `anyhow`, `async-trait` og `tokio`.
+`serde`, `chrono`, `anyhow` og `tokio`.
 
 ## Beregning og normalisering
 

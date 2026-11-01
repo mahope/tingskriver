@@ -38,6 +38,11 @@ pub fn relative_file(root: &Path, name: &str) -> Result<PathBuf> {
     {
         bail!("Invalid relative asset path");
     }
+    let root = if root.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        root
+    };
     let root = root
         .canonicalize()
         .context("Cannot resolve asset directory")?;
