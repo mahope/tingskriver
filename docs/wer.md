@@ -156,7 +156,8 @@ Branch protection skal særskilt kræve WER-jobbet, hvis det skal blokere merge.
    Opdatér aldrig automatisk baseline efter en regression.
 
 Adapterne bruger `ParakeetEngine::transcribe_audio` og
-`WhisperEngine::transcribe_audio(..., Some("da"))`. De kompileres også på Linux
+`WhisperEngine::transcribe_audio_with_confidence(..., Some("da"))`, som den
+normale Whisper-worker også bruger (confidence gemmes ikke i WER-rapporten). De kompileres også på Linux
 og ved `cargo xwin check ... -p tingskriver-core --example wer_run`. De går
 **direkte til de eksisterende model-API'er**, ikke gennem mikrofon, VAD,
 bidder, mødeorkestrering eller valgfri polering.

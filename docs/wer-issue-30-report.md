@@ -66,7 +66,8 @@ Udvælgelseskrav og metadata pr. klip står i
 rettighedsklare klip med oplæsning/samtale og dialekter, samt samtykke til
 nye optagelser og eventuel offentlig deling.
 
-Runneren kalder de eksisterende **model-API'er direkte**. Den går ikke gennem
+Runneren kalder de eksisterende **model-API'er direkte**, herunder samme
+`transcribe_audio_with_confidence` som den normale Whisper-worker. Den går ikke gennem
 VAD, bidder eller polering. Der findes ikke en stabil offentlig fil-til-
 fuld-kæde-API med VAD-kontakt i de tilladte filer. Opskriften i
 [wer.md](wer.md#bevis-for-den-fulde-transskriptionskæde-mangler) beskriver den

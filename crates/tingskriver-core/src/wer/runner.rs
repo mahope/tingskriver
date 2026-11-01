@@ -80,9 +80,10 @@ impl Engine for ModelEngine {
             let samples = read_pcm16(&relative_file(root, &clip.file)?)?;
             let result = match self {
                 Self::Parakeet(engine, _) => engine.transcribe_audio(samples).await,
-                Self::Whisper(engine, _) => {
-                    engine.transcribe_audio(samples, Some("da".into())).await
-                }
+                Self::Whisper(engine, _) => engine
+                    .transcribe_audio_with_confidence(samples, Some("da".into()))
+                    .await
+                    .map(|(text, _, _)| text),
             };
             result.map_err(|_| anyhow::anyhow!("Model transcription failed"))
         })
