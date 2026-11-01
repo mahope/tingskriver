@@ -54,6 +54,7 @@ pub mod runtime;
 pub mod shortcuts;
 pub mod state;
 pub mod summary;
+pub mod transcript_merge;
 pub mod whisper_engine;
 
 #[cfg(target_os = "windows")]
