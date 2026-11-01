@@ -57,8 +57,12 @@ unsafe extern "system" {
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(Some(0)).collect()
 }
-fn consent(root: isize) -> State {
-    let path = wide("Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\microphone");
+fn consent(root: isize, desktop: bool) -> State {
+    let mut path = String::from("Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\microphone");
+    if desktop {
+        path.push_str("\\NonPackaged");
+    }
+    let path = wide(&path);
     let value = wide("Value");
     let mut data = [0u16; 32];
     let mut size = std::mem::size_of_val(&data) as u32;
@@ -201,15 +205,14 @@ impl SystemProbe for NativeProbe {
                 }
             }
             Check::Microphone => {
-                let user = consent(0x80000001u32 as i32 as isize);
-                let machine = consent(0x80000002u32 as i32 as isize);
-                if user == State::Missing || machine == State::Missing {
-                    State::Missing
-                } else if user == State::Ok && machine == State::Ok {
-                    State::Ok
-                } else {
-                    State::Unknown
-                }
+                let user = 0x80000001u32 as i32 as isize;
+                let machine = 0x80000002u32 as i32 as isize;
+                super::microphone::microphone_permission([
+                    consent(user, false),
+                    consent(machine, false),
+                    consent(user, true),
+                    consent(machine, true),
+                ])
             }
             Check::SystemAudio => {
                 if crate::audio::devices::default_output_device().is_ok() {

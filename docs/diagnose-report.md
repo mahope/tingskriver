@@ -103,3 +103,27 @@ parsing with tests; cross-check the Windows code with cargo xwin. Native AVX2
 requirements in the existing Windows distribution remain a documented limitation.
 
 Refs #37
+
+## Review correction: desktop microphone permission
+
+The P2 finding is valid and corrected: the Windows probe now reads both the
+microphone root and its `NonPackaged` subkey in HKCU and HKLM. Any Deny wins;
+OK requires all four values to be Allow. Unreadable or absent values otherwise
+produce Unknown. No P1 or P3 findings were reported, and no findings were rejected.
+
+Validation of this correction:
+- The regression test failed with the old root-only aggregation (Ok instead of
+  Missing), then passed with desktop consent included. All four diagnosis tests pass.
+- `cargo test -p tingskriver-core`: 453 passed, 0 failed, 2 ignored; doc tests:
+  1 passed, 0 failed, 1 ignored.
+- `cargo xwin check --target x86_64-pc-windows-msvc -p tingskriver-core -p tingskriver-overlay -p tingskriver-app`: passed.
+- Targeted rustfmt and `git diff --check`: passed.
+- Core clippy exits 101 on the existing inherent `to_string`/Display conflict at
+  `audio/capture/backend_config.rs:55`. That file is byte-identical to origin/main
+  (SHA-256 d469b31c5c8a10882772775bc1866bb4027ad48c6d1a39c37cef954bb02e8f86).
+  No diagnosis files have clippy findings.
+- No new packages or changes outside diagnosis code and its documentation.
+
+The Windows desktop-permission toggle still requires the manual test in
+`docs/diagnose.md`, step 4. The original AVX2/distribution startup limitations
+and incomplete first acceptance criterion remain unchanged.

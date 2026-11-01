@@ -1,5 +1,7 @@
 //! Content-free environment diagnostics. Probes never perform repair actions.
 use serde::Serialize;
+#[cfg(any(windows, test))]
+mod microphone;
 #[cfg(test)]
 mod tests;
 #[cfg(windows)]

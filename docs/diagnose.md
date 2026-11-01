@@ -15,16 +15,17 @@ fra PowerShell, hvis terminalen ellers ikke venter på GUI-programmet.
 | --- | --- | --- |
 | `cpu.avx2` | CPU-feature-detektion med Rust | `UseCpuPath` |
 | `runtime.vulkan` | Indlæs kun `vulkan-1.dll` fra System32; frigiv igen | `InstallVulkanRuntime` |
-| `permission.microphone` | ConsentStore microphone `Value`, HKCU og HKLM | `OpenSettings("ms-settings:privacy-microphone")` |
+| `permission.microphone` | ConsentStore microphone og `NonPackaged` `Value`, HKCU og HKLM | `OpenSettings("ms-settings:privacy-microphone")` |
 | `audio.output` | Eksisterende `audio::devices::default_output_device` | `OpenSettings("ms-settings:sound")` |
 | `shortcut.conflict` | Midlertidig RegisterHotKey/UnregisterHotKey | `ChooseOtherShortcut` |
 | `clipboard.locked` | OpenClipboard, højst tre forsøg med 10 ms mellemrum | `CloseClipboardOwner` |
 | `window.integrity` | Sammenlign token-integritetsniveau for eget og aktivt program | `RunAsSameUser` |
 
-Mikrofontjekket viser fejl ved Deny på et af niveauerne, OK kun ved Allow på begge;
-manglende værdier, andre værdier og adgangsfejl er ukendte. Gruppepolitikker og
-NonPackaged-undernøgler undersøges ikke; en Allow-værdi beviser ikke, at en virkelig
-optagelse virker. En DLL, der kan indlæses, beviser ikke GPU/driverfunktionalitet.
+Mikrofontjekket læser både microphone-roden og `NonPackaged` for skrivebordsapps
+i HKCU og HKLM. Deny i en af de fire værdier giver fejl; OK kræver Allow i alle
+fire. Manglende værdier, andre værdier og adgangsfejl giver ukendt, medmindre en
+anden værdi er Deny. Gruppepolitikker undersøges ikke; Allow i registreringsdatabasen
+beviser ikke, at en virkelig optagelse virker. En DLL, der kan indlæses, beviser ikke GPU/driverfunktionalitet.
 Lydopslagets fejl kan både betyde manglende enhed og mislykket navneopslag, så
 resultatet er ukendt ved fejl, og enhedens navn eksporteres aldrig.
 Genvej leveres som `NativeProbe { shortcut: Some((modifier_flags, virtual_key)) }`.
@@ -85,6 +86,9 @@ formater. Rapporten skrives kun til stdout, aldrig til den almindelige applog.
    Whisper-model, og kontrollér `use_gpu=false` og `flash_attn=false` i loggen.
    Gentag uden flag for at kontrollere den almindelige backend.
 4. Afvis mikrofonadgang i Windows, gentag diagnosen og gendan tilladelsen.
+   Slå derefter kun adgangen for skrivebordsapps fra med rodadgangen tilladt:
+   `permission.microphone` skal vise fejl. Gendan desktop-adgangen og kontrollér
+   OK, hvis alle fire værdier er Allow, ellers ukendt.
    Afbryd standardafspilningsenheden og kontrollér ukendt/OK efter gentilkobling.
 5. Hold udklipsholderen åben fra et testprogram, og kontrollér fejlfundet. Luk
    testprogrammet, og kontrollér positivt at kontrollen igen er OK.
