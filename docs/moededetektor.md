@@ -54,6 +54,10 @@ mikrofon, YouTube/Netflix, Teams-chat og Meet/Zoom-forsider giver ingen start.
 Årsager og signaler er faste enums uden vinduestitler eller mødenavne.
 Snapshottene indeholder titler og bør derfor ikke logges.
 
+Mødeidentitet er kilde, mikrofonproces og mikrofonstart. Hvis indsamleren lader
+et mikrofonforløb fortsætte på tværs af to møder i samme kilde, kan de ikke
+adskilles af denne grænseflade. Indsamleren skal rapportere reelle ophør/genstarter.
+
 ## Stopregler
 
 Kun en observeret mødetilstand med `recording_active = true` kan give stop.
