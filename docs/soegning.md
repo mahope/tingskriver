@@ -106,3 +106,10 @@ Datagenerering indgår ikke i tiden. Kør den stramme grænse med:
 ```bash
 cargo test --release -p tingskriver-core --test search_fts5 hundred_hours -- --nocapture
 ```
+
+Målt på agent-worker 2026-11-01 med det ovenstående korpus: 65,0 ms median i
+release og 95,5 ms i en målrettet debug-kørsel. Tallene er maskinafhængige;
+CI håndhæver grænserne ovenfor. Ved samtidige worktrees kan Cargos delte
+buildmappe genbruge et andet jobs core-artefakt. Lokalt blev debug-kørslerne
+derfor kørt med `cargo --config 'profile.dev.package.tingskriver-core.debug=1'
+test ...`, stadig uden optimering og med samme aftalte `CARGO_TARGET_DIR`.
