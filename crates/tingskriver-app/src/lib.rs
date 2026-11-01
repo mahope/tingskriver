@@ -1,7 +1,8 @@
 //! Tingskriver GPUI shell on top of `tingskriver-core`: main window with
 //! sidebar navigation, design tokens with live light and dark mode, bundled
 //! Danish fonts, a remembered window position, `--hidden` start and a
-//! single-instance signal. The database opens in the background; a failure
+//! single-instance signal, installer hooks and updates through Velopack
+//! (`update`). The database opens in the background; a failure
 //! shows an error page with the log path instead of exiting. See
 //! `docs/gpui.md`.
 //!
@@ -17,6 +18,7 @@ pub mod single_instance;
 pub mod startup;
 pub mod theme;
 pub mod ui;
+pub mod update;
 pub mod window_state;
 
 use gpui::{App, AppContext, QuitMode};
@@ -34,6 +36,8 @@ pub fn run() {
     let clock = StartupClock::start();
     let log_path = tingskriver_core::logging::init(LOG_FILE);
     crash::install_panic_hook(log_path.clone());
+    // Installer hooks exit here.
+    update::handle_installer_events();
     let args = StartupArgs::from_env();
     log::info!(
         "Tingskriver {} (GPUI) starting{}; log file: {}",
@@ -82,6 +86,9 @@ pub fn run() {
             None
         }
     };
+    // Only the sole instance may replace the installed files.
+    update::apply_pending_update(messages.is_some());
+    update::start_background_checks();
 
     // Tray, shortcuts and dictation, on their own threads. Normally only the
     // first instance gets here, so there is one keyboard hook per user; if

@@ -41,6 +41,7 @@ pub mod config;
 pub mod database;
 pub mod dictation;
 pub mod host;
+pub mod install;
 pub mod groq;
 pub mod logging;
 pub mod ollama;
