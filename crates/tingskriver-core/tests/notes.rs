@@ -197,7 +197,7 @@ async fn legacy_fixtures_preserve_original_and_are_idempotent() {
     let mut originals = Vec::new();
     for entry in std::fs::read_dir(root).unwrap() {
         let path = entry.unwrap().path();
-        if path.extension().is_none_or(|s| s != "json") {
+        if path.extension() != Some(std::ffi::OsStr::new("json")) {
             continue;
         }
         let id = path.file_stem().unwrap().to_str().unwrap().to_string();
@@ -281,29 +281,28 @@ async fn autosave_deadline_and_crash_loss_are_bounded() {
     tokio::time::pause();
     let (sender, receiver) = tokio::sync::mpsc::channel(16);
     let task = tokio::spawn(session.run(receiver));
-    sender.send(document("first")).await.unwrap();
-    tokio::task::yield_now().await;
-    tokio::time::advance(std::time::Duration::from_millis(1900)).await;
-    sender.send(document("latest")).await.unwrap();
-    tokio::task::yield_now().await;
-    tokio::time::advance(std::time::Duration::from_millis(100)).await;
+    for n in 0..20 {
+        sender.send(document(&format!("edit {n}"))).await.unwrap();
+        tokio::task::yield_now().await;
+        tokio::time::advance(std::time::Duration::from_millis(100)).await;
+    }
     // SQLite uses a real worker thread; resume time while waiting for the transaction.
     tokio::time::resume();
     for _ in 0..100 {
-        if store.load("a").await.unwrap() == document("latest") {
+        if store.load("a").await.unwrap() == document("edit 19") {
             break;
         }
         tokio::task::yield_now().await;
     }
-    assert_eq!(store.load("a").await.unwrap(), document("latest"));
+    assert_eq!(store.load("a").await.unwrap(), document("edit 19"));
     tokio::time::pause();
     sender.send(document("lost on crash")).await.unwrap();
     tokio::task::yield_now().await;
-    tokio::time::advance(std::time::Duration::from_millis(1999)).await;
+    tokio::time::advance(std::time::Duration::from_millis(499)).await;
     task.abort();
     let _ = task.await;
     tokio::time::resume();
-    assert_eq!(store.load("a").await.unwrap(), document("latest"));
+    assert_eq!(store.load("a").await.unwrap(), document("edit 19"));
     let mut session = NotesSession::load(store.clone(), "a".into()).await.unwrap();
     session.edit(|d| *d = document("flush"));
     assert!(session.is_dirty());
@@ -312,9 +311,9 @@ async fn autosave_deadline_and_crash_loss_are_bounded() {
     assert_eq!(store.load("a").await.unwrap(), document("flush"));
 }
 
+type SavedSnapshots = Vec<(tokio::time::Instant, Document)>;
 #[derive(Clone, Default)]
-struct MemoryStore(std::sync::Arc<std::sync::Mutex<Vec<(tokio::time::Instant, Document)>>>);
-#[async_trait::async_trait]
+struct MemoryStore(std::sync::Arc<std::sync::Mutex<SavedSnapshots>>);
 impl tingskriver_core::notes::autosave::NotesPersistence for MemoryStore {
     async fn load(&self, _: &str) -> anyhow::Result<Document> {
         Ok(Document::default())
@@ -349,9 +348,19 @@ async fn continuous_edits_cannot_postpone_two_second_deadline() {
         std::time::Duration::from_secs(2)
     );
     assert_eq!(saved[0].1, document("edit 19"));
-    sender.send(document("unsaved")).await.unwrap();
-    tokio::task::yield_now().await;
-    tokio::time::advance(std::time::Duration::from_millis(1999)).await;
+    for n in 0..20 {
+        sender
+            .send(document(&format!("unsaved {n}")))
+            .await
+            .unwrap();
+        tokio::task::yield_now().await;
+        tokio::time::advance(std::time::Duration::from_millis(if n == 19 {
+            99
+        } else {
+            100
+        }))
+        .await;
+    }
     task.abort();
     let _ = task.await;
     assert_eq!(store.0.lock().unwrap().len(), 1);
@@ -374,4 +383,24 @@ async fn closing_edit_channel_flushes_immediately() {
         store.0.lock().unwrap().as_slice(),
         &[(start, document("last"))]
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn quiet_edit_is_debounced_for_half_a_second() {
+    let store = MemoryStore::default();
+    let session = NotesSession::load(store.clone(), "synthetic".into())
+        .await
+        .unwrap();
+    let (sender, receiver) = tokio::sync::mpsc::channel(1);
+    let task = tokio::spawn(session.run(receiver));
+    sender.send(document("quiet")).await.unwrap();
+    tokio::task::yield_now().await;
+    tokio::time::advance(std::time::Duration::from_millis(499)).await;
+    tokio::task::yield_now().await;
+    assert!(store.0.lock().unwrap().is_empty());
+    tokio::time::advance(std::time::Duration::from_millis(1)).await;
+    tokio::task::yield_now().await;
+    assert_eq!(store.0.lock().unwrap()[0].1, document("quiet"));
+    drop(sender);
+    task.await.unwrap().unwrap();
 }

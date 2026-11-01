@@ -88,8 +88,8 @@ Kalderen skal drive autosave; konstruktion alene starter ingen skjult opgave.
 
 Til løbende autosave oprettes en bounded `tokio::sync::mpsc::channel<Document>`.
 Start `runtime::spawn(session.run(receiver))`, og send dokument-snapshots ved
-ændringer. Løkken samler ændringer og gemmer senest to sekunder efter første
-ugemte ændring; senere ændringer flytter aldrig denne frist. Tidsfristen har
+ændringer. Løkken venter på 500 ms ro efter seneste ændring, men gemmer senest
+to sekunder efter første ugemte ændring; senere ændringer flytter aldrig denne frist. Tidsfristen har
 prioritet over flere indgående ændringer. Luk senderen og await opgaven ved
 normal lukning: sidste ændring flushes straks. Drop/abort simulerer nedbrud.
 Kalderen skal overvåge opgavens `Result`; lagringsfejl returneres, aldrig skjules.
