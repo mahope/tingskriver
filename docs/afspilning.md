@@ -108,3 +108,69 @@ at lyden matcher tidskoden. Prøv 0,5x/1x/2x. Åbn derefter mikrofon- og systems
 sammen, slå hver kilde fra og til, og kontrollér synkronisering og klipbeskyttelse.
 Kontrollér også fejl ved manglende lydenhed og afbrydelse af udgangen. Denne gren
 indeholder ingen UI-integration, så den gamle Tauri-hook kan ikke bruges til prøven.
+
+## Verifikationsrapport for issue #17
+
+Alle fire acceptkriterier er opfyldt i hardwarefri prøver:
+
+- Opstart og RAM: 1 times PCM-WAV på 115,2 MB leverede de første 100 ms på
+  1,98 ms. RSS steg 36 KiB efter åbning af den store fil, mod 8.328 KiB ved
+  den første lille fil. Ringbufferen har samme kapacitet uanset filstørrelsen.
+- Søgning: markørprøven består ved 38 tidskoder i hvert af WAV, AAC/M4A,
+  AAC/MP4, MP3, FLAC og Ogg/Vorbis. Frekvensen identificerer et unikt
+  100 ms interval; positionsuret kontrolleres med 1 ms tolerance.
+- Fake output: styring, præcist frameantal ved 0,5/1/2x, pause, søgning efter
+  slut, forskellige samplerates/kanaler, begge mute-retninger, klipbeskyttelse,
+  position og fejlhændelser består uden lydenhed.
+- JSON: `read_audio_file` og dens handler-registrering er fjernet. Søgning
+  fandt ingen imports af `useAudioPlayer`; dens JSON-indlæsning og afkodning
+  er fjernet, og den ubrugte hook giver nu en tydelig fejl ved indlæsning.
+  En regressionstest kontrollerer, at de to JSON-indgange ikke findes.
+
+Kørsler på den endelige kode:
+
+```text
+cargo test -p tingskriver-core
+485 passed; 0 failed; 4 ignored
+Doc-tests: 1 passed; 0 failed; 1 ignored
+
+cargo test -p tingskriver-core playback::tests -- --ignored --nocapture --test-threads=1
+2 passed; 0 failed; 0 ignored
+
+cargo xwin check --target x86_64-pc-windows-msvc -p tingskriver-core -p tingskriver-overlay -p tingskriver-app
+Finished dev profile (Clang 19; also checks host transitively)
+
+rustfmt --edition 2021 --check crates/tingskriver-core/src/playback/*.rs
+Passed
+```
+
+`cargo clippy -p tingskriver-core --lib --tests` har ingen fund i `playback`.
+Hele kommandoen fejler på de tre kendte arvede fejl i
+`audio/capture/backend_config.rs:55` og
+`whisper_engine/whisper_engine.rs:1690,1890`. Disse filer er uændrede i grenen;
+gaten er udtrykkeligt udskudt i `docs/agenter.md`.
+
+Ingen nye pakker, opgraderinger eller Symphonia-features er installeret.
+De eksisterende `symphonia`, `ringbuf`, `cpal` og standardbiblioteket genbruges.
+`cargo deny` er ikke gentaget, da afhængigheder og lockfil er uændrede.
+Review foretages samlet fra Mads' PC som aftalt; ingen PR, deploy, tag eller
+versionsændring er udført.
+
+Uden for det nye modul er kun core-modullinjen, de to nævnte frontend-filer og
+denne dokumentation ændret. `audio/**` og `docs/arkitektur.md` er urørte.
+Foreslået linje til arkitekturdokumentet:
+
+> `playback/`: UI-fri streamingafspilning med tidskodesøgning, separate spor,
+> hastighed og CPAL/fake output; se [afspilning.md](afspilning.md).
+
+Foreslået PR-titel: **Add streaming core playback with timestamp seeking**
+
+Foreslået PR-beskrivelse:
+
+Stream recordings through a bounded core player with fake and CPAL outputs.
+Add accurate timestamp seeking, playback controls, per-track gains and
+hardware-free marker, duration and memory tests. Remove the legacy JSON audio
+command. Speed uses resampling and changes pitch; native Windows audio still
+needs the manual listening test above.
+
+Fixes #17.
