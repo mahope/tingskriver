@@ -464,7 +464,7 @@ pub struct TrackSummary {
     pub offset_samples: u64,
     /// Samples on disk, including filled gaps.
     pub written_samples: u64,
-    /// Samples that never reached the disk (storage failed until the end).
+    /// Audio replaced by silence or still unwritten at stop.
     pub lost_samples: u64,
     /// Silence inserted for gaps and for audio dropped while storage failed.
     pub silence_samples: u64,
@@ -480,8 +480,8 @@ pub struct TrackWriter<S: TrackStorage> {
     /// Samples accepted so far (written + pending), including silence.
     accepted: u64,
     /// Clock position where the current lag beyond the threshold started,
-    /// and the smallest lag seen since.
-    lag_since: Option<(u64, u64)>,
+    /// the smallest lag seen since, and the accepted position before the lag.
+    lag_since: Option<(u64, u64, u64)>,
     pending: VecDeque<Block>,
     pending_sample_count: usize,
     max_pending_samples: usize,
@@ -493,6 +493,7 @@ pub struct TrackWriter<S: TrackStorage> {
     failing: bool,
     /// Buffered audio replaced by silence during the current failure.
     replaced: u64,
+    total_replaced: u64,
     attempts: u64,
     scratch: Vec<i16>,
 }
@@ -514,6 +515,7 @@ impl<S: TrackStorage> TrackWriter<S> {
             retry_at: None,
             failing: false,
             replaced: 0,
+            total_replaced: 0,
             attempts: 0,
             scratch: Vec::new(),
         }
@@ -543,18 +545,18 @@ impl<S: TrackStorage> TrackWriter<S> {
                     self.lag_since = None;
                 } else {
                     match self.lag_since {
-                        None => self.lag_since = Some((start, lag)),
-                        Some((since, smallest)) => {
+                        None => self.lag_since = Some((start, lag, self.accepted)),
+                        Some((since, smallest, boundary)) => {
                             let smallest = smallest.min(lag);
                             if start.saturating_sub(since) >= confirm {
                                 log::warn!(
                                     "Track lags the recording clock by {:.2}s; filled with silence",
                                     smallest as f64 / self.sample_rate as f64
                                 );
-                                self.push_silence(smallest);
+                                self.insert_gap(boundary, smallest);
                                 self.lag_since = None;
                             } else {
-                                self.lag_since = Some((since, smallest));
+                                self.lag_since = Some((since, smallest, boundary));
                             }
                         }
                     }
@@ -570,6 +572,35 @@ impl<S: TrackStorage> TrackWriter<S> {
             self.enforce_pending_limit();
         }
         started
+    }
+
+    fn insert_gap(&mut self, boundary: u64, samples: u64) {
+        let mut remaining = boundary.saturating_sub(self.written);
+        let mut index = 0;
+        while let Some(block) = self.pending.get_mut(index) {
+            if remaining == 0 {
+                break;
+            }
+            let len = block.len();
+            if remaining < len {
+                let tail = match block {
+                    Block::Samples(data) => Block::Samples(data.split_off(remaining as usize)),
+                    Block::Silence(n) => {
+                        let tail = *n - remaining;
+                        *n = remaining;
+                        Block::Silence(tail)
+                    }
+                };
+                self.pending.insert(index + 1, tail);
+                index += 1;
+                break;
+            }
+            remaining -= len;
+            index += 1;
+        }
+        self.pending.insert(index, Block::Silence(samples));
+        self.accepted += samples;
+        self.silence += samples;
     }
 
     /// Add `n` samples of silence at the end of the track.
@@ -628,12 +659,14 @@ impl<S: TrackStorage> TrackWriter<S> {
                 log::warn!("Track buffer full: the oldest buffered audio is replaced by silence");
             }
             self.replaced += replaced as u64;
+            self.total_replaced += replaced as u64;
         }
     }
 
     /// End of the track on the shared recording clock (offset + accepted).
     pub fn end_position(&self) -> Option<u64> {
-        self.offset.map(|o| o + self.accepted)
+        self.offset
+            .map(|o| o + self.accepted + self.lag_since.map_or(0, |(_, lag, _)| lag))
     }
 
     pub fn offset(&self) -> Option<u64> {
@@ -679,6 +712,10 @@ impl<S: TrackStorage> TrackWriter<S> {
 
     /// Write everything pending now, ignoring the commit and retry timers.
     pub fn commit(&mut self, now: Instant) -> Option<StorageEvent> {
+        // Keep confirmation audio mutable until a lag is confirmed or caught up.
+        if self.lag_since.is_some() {
+            return None;
+        }
         if self.pending.is_empty() {
             self.last_commit = Some(now);
             return None;
@@ -779,11 +816,14 @@ impl<S: TrackStorage> TrackWriter<S> {
 
     /// Final commit at stop (one attempt regardless of the retry timer).
     pub fn finish(mut self, now: Instant) -> (TrackSummary, Option<StorageEvent>) {
+        if let Some((_, smallest, boundary)) = self.lag_since.take() {
+            self.insert_gap(boundary, smallest);
+        }
         let event = self.commit(now);
         if let Err(e) = self.storage.sync() {
             log::warn!("Could not sync the track to the disk at stop: {e}");
         }
-        let lost: u64 = self.pending.iter().map(Block::len).sum();
+        let lost = self.total_replaced + self.pending_sample_count as u64;
         let summary = TrackSummary {
             offset_samples: self.offset.unwrap_or(0),
             written_samples: self.written,
@@ -872,12 +912,15 @@ pub(crate) mod tests {
         // Small jitter is ignored.
         w.push(&[0.1; 100], Some(800));
         assert_eq!(w.end_position(), Some(700));
+        let now = Instant::now();
+        w.commit(now);
         // Device outage of 1 s: the next chunk starts at 1700, the track
         // ends at 700. Audio continues in real time; once the lag has lasted
         // GAP_CONFIRM it is filled.
         let mut end = 1800;
         while end <= 3000 {
             w.push(&[0.1; 100], Some(end));
+            w.tick(now + Duration::from_millis(end));
             end += 100;
         }
         assert_eq!(w.end_position(), Some(3000));
@@ -886,8 +929,24 @@ pub(crate) mod tests {
         assert_eq!(summary.silence_samples, 1000);
         let data = storage.samples.lock().unwrap();
         assert_eq!(data.len(), 2500);
-        // The silence sits after the audio that confirmed the gap.
-        assert_eq!(data.iter().filter(|&&s| s == 0).count(), 1000);
+        assert!(data[..200].iter().all(|&s| s != 0));
+        assert!(data[200..1200].iter().all(|&s| s == 0));
+        assert!(data[1200..].iter().all(|&s| s != 0));
+    }
+
+    #[test]
+    fn stopping_during_gap_confirmation_keeps_the_gap_before_audio() {
+        let storage = MemoryStorage::default();
+        let mut writer = TrackWriter::new(storage.clone(), 1000);
+        writer.push(&[0.1; 1000], Some(1000));
+        writer.commit(Instant::now());
+        writer.push(&[0.2; 100], Some(3100));
+        assert_eq!(writer.end_position(), Some(3100));
+        let (summary, _) = writer.finish(Instant::now());
+        assert_eq!(summary.written_samples, 3100);
+        let data = storage.samples.lock().unwrap();
+        assert!(data[1000..3000].iter().all(|&s| s == 0));
+        assert!(data[3000..].iter().all(|&s| s != 0));
     }
 
     #[test]
@@ -948,6 +1007,9 @@ pub(crate) mod tests {
         assert_eq!(data.len(), 60_000);
         assert!(data[..30_000].iter().all(|&s| s == 0));
         assert!(data[30_000..].iter().all(|&s| s != 0));
+        drop(data);
+        let (summary, _) = w.finish(t0 + Duration::from_secs(61));
+        assert_eq!(summary.lost_samples, 30_000);
     }
 
     #[test]

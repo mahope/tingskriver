@@ -184,6 +184,13 @@ pub fn scan_raw_tracks(raw_dir: &Path, repair: bool) -> io::Result<ScannedTracks
         }
     };
     let segments = list_segments(raw_dir)?;
+    if let Some(dropped) = manifest
+        .as_ref()
+        .map(|m| m.dropped_samples)
+        .filter(|&n| n > 0)
+    {
+        problems.push(format!("{dropped} lydsamples blev tabt i optagelseskøen"));
+    }
     let mut sample_rate = manifest.as_ref().map(|m| m.sample_rate).filter(|&r| r > 0);
     let mut tracks = Vec::new();
 
@@ -565,6 +572,19 @@ impl Drop for FolderGuard {
 /// folder. Blocking; run it on a blocking thread. `ffmpeg` is the encoder to
 /// use (`None`: not found).
 pub fn finalize_raw_tracks(meeting_folder: &Path, ffmpeg: Option<&Path>) -> FinalizeOutcome {
+    finalize_tracks(meeting_folder, ffmpeg, false)
+}
+
+/// Recovery keeps its inputs until the meeting has been saved to the database.
+pub fn recover_raw_tracks(meeting_folder: &Path, ffmpeg: Option<&Path>) -> FinalizeOutcome {
+    finalize_tracks(meeting_folder, ffmpeg, true)
+}
+
+fn finalize_tracks(
+    meeting_folder: &Path,
+    ffmpeg: Option<&Path>,
+    keep_raw: bool,
+) -> FinalizeOutcome {
     let Some(_guard) = FolderGuard::acquire(meeting_folder) else {
         return FinalizeOutcome::failed("Lyden samles allerede.".to_string(), None);
     };
@@ -696,11 +716,19 @@ pub fn finalize_raw_tracks(meeting_folder: &Path, ffmpeg: Option<&Path>) -> Fina
         raw_kept: true,
         problems: scanned.problems.clone(),
     };
-    finish(&raw_dir, outcome)
+    finish_with_cleanup(&raw_dir, outcome, !keep_raw)
 }
 
 /// Record the outcome next to the raw tracks, and delete them on `Ok`.
-fn finish(raw_dir: &Path, mut outcome: FinalizeOutcome) -> FinalizeOutcome {
+fn finish(raw_dir: &Path, outcome: FinalizeOutcome) -> FinalizeOutcome {
+    finish_with_cleanup(raw_dir, outcome, true)
+}
+
+fn finish_with_cleanup(
+    raw_dir: &Path,
+    mut outcome: FinalizeOutcome,
+    cleanup: bool,
+) -> FinalizeOutcome {
     match serde_json::to_string_pretty(&outcome) {
         Ok(json) => {
             if let Err(e) = std::fs::write(raw_dir.join(VERIFIED_MARKER), json) {
@@ -709,7 +737,7 @@ fn finish(raw_dir: &Path, mut outcome: FinalizeOutcome) -> FinalizeOutcome {
         }
         Err(e) => log::warn!("Could not serialize the finalize outcome: {e}"),
     }
-    if outcome.status == AudioSaveStatus::Ok {
+    if outcome.status == AudioSaveStatus::Ok && cleanup {
         match std::fs::remove_dir_all(raw_dir) {
             Ok(()) => {
                 outcome.raw_kept = false;
@@ -909,6 +937,32 @@ mod tests {
     }
 
     #[test]
+    fn persisted_losses_remain_partial_after_repeated_finalize() {
+        let dir = tempfile::tempdir().unwrap();
+        record(dir.path(), 1);
+        let raw = dir.path().join(RAW_DIR);
+        let mut manifest = read_manifest(&raw).unwrap();
+        manifest.dropped_samples = 200;
+        manifest.tracks[0].lost_samples = 100;
+        write_manifest(&raw, &manifest).unwrap();
+        let scanned = scan_raw_tracks(&raw, false).unwrap();
+        assert_eq!(scanned.problems.len(), 2);
+        let Some(ffmpeg) = ffmpeg() else { return };
+        for _ in 0..2 {
+            let outcome = finalize_raw_tracks(dir.path(), Some(&ffmpeg));
+            assert_eq!(
+                outcome.status,
+                AudioSaveStatus::Partial,
+                "{}",
+                outcome.message
+            );
+            assert!(outcome.raw_kept);
+            assert!(raw.exists());
+            assert_eq!(outcome.problems.len(), 2);
+        }
+    }
+
+    #[test]
     fn mixes_without_clipping() {
         assert_eq!(mix_samples(1000, 2000), 3000);
         assert_eq!(mix_samples(i16::MAX, i16::MAX), i16::MAX);
@@ -1078,6 +1132,7 @@ mod tests {
                     segments: Vec::new(),
                 }],
                 complete: false,
+                dropped_samples: 0,
             },
         )
         .unwrap();

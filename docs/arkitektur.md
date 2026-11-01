@@ -138,7 +138,8 @@ summary run after the meeting from the saved files, so a crash in a model
   `tracks.json` holds each track's offset on the shared recording clock (the
   active duration, pauses excluded). A track that lags that clock for more
   than a second gets silence for the missing time, and at stop both tracks
-  are padded to the same end.
+  are padded to the same end. Audio received while confirming a gap stays
+  buffered so silence can be inserted before it, at the start of the outage.
 - Storage errors are a state, not a log line: the first failure emits
   `recording-storage-error` (`{ message, kind }`, e.g. "Lyden gemmes ikke:
   disken er fuld"), recovery emits `recording-storage-recovered`, and more
@@ -148,6 +149,8 @@ summary run after the meeting from the saved files, so a crash in a model
   time axis survives). `recording_commands::current_storage_error()` and
   `get_recording_state().storage_error` give the current message to UIs and
   the recording indicator.
+  Replaced audio and samples dropped from a full queue are persisted in
+  `tracks.json`; a later finalize still reports `delvis` after storage recovers.
 - Stop stops the streams (their last callbacks and the resampler tail still
   reach the writer), closes the channel and waits for the writer to drain it.
   The log line `Stop-to-saved: N ms` measures this. `recording-saved` and
@@ -162,7 +165,9 @@ summary run after the meeting from the saved files, so a crash in a model
 - After a crash, `recover_audio_from_checkpoints` runs the same finalize:
   headers that lag their data are repaired, a truncated segment keeps its
   readable part, an unreadable one is skipped (silence keeps later segments
-  in place), and any of these gives `delvis` with the other pieces.
+  in place), and any of these gives `delvis` with the other pieces. Recovery
+  keeps the raw tracks until the frontend saves the meeting to the database
+  and calls `cleanup_checkpoints`, allowing retries after a failed save.
 
 ## AI providers: one model, a chain per function
 

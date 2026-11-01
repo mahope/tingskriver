@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use super::ffmpeg::find_ffmpeg_path;
 use super::finalize::{
-    finalize_raw_tracks, has_raw_tracks, read_verified_status, scan_raw_tracks, AudioSaveStatus,
+    has_raw_tracks, read_verified_status, recover_raw_tracks, scan_raw_tracks, AudioSaveStatus,
     MIXED_FILE, RAW_DIR,
 };
 
@@ -44,7 +44,7 @@ impl AudioRecoveryStatus {
 /// Recover the audio of a meeting folder after a crash: repair, encode and
 /// verify the raw tracks. `partial` means some pieces were missing or
 /// damaged and the rest was saved; the raw tracks are only deleted on a
-/// complete (`success`) recovery.
+/// complete (`success`) recovery and the frontend's database save.
 pub async fn recover_audio_from_checkpoints(
     meeting_folder: String,
     _sample_rate: u32,
@@ -66,7 +66,7 @@ pub async fn recover_audio_from_checkpoints(
         let folder = folder_path.clone();
         let outcome = tokio::task::spawn_blocking(move || {
             let ffmpeg = find_ffmpeg_path();
-            finalize_raw_tracks(&folder, ffmpeg.as_deref())
+            recover_raw_tracks(&folder, ffmpeg.as_deref())
         })
         .await
         .map_err(|e| format!("Audio recovery failed: {e}"))?;
@@ -314,8 +314,14 @@ mod tests {
             .unwrap();
         assert_eq!(status.status, "success", "{}", status.message);
         assert!(dir.path().join(MIXED_FILE).exists());
-        // Verified and deleted already; cleanup is a no-op.
+        assert!(dir.path().join(RAW_DIR).exists());
+        let retry = recover_audio_from_checkpoints(folder.clone(), 48000)
+            .await
+            .unwrap();
+        assert_eq!(retry.status, "success");
+        assert!(has_audio_checkpoints(folder.clone()).await.unwrap());
         assert!(cleanup_checkpoints(folder).await.is_ok());
+        assert!(!dir.path().join(RAW_DIR).exists());
     }
 
     #[tokio::test]

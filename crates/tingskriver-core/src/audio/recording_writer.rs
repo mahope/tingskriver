@@ -144,6 +144,8 @@ pub struct TrackManifest {
     /// True once the writer finished normally (stop, not a crash).
     #[serde(default)]
     pub complete: bool,
+    #[serde(default)]
+    pub dropped_samples: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -312,6 +314,7 @@ where
                         sample_rate,
                         tracks: Vec::new(),
                         complete: false,
+                        dropped_samples: 0,
                     },
                     failing: false,
                     last_backlog_warning: None,
@@ -514,10 +517,11 @@ where
             tracks.push((kind, summary));
         }
         self.manifest.complete = true;
+        let dropped = self.dropped.load(Ordering::Relaxed);
+        self.manifest.dropped_samples = dropped;
         if let Err(e) = write_manifest(&self.dir, &self.manifest) {
             log::warn!("Could not write {MANIFEST_FILE}: {e}");
         }
-        let dropped = self.dropped.load(Ordering::Relaxed);
         if dropped > 0 && storage_error.is_none() {
             storage_error = Some(QUEUE_FULL_MESSAGE.to_string());
         }
@@ -822,6 +826,8 @@ mod tests {
         drop(tx);
         let summary = handle.join().unwrap();
         assert!(summary.dropped_samples > 0);
+        let manifest = read_manifest(_dir.path()).unwrap();
+        assert_eq!(manifest.dropped_samples, summary.dropped_samples);
         assert!(observer
             .failed
             .lock()
