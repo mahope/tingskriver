@@ -365,16 +365,20 @@ fn room_for_copy(needed: u64, available: Option<u64>) -> bool {
 /// Free bytes on the disk that holds `path`: the disk with the longest
 /// mount point that `path` lies under.
 fn available_space(path: &Path) -> Option<u64> {
-    let path = path
-        .ancestors()
-        .find_map(|p| fs::canonicalize(p).ok())?;
+    let path = path.ancestors().find_map(|p| fs::canonicalize(p).ok())?;
     let disks = sysinfo::Disks::new_with_refreshed_list();
     disks
         .list()
         .iter()
-        .filter(|disk| path.starts_with(disk.mount_point()))
-        .max_by_key(|disk| disk.mount_point().as_os_str().len())
-        .map(|disk| disk.available_space())
+        .filter_map(|disk| {
+            // Windows canonical paths use verbatim prefixes (\\?\); mount
+            // points must use the same representation before comparison.
+            let mount = fs::canonicalize(disk.mount_point()).ok()?;
+            path.starts_with(&mount)
+                .then(|| (mount.as_os_str().len(), disk.available_space()))
+        })
+        .max_by_key(|(length, _)| *length)
+        .map(|(_, available)| available)
 }
 
 /// A copy taken before opening a database that was not closed cleanly.
@@ -648,10 +652,14 @@ mod tests {
     #[test]
     fn free_space_is_found_for_a_folder_that_does_not_exist_yet() {
         let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join(BACKUP_DIR).join("x");
+        assert!(!missing.exists());
         // Containers may list no disks; then the copy is simply allowed.
         if !sysinfo::Disks::new_with_refreshed_list().list().is_empty() {
-            assert!(available_space(&dir.path().join(BACKUP_DIR).join("x")).is_some());
+            assert!(available_space(dir.path()).is_some());
+            assert!(available_space(&missing).is_some());
         }
+        assert!(!missing.exists());
     }
 
     #[test]

@@ -80,6 +80,9 @@ registers at startup.
   migrations, a copy of the database and its `-wal`/`-shm` files in
   `backups/`. Nothing deletes `-wal` or `-shm` files: a WAL holds committed
   transactions. `summary_da()` and `advice_da()` give the error page text.
+  The safety-copy space check resolves the nearest existing ancestor and
+  canonicalizes mount points too, including Windows verbatim drive paths,
+  so it works before the backup directory exists.
 - Connections use WAL, `synchronous=NORMAL`, `busy_timeout=5s` and foreign
   keys (`database::manager::connect_options`).
 - The Tauri app opens the database in a background task after the window is
