@@ -20,7 +20,7 @@ Frozen installation keeps the lockfile and installed dependency set aligned. Whe
 
 ## Workspace, tests and CI for agents
 
-The repository is a Cargo workspace (see [arkitektur.md](arkitektur.md)): `crates/tingskriver-core` holds the logic, `crates/tingskriver-app` the GPUI app, `crates/tingskriver-overlay` the Windows overlay and `frontend/src-tauri` the current Tauri app.
+The repository is a Cargo workspace (see [arkitektur.md](arkitektur.md)): `crates/tingskriver-core` holds the logic, `crates/tingskriver-app` the GPUI app, `crates/tingskriver-overlay` the Windows overlay, `crates/tingskriver-host` the hook, shortcut and tray host and `frontend/src-tauri` the current Tauri app.
 
 ```bash
 cargo test -p tingskriver-core          # platform independent tests, runs on Linux
@@ -46,7 +46,7 @@ Most new Rust code is Windows-only (`#[cfg(windows)]`), and Linux `cargo check` 
 rustup target add x86_64-pc-windows-msvc
 cargo install cargo-xwin --locked
 sudo apt-get install clang llvm lld ninja-build cmake   # Debian: llvm-19 lld-19, then add /usr/lib/llvm-19/bin to PATH
-cargo xwin check --target x86_64-pc-windows-msvc -p tingskriver-core -p tingskriver-overlay -p tingskriver-app
+cargo xwin check --target x86_64-pc-windows-msvc -p tingskriver-core -p tingskriver-overlay -p tingskriver-host -p tingskriver-app
 ```
 
 whisper.cpp builds fine this way. The Tauri crate itself does not: its build script verifies the downloaded `ffmpeg.exe` by running it. For a local check only, a stub that answers `-version` gets past that:

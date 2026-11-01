@@ -16,6 +16,7 @@ path = "src/main.rs"
 
 [dependencies]
 tingskriver-core = { path = "../tingskriver-core" }
+tingskriver-host = { path = "../tingskriver-host" }
 # GPUI is pinned to the exact snapshot gpui-component 0.8.1 is built against
 # (gpui-pre is Zed's gpui published by the gpui-component maintainers).
 # Upgrade only together with gpui-component; scripts/check-gpui-lock.py
