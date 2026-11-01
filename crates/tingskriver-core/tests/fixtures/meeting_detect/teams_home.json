@@ -1,0 +1,34 @@
+{
+  "steps": [
+    {
+      "snapshot": {
+        "now": 100,
+        "microphone_users": [
+          {
+            "process_name": "ms-teams.exe",
+            "started_at": 90
+          }
+        ],
+        "windows": [
+          {
+            "process_name": "ms-teams.exe",
+            "title": "Microsoft Teams",
+            "is_browser": false,
+            "is_foreground": true
+          }
+        ],
+        "calendar": [],
+        "dictation_active": false,
+        "recording_active": false,
+        "last_speech_at": null
+      },
+      "expected": {
+        "source": "unknown",
+        "confidence": "low",
+        "signals": [],
+        "action": "none",
+        "reason": "no_meeting"
+      }
+    }
+  ]
+}

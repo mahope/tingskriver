@@ -1,0 +1,40 @@
+{
+  "steps": [
+    {
+      "snapshot": {
+        "now": 100,
+        "microphone_users": [],
+        "windows": [],
+        "calendar": [],
+        "dictation_active": false,
+        "recording_active": true,
+        "last_speech_at": null
+      },
+      "expected": {
+        "source": "unknown",
+        "confidence": "low",
+        "signals": [],
+        "action": "none",
+        "reason": "no_meeting"
+      }
+    },
+    {
+      "snapshot": {
+        "now": 1000,
+        "microphone_users": [],
+        "windows": [],
+        "calendar": [],
+        "dictation_active": false,
+        "recording_active": true,
+        "last_speech_at": null
+      },
+      "expected": {
+        "source": "unknown",
+        "confidence": "low",
+        "signals": [],
+        "action": "none",
+        "reason": "no_meeting"
+      }
+    }
+  ]
+}

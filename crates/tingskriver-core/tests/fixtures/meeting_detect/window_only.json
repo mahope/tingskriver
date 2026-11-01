@@ -1,0 +1,29 @@
+{
+  "steps": [
+    {
+      "snapshot": {
+        "now": 100,
+        "microphone_users": [],
+        "windows": [
+          {
+            "process_name": "Teams.exe",
+            "title": "Synthetic call | Microsoft Teams",
+            "is_browser": false,
+            "is_foreground": true
+          }
+        ],
+        "calendar": [],
+        "dictation_active": false,
+        "recording_active": false,
+        "last_speech_at": null
+      },
+      "expected": {
+        "source": "unknown",
+        "confidence": "low",
+        "signals": [],
+        "action": "none",
+        "reason": "no_meeting"
+      }
+    }
+  ]
+}
