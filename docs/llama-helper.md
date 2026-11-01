@@ -60,7 +60,8 @@ short spawn-to-assignment window is not covered. Other platforms do not use jobs
 ## Automated checks
 
 `cargo test -p tingskriver-core sidecar --lib` covers 1,000 deterministic seeded
-generation/ping interleavings using `tokio::io::duplex`, busy health checks,
+generation/ping interleavings using `tokio::io::duplex`, health checks both before
+and during generation,
 cancellation, timeout, late replies, complete/partial EOF, wrong response types,
 helper errors, and 20 monitor restarts with live task counters. These tests require
 neither a model nor a helper binary. Windows API compilation is checked with

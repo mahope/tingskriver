@@ -74,3 +74,49 @@ async fn real_health_ping_skips_busy_generation_without_waiting() {
     assert!(response.unwrap().contains("generated"));
     fake.await.unwrap();
 }
+
+#[tokio::test]
+async fn generation_queued_behind_ping_receives_its_own_response() {
+    let manager = SidecarManager::with_binary(PathBuf::from("unused-fake-helper"));
+    let (client, helper) = tokio::io::duplex(4096);
+    let (reader, writer) = tokio::io::split(client);
+    *manager.transport.lock().await = Some(Transport::new(reader, writer));
+    let (ping_started, received_ping) = tokio::sync::oneshot::channel();
+    let fake = tokio::spawn(async move {
+        let mut helper = BufReader::new(helper);
+        let mut line = String::new();
+        helper.read_line(&mut line).await.unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&line).unwrap()["type"],
+            "ping"
+        );
+        ping_started.send(()).unwrap();
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        helper
+            .get_mut()
+            .write_all(b"{\"type\":\"pong\"}\n")
+            .await
+            .unwrap();
+        line.clear();
+        helper.read_line(&mut line).await.unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&line).unwrap()["type"],
+            "generate"
+        );
+        helper
+            .get_mut()
+            .write_all(b"{\"type\":\"response\",\"text\":\"generated\"}\n")
+            .await
+            .unwrap();
+    });
+    let generation = async {
+        received_ping.await.unwrap();
+        manager
+            .send_request(r#"{"type":"generate"}"#.into(), Duration::from_secs(1))
+            .await
+    };
+    let (ping, generation) = tokio::join!(manager.send_ping(), generation);
+    ping.unwrap();
+    assert!(generation.unwrap().contains("generated"));
+    fake.await.unwrap();
+}
