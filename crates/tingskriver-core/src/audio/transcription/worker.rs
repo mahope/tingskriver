@@ -422,18 +422,6 @@ async fn transcribe_chunk_with_provider(
     }
     let speech_samples = trimmed.samples;
 
-    // Check for empty samples - improved error handling
-    if speech_samples.is_empty() {
-        warn!(
-            "Audio chunk {} is empty, skipping transcription",
-            chunk.chunk_id
-        );
-        return Err(TranscriptionError::AudioTooShort {
-            samples: 0,
-            minimum: 1600, // 100ms at 16kHz
-        });
-    }
-
     // Calculate energy for logging/monitoring only
     let energy: f32 =
         speech_samples.iter().map(|&x| x * x).sum::<f32>() / speech_samples.len() as f32;

@@ -29,7 +29,7 @@ impl EnergyVad {
         let gate = (0.0015 + threshold * 0.003).max(self.floor * (2.0 + threshold * 4.0));
         let broadband = difference_energy > raw_energy * 0.02;
         let speech = rms > gate && broadband;
-        if !speech {
+        if !speech && broadband {
             self.floor = 0.98 * self.floor + 0.02 * rms;
         }
         speech

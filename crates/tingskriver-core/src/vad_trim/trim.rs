@@ -105,23 +105,24 @@ impl Iterator for PcmSamples {
         }
     }
 }
-pub(super) trait InputFactory<I> {
-    fn open(&self) -> Result<I>;
-}
-impl<I, F: Fn() -> Result<I>> InputFactory<I> for F {
-    fn open(&self) -> Result<I> {
-        self()
-    }
-}
-
 pub(super) fn detect_with_fallback<I: Iterator<Item = Result<f32>>>(
-    open: impl InputFactory<I>,
+    open: impl Fn() -> Result<I>,
     cfg: &TrimConfig,
     backend: Backend,
 ) -> Result<(Vec<(usize, usize)>, Backend)> {
     // Startup errors are recoverable before input is consumed. Never hide I/O or
     // invalid-sample errors by retrying them as another backend.
-    let processor = if backend == Backend::Silero {
+    let processor = make_processor(backend, cfg);
+    let selected = if processor.is_some() {
+        Backend::Silero
+    } else {
+        Backend::Energy
+    };
+    let ranges = detect(open()?, cfg, processor)?;
+    Ok((ranges, selected))
+}
+pub(super) fn make_processor(backend: Backend, cfg: &TrimConfig) -> Option<ContinuousVadProcessor> {
+    if backend == Backend::Silero {
         match silero(cfg) {
             Ok(p) => Some(p),
             Err(_) => {
@@ -131,14 +132,7 @@ pub(super) fn detect_with_fallback<I: Iterator<Item = Result<f32>>>(
         }
     } else {
         None
-    };
-    let selected = if processor.is_some() {
-        Backend::Silero
-    } else {
-        Backend::Energy
-    };
-    let ranges = detect(open.open()?, cfg, processor)?;
-    Ok((ranges, selected))
+    }
 }
 pub(super) fn silero(cfg: &TrimConfig) -> Result<ContinuousVadProcessor> {
     let config = silero_rs::VadConfig {
@@ -149,7 +143,6 @@ pub(super) fn silero(cfg: &TrimConfig) -> Result<ContinuousVadProcessor> {
         redemption_time: Duration::from_millis(cfg.min_silence_ms.into()),
         pre_speech_pad: Duration::ZERO,
         post_speech_pad: Duration::ZERO,
-        ..Default::default()
     };
     ContinuousVadProcessor::with_config(16000, config)
 }

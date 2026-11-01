@@ -43,13 +43,18 @@ pub struct TimedTranscript {
 }
 /// Optional adapter for engines that expose timestamps. The existing core
 /// TranscriptionProvider returns text only and remains unchanged.
-#[async_trait::async_trait]
 pub trait TimedTranscriptionProvider: Send + Sync {
-    async fn transcribe_timed(
-        &self,
+    fn transcribe_timed<'a>(
+        &'a self,
         audio: Vec<f32>,
         language: Option<String>,
-    ) -> Result<TimedTranscript, TranscriptionError>;
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<TimedTranscript, TranscriptionError>>
+                + Send
+                + 'a,
+        >,
+    >;
 }
 pub async fn transcribe_trimmed_timed(
     provider: &dyn TimedTranscriptionProvider,

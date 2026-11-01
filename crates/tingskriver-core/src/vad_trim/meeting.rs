@@ -1,4 +1,4 @@
-use super::{select_backend, Backend, TrimConfig};
+use super::{select_backend, TrimConfig};
 use crate::audio::vad::SpeechSegment;
 use anyhow::Result;
 
@@ -16,29 +16,20 @@ pub fn get_speech_chunks_with_progress(
     let backend = select_backend(cfg.backend, || {
         crate::ensure_onnx_runtime_available().is_ok()
     });
-    let mut processor = if backend == Backend::Silero {
-        match super::trim::silero(&cfg) {
-            Ok(p) => Some(p),
-            Err(_) => {
-                log::warn!("VAD backend: energy (Silero session startup failed)");
-                None
-            }
-        }
-    } else {
-        None
-    };
+    cfg.validate()?;
+    let processor = super::trim::make_processor(backend, &cfg);
     let mut last_percent = None;
     let input = samples.iter().copied().enumerate().map(|(i, sample)| {
         if i % 16000 == 0 {
             let percent = ((i as f64 / samples.len().max(1) as f64) * 100.0) as u32;
-            if last_percent.is_none_or(|last| percent >= last + 5) {
+            if last_percent.map_or(true, |last| percent >= last + 5) {
                 last_percent = Some(percent);
                 anyhow::ensure!(progress(percent, 0), "VAD processing cancelled");
             }
         }
         Ok(sample)
     });
-    let ranges = super::trim::detect(input, &cfg, processor.take())?;
+    let ranges = super::trim::detect(input, &cfg, processor)?;
     anyhow::ensure!(progress(100, ranges.len()), "VAD processing cancelled");
     Ok(ranges
         .into_iter()

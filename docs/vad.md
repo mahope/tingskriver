@@ -56,8 +56,8 @@ are configurable without changing the old constructor's behavior.
 Energy VAD uses 30 ms frames, a 200 Hz high-pass RMS, a slowly adapting noise
 floor, and a first-difference energy ratio to reject narrow low-frequency hum.
 The threshold raises both the absolute RMS gate and its required ratio above
-the noise floor. Only nonspeech frames update that floor, so sustained speech
-does not teach the detector to suppress itself. The same interval builder
+the noise floor. Only broadband nonspeech frames update that floor, so hum and sustained speech
+do not teach the detector to suppress itself. The same interval builder
 bridges pauses, rejects short events, pads intervals, merges overlapping pads,
 and retains speech at EOF. This is a conservative fallback, not a semantic
 speech classifier: loud broadband noise/music may still pass, and very quiet

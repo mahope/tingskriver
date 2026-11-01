@@ -25,14 +25,16 @@ fn clip(level: f32) -> (Vec<f32>, Vec<(usize, usize)>) {
 }
 struct Fake {
     calls: AtomicUsize,
+    expected_samples: usize,
 }
 #[async_trait::async_trait]
 impl TranscriptionProvider for Fake {
     async fn transcribe(
         &self,
-        _: Vec<f32>,
+        audio: Vec<f32>,
         _: Option<String>,
     ) -> Result<TranscriptResult, TranscriptionError> {
+        assert_eq!(audio.len(), self.expected_samples);
         self.calls.fetch_add(1, Ordering::SeqCst);
         Ok(TranscriptResult {
             text: "test".into(),
@@ -52,18 +54,29 @@ impl TranscriptionProvider for Fake {
 }
 #[tokio::test]
 async fn thirty_seconds_silence_and_low_noise_never_call_provider() {
-    for amplitude in [0.0, 0.0003] {
-        let audio: Vec<_> = (0..480_000)
-            .map(|i| amplitude * (i as f32 * 1.79).sin())
-            .collect();
-        let fake = Fake {
-            calls: AtomicUsize::new(0),
-        };
-        let result = transcribe_trimmed(&fake, &audio, &config(), None)
+    for backend in [BackendPreference::Energy, BackendPreference::Silero] {
+        for amplitude in [0.0, 0.0003] {
+            let audio: Vec<_> = (0..480_000)
+                .map(|i| amplitude * (i as f32 * 1.79).sin())
+                .collect();
+            let fake = Fake {
+                calls: AtomicUsize::new(0),
+                expected_samples: 0,
+            };
+            let result = transcribe_trimmed(
+                &fake,
+                &audio,
+                &TrimConfig {
+                    backend,
+                    ..config()
+                },
+                None,
+            )
             .await
             .unwrap();
-        assert!(result.transcript.text.is_empty());
-        assert_eq!(fake.calls.load(Ordering::SeqCst), 0);
+            assert!(result.transcript.text.is_empty());
+            assert_eq!(fake.calls.load(Ordering::SeqCst), 0);
+        }
     }
 }
 #[test]
@@ -71,6 +84,18 @@ fn five_clips_preserve_every_known_speech_sample() {
     for level in [0.012, 0.025, 0.06, 0.15, 0.4] {
         let (audio, truth) = clip(level);
         let result = trim(&audio, &config()).unwrap();
+        let forced = trim_with_runtime_probe(
+            &audio,
+            &TrimConfig {
+                backend: BackendPreference::Auto,
+                ..config()
+            },
+            || false,
+        )
+        .unwrap();
+        assert_eq!(result.samples, forced.samples);
+        assert_eq!(result.segments, forced.segments);
+        assert_eq!(forced.backend, Backend::Energy);
         assert!(result.samples.len() < audio.len() / 2);
         for (start, end) in truth {
             let overlap: usize = result
@@ -110,18 +135,25 @@ struct TimedFake {
     calls: AtomicUsize,
     spans: Vec<TimedSpan>,
 }
-#[async_trait::async_trait]
 impl TimedTranscriptionProvider for TimedFake {
-    async fn transcribe_timed(
-        &self,
+    fn transcribe_timed<'a>(
+        &'a self,
         _: Vec<f32>,
         _: Option<String>,
-    ) -> Result<TimedTranscript, TranscriptionError> {
-        self.calls.fetch_add(1, Ordering::SeqCst);
-        Ok(TimedTranscript {
-            text: "test".into(),
-            words: self.spans.clone(),
-            segments: self.spans.clone(),
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<TimedTranscript, TranscriptionError>>
+                + Send
+                + 'a,
+        >,
+    > {
+        Box::pin(async move {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(TimedTranscript {
+                text: "test".into(),
+                words: self.spans.clone(),
+                segments: self.spans.clone(),
+            })
         })
     }
 }
@@ -338,4 +370,72 @@ fn silero_startup_and_empty_buffer_smoke() {
     assert!(result.samples.is_empty());
     // Startup may fall back on machines without a working runtime; this is not a
     // speech-quality fixture. That requires the licensed corpus from issue #30.
+}
+
+#[test]
+fn quiet_speech_survives_mains_hum_and_silence_setting_bridges_pauses() {
+    let (mut audio, truth) = clip(0.025);
+    for (i, sample) in audio.iter_mut().enumerate() {
+        *sample += 0.03 * (std::f32::consts::TAU * 50.0 * i as f32 / 16000.0).sin();
+    }
+    let result = trim(&audio, &config()).unwrap();
+    for (start, end) in truth {
+        let overlap: usize = result
+            .segments
+            .iter()
+            .map(|s| end.min(s.orig_end).saturating_sub(start.max(s.orig_start)))
+            .sum();
+        assert_eq!(overlap, end - start);
+    }
+    let (clean, _) = clip(0.15);
+    let mut joined = clean[16000..32000].to_vec();
+    joined.extend_from_slice(&[0.0; 3200]);
+    joined.extend_from_slice(&clean[16000..32000]);
+    let cfg = TrimConfig {
+        speech_pad_ms: 0,
+        ..config()
+    };
+    assert_eq!(trim(&joined, &cfg).unwrap().segments.len(), 1);
+    assert_eq!(
+        trim(
+            &joined,
+            &TrimConfig {
+                min_silence_ms: 100,
+                ..cfg
+            }
+        )
+        .unwrap()
+        .segments
+        .len(),
+        2
+    );
+}
+#[tokio::test]
+async fn timed_provider_is_not_called_on_silence() {
+    let fake = TimedFake {
+        calls: AtomicUsize::new(0),
+        spans: Vec::new(),
+    };
+    let result = transcribe_trimmed_timed(&fake, &vec![0.0; 480000], &config(), None)
+        .await
+        .unwrap();
+    assert!(result.text.is_empty());
+    assert_eq!(fake.calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn text_provider_receives_only_trimmed_audio_in_one_call() {
+    let (audio, _) = clip(0.06);
+    let trimmed = trim(&audio, &config()).unwrap();
+    let fake = Fake {
+        calls: AtomicUsize::new(0),
+        expected_samples: trimmed.samples.len(),
+    };
+    let result = transcribe_trimmed(&fake, &audio, &config(), Some("da".into()))
+        .await
+        .unwrap();
+    assert_eq!(fake.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(result.transcript.text, "test");
+    assert_eq!(result.audio.samples, trimmed.samples);
+    assert!(result.audio.samples.len() < audio.len());
 }
