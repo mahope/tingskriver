@@ -93,7 +93,7 @@ og de lokalt tilgængelige pakkekilder:
 - `rusty-fork` 0.3.1: Jason Lingle, siden februar 2018, seneste udgivelse
   4. oktober 2025. Ingen build-script eller proc-makro; procesisolering og
   timeout ved eksplicit testkørsel. Konklusion: installér transitivt.
-- `unarray` 0.1.4: proptest-rs (repository i pakkemanifest), siden juni 2022,
+- `unarray` 0.1.4: cameron1024 (repository i pakkemanifest), siden juni 2022,
   seneste udgivelse november 2022. Ingen build-script eller proc-makro.
   Konklusion: installér transitivt.
 
