@@ -49,6 +49,7 @@ pub mod openai;
 pub mod openrouter;
 pub mod parakeet_engine;
 pub mod paths;
+pub mod playback;
 pub mod providers;
 pub mod runtime;
 pub mod shortcuts;

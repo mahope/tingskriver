@@ -1,10 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 
 export const useAudioPlayer = (audioPath: string | null) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
+  const [duration] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const audioRef = useRef<AudioContext | null>(null);
   const sourceRef = useRef<AudioBufferSourceNode | null>(null);
@@ -72,47 +71,9 @@ export const useAudioPlayer = (audioPath: string | null) => {
 
       console.log('Loading audio from:', audioPath);
       
-      // Read the file using Tauri command
-      const result = await invoke<number[]>('read_audio_file', { 
-        filePath: audioPath 
-      });
-      
-      if (!result || result.length === 0) {
-        throw new Error('Empty audio data received');
-      }
-      
-      console.log('Audio file read, size:', result.length, 'bytes');
-      
-      // Create a copy of the audio data
-      const audioData = new Uint8Array(result).buffer;
-      
-      console.log('Created audio buffer, size:', audioData.byteLength, 'bytes');
-      
-      // Decode the audio data
-      const audioBuffer = await new Promise<AudioBuffer>((resolve, reject) => {
-        audioRef.current!.decodeAudioData(
-          audioData,
-          buffer => {
-            console.log('Audio decoded successfully:', {
-              duration: buffer.duration,
-              sampleRate: buffer.sampleRate,
-              numberOfChannels: buffer.numberOfChannels,
-              length: buffer.length
-            });
-            resolve(buffer);
-          },
-          error => {
-            console.error('Audio decoding failed:', error);
-            reject(new Error('Failed to decode audio data: ' + error));
-          }
-        );
-      });
-      
-      audioBufferRef.current = audioBuffer;
-      setDuration(audioBuffer.duration);
-      setCurrentTime(0);
-      setError(null);
-      console.log('Audio loaded and ready to play');
+      // Playback now belongs to the streaming Rust core. This unused legacy
+      // hook must not transfer audio through JSON.
+      setError('Brug afspilleren i skrivebordsappen');
     } catch (error) {
       console.error('Error loading audio:', error);
       if (error instanceof Error) {
