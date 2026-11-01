@@ -28,7 +28,9 @@ timeout, partial EOF, invalid JSON, and unexpected response types leave the
 connection unusable. Subsequent requests fail with a restart-required error rather
 than consuming a late response. Helper errors are returned to the caller normally.
 The high-level client stops the process on user cancellation; request timeout also
-stops it. No response contents are logged by the transport.
+stops it if the request has begun its exchange. A timeout while waiting for the
+transaction lock leaves the helper and its active generation running. No response
+contents are logged by the transport.
 
 ## Process and monitor lifecycle
 

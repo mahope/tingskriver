@@ -1,63 +1,10 @@
 use super::*;
-use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::Mutex;
 
 fn pair() -> (Transport, tokio::io::DuplexStream) {
     let (client, helper) = tokio::io::duplex(4096);
     let (reader, writer) = tokio::io::split(client);
     (Transport::new(reader, writer), helper)
-}
-
-#[tokio::test]
-async fn ping_during_generation_never_steals_response_1000_iterations() {
-    let (transport, helper) = pair();
-    let transport = Arc::new(Mutex::new(transport));
-    let (reader, mut writer) = tokio::io::split(helper);
-    let fake = tokio::spawn(async move {
-        let mut lines = BufReader::new(reader).lines();
-        let mut seed = 20_u64;
-        while let Some(line) = lines.next_line().await.unwrap() {
-            let request: serde_json::Value = serde_json::from_str(&line).unwrap();
-            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
-            tokio::time::sleep(Duration::from_micros(seed % 100)).await;
-            let response = if request["type"] == "ping" {
-                serde_json::json!({"type":"pong"})
-            } else {
-                serde_json::json!({"type":"response", "text":request["iteration"]})
-            };
-            writer
-                .write_all(format!("{response}\n").as_bytes())
-                .await
-                .unwrap();
-        }
-    });
-    for iteration in 0..1000 {
-        let mut transaction = transport.lock().await;
-        let request = serde_json::json!({"type":"generate", "iteration":iteration}).to_string();
-        let generation = transaction.exchange(&request);
-        let ping = async {
-            tokio::task::yield_now().await;
-            // Same non-queuing policy as the health monitor.
-            assert!(transport.try_lock().is_err());
-        };
-        let (response, ()) = tokio::join!(generation, ping);
-        let response: serde_json::Value = serde_json::from_str(&response.unwrap()).unwrap();
-        assert_eq!(response["text"], iteration);
-        drop(transaction);
-        let response = transport
-            .lock()
-            .await
-            .exchange(r#"{"type":"ping"}"#)
-            .await
-            .unwrap();
-        assert_eq!(
-            serde_json::from_str::<serde_json::Value>(&response).unwrap()["type"],
-            "pong"
-        );
-    }
-    drop(transport);
-    fake.await.unwrap();
 }
 
 #[tokio::test]

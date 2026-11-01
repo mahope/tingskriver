@@ -452,13 +452,14 @@ impl SidecarManager {
         // Track active request
         let _guard = RequestGuard::new(self.active_request_count.clone());
 
+        let mut exchange_started = false;
         let exchange = async {
             let mut transport = self.transport.lock().await;
-            transport
+            let transport = transport
                 .as_mut()
-                .ok_or_else(|| anyhow!("Sidecar not running"))?
-                .exchange(&request_json)
-                .await
+                .ok_or_else(|| anyhow!("Sidecar not running"))?;
+            exchange_started = true;
+            transport.exchange(&request_json).await
         };
         match tokio::time::timeout(timeout, exchange).await {
             Ok(result) => {
@@ -470,7 +471,9 @@ impl SidecarManager {
                 result
             }
             Err(_) => {
-                self.shutdown().await?;
+                if exchange_started {
+                    self.shutdown().await?;
+                }
                 Err(anyhow!("Request timed out after {:?}", timeout))
             }
         }
