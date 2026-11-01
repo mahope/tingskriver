@@ -501,6 +501,9 @@ pub fn run() {
                 }
             });
 
+            // Finish the audio of meetings whose background encode never completed.
+            tauri::async_runtime::spawn(tingskriver_core::audio::finalize::finalize_pending_at_startup());
+
             // Set models directory to use app_data_dir (unified storage location)
             whisper_engine::commands::set_models_directory(&_app.handle());
 
