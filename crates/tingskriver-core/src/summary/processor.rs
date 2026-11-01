@@ -393,18 +393,22 @@ pub(crate) async fn generate_meeting_summary(
             info!("✓ Using cached English summary ({} chars), skipping pass 1", cached.len());
             (cached.to_string(), 1_i64, false)
         } else if provider == &LLMProvider::BuiltInAI {
-            let data_dir = app_data_dir.ok_or("Local model needs an application data directory")?;
+            let data_dir = app_data_dir.ok_or("Appens datamappe mangler til den lokale model.")?;
             let mut model = super::map_reduce::Builtin {
                 data_dir,
                 name: model_name,
                 cancellation: cancellation_token,
                 reasoning_stripped: false,
             };
-            let budget = super::map_reduce::Budget::for_model(model_name)?;
+            let budget = super::map_reduce::Budget::for_model(model_name)
+                .map_err(|_| "Den valgte lokale model kendes ikke.".to_string())?;
             let report = super::map_reduce::english_report(
                 &mut model, &budget, text, template, custom_prompt,
             )
-            .await?;
+            .await
+            .map_err(|_| {
+                "Den lokale model kunne ikke lave referatet. Prøv igen.".to_string()
+            })?;
             (
                 report.content,
                 report.stats.map_chunks.max(1) as i64,
