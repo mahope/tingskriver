@@ -156,6 +156,12 @@ A recording captures and saves, nothing else. Transcription, VAD and the
 summary run after the meeting from the saved files, so a crash in a model
 (a native abort in ggml or ONNX Runtime) cannot stop the audio.
 
+The desktop stop flow saves the meeting first, waits for the matching
+`recording-audio-finalized` event, then runs file transcription with the
+configured local model and the saved database meeting id. Completion is
+retained if encoding finishes before the database save. Failed encoding or
+transcription leaves the saved meeting available and reports the error.
+
 - Capture (`audio::pipeline::AudioCapture`) resamples to 48 kHz mono and
   applies the microphone filters, then hands the chunk to the disk writer
   through `RecordingState::send_audio_chunk`. That uses a bounded channel

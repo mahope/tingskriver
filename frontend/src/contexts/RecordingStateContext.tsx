@@ -4,6 +4,7 @@ import React, { createContext, useContext, useState, useEffect, useRef, useCallb
 import { recordingService } from '@/services/recordingService';
 import { toast } from 'sonner';
 import { listen } from '@tauri-apps/api/event';
+import { recordingFinalized, type FinalizedRecording } from '@/lib/recording-finalization';
 
 /**
  * Recording state synchronized with backend
@@ -377,7 +378,8 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
           listen<{ message: string }>('recording-storage-backlog', (event) => {
             toast.warning(event.payload.message, { id: 'recording-storage-backlog', duration: 8000 });
           }),
-          listen<{ status: string; message: string }>('recording-audio-finalized', (event) => {
+          listen<FinalizedRecording>('recording-audio-finalized', (event) => {
+            recordingFinalized(event.payload);
             if (event.payload.status !== 'ok') {
               toast.error(event.payload.message, { duration: 15000 });
             }
