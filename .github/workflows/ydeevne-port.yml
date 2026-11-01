@@ -76,9 +76,9 @@ jobs:
           PROFILE: ${{ inputs.profil }}
         shell: bash
         run: |
-          set -uo pipefail
-          python scripts/ydeevne-port.py "performance-input/$MEASUREMENT" --baseline "$BASELINE" --profil "$PROFILE" > ydeevne-rapport.md 2>&1
-          result=$?
+          set -euo pipefail
+          result=0
+          python scripts/ydeevne-port.py "performance-input/$MEASUREMENT" --baseline "$BASELINE" --profil "$PROFILE" > ydeevne-rapport.md 2>&1 || result=$?
           cat ydeevne-rapport.md >> "$GITHUB_STEP_SUMMARY"
           exit "$result"
       - name: Attach gate report even on failure

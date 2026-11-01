@@ -1,5 +1,6 @@
 """CLI regression tests using synthetic, never reference-machine, measurements."""
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -28,7 +29,8 @@ class GateTests(unittest.TestCase):
     def invoke(self, *args):
         return subprocess.run([sys.executable, str(SCRIPT), str(self.measurement),
                                '--baseline', str(self.baseline), *args],
-                              capture_output=True, text=True, encoding='utf-8')
+                              capture_output=True, text=True, encoding='utf-8',
+                              env={**os.environ, 'PYTHONIOENCODING': 'ascii'})
 
     def test_manipulated_baseline_copy(self):
         data = json.loads(self.baseline.read_text())
@@ -113,6 +115,22 @@ class GateTests(unittest.TestCase):
         result = self.invoke()
         self.assertEqual(result.returncode, 1)
         self.assertNotIn('Advarsel', result.stderr)
+
+    def test_bad_schema_and_multiple_json_blocks(self):
+        for text in ['[]', '{}', '{"resultater": []}',
+                     '```json\n{"resultater":{}}\n```\n'
+                     '```json\n{"resultater":{}}\n```']:
+            self.measurement.write_text(text, encoding='utf-8')
+            result = self.invoke('--tillad-uden-baseline')
+            self.assertEqual(result.returncode, 2)
+            self.assertNotIn('Traceback', result.stderr)
+
+    def test_readme_requires_markers(self):
+        readme = self.root / 'README.md'
+        readme.write_text('Unrelated documentation', encoding='utf-8')
+        result = self.invoke('--skriv-readme', '--readme', str(readme))
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(readme.read_text(), 'Unrelated documentation')
 
     def test_readme_sync(self):
         readme = self.root / 'README.md'
