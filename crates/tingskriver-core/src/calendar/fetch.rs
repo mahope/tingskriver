@@ -38,7 +38,11 @@ impl Calendar {
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|_| CalendarError::Fetch)?;
-        let cache = Cache::load(&path).await.unwrap_or_default();
+        let cache = Cache::load(&path)
+            .await
+            .ok()
+            .filter(|cache| cache.timezone == config.timezone)
+            .unwrap_or_default();
         Ok(Self {
             address,
             config,
@@ -142,7 +146,8 @@ impl Calendar {
         parse_config.own_addresses.clear();
         let events = parse(&body, &parse_config, from, to)?;
         let cache = Cache {
-            version: 1,
+            version: 2,
+            timezone: self.config.timezone.clone(),
             events,
             etag,
             fetched_at: Some(now),

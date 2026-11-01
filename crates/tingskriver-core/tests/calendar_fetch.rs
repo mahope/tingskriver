@@ -181,3 +181,52 @@ async fn timeout_is_bounded_and_keeps_cache() {
     assert_eq!(result.unwrap(), RefreshOutcome::Cached);
     assert!(calendar.events_around(now()) == original);
 }
+
+#[tokio::test]
+async fn timezone_change_discards_cache_and_refetches_without_etag() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address =
+        IcsAddress::new(format!("http://{}/secret", listener.local_addr().unwrap())).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("events.json");
+    let body = "BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:floating\nDTSTART:20260201T090000\nDURATION:PT1H\nEND:VEVENT\nEND:VCALENDAR";
+    let mut calendar = Calendar::open_at(
+        address.clone(),
+        CalendarConfig::default(),
+        path.clone(),
+        Timeout::from_secs(1),
+    )
+    .await
+    .unwrap();
+    let (result, _) = tokio::join!(
+        calendar.refresh_if_due(now()),
+        reply(&listener, "200 OK", "ETag: \"v1\"\r\n", body)
+    );
+    assert_eq!(result, RefreshOutcome::Updated);
+    assert_eq!(
+        calendar.events_around(now())[0].start,
+        "2026-02-01T08:00:00Z".parse::<DateTime<Utc>>().unwrap()
+    );
+    let mut reopened = Calendar::open_at(
+        address,
+        CalendarConfig {
+            timezone: "UTC".into(),
+            ..CalendarConfig::default()
+        },
+        path,
+        Timeout::from_secs(1),
+    )
+    .await
+    .unwrap();
+    assert!(reopened.events_around(now()).is_empty());
+    let (result, request) = tokio::join!(
+        reopened.refresh_if_due(now()),
+        reply(&listener, "200 OK", "ETag: \"v1\"\r\n", body)
+    );
+    assert_eq!(result, RefreshOutcome::Updated);
+    assert!(!request.to_lowercase().contains("if-none-match"));
+    assert_eq!(
+        reopened.events_around(now())[0].start,
+        "2026-02-01T09:00:00Z".parse::<DateTime<Utc>>().unwrap()
+    );
+}

@@ -6,6 +6,7 @@ use std::path::Path;
 #[derive(Default, Serialize, Deserialize)]
 pub(super) struct Cache {
     pub version: u8,
+    pub timezone: String,
     pub events: Vec<Event>,
     pub etag: Option<String>,
     pub fetched_at: Option<DateTime<Utc>>,
@@ -21,7 +22,7 @@ impl Cache {
             return Err(CalendarError::Cache);
         }
         let cache: Self = serde_json::from_slice(&bytes).map_err(|_| CalendarError::Cache)?;
-        if cache.version != 1 {
+        if cache.version != 2 {
             return Err(CalendarError::Cache);
         }
         Ok(cache)

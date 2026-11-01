@@ -304,3 +304,21 @@ fn floating_uses_configured_zone() {
         .iter()
         .any(|e| e.title == "Floating" && e.start == at("2026-02-01T08:00:00Z")));
 }
+
+#[test]
+fn utc_rdates_preserve_both_instants_in_autumn_fold() {
+    let source = "BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:fold-rdate\nDTSTART;TZID=Europe/Copenhagen:20261024T023000\nDURATION:PT1H\nRDATE:20261025T003000Z,20261025T013000Z\nEND:VEVENT\nEND:VCALENDAR";
+    let e = events(source);
+    assert_eq!(e.len(), 3);
+    assert_eq!(e[1].start, at("2026-10-25T00:30:00Z"));
+    assert_eq!(e[2].start, at("2026-10-25T01:30:00Z"));
+    assert_eq!(e[2].end, at("2026-10-25T02:30:00Z"));
+    let excluded = source.replace("RDATE:", "EXDATE:20261025T013000Z\nRDATE:");
+    let e = events(&excluded);
+    assert_eq!(e.len(), 2);
+    assert_eq!(e[1].start, at("2026-10-25T00:30:00Z"));
+    let overridden = source.replace("END:VCALENDAR", "BEGIN:VEVENT\nUID:fold-rdate\nRECURRENCE-ID:20261025T013000Z\nDTSTART:20261025T040000Z\nDURATION:PT1H\nEND:VEVENT\nEND:VCALENDAR");
+    let e = events(&overridden);
+    assert_eq!(e.len(), 3);
+    assert_eq!(e[2].start, at("2026-10-25T04:00:00Z"));
+}

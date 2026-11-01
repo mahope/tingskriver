@@ -60,6 +60,9 @@ Et møde, hvis observerede start ligger efter `now`, giver intet match.
   DTSTART, TZOFFSETFROM/TO, RDATE og ovenstående RRULE-delmængde. Kendte navne
   følger IANA, selv hvis en medsendt definition er forældet.
 
+Eksplicitte UTC-tidspunkter i RDATE bevares også ved efterårets dobbelte
+klokkeslæt; EXDATE og RECURRENCE-ID sammenlignes som UTC-tidspunkter.
+
 STATUS:CANCELLED filtreres altid fra. PARTSTAT=DECLINED filtreres kun fra,
 når den tilhørende mailadresse findes i `own_addresses` (uden forskel på
 store/små bogstaver). Andres afvisning skjuler ikke mødet. Uden egen
@@ -101,10 +104,12 @@ underlagt opdateringsintervallet. Ved ur, der går baglæns, forsøges igen.
 
 ## Cacheformat og privatliv
 
-`paths::app_data_dir()/calendar/events.json` er JSON version 1 med `events`,
+`paths::app_data_dir()/calendar/events.json` er JSON version 2 med parserens `timezone`, `events`,
 `etag`, `fetched_at`, `range_start` og `range_end`. Begivenheder indeholder
 UID, titel, deltagere (navn/mail/declined), UTC-start/slut og all_day.
-Der gemmes hverken rå ICS, ICS-adresse eller konfiguration i filen.
+Der gemmes hverken rå ICS eller ICS-adresse i filen. Ved ændring af
+konfigurationens tidszone kasseres cachen, og feedet hentes uden ETag.
+Version 1 kasseres også, da den ikke gemte parserens tidszone.
 Den indeholder kalenderens personlige mødeoplysninger og bør behandles som
 andre lokale mødedata. På Unix oprettes filen med mode 0600.
 

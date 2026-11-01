@@ -198,8 +198,8 @@ impl RawEvent {
                         .any(|own| email(&p.value).eq_ignore_ascii_case(own.trim()))
             })
     }
-    fn event(&self, start: &Stamp, local: NaiveDateTime) -> Result<Event> {
-        let begin = start.at(local)?;
+    fn event(&self, start: &Stamp, begin: DateTime<Utc>) -> Result<Event> {
+        let local = start.zone.local(begin)?;
         let end = if let Some(end) = self.get("DTEND") {
             if self.get("DURATION").is_some() {
                 return invalid();
@@ -226,10 +226,13 @@ impl RawEvent {
                 (Duration::zero(), Duration::zero())
             };
             // Day durations are nominal wall-clock days, including DST changes.
-            start
-                .at(local.checked_add_signed(days).ok_or(CalendarError::Parse)?)?
-                .checked_add_signed(seconds)
-                .ok_or(CalendarError::Parse)?
+            (if days == Duration::zero() {
+                begin
+            } else {
+                start.at(local.checked_add_signed(days).ok_or(CalendarError::Parse)?)?
+            })
+            .checked_add_signed(seconds)
+            .ok_or(CalendarError::Parse)?
         };
         if end < begin {
             return invalid();
@@ -408,7 +411,10 @@ pub fn parse(
             default_zone.clone(),
         )?;
         start.utc()?;
-        let mut dates = recurrence::expand(raw, &start, to)?;
+        let mut dates: BTreeSet<_> = recurrence::expand(raw, &start, to)?
+            .into_iter()
+            .filter_map(|local| start.at(local).ok())
+            .collect();
         let mut excluded = BTreeSet::new();
         for p in raw
             .props
@@ -422,18 +428,15 @@ pub fn parse(
                 if p.name == "EXDATE" {
                     excluded.insert(d.utc()?);
                 } else {
-                    dates.insert(start.zone.local(d.utc()?)?);
+                    dates.insert(d.utc()?);
                 }
             }
         }
-        for local in dates {
-            let Ok(utc) = start.at(local) else {
-                continue;
-            };
+        for utc in dates {
             if excluded.contains(&utc) || overrides.contains_key(&(raw.uid()?.to_owned(), utc)) {
                 continue;
             }
-            let event = raw.event(&start, local)?;
+            let event = raw.event(&start, utc)?;
             if event.start < to
                 && (event.end > from || event.end == event.start && event.start >= from)
             {
@@ -449,7 +452,7 @@ pub fn parse(
             raw.get("DTSTART").ok_or(CalendarError::Parse)?,
             default_zone.clone(),
         )?;
-        let event = raw.event(&start, start.local)?;
+        let event = raw.event(&start, start.utc()?)?;
         if event.start < to && (event.end > from || event.end == event.start && event.start >= from)
         {
             result.push(event);
