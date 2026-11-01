@@ -38,6 +38,10 @@ Et møde, hvis observerede start ligger efter `now`, giver intet match.
   `VALUE=DATE`. Heldagsaftaler uden slut varer én lokal dag. DTEND for
   heldagsaftaler er eksklusiv. Dagbaserede varigheder bevarer lokal tid
   hen over sommertid.
+- DURATION skelner mellem nominelle dage/uger og forløbne timer/minutter/
+  sekunder: P1D over forårsskiftet kan være 23 timer, PT24H er altid 24 timer.
+  Gentagne tidsbestemte aftaler med DTEND bevarer den oprindelige, præcise
+  varighed. DTEND og DURATION må ikke optræde sammen.
 - RRULE: DAILY, WEEKLY, MONTHLY og YEARLY; INTERVAL, COUNT, inklusiv UNTIL,
   BYDAY (og positive/negative ordinaler for måned/år), BYMONTHDAY (og negative
   værdier), BYMONTH og WKST. Ugyldige datoer og ikke-eksisterende lokale

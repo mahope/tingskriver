@@ -73,7 +73,10 @@ impl Zone {
                     .checked_sub_signed(Duration::seconds(i64::from(from)))
                     .ok_or(CalendarError::Parse)?
                     .and_utc();
-                if initial.is_none_or(|(first, _)| utc < first) {
+                if match initial {
+                    None => true,
+                    Some((first, _)) => utc < first,
+                } {
                     initial = Some((utc, from));
                 }
                 transitions.push((utc, next));

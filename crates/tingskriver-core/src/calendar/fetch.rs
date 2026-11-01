@@ -156,3 +156,31 @@ impl Calendar {
         Ok(RefreshOutcome::Updated)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn actual_network_error_has_no_url_in_debug_or_display() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!(
+            "http://{}/private-synthetic-token",
+            listener.local_addr().unwrap()
+        );
+        drop(listener);
+        let dir = tempfile::tempdir().unwrap();
+        let mut calendar = Calendar::open_at(
+            IcsAddress::new(url.clone()).unwrap(),
+            CalendarConfig::default(),
+            dir.path().join("events.json"),
+            Timeout::from_millis(30),
+        )
+        .await
+        .unwrap();
+        let error = calendar.refresh(Utc::now()).await.unwrap_err();
+        let formatted = format!("{error:?} {error}");
+        assert!(!formatted.contains(&url));
+        assert!(!formatted.contains("private-synthetic-token"));
+    }
+}

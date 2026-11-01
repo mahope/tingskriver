@@ -152,7 +152,7 @@ async fn timeout_is_bounded_and_keeps_cache() {
         address,
         CalendarConfig::default(),
         dir.path().join("events.json"),
-        Timeout::from_millis(30),
+        Timeout::from_millis(100),
     )
     .await
     .unwrap();
@@ -169,12 +169,15 @@ async fn timeout_is_bounded_and_keeps_cache() {
     let original = calendar.events_around(now());
     let stalled = async {
         let (_stream, _) = listener.accept().await.unwrap();
-        tokio::time::sleep(Timeout::from_millis(150)).await;
+        tokio::time::sleep(Timeout::from_millis(500)).await;
     };
     let (result, _) = tokio::join!(
-        calendar.refresh_if_due(now() + Duration::minutes(10)),
+        tokio::time::timeout(
+            Timeout::from_millis(400),
+            calendar.refresh_if_due(now() + Duration::minutes(10))
+        ),
         stalled
     );
-    assert_eq!(result, RefreshOutcome::Cached);
+    assert_eq!(result.unwrap(), RefreshOutcome::Cached);
     assert!(calendar.events_around(now()) == original);
 }

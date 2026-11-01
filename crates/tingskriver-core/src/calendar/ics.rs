@@ -129,13 +129,14 @@ pub(super) fn stamp(p: &Property, default_zone: Zone) -> Result<Stamp> {
     .ok_or(CalendarError::Parse)?;
     Ok(Stamp { local, zone, date })
 }
-fn duration(s: &str) -> Result<Duration> {
+fn duration(s: &str) -> Result<(Duration, Duration)> {
     let Some(rest) = s.strip_prefix('P') else {
         return invalid();
     };
     let mut time = false;
     let mut n = String::new();
     let mut seconds = 0_i64;
+    let mut days = 0_i64;
     let mut any = false;
     for c in rest.chars() {
         if c == 'T' && n.is_empty() && !time {
@@ -147,15 +148,16 @@ fn duration(s: &str) -> Result<Duration> {
             continue;
         }
         let unit = match (time, c) {
-            (false, 'W') => 604800,
-            (false, 'D') => 86400,
+            (false, 'W') => 7,
+            (false, 'D') => 1,
             (true, 'H') => 3600,
             (true, 'M') => 60,
             (true, 'S') => 1,
             _ => return invalid(),
         };
         let value = n.parse::<i64>().map_err(|_| CalendarError::Parse)?;
-        seconds = seconds
+        let target = if time { &mut seconds } else { &mut days };
+        *target = target
             .checked_add(value.checked_mul(unit).ok_or(CalendarError::Parse)?)
             .ok_or(CalendarError::Parse)?;
         n.clear();
@@ -164,7 +166,10 @@ fn duration(s: &str) -> Result<Duration> {
     if !any || !n.is_empty() {
         return invalid();
     }
-    Duration::try_seconds(seconds).ok_or(CalendarError::Parse)
+    Ok((
+        Duration::try_days(days).ok_or(CalendarError::Parse)?,
+        Duration::try_seconds(seconds).ok_or(CalendarError::Parse)?,
+    ))
 }
 #[derive(Clone)]
 pub(super) struct RawEvent {
@@ -194,26 +199,38 @@ impl RawEvent {
             })
     }
     fn event(&self, start: &Stamp, local: NaiveDateTime) -> Result<Event> {
+        let begin = start.at(local)?;
         let end = if let Some(end) = self.get("DTEND") {
+            if self.get("DURATION").is_some() {
+                return invalid();
+            }
             let end = stamp(end, start.zone.clone())?;
-            let delta = end.local - start.local;
-            end.at(local
-                .checked_add_signed(delta)
-                .ok_or(CalendarError::Parse)?)?
+            if end.date != start.date {
+                return invalid();
+            }
+            if start.date {
+                start.at(local
+                    .checked_add_signed(end.local - start.local)
+                    .ok_or(CalendarError::Parse)?)?
+            } else {
+                begin
+                    .checked_add_signed(end.utc()? - start.utc()?)
+                    .ok_or(CalendarError::Parse)?
+            }
         } else {
-            let delta = if let Some(d) = self.get("DURATION") {
+            let (days, seconds) = if let Some(d) = self.get("DURATION") {
                 duration(&d.value)?
             } else if start.date {
-                Duration::days(1)
+                (Duration::days(1), Duration::zero())
             } else {
-                Duration::zero()
+                (Duration::zero(), Duration::zero())
             };
             // Day durations are nominal wall-clock days, including DST changes.
-            start.at(local
-                .checked_add_signed(delta)
-                .ok_or(CalendarError::Parse)?)?
+            start
+                .at(local.checked_add_signed(days).ok_or(CalendarError::Parse)?)?
+                .checked_add_signed(seconds)
+                .ok_or(CalendarError::Parse)?
         };
-        let begin = start.at(local)?;
         if end < begin {
             return invalid();
         }
@@ -390,6 +407,7 @@ pub fn parse(
             raw.get("DTSTART").ok_or(CalendarError::Parse)?,
             default_zone.clone(),
         )?;
+        start.utc()?;
         let mut dates = recurrence::expand(raw, &start, to)?;
         let mut excluded = BTreeSet::new();
         for p in raw

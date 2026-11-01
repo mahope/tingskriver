@@ -19,6 +19,24 @@ const RULES: &str = include_str!("fixtures/calendar/rules.ics");
 const EDGES: &str = include_str!("fixtures/calendar/edge-cases.ics");
 
 #[test]
+fn duration_distinguishes_nominal_days_from_elapsed_hours() {
+    let e = events(EDGES);
+    let hours = e.iter().find(|e| e.uid == "elapsed-duration").unwrap();
+    assert_eq!(hours.end - hours.start, chrono::Duration::hours(2));
+    let day = e.iter().find(|e| e.uid == "nominal-duration").unwrap();
+    assert_eq!(day.end - day.start, chrono::Duration::hours(24));
+}
+#[test]
+fn recurring_dtend_preserves_exact_duration_across_dst() {
+    let e = events(EDGES);
+    let e: Vec<_> = e.iter().filter(|e| e.uid == "exact-end").collect();
+    assert_eq!(e.len(), 2);
+    assert!(e
+        .iter()
+        .all(|e| e.end - e.start == chrono::Duration::hours(2)));
+}
+
+#[test]
 fn daily_interval_and_month_31() {
     let e = events(EDGES);
     let dates: Vec<_> = e
