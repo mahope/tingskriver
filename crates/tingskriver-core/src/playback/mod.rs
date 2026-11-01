@@ -130,17 +130,23 @@ impl<O: AudioOutput> Player<O> {
                     match rx.try_recv() {
                         Ok(Command::Stop) | Err(mpsc::TryRecvError::Disconnected) => break,
                         Ok(Command::Reset(t, s, g, ack)) => {
-                            let result = tracks.iter_mut().try_for_each(|track| track.seek(t));
-                            if result.is_ok() {
+                            // Keep all active decoders intact if any track cannot seek.
+                            let result = tracks
+                                .iter()
+                                .map(|track| track.seeked(t))
+                                .collect::<Result<Vec<_>, _>>();
+                            let result = result.map(|next_tracks| {
+                                tracks = next_tracks;
                                 time = t.as_secs_f64();
                                 anchor = time;
                                 frame_index = 0;
                                 speed = s;
                                 gains = g;
-                                generation = state.generation.load(Ordering::SeqCst);
+                                generation = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
+                                state.ended.store(0, Ordering::Release);
                                 finished = false;
                                 reported_end = false;
-                            }
+                            });
                             let _ = ack.send(result);
                         }
                         Err(mpsc::TryRecvError::Empty) => {}
@@ -231,18 +237,18 @@ impl<O: AudioOutput> Player<O> {
     }
     fn reset(&mut self, t: Duration) -> Result<(), PlaybackError> {
         let playing = self.shared.playing.swap(false, Ordering::SeqCst);
-        self.shared.generation.fetch_add(1, Ordering::SeqCst);
-        self.shared.ended.store(0, Ordering::Release);
         let (tx, rx) = mpsc::sync_channel(1);
         self.commands
             .send(Command::Reset(t, self.speed, self.gains, tx))
             .map_err(|_| PlaybackError::Stopped)?;
-        rx.recv().map_err(|_| PlaybackError::Stopped)??;
-        self.shared
-            .position
-            .store(t.as_nanos().min(u64::MAX as u128) as u64, Ordering::Release);
+        let result = rx.recv().map_err(|_| PlaybackError::Stopped)?;
+        if result.is_ok() {
+            self.shared
+                .position
+                .store(t.as_nanos().min(u64::MAX as u128) as u64, Ordering::Release);
+        }
         self.shared.playing.store(playing, Ordering::Release);
-        Ok(())
+        result
     }
     pub fn seek(&mut self, t: Duration) -> Result<(), PlaybackError> {
         self.reset(t)
@@ -251,8 +257,12 @@ impl<O: AudioOutput> Player<O> {
         if !speed.is_finite() || !(0.5..=2.0).contains(&speed) {
             return Err(PlaybackError::Speed);
         }
-        self.speed = speed;
-        self.reset(self.position())
+        let previous = std::mem::replace(&mut self.speed, speed);
+        let result = self.reset(self.position());
+        if result.is_err() {
+            self.speed = previous;
+        }
+        result
     }
     /// Zero gain mutes a track. Gains must be finite and in 0..=1.
     pub fn set_track_gains(&mut self, mikrofon: f32, system: f32) -> Result<(), PlaybackError> {
@@ -262,8 +272,12 @@ impl<O: AudioOutput> Player<O> {
         {
             return Err(PlaybackError::Gain);
         }
-        self.gains = [mikrofon, system];
-        self.reset(self.position())
+        let previous = std::mem::replace(&mut self.gains, [mikrofon, system]);
+        let result = self.reset(self.position());
+        if result.is_err() {
+            self.gains = previous;
+        }
+        result
     }
     pub fn output_mut(&mut self) -> &mut O {
         &mut self.output

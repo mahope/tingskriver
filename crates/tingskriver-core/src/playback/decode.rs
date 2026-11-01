@@ -120,7 +120,12 @@ impl Track {
             }
         }
     }
-    pub fn seek(&mut self, time: Duration) -> Result<(), PlaybackError> {
+    pub fn seeked(&self, time: Duration) -> Result<Self, PlaybackError> {
+        let mut track = Self::open(&self.path)?;
+        track.seek(time)?;
+        Ok(track)
+    }
+    fn seek(&mut self, time: Duration) -> Result<(), PlaybackError> {
         let seconds = time.as_secs_f64() + self.offset;
         // Warm transform codecs and MP3's bit reservoir before the requested frame.
         let time = Duration::try_from_secs_f64(seconds)

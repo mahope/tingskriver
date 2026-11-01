@@ -31,6 +31,10 @@ arbejder på atomiske værdier. Positionen er medietid, beregnet fra leverede
 frames, og står stille ved pause og bufferunderløb. Den omfatter ikke lydkortets
 hardwarelatens. `seek` kan også bruges efter `Ended`; kald derefter `play`.
 Et kald til `play` alene efter slut starter ikke forfra.
+Ved søgning klargøres nye dekodere for alle spor, før tidsaksen skiftes.
+En fejlet søgning bevarer de aktive dekodere, bufferens generation, position og
+afspilnings-/pausetilstand. Fejl ved hastigheds- eller gainændring bevarer også
+de tidligere indstillinger. Klargøring kræver, at kildefilerne stadig kan åbnes.
 
 `Event::Position(Duration)`, `Ended` og `Error(PlaybackError)` kommer gennem
 modtageren fra `open`. Køen har 64 pladser; positionsopdateringer kan springes
@@ -131,7 +135,7 @@ Kørsler på den endelige kode:
 
 ```text
 cargo test -p tingskriver-core
-485 passed; 0 failed; 4 ignored
+487 passed; 0 failed; 4 ignored
 Doc-tests: 1 passed; 0 failed; 1 ignored
 
 cargo test -p tingskriver-core playback::tests -- --ignored --nocapture --test-threads=1
@@ -174,3 +178,22 @@ command. Speed uses resampling and changes pitch; native Windows audio still
 needs the manual listening test above.
 
 Fixes #17.
+
+## Rettelse efter review 2026-11-01
+
+Reviewets eneste fund (P2) var korrekt: en fejlet søgning skiftede generation
+uden at skifte workerens dekodere, så efterfølgende output blev kasseret.
+Søgning klargør nu alle spor separat og skifter kun generation ved succes.
+Fejl bevarer også afspilnings-/pausetilstand, position og tidligere indstillinger.
+To regressionstests dækker `Duration::MAX` med ét/to spor og afspilning/pause
+samt fejl ved åbning af andet spor uden at ødelægge det første.
+Den første regressionstest fejlede før rettelsen med `output timed out at 0`.
+Ingen fund blev afvist eller udskudt; reviewet havde ingen P1 eller P3.
+
+Efter rettelsen: playback-tests 8 bestået, 2 ignoreret; fuld core-suite
+487 bestået, 0 fejl, 4 ignoreret; dokumentationstest 1 bestået, 1 ignoreret.
+De to ignorerede playback-prøver blev kørt særskilt og bestod: alle formater
+og en times WAV (2,10 ms opstart, 48 KiB yderligere RSS; lille WAV 2,33 ms,
+8.336 KiB RSS). Rustfmt og `git diff --check` bestod. Clippy har fortsat de
+tre ovennævnte arvede fejl, ingen fund i playback. Ingen nye pakker eller
+ændringer uden for playback-modulet og dette dokument i reviewrettelsen.

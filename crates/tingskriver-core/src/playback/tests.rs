@@ -49,6 +49,69 @@ fn pull(player: &mut Player<FakeOutput>, n: usize) -> Vec<f32> {
     result
 }
 #[test]
+fn failed_seek_preserves_playback_state() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("tone.wav");
+    wav(&path, 16000, 1, 1);
+    for source in [
+        Source::Mixed(path.clone()),
+        Source::Tracks {
+            mikrofon: path.clone(),
+            system: path.clone(),
+        },
+    ] {
+        for playing in [false, true] {
+            let (mut p, _) = Player::open(source.clone(), FakeOutput::new(16000)).unwrap();
+            p.play();
+            pull(&mut p, 160);
+            if !playing {
+                p.pause();
+            }
+            let position = p.position();
+            assert_eq!(p.seek(Duration::MAX), Err(PlaybackError::Seek));
+            assert_eq!(p.position(), position);
+            assert_eq!(p.shared.playing.load(Ordering::Acquire), playing);
+            if !playing {
+                assert_eq!(p.output_mut().pull(&mut [0.0; 160]), 0);
+                p.play();
+            }
+            let samples = pull(&mut p, 160);
+            assert!(samples.iter().any(|s| s.abs() > 0.01));
+            assert_eq!(p.position(), position + Duration::from_millis(10));
+            p.seek(Duration::from_millis(500)).unwrap();
+            pull(&mut p, 160);
+            assert_eq!(p.position(), Duration::from_millis(510));
+        }
+    }
+}
+#[test]
+fn failed_second_track_reset_keeps_both_tracks_and_settings() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("a.wav");
+    let b = dir.path().join("b.wav");
+    wav(&a, 16000, 1, 1);
+    wav(&b, 16000, 1, 1);
+    let (mut p, _) = Player::open(
+        Source::Tracks {
+            mikrofon: a,
+            system: b.clone(),
+        },
+        FakeOutput::new(16000),
+    )
+    .unwrap();
+    p.play();
+    pull(&mut p, 160);
+    std::fs::rename(&b, dir.path().join("moved.wav")).unwrap();
+    assert_eq!(p.seek(Duration::from_millis(500)), Err(PlaybackError::Open));
+    assert_eq!(p.set_speed(2.0), Err(PlaybackError::Open));
+    assert_eq!(p.speed, 1.0);
+    assert_eq!(p.set_track_gains(0.0, 0.0), Err(PlaybackError::Open));
+    assert_eq!(p.gains, [1.0, 1.0]);
+    let samples = pull(&mut p, 16000 - 160);
+    assert!(samples.iter().any(|s| s.abs() == 1.0));
+    assert_eq!(p.position(), Duration::from_secs(1));
+}
+#[test]
 fn fake_controls_speed_position_and_end() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("tone.wav");
