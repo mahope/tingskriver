@@ -3,12 +3,14 @@
 //! The panic hook in [`crate::logging`] catches Rust panics, but a native
 //! abort (an access violation in whisper.cpp or ONNX Runtime, a stack
 //! overflow) ends the process without running any Rust code. For those,
-//! Windows itself can write a minidump: a per-user `LocalDumps` key for the
+//! Windows itself can write a minidump: a per-exe `LocalDumps` key for the
 //! exe under
-//! `HKCU\Software\Microsoft\Windows\Windows Error Reporting\LocalDumps`
+//! `HKLM\Software\Microsoft\Windows\Windows Error Reporting\LocalDumps`
 //! makes WER save a small dump (`DumpType` 1) in [`crate::paths::dump_dir`].
 //! Nothing is uploaded; the dumps stay on the PC until the user sends one.
 //!
+//! Setup requires administrator privileges. Failures are returned to the UI
+//! and logged at startup; an unelevated process cannot configure WER.
 //! On by default and set again at every start (the exe can move with an
 //! update). Turning it off removes the key; the choice is a marker file next
 //! to the logs, so it holds without a database.
@@ -67,24 +69,29 @@ pub fn remember_in(local_dir: &Path, enabled: bool) -> std::io::Result<()> {
     }
 }
 
-/// Whether crash dumps are on (the default).
+/// Whether crash dumps are requested and Windows has a minidump registration.
 pub fn enabled() -> bool {
-    crate::paths::local_data_dir().map_or(true, |dir| enabled_in(&dir))
+    let requested = crate::paths::local_data_dir().map_or(true, |dir| enabled_in(&dir));
+    requested && platform::registered()
 }
 
 /// Turn crash dumps on or off and remember it.
 pub fn set_enabled(enabled: bool) -> Result<(), String> {
     let dir = crate::paths::local_data_dir().ok_or("Could not determine the local data folder")?;
-    remember_in(&dir, enabled)
-        .map_err(|e| format!("Could not save the crash dump setting: {e}"))?;
-    apply()
+    apply_setting(enabled)?;
+    remember_in(&dir, enabled).map_err(|e| format!("Could not save the crash dump setting: {e}"))
 }
 
 /// Make the registry match the setting: the `LocalDumps` key for the
 /// running exe when on, no key when off. Does nothing outside Windows.
 pub fn apply() -> Result<(), String> {
+    let requested = crate::paths::local_data_dir().map_or(true, |dir| enabled_in(&dir));
+    apply_setting(requested)
+}
+
+fn apply_setting(enabled: bool) -> Result<(), String> {
     let exe = current_exe_name().ok_or("Could not determine the exe name")?;
-    if enabled() {
+    if enabled {
         let dir = crate::paths::dump_dir().ok_or("Could not determine the dump folder")?;
         std::fs::create_dir_all(&dir)
             .map_err(|e| format!("Could not create {}: {e}", dir.display()))?;
@@ -119,8 +126,9 @@ mod platform {
     use windows::core::PCWSTR;
     use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS, WIN32_ERROR};
     use windows::Win32::System::Registry::{
-        RegCloseKey, RegCreateKeyExW, RegDeleteTreeW, RegSetValueExW, HKEY, HKEY_CURRENT_USER,
-        KEY_SET_VALUE, REG_DWORD, REG_EXPAND_SZ, REG_OPTION_NON_VOLATILE, REG_VALUE_TYPE,
+        RegCloseKey, RegCreateKeyExW, RegDeleteTreeW, RegGetValueW, RegSetValueExW, HKEY,
+        HKEY_LOCAL_MACHINE, KEY_SET_VALUE, REG_DWORD, REG_EXPAND_SZ, REG_OPTION_NON_VOLATILE,
+        REG_VALUE_TYPE, RRF_RT_REG_DWORD,
     };
 
     fn wide(s: &std::ffi::OsStr) -> Vec<u16> {
@@ -131,7 +139,10 @@ mod platform {
         if status == ERROR_SUCCESS {
             Ok(())
         } else {
-            Err(format!("{what} failed (Win32 error {})", status.0))
+            Err(format!(
+                "{what} failed (Win32 error {}). Configuring Windows crash dumps requires administrator privileges.",
+                status.0
+            ))
         }
     }
 
@@ -144,13 +155,36 @@ mod platform {
         check(&format!("Setting {name}"), status)
     }
 
+    pub fn registered() -> bool {
+        let Some(exe) = super::current_exe_name() else {
+            return false;
+        };
+        let subkey = wide(super::exe_key(&exe).as_ref());
+        let name = wide("DumpType".as_ref());
+        let mut value = 0u32;
+        let mut size = std::mem::size_of::<u32>() as u32;
+        // SAFETY: strings are terminated; value and size are writable for the call.
+        let status = unsafe {
+            RegGetValueW(
+                HKEY_LOCAL_MACHINE,
+                PCWSTR(subkey.as_ptr()),
+                PCWSTR(name.as_ptr()),
+                RRF_RT_REG_DWORD,
+                None,
+                Some((&mut value as *mut u32).cast()),
+                Some(&mut size),
+            )
+        };
+        status == ERROR_SUCCESS && value == super::DUMP_TYPE_MINI
+    }
+
     pub fn register(exe_name: &str, dump_dir: &Path) -> Result<(), String> {
         let subkey = wide(super::exe_key(exe_name).as_ref());
         let mut key = HKEY::default();
         // SAFETY: valid null-terminated subkey; `key` receives the handle.
         let status = unsafe {
             RegCreateKeyExW(
-                HKEY_CURRENT_USER,
+                HKEY_LOCAL_MACHINE,
                 PCWSTR(subkey.as_ptr()),
                 None,
                 PCWSTR::null(),
@@ -191,8 +225,8 @@ mod platform {
 
     pub fn unregister(exe_name: &str) -> Result<(), String> {
         let subkey = wide(super::exe_key(exe_name).as_ref());
-        // SAFETY: valid null-terminated subkey under HKCU.
-        let status = unsafe { RegDeleteTreeW(HKEY_CURRENT_USER, PCWSTR(subkey.as_ptr())) };
+        // SAFETY: valid null-terminated subkey under HKLM.
+        let status = unsafe { RegDeleteTreeW(HKEY_LOCAL_MACHINE, PCWSTR(subkey.as_ptr())) };
         if status == ERROR_FILE_NOT_FOUND {
             return Ok(());
         }
@@ -203,6 +237,10 @@ mod platform {
 #[cfg(not(windows))]
 mod platform {
     use std::path::Path;
+
+    pub fn registered() -> bool {
+        true
+    }
 
     pub fn register(_exe_name: &str, _dump_dir: &Path) -> Result<(), String> {
         Ok(())
@@ -216,6 +254,65 @@ mod platform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Run explicitly from an elevated Windows terminal. Uses a uniquely named
+    /// child executable so no application or other test's WER key is changed.
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "requires elevated Windows and Windows Error Reporting"]
+    fn native_crash_produces_a_minidump() {
+        if std::env::var_os("TINGSKRIVER_WER_CRASH_CHILD").is_some() {
+            #[link(name = "kernel32")]
+            extern "system" {
+                fn RaiseException(code: u32, flags: u32, count: u32, args: *const usize);
+            }
+            // SAFETY: no arguments; this deliberately terminates the isolated child.
+            unsafe { RaiseException(0xc0000005, 1, 0, std::ptr::null()) };
+            panic!("native exception unexpectedly returned");
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let exe_name = format!("tingskriver-wer-probe-{}.exe", uuid::Uuid::new_v4());
+        let exe = dir.path().join(&exe_name);
+        std::fs::copy(std::env::current_exe().unwrap(), &exe).unwrap();
+        let dumps = dir.path().join("dumps");
+        std::fs::create_dir(&dumps).unwrap();
+        struct Registration(String);
+        impl Drop for Registration {
+            fn drop(&mut self) {
+                let _ = platform::unregister(&self.0);
+            }
+        }
+        let _registration = Registration(exe_name.clone());
+        platform::register(&exe_name, &dumps).unwrap();
+        let mut child = std::process::Command::new(exe)
+            .args([
+                "--exact",
+                "crash_dumps::tests::native_crash_produces_a_minidump",
+                "--ignored",
+            ])
+            .env("TINGSKRIVER_WER_CRASH_CHILD", "1")
+            .spawn()
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                assert!(!status.success());
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                panic!("WER crash child did not terminate within 60 seconds");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        let dump = std::fs::read_dir(dumps)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| path.extension().is_some_and(|ext| ext == "dmp"))
+            .expect("native crash must produce a dump");
+        assert!(std::fs::read(dump).unwrap().starts_with(b"MDMP"));
+    }
 
     #[test]
     fn key_is_per_exe_under_local_dumps() {

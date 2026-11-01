@@ -89,8 +89,10 @@ registers at startup.
   shown. The React `DatabaseGate` shows a loading state, and if opening fails
   an error page with the log and the backup, from the `database-status`
   event and the `get_database_status` command.
-- `crash_dumps::apply_in_background()` sets the per-user Windows Error
-  Reporting `LocalDumps` key for the running exe, so a native crash leaves a
+- `crash_dumps::apply_in_background()` sets the per-exe Windows Error
+  Reporting `LocalDumps` key under HKLM for the running exe. This requires
+  administrator privileges; setup errors are logged at startup and returned
+  when changing the setting. Once configured, a native crash leaves a
   minidump in `%LOCALAPPDATA%\dk.mahoje.tingskriver\dumps`. The release
   profile keeps line tables in a separate PDB (`split-debuginfo`), which CI
   uploads as the `...-symbols-...` artifact. The GPUI app should call
@@ -221,3 +223,14 @@ polishing. `providers::chain_for` returns the resolved links for callers that
 need their own loop. The settings UI uses `config`, `save_config`,
 `statuses`, `set_key`, `delete_key` and `test_provider` (a real `GET /models`
 with the measured round trip).
+
+Database safety copies use a unique folder on every attempt, including the
+current WAL and rollback journal. Error advice only confirms a copy when its
+path is available; failed copies are reported explicitly.
+
+To verify WER with an actual native exception, run from an elevated Windows
+terminal: `cargo test --locked -p tingskriver-core
+crash_dumps::tests::native_crash_produces_a_minidump -- --ignored --exact`.
+The test registers only its uniquely named child executable, checks the dump
+signature and removes its HKLM key afterward. It is excluded from ordinary
+unit tests because it requires administrator access and the WER service.

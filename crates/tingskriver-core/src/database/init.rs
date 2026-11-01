@@ -11,7 +11,7 @@
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use serde::Serialize;
 
@@ -145,10 +145,16 @@ impl DbInitError {
             DbFailureKind::Locked => {
                 "Luk andre vinduer med Tingskriver og programmer, der har databasen åben, og start Tingskriver igen."
             }
+            DbFailureKind::Corrupt if self.backup_path().is_none() => {
+                "Dine optagelser ligger stadig som lydfiler, men der kunne ikke oprettes en kopi af databasen. Send logfilen til udvikleren, før du sletter noget."
+            }
             DbFailureKind::Corrupt => {
                 "Dine optagelser ligger stadig som lydfiler, og der er taget en kopi af databasen. Send logfilen til udvikleren, før du sletter noget."
             }
             DbFailureKind::DiskFull => "Frigør plads på disken, og start Tingskriver igen.",
+            DbFailureKind::Migration if self.backup_path().is_none() => {
+                "Der kunne ikke oprettes en kopi af databasen. Send logfilen til udvikleren, før du sletter noget."
+            }
             DbFailureKind::Migration => {
                 "Der er taget en kopi af databasen. Send logfilen til udvikleren."
             }
@@ -275,40 +281,21 @@ pub fn has_leftover_journal(database_path: &Path) -> bool {
         .any(|file| fs::metadata(file).map(|m| m.len() > 0).unwrap_or(false))
 }
 
-/// Folder name for a backup of `database_path`: the file name, its
-/// modification time and its size. Starting a broken database again gives
-/// the same name, so repeated failures do not fill the disk with copies.
-fn backup_folder_name(database_path: &Path, modified: SystemTime, len: u64) -> String {
-    let stem = database_path
-        .file_stem()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "database".to_string());
-    let modified: chrono::DateTime<chrono::Local> = modified.into();
-    format!("{stem}-{}-{len}", modified.format("%Y%m%d-%H%M%S"))
-}
-
 /// Copy the database file and its `-wal`, `-shm` and `-journal` files to a
 /// new folder in `backup_root`. Returns the folder, or `None` when there is
-/// no database file to copy. A backup of the same file state (modification
-/// time and size) is reused instead of copied again.
+/// no database file to copy. Each call makes a fresh copy, including journals.
 pub fn backup_database(database_path: &Path, backup_root: &Path) -> io::Result<Option<PathBuf>> {
     Ok(copy_database(database_path, backup_root)?.map(|(folder, _)| folder))
 }
 
-/// [`backup_database`], and whether this call made the copy (`false` when an
-/// existing backup of the same file state was reused).
+/// [`backup_database`], and whether this call made the copy.
 fn copy_database(database_path: &Path, backup_root: &Path) -> io::Result<Option<(PathBuf, bool)>> {
-    let metadata = match fs::metadata(database_path) {
-        Ok(metadata) => metadata,
+    match fs::metadata(database_path) {
+        Ok(_) => (),
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(e),
     };
-    let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-    let folder = backup_root.join(backup_folder_name(database_path, modified, metadata.len()));
-    let main_copy = folder.join(database_path.file_name().unwrap_or_default());
-    if main_copy.exists() {
-        return Ok(Some((folder, false)));
-    }
+    let folder = backup_root.join(format!("database-{}", uuid::Uuid::new_v4()));
 
     // Copy into a temporary folder and rename it at the end, so a copy that
     // fails halfway (full disk) is never mistaken for a complete backup.
@@ -567,6 +554,38 @@ mod tests {
     }
 
     #[test]
+    fn wal_changes_are_included_in_the_next_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("meeting_minutes.sqlite");
+        let wal = dir.path().join("meeting_minutes.sqlite-wal");
+        let root = dir.path().join(BACKUP_DIR);
+        fs::write(&db, b"main").unwrap();
+        fs::write(&wal, b"old").unwrap();
+        let first = backup_database(&db, &root).unwrap().unwrap();
+        fs::write(&wal, b"new").unwrap();
+        let next = backup_database(&db, &root).unwrap().unwrap();
+        assert_ne!(first, next);
+        assert_eq!(
+            fs::read(next.join(wal.file_name().unwrap())).unwrap(),
+            b"new"
+        );
+        assert_eq!(
+            fs::read(first.join(wal.file_name().unwrap())).unwrap(),
+            b"old"
+        );
+    }
+
+    #[test]
+    fn backup_advice_matches_the_actual_copy_result() {
+        for kind in [DbFailureKind::Corrupt, DbFailureKind::Migration] {
+            let mut error = DbInitError::new(kind, info("x"));
+            assert!(error.advice_da().contains("kunne ikke"));
+            error.set_backup_path(Some(PathBuf::from("backup")));
+            assert!(error.advice_da().contains("er taget en kopi"));
+        }
+    }
+
+    #[test]
     fn backup_copies_all_files_once_and_leaves_the_originals() {
         let dir = tempfile::tempdir().unwrap();
         let db = dir.path().join("meeting_minutes.sqlite");
@@ -588,10 +607,10 @@ mod tests {
         assert!(db.exists());
         assert!(dir.path().join("meeting_minutes.sqlite-wal").exists());
 
-        // The same file state reuses the backup.
+        // Every attempt captures the current files.
         let again = backup_database(&db, &root).unwrap().unwrap();
-        assert_eq!(again, folder);
-        assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
+        assert_ne!(again, folder);
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 2);
     }
 
     #[test]
@@ -620,7 +639,7 @@ mod tests {
         // A backup from an earlier failure of the same file state stays.
         let earlier = backup_database(&db, &root).unwrap().unwrap();
         let copy = backup_before_open(&db, &root).unwrap();
-        assert_eq!(copy.folder(), earlier);
+        assert_ne!(copy.folder(), earlier);
         copy.discard();
         assert!(earlier.exists());
         assert!(wal.exists(), "the WAL itself is never touched");
