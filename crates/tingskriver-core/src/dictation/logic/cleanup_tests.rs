@@ -434,6 +434,8 @@ fn enter_trigger_in_the_middle_is_text() {
 #[test]
 fn addresses_table() {
     let cases: &[(&str, &str)] = &[
+        ("se mahoje punktum dk skråstreg kontakt i morgen", "Se mahoje.dk/kontakt i morgen"),
+        ("se mahoje punktum dk skråstreg min bindestreg side skråstreg kontakt i morgen", "Se mahoje.dk/min-side/kontakt i morgen"),
         ("anna snabel-a eksempel punktum d k", "anna@eksempel.dk"),
         (
             "skriv til anna snabel-a eksempel punktum dk",

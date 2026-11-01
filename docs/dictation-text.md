@@ -106,14 +106,22 @@ The file is read at start and when the dictionary changes.
 ## Voice commands on Windows
 
 "slet det" and "vælg det" act only when they are the whole dictation, and
-only while the control that had focus after the previous insertion still has
+only while the control that had focus at the previous insertion still has
 focus (`GetGUIThreadInfo`), and at most 60 seconds after the insertion.
 Browsers and Electron apps draw all fields in one control, so the focused UI
 Automation element's runtime id is compared too; if UI Automation answered at
 insertion but not now, nothing happens. After Chat's Enter the insertion is
-forgotten. Typing or moving the cursor inside the same field within the 60
+forgotten. The insertion retains its target across clipboard restoration;
+paste, typing fallback and Chat's Enter check that the same field still has focus.
+Typing or moving the cursor inside the same field within the 60
 seconds is not detected. The command sends Backspace or Shift+Left once per
-inserted character.
+inserted character. After "vælg det", another selection command does nothing
+and "slet det" sends one Backspace to remove the selection.
+
+A spoken URL path consumes one word per slash-separated segment, with explicit
+hyphens or underscores joining words within a segment. For example,
+"mahoje punktum dk skråstreg kontakt i morgen" becomes
+"mahoje.dk/kontakt i morgen".
 
 "stop diktering" at the end of a dictation is removed from the text and
 reported as `stopDictation`, but nothing acts on it yet: the text is cleaned

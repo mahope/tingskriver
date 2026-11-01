@@ -365,6 +365,15 @@ pub struct LastInsertion {
     pub text: String,
     pub field: FieldId,
     pub at: Instant,
+    pub selected: bool,
+}
+
+pub fn require_field(expected: Option<&FieldId>, current: Option<&FieldId>) -> Result<(), String> {
+    if expected.is_some() && expected == current {
+        Ok(())
+    } else {
+        Err("Tekstfeltet har skiftet eller kunne ikke identificeres".to_string())
+    }
 }
 
 /// How long "slet det"/"vælg det" can reach back. Later, the user has most
@@ -405,8 +414,9 @@ pub fn plan_edit(
         return None;
     }
     match command {
-        VoiceCommand::DeleteThat => Some(EditPlan::Backspace(n)),
-        VoiceCommand::SelectThat => Some(EditPlan::SelectLeft(n)),
+        VoiceCommand::DeleteThat => Some(EditPlan::Backspace(if last.selected { 1 } else { n })),
+        VoiceCommand::SelectThat if !last.selected => Some(EditPlan::SelectLeft(n)),
+        VoiceCommand::SelectThat => None,
         VoiceCommand::StopDictation => None,
     }
 }
@@ -555,7 +565,41 @@ mod tests {
             text: text.into(),
             field,
             at: Instant::now(),
+            selected: false,
         }
+    }
+
+    #[test]
+    fn insertion_target_is_not_reassigned_after_clipboard_wait() {
+        let inserted_into = field(1);
+        let focused_after_wait = field(2);
+        assert!(require_field(Some(&inserted_into), Some(&focused_after_wait)).is_err());
+        assert!(require_field(Some(&inserted_into), Some(&inserted_into)).is_ok());
+        assert!(require_field(None, None).is_err());
+        assert!(require_field(Some(&inserted_into), None).is_err());
+    }
+
+    #[test]
+    fn select_then_delete_preserves_existing_text() {
+        let mut last = last("Hej", field(1));
+        let now = last.at;
+        assert_eq!(
+            plan_edit(VoiceCommand::SelectThat, Some(&last), Some(&field(1)), now),
+            Some(EditPlan::SelectLeft(3))
+        );
+        last.selected = true;
+        assert_eq!(
+            plan_edit(VoiceCommand::SelectThat, Some(&last), Some(&field(1)), now),
+            None
+        );
+        assert_eq!(
+            plan_edit(VoiceCommand::DeleteThat, Some(&last), Some(&field(1)), now),
+            Some(EditPlan::Backspace(1))
+        );
+        assert_eq!(
+            plan_edit(VoiceCommand::DeleteThat, Some(&last), Some(&field(2)), now),
+            None
+        );
     }
 
     #[test]

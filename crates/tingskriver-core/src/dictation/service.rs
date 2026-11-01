@@ -854,11 +854,11 @@ impl Service {
         };
         let inserted = insert(text.clone(), options).await;
         let (insert_method, inserted_at) = match inserted {
-            Ok((method, at)) => {
+            Ok((method, at, field)) => {
                 self.set_error(None);
-                self.remember_insertion(&text).await;
+                self.remember_insertion(&text, field.clone(), at);
                 if cleaned.press_enter {
-                    match press_enter().await {
+                    match press_enter(field).await {
                         // The message is sent: "slet det" must not reach into the emptied field.
                         Ok(()) => self.forget_insertion(),
                         Err(e) => {
@@ -932,16 +932,13 @@ impl Service {
         }
     }
 
-    async fn remember_insertion(&self, text: &str) {
-        let field = tokio::task::spawn_blocking(focused_field)
-            .await
-            .ok()
-            .flatten();
+    fn remember_insertion(&self, text: &str, field: Option<FieldId>, at: Instant) {
         if let Ok(mut slot) = self.last_insertion.lock() {
             *slot = field.map(|field| LastInsertion {
                 text: text.to_string(),
                 field,
-                at: Instant::now(),
+                at,
+                selected: false,
             });
         }
     }
@@ -968,6 +965,10 @@ impl Service {
             Ok(()) => {
                 if command == VoiceCommand::DeleteThat {
                     self.forget_insertion();
+                } else if let Ok(mut slot) = self.last_insertion.lock() {
+                    if let Some(last) = slot.as_mut() {
+                        last.selected = true;
+                    }
                 }
             }
             Err(e) => {
@@ -1039,15 +1040,21 @@ struct InsertOptions {
 }
 
 #[cfg(windows)]
-async fn insert(text: String, options: InsertOptions) -> Result<(&'static str, Instant), String> {
+async fn insert(
+    text: String,
+    options: InsertOptions,
+) -> Result<(&'static str, Instant, Option<FieldId>), String> {
     tokio::task::spawn_blocking(move || super::win::insert_text(&text, &options))
         .await
         .map_err(|e| e.to_string())?
-        .map(|(method, at)| (method.as_str(), at))
+        .map(|(method, at, field)| (method.as_str(), at, field))
 }
 
 #[cfg(not(windows))]
-async fn insert(_text: String, options: InsertOptions) -> Result<(&'static str, Instant), String> {
+async fn insert(
+    _text: String,
+    options: InsertOptions,
+) -> Result<(&'static str, Instant, Option<FieldId>), String> {
     let _ = (options.restore_after, options.paste_timeout, options.app);
     Err("Indsættelse understøttes kun på Windows".to_string())
 }
@@ -1090,13 +1097,16 @@ async fn apply_edit(_plan: spoken::EditPlan) -> Result<(), String> {
 }
 
 #[cfg(windows)]
-async fn press_enter() -> Result<(), String> {
-    tokio::task::spawn_blocking(super::target_win::press_enter)
-        .await
-        .map_err(|e| e.to_string())?
+async fn press_enter(field: Option<FieldId>) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        spoken::require_field(field.as_ref(), focused_field().as_ref())?;
+        super::target_win::press_enter()
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[cfg(not(windows))]
-async fn press_enter() -> Result<(), String> {
+async fn press_enter(_field: Option<FieldId>) -> Result<(), String> {
     Err("Enter understøttes kun på Windows".to_string())
 }

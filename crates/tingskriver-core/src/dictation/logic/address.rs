@@ -239,15 +239,14 @@ fn domain(atoms: &[Atom], bare: bool) -> Option<usize> {
 fn path(atoms: &[Atom]) -> usize {
     let mut i = 0;
     while matches!(atoms.get(i), Some(Atom::Slash)) {
-        let mut j = i + 1;
-        while matches!(
-            atoms.get(j),
-            Some(Atom::Word(_) | Atom::Dash | Atom::Underscore)
-        ) {
-            j += 1;
-        }
-        if j == i + 1 {
+        if !matches!(atoms.get(i + 1), Some(Atom::Word(_))) {
             break;
+        }
+        let mut j = i + 2;
+        while matches!(atoms.get(j), Some(Atom::Dash | Atom::Underscore))
+            && matches!(atoms.get(j + 1), Some(Atom::Word(_)))
+        {
+            j += 2;
         }
         i = j;
     }
