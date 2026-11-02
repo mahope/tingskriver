@@ -299,7 +299,7 @@ impl Store {
                 text: s.text,
             })
             .collect();
-        Ok(Rules { replacements, snippets })
+        Ok(Rules { replacements, snippets, symbols: Vec::new() })
     }
 
     // -- history -----------------------------------------------------------

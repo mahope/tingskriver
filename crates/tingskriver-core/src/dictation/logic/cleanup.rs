@@ -48,6 +48,8 @@ pub struct Snippet {
 pub struct Rules {
     pub replacements: Vec<Replacement>,
     pub snippets: Vec<Snippet>,
+    /// Additional spoken symbols loaded from spoken-symbols.json.
+    pub symbols: Vec<Replacement>,
 }
 
 /// Fillers removed everywhere (whole words only), in every style.
@@ -64,18 +66,56 @@ const ABBREVIATIONS: &[&str] = &[
     "pga", "vedr", "jf", "ift", "hhv", "tlf", "etc", "mr", "hr", "fr",
 ];
 
+const SYMBOLS: &[(&str, &str)] = &[
+    ("bindestreg", "-"),
+    ("skråstreg", "/"),
+    ("omvendt skråstreg", "\\"),
+    ("parentes start", "("),
+    ("start parentes", "("),
+    ("parentes slut", ")"),
+    ("slut parentes", ")"),
+    ("kantet parentes start", "["),
+    ("kantet parentes slut", "]"),
+    ("tuborgklamme start", "{"),
+    ("tuborgklamme slut", "}"),
+    ("anførselstegn", "\""),
+    ("apostrof", "'"),
+    ("snabel-a", "@"),
+    ("snabel a", "@"),
+    ("procent", "%"),
+    ("plus", "+"),
+    ("lig med", "="),
+    ("hashtag", "#"),
+    ("og tegn", "&"),
+    ("stjerne", "*"),
+    ("understregning", "_"),
+    ("mindre end", "<"),
+    ("større end", ">"),
+    ("lodret streg", "|"),
+    ("tilde", "~"),
+    ("hat", "^"),
+    ("eurotegn", "€"),
+    ("dollartegn", "$"),
+    ("pundtegn", "£"),
+    ("gradtegn", "°"),
+    ("tre prikker", "…"),
+    ("paragraftegn", "§"),
+];
+
 const TRAILING_PUNCT: &[char] = &['.', ',', '?', '!', ':', ';'];
 
 #[derive(Clone, Debug, PartialEq)]
 enum Tok {
     Word { text: String, protected: bool },
     Punct(char),
+    Symbol(String),
     Break(u8),
 }
 
 #[derive(Clone, Debug)]
 enum Action {
     Punct(char),
+    Symbol(String),
     Break(u8),
     /// Fixed text. `drop_following_punct` is set for snippets, whose trigger
     /// usually gets a period from the speech model.
@@ -93,7 +133,18 @@ struct Matcher {
 /// Clean dictated text according to `style` and the user's `rules`.
 pub fn clean(input: &str, style: Style, rules: &Rules) -> String {
     let tokens = tokenize(input);
-    let tokens = apply_phrases(tokens, &build_matchers(rules));
+    static BUILTINS: std::sync::OnceLock<Vec<Matcher>> = std::sync::OnceLock::new();
+    let custom;
+    let matchers =
+        if rules.replacements.is_empty() && rules.snippets.is_empty() && rules.symbols.is_empty() {
+            BUILTINS
+                .get_or_init(|| build_matchers(&Rules::default()))
+                .as_slice()
+        } else {
+            custom = build_matchers(rules);
+            &custom
+        };
+    let tokens = apply_phrases(tokens, matchers);
     let tokens = remove_fillers(tokens, style);
     let tokens = if style == Style::Normal {
         capitalize(tokens)
@@ -166,6 +217,8 @@ fn build_matchers(rules: &Rules) -> Vec<Matcher> {
         ("ny linje", Action::Break(1)),
         ("ny linie", Action::Break(1)),
         ("nyt afsnit", Action::Break(2)),
+        ("linjeskift", Action::Break(1)),
+        ("afsnitsskift", Action::Break(2)),
     ];
     for (phrase, action) in commands {
         matchers.push(Matcher {
@@ -174,6 +227,34 @@ fn build_matchers(rules: &Rules) -> Vec<Matcher> {
         });
     }
 
+    for (phrase, symbol) in rules
+        .symbols
+        .iter()
+        .map(|r| (r.from.as_str(), r.to.as_str()))
+        .chain(SYMBOLS.iter().copied())
+    {
+        if !phrase_words(phrase).is_empty() {
+            matchers.push(Matcher {
+                words: phrase_words(phrase),
+                action: Action::Symbol(symbol.to_string()),
+            });
+        }
+    }
+    // Escapes precede user rules, so their result is never interpreted again.
+    let mut literals = Vec::new();
+    for m in &matchers {
+        let mut words = vec!["skriv".to_string(), "ordet".to_string()];
+        words.extend(m.words.clone());
+        literals.push(Matcher {
+            words,
+            action: Action::Text {
+                text: m.words.join(" "),
+                drop_following_punct: false,
+            },
+        });
+    }
+    literals.extend(matchers);
+    let mut matchers = literals;
     // Longest phrase wins; the sort is stable so user rules win ties.
     matchers.sort_by(|a, b| b.words.len().cmp(&a.words.len()));
     matchers
@@ -210,27 +291,38 @@ fn tokenize(input: &str) -> Vec<Tok> {
     tokens
 }
 
-fn match_at<'m>(tokens: &[Tok], start: usize, matchers: &'m [Matcher]) -> Option<&'m Matcher> {
+fn match_at<'m>(
+    tokens: &[Option<String>],
+    start: usize,
+    matchers: &'m [Matcher],
+) -> Option<&'m Matcher> {
     matchers.iter().find(|m| {
         if start + m.words.len() > tokens.len() {
             return false;
         }
-        m.words.iter().enumerate().all(|(offset, word)| match &tokens[start + offset] {
-            Tok::Word {
-                text,
-                protected: false,
-            } => normalize(text) == *word,
-            _ => false,
-        })
+        m.words
+            .iter()
+            .enumerate()
+            .all(|(offset, word)| tokens[start + offset].as_ref() == Some(word))
     })
 }
 
 fn apply_phrases(tokens: Vec<Tok>, matchers: &[Matcher]) -> Vec<Tok> {
+    let normalized: Vec<_> = tokens
+        .iter()
+        .map(|t| match t {
+            Tok::Word {
+                text,
+                protected: false,
+            } => Some(normalize(text)),
+            _ => None,
+        })
+        .collect();
     let mut out: Vec<Tok> = Vec::with_capacity(tokens.len());
     let mut i = 0;
     while i < tokens.len() {
         let matched = match &tokens[i] {
-            Tok::Word { .. } => match_at(&tokens, i, matchers),
+            Tok::Word { .. } => match_at(&normalized, i, matchers),
             _ => None,
         };
         let Some(m) = matched else {
@@ -245,6 +337,10 @@ fn apply_phrases(tokens: Vec<Tok>, matchers: &[Matcher]) -> Vec<Tok> {
 
         i += m.words.len();
         let drop_following = match &m.action {
+            Action::Symbol(text) => {
+                out.push(Tok::Symbol(text.clone()));
+                true
+            }
             Action::Punct(c) => {
                 push_punct(&mut out, *c);
                 true
@@ -297,7 +393,7 @@ fn push_punct(out: &mut Vec<Tok>, c: char) {
                 out.push(Tok::Punct(c));
             }
         }
-        Some(Tok::Word { .. }) => out.push(Tok::Punct(c)),
+        Some(Tok::Word { .. } | Tok::Symbol(_)) => out.push(Tok::Punct(c)),
     }
 }
 
@@ -313,7 +409,7 @@ fn is_sentence_start(out: &[Tok]) -> bool {
     match out.last() {
         None | Some(Tok::Break(_)) => true,
         Some(Tok::Punct(c)) => matches!(c, '.' | '?' | '!') && !ends_with_abbreviation(out),
-        Some(Tok::Word { .. }) => false,
+        Some(Tok::Word { .. } | Tok::Symbol(_)) => false,
     }
 }
 
@@ -392,6 +488,7 @@ fn upper_first(word: &str) -> String {
 fn render(tokens: &[Tok]) -> String {
     let mut out = String::new();
     let mut need_space = false;
+    let mut quote_open = false;
     for tok in tokens {
         match tok {
             Tok::Word { text, .. } => {
@@ -400,6 +497,23 @@ fn render(tokens: &[Tok]) -> String {
                 }
                 out.push_str(text);
                 need_space = true;
+            }
+            Tok::Symbol(text) => {
+                let (before, after) = match text.as_str() {
+                    "(" | "[" | "{" | "#" | "€" | "$" | "£" | "§" => (true, false),
+                    ")" | "]" | "}" | "%" | "°" | "…" => (false, true),
+                    "-" | "/" | "\\" | "@" | "_" | "'" => (false, false),
+                    "\"" => {
+                        quote_open = !quote_open;
+                        (quote_open, !quote_open)
+                    }
+                    _ => (true, true),
+                };
+                if before && need_space {
+                    out.push(' ');
+                }
+                out.push_str(text);
+                need_space = after;
             }
             Tok::Punct(c) => {
                 out.push(*c);
@@ -416,7 +530,9 @@ fn render(tokens: &[Tok]) -> String {
             }
         }
     }
-    out.trim_end_matches(' ').trim_start_matches(' ').to_string()
+    out.trim_end_matches(' ')
+        .trim_start_matches(' ')
+        .to_string()
 }
 
 #[cfg(test)]
@@ -447,6 +563,7 @@ mod tests {
                     to: "Syv.ai".into(),
                 },
             ],
+            symbols: Vec::new(),
             snippets: vec![
                 Snippet {
                     trigger: "min signatur".into(),
@@ -457,6 +574,74 @@ mod tests {
                     text: "39413892".into(),
                 },
             ],
+        }
+    }
+
+    #[test]
+    fn extended_symbols_and_variants() {
+        let table = [
+            ("komma", ","),
+            ("punktum", "."),
+            ("kolon", ":"),
+            ("semikolon", ";"),
+            ("spørgsmålstegn", "?"),
+            ("udråbstegn", "!"),
+            ("bindestreg", "-"),
+            ("skråstreg", "/"),
+            ("omvendt skråstreg", "\\"),
+            ("parentes start", "("),
+            ("start parentes", "("),
+            ("parentes slut", ")"),
+            ("slut parentes", ")"),
+            ("kantet parentes start", "["),
+            ("kantet parentes slut", "]"),
+            ("tuborgklamme start", "{"),
+            ("tuborgklamme slut", "}"),
+            ("anførselstegn", "\""),
+            ("apostrof", "'"),
+            ("snabel-a", "@"),
+            ("snabel a", "@"),
+            ("procent", "%"),
+            ("plus", "+"),
+            ("lig med", "="),
+            ("hashtag", "#"),
+            ("og tegn", "&"),
+            ("stjerne", "*"),
+            ("understregning", "_"),
+            ("mindre end", "<"),
+            ("større end", ">"),
+            ("lodret streg", "|"),
+            ("tilde", "~"),
+            ("hat", "^"),
+            ("eurotegn", "€"),
+            ("dollartegn", "$"),
+            ("pundtegn", "£"),
+            ("gradtegn", "°"),
+            ("tre prikker", "…"),
+            ("paragraftegn", "§"),
+        ];
+        for (phrase, expected) in table {
+            // Terminal punctuation retains the existing rule: no leading punctuation.
+            let input = format!("x {phrase}");
+            assert!(raw(&input).ends_with(expected), "{phrase}: {}", raw(&input));
+        }
+        assert_eq!(raw("parentes start hej parentes slut"), "(hej)");
+        assert_eq!(raw("a bindestreg b skråstreg c snabel a d"), "a-b/c@d");
+        assert_eq!(raw("to plus to lig med fire"), "to + to = fire");
+        assert_eq!(raw("hashtag emne"), "#emne");
+        assert_eq!(raw("anførselstegn hej anførselstegn"), "\"hej\"");
+    }
+
+    #[test]
+    fn literal_words_and_windows_breaks() {
+        assert_eq!(normal("skriv ordet punktum"), "punktum");
+        assert_eq!(normal("skriv ordet komma"), "komma");
+        assert_eq!(normal("et skriv ordet komma punktum tak"), "Et komma. Tak");
+        for phrase in ["linjeskift", "ny linje", "ny linie"] {
+            assert_eq!(normal(&format!("hej {phrase} tak")), "Hej\nTak");
+        }
+        for phrase in ["nyt afsnit", "afsnitsskift"] {
+            assert_eq!(normal(&format!("hej {phrase} tak")), "Hej\n\nTak");
         }
     }
 
@@ -530,7 +715,10 @@ mod tests {
 
     #[test]
     fn new_line_and_paragraph() {
-        assert_eq!(normal("hej ny linje hvordan går det"), "Hej\nHvordan går det");
+        assert_eq!(
+            normal("hej ny linje hvordan går det"),
+            "Hej\nHvordan går det"
+        );
         assert_eq!(normal("Hej, ny linje, tak."), "Hej\nTak.");
         assert_eq!(normal("Hej. Nyt afsnit. Tak."), "Hej.\n\nTak.");
         assert_eq!(normal("hej ny linje ny linje tak"), "Hej\n\nTak");
@@ -560,7 +748,10 @@ mod tests {
     #[test]
     fn keeps_numbers_and_inner_punctuation() {
         assert_eq!(normal("det koster 3.5 kroner"), "Det koster 3.5 kroner");
-        assert_eq!(normal("skriv til mads@mahoje.dk"), "Skriv til mads@mahoje.dk");
+        assert_eq!(
+            normal("skriv til mads@mahoje.dk"),
+            "Skriv til mads@mahoje.dk"
+        );
     }
 
     #[test]
@@ -574,10 +765,7 @@ mod tests {
             clean("mahoje bruger syv ai.", Style::Normal, &r),
             "Mahoje bruger Syv.ai."
         );
-        assert_eq!(
-            clean("MAHOJE", Style::Normal, &r),
-            "Mahoje"
-        );
+        assert_eq!(clean("MAHOJE", Style::Normal, &r), "Mahoje");
     }
 
     #[test]
@@ -600,7 +788,10 @@ mod tests {
 
     #[test]
     fn model_newlines_are_kept() {
-        assert_eq!(normal("første linje\nanden linje"), "Første linje\nAnden linje");
+        assert_eq!(
+            normal("første linje\nanden linje"),
+            "Første linje\nAnden linje"
+        );
         assert_eq!(normal("a\n\n\n\nb"), "A\n\nB");
     }
 
@@ -630,6 +821,10 @@ mod tests {
         let start = std::time::Instant::now();
         let out = clean(&input, Style::Normal, &rules());
         assert!(!out.is_empty());
-        assert!(start.elapsed().as_millis() < 50, "took {:?}", start.elapsed());
+        assert!(
+            start.elapsed().as_millis() < 50,
+            "took {:?}",
+            start.elapsed()
+        );
     }
 }

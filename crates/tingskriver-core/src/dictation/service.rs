@@ -90,11 +90,25 @@ pub fn init(app: HostHandle, overlay: Arc<dyn Overlay>) {
     });
 }
 
+fn load_symbols(dir: &std::path::Path, rules: &mut Rules) -> Result<(), String> {
+    let path = dir.join("spoken-symbols.json");
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(format!("Kunne ikke læse spoken-symbols.json: {e}")),
+    };
+    let pairs: Vec<(String, String)> = serde_json::from_str(&text)
+        .map_err(|e| format!("Ugyldig spoken-symbols.json: {e}"))?;
+    rules.symbols = pairs.into_iter().map(|(from, to)| cleanup::Replacement { from, to }).collect();
+    Ok(())
+}
+
 async fn init_inner(app: HostHandle, overlay: Arc<dyn Overlay>) -> Result<(), String> {
     let app_data_dir = app.app_data_dir()?;
     let store = Store::open(&app_data_dir.join("dictation.sqlite")).await?;
     let settings = store.settings().await?;
-    let rules = store.rules().await?;
+    let mut rules = store.rules().await?;
+    load_symbols(&app_data_dir, &mut rules)?;
     let timings = Timings::open(store.pool()).await?;
     super::warm::set_policy(settings.residency_policy());
     let service = Arc::new(Service {
@@ -172,7 +186,8 @@ impl Service {
     }
 
     pub async fn reload_rules(&self) -> Result<(), String> {
-        let rules = self.store.rules().await?;
+        let mut rules = self.store.rules().await?;
+        load_symbols(&self.app_data_dir, &mut rules)?;
         if let Ok(mut slot) = self.rules.write() {
             *slot = rules;
         }
