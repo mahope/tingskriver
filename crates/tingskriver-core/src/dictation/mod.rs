@@ -9,6 +9,7 @@
 
 pub mod capture;
 pub mod logic;
+pub mod modes;
 pub mod overlay;
 pub mod secrets;
 pub mod service;

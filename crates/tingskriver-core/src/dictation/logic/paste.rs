@@ -222,8 +222,19 @@ pub fn not_received_message(app: Option<&str>) -> String {
     )
 }
 
+/// A missing foreground window must never authorize insertion.
+pub fn same_target(recorded: usize, current: usize) -> bool {
+    recorded != 0 && recorded == current
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn insertion_requires_the_recording_window() {
+        assert!(super::same_target(12, 12));
+        assert!(!super::same_target(12, 13));
+        assert!(!super::same_target(0, 0));
+    }
     use super::*;
 
     #[test]
