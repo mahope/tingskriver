@@ -1,0 +1,53 @@
+{
+  "mic": [],
+  "system": [
+    {
+      "start_ms": 5,
+      "slut_ms": 6,
+      "tekst": "a again",
+      "taler": "SPEAKER_01"
+    },
+    {
+      "start_ms": 1,
+      "slut_ms": 2,
+      "tekst": "a",
+      "taler": "SPEAKER_01"
+    },
+    {
+      "start_ms": 3,
+      "slut_ms": 4,
+      "tekst": "b",
+      "taler": "0"
+    }
+  ],
+  "diarized": true,
+  "expected": [
+    {
+      "start_ms": 1,
+      "slut_ms": 2,
+      "tekst": "a",
+      "kilde": "System",
+      "label": "Taler 1",
+      "overlapper": false,
+      "taler_mangler": false
+    },
+    {
+      "start_ms": 3,
+      "slut_ms": 4,
+      "tekst": "b",
+      "kilde": "System",
+      "label": "Taler 2",
+      "overlapper": false,
+      "taler_mangler": false
+    },
+    {
+      "start_ms": 5,
+      "slut_ms": 6,
+      "tekst": "a again",
+      "kilde": "System",
+      "label": "Taler 1",
+      "overlapper": false,
+      "taler_mangler": false
+    }
+  ]
+}

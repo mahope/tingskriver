@@ -1,0 +1,69 @@
+{
+  "mic": [
+    {
+      "start_ms": 0,
+      "slut_ms": 100,
+      "tekst": "outer",
+      "taler": null
+    },
+    {
+      "start_ms": 10,
+      "slut_ms": 20,
+      "tekst": "inner",
+      "taler": null
+    },
+    {
+      "start_ms": 30,
+      "slut_ms": 40,
+      "tekst": "inner2",
+      "taler": null
+    }
+  ],
+  "system": [
+    {
+      "start_ms": 21,
+      "slut_ms": 22,
+      "tekst": "nested",
+      "taler": "a"
+    }
+  ],
+  "diarized": true,
+  "expected": [
+    {
+      "start_ms": 0,
+      "slut_ms": 100,
+      "tekst": "outer",
+      "kilde": "Mikrofon",
+      "label": "Mig",
+      "overlapper": true,
+      "taler_mangler": false
+    },
+    {
+      "start_ms": 10,
+      "slut_ms": 20,
+      "tekst": "inner",
+      "kilde": "Mikrofon",
+      "label": "Mig",
+      "overlapper": true,
+      "taler_mangler": false
+    },
+    {
+      "start_ms": 21,
+      "slut_ms": 22,
+      "tekst": "nested",
+      "kilde": "System",
+      "label": "Taler 1",
+      "overlapper": true,
+      "taler_mangler": false
+    },
+    {
+      "start_ms": 30,
+      "slut_ms": 40,
+      "tekst": "inner2",
+      "kilde": "Mikrofon",
+      "label": "Mig",
+      "overlapper": true,
+      "taler_mangler": false
+    }
+  ]
+}
