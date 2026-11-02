@@ -8,7 +8,8 @@ og en tilbagevendt valgt enhed kan også give skift. Lydindhold afgør aldrig sk
 ## Automatiske beslutningstests
 
 `cargo test -p tingskriver-core --test device_decisions -- --nocapture` kører
-13 datadrevne tidsforløb gennem `MicWatchdog` og `DeviceFollower`. Samme tabel
+14 datadrevne tidsforløb gennem `MicWatchdog` og `DeviceFollower`, herunder et
+midlertidigt fejlet enhedsopslag under mute og efterfølgende genopretning. Samme tabel
 køres mod en bevidst forkert variant, der erklærer strømmen fejlet efter fem
 sekunders stilhed. Kontrollen kræver, at tabellen afslører denne regression.
 Produktionslogikken er uændret.
