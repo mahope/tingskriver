@@ -515,7 +515,25 @@ async fn keyset_pages_return_every_segment_once_in_order() {
 }
 
 #[tokio::test]
+async fn three_hour_meeting_loads_with_50_meetings() {
+    load_three_hour_meeting_with_50_meetings().await;
+}
+
+#[tokio::test]
+#[ignore = "performance benchmark; run separately in release mode"]
 async fn three_hour_meeting_loads_in_under_200_ms_with_50_meetings() {
+    let (keyset, single) = load_three_hour_meeting_with_50_meetings().await;
+    assert!(
+        keyset < Duration::from_millis(200),
+        "keyset load took {keyset:?}"
+    );
+    assert!(
+        single < Duration::from_millis(200),
+        "single page took {single:?}"
+    );
+}
+
+async fn load_three_hour_meeting_with_50_meetings() -> (Duration, Duration) {
     let dir = tempfile::tempdir().unwrap();
     let db = create_database(dir.path()).await;
     // 50 meetings of 3 hours with a segment every 4 seconds: 2,700 segments
@@ -588,12 +606,5 @@ async fn three_hour_meeting_loads_in_under_200_ms_with_50_meetings() {
     assert_eq!(loaded as i64, SEGMENTS);
     assert_eq!(all.len() as i64, SEGMENTS);
     assert_eq!(total, SEGMENTS);
-    assert!(
-        keyset < Duration::from_millis(200),
-        "keyset load took {keyset:?}"
-    );
-    assert!(
-        single < Duration::from_millis(200),
-        "single page took {single:?}"
-    );
+    (keyset, single)
 }

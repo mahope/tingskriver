@@ -8,14 +8,32 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, ChildStdin, ChildStdout};
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::Child;
 use tokio::sync::{Mutex, RwLock};
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
 use super::models;
+use tokio_util::sync::CancellationToken;
+
+#[path = "sidecar_transport.rs"]
+mod transport;
+use transport::Transport;
+
+struct MonitorTasks {
+    token: CancellationToken,
+    tasks: Vec<tokio::task::JoinHandle<()>>,
+}
+impl Default for MonitorTasks {
+    fn default() -> Self {
+        Self {
+            token: CancellationToken::new(),
+            tasks: Vec::new(),
+        }
+    }
+}
 
 // ============================================================================
 // Sidecar State Management
@@ -26,11 +44,12 @@ pub struct SidecarManager {
     /// Child process handle
     child_process: Arc<Mutex<Option<Child>>>,
 
-    /// Stdin writer for sending requests
-    stdin_writer: Arc<Mutex<Option<ChildStdin>>>,
-
-    /// Stdout reader for receiving responses
-    stdout_reader: Arc<Mutex<Option<BufReader<ChildStdout>>>>,
+    transport: Arc<Mutex<Option<Transport>>>,
+    monitors: Arc<Mutex<MonitorTasks>>,
+    lifecycle: Arc<Mutex<()>>,
+    health_live: Arc<AtomicUsize>,
+    idle_live: Arc<AtomicUsize>,
+    owns_tasks: bool,
 
     /// Last activity timestamp
     last_activity: Arc<RwLock<Instant>>,
@@ -77,7 +96,10 @@ impl SidecarManager {
     /// Create a new sidecar manager
     pub fn new(_app_data_dir: PathBuf) -> Result<Self> {
         let helper_binary_path = Self::resolve_helper_binary()?;
+        Ok(Self::with_binary(helper_binary_path))
+    }
 
+    fn with_binary(helper_binary_path: PathBuf) -> Self {
         // Get idle timeout from env var or use default
         let idle_timeout_secs = std::env::var("LLAMA_IDLE_TIMEOUT")
             .ok()
@@ -90,10 +112,14 @@ impl SidecarManager {
         );
         log::info!("Helper binary path: {}", helper_binary_path.display());
 
-        Ok(Self {
+        Self {
             child_process: Arc::new(Mutex::new(None)),
-            stdin_writer: Arc::new(Mutex::new(None)),
-            stdout_reader: Arc::new(Mutex::new(None)),
+            transport: Arc::new(Mutex::new(None)),
+            monitors: Arc::new(Mutex::new(MonitorTasks::default())),
+            lifecycle: Arc::new(Mutex::new(())),
+            health_live: Arc::new(AtomicUsize::new(0)),
+            idle_live: Arc::new(AtomicUsize::new(0)),
+            owns_tasks: true,
             last_activity: Arc::new(RwLock::new(Instant::now())),
             is_healthy: Arc::new(AtomicBool::new(false)),
             should_shutdown: Arc::new(AtomicBool::new(false)),
@@ -101,7 +127,7 @@ impl SidecarManager {
             helper_binary_path,
             current_model_path: Arc::new(RwLock::new(None)),
             idle_timeout_secs,
-        })
+        }
     }
 
     /// Resolve the path to llama-helper binary
@@ -111,7 +137,10 @@ impl SidecarManager {
             if !env_path.is_empty() {
                 let path = PathBuf::from(env_path);
                 if path.exists() {
-                    log::info!("Using llama-helper from TINGSKRIVER_LLAMA_HELPER: {}", path.display());
+                    log::info!(
+                        "Using llama-helper from TINGSKRIVER_LLAMA_HELPER: {}",
+                        path.display()
+                    );
                     return Ok(path);
                 }
             }
@@ -121,30 +150,55 @@ impl SidecarManager {
         // 2. Check relative to current executable (most reliable for AppImage/bundled apps)
         if let Ok(exe_path) = std::env::current_exe() {
             if let Some(exe_dir) = exe_path.parent() {
-                log::info!("Searching for llama-helper relative to executable: {}", exe_dir.display());
-                
+                log::info!(
+                    "Searching for llama-helper relative to executable: {}",
+                    exe_dir.display()
+                );
+
                 // Get the target triple (same logic as before)
-                let target_triple = std::env::var("TARGET")
-                    .unwrap_or_else(|_| {
-                        #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-                        { "x86_64-unknown-linux-gnu".to_string() }
-                        #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
-                        { "aarch64-unknown-linux-gnu".to_string() }
-                        #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-                        { "x86_64-apple-darwin".to_string() }
-                        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-                        { "aarch64-apple-darwin".to_string() }
-                        #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-                        { "x86_64-pc-windows-msvc".to_string() }
-                        #[cfg(all(target_os = "windows", target_arch = "aarch64"))]
-                        { "aarch64-pc-windows-msvc".to_string() }
-                        #[cfg(not(any(
-                            all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")),
-                            all(target_os = "macos", any(target_arch = "x86_64", target_arch = "aarch64")),
-                            all(target_os = "windows", any(target_arch = "x86_64", target_arch = "aarch64"))
-                        )))]
-                        { "unknown".to_string() }
-                    });
+                let target_triple = std::env::var("TARGET").unwrap_or_else(|_| {
+                    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+                    {
+                        "x86_64-unknown-linux-gnu".to_string()
+                    }
+                    #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+                    {
+                        "aarch64-unknown-linux-gnu".to_string()
+                    }
+                    #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+                    {
+                        "x86_64-apple-darwin".to_string()
+                    }
+                    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+                    {
+                        "aarch64-apple-darwin".to_string()
+                    }
+                    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+                    {
+                        "x86_64-pc-windows-msvc".to_string()
+                    }
+                    #[cfg(all(target_os = "windows", target_arch = "aarch64"))]
+                    {
+                        "aarch64-pc-windows-msvc".to_string()
+                    }
+                    #[cfg(not(any(
+                        all(
+                            target_os = "linux",
+                            any(target_arch = "x86_64", target_arch = "aarch64")
+                        ),
+                        all(
+                            target_os = "macos",
+                            any(target_arch = "x86_64", target_arch = "aarch64")
+                        ),
+                        all(
+                            target_os = "windows",
+                            any(target_arch = "x86_64", target_arch = "aarch64")
+                        )
+                    )))]
+                    {
+                        "unknown".to_string()
+                    }
+                });
 
                 let binary_name = if cfg!(windows) {
                     format!("llama-helper-{}.exe", target_triple)
@@ -155,7 +209,10 @@ impl SidecarManager {
                 // Try exact match in exe dir
                 let bundled = exe_dir.join(&binary_name);
                 if bundled.exists() {
-                    log::info!("Found exact match next to executable: {}", bundled.display());
+                    log::info!(
+                        "Found exact match next to executable: {}",
+                        bundled.display()
+                    );
                     return Ok(bundled);
                 }
 
@@ -166,7 +223,10 @@ impl SidecarManager {
                         let path = entry.path();
                         if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
                             if name.starts_with("llama-helper") && !name.ends_with(".d") {
-                                log::info!("Found fuzzy match next to executable: {}", path.display());
+                                log::info!(
+                                    "Found fuzzy match next to executable: {}",
+                                    path.display()
+                                );
                                 return Ok(path);
                             }
                         }
@@ -177,31 +237,56 @@ impl SidecarManager {
 
         // 3. Check bundled resources (RESOURCE_DIR) - Fallback
         if let Ok(resource_dir) = std::env::var("RESOURCE_DIR") {
-            log::info!("Searching for llama-helper in RESOURCE_DIR: {}", resource_dir);
+            log::info!(
+                "Searching for llama-helper in RESOURCE_DIR: {}",
+                resource_dir
+            );
             let resource_path = PathBuf::from(&resource_dir);
-             // Get the target triple again (or we could have shared it, but code duplication is safer for this tool usage)
-            let target_triple = std::env::var("TARGET")
-                .unwrap_or_else(|_| {
-                     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-                    { "x86_64-unknown-linux-gnu".to_string() }
-                    // ... (abbreviated for brevity in thought, but must be full in tool)
-                     #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
-                    { "aarch64-unknown-linux-gnu".to_string() }
-                    #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-                    { "x86_64-apple-darwin".to_string() }
-                    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-                    { "aarch64-apple-darwin".to_string() }
-                    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-                    { "x86_64-pc-windows-msvc".to_string() }
-                    #[cfg(all(target_os = "windows", target_arch = "aarch64"))]
-                    { "aarch64-pc-windows-msvc".to_string() }
-                    #[cfg(not(any(
-                        all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")),
-                        all(target_os = "macos", any(target_arch = "x86_64", target_arch = "aarch64")),
-                        all(target_os = "windows", any(target_arch = "x86_64", target_arch = "aarch64"))
-                    )))]
-                    { "unknown".to_string() }
-                });
+            // Get the target triple again (or we could have shared it, but code duplication is safer for this tool usage)
+            let target_triple = std::env::var("TARGET").unwrap_or_else(|_| {
+                #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+                {
+                    "x86_64-unknown-linux-gnu".to_string()
+                }
+                // ... (abbreviated for brevity in thought, but must be full in tool)
+                #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+                {
+                    "aarch64-unknown-linux-gnu".to_string()
+                }
+                #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+                {
+                    "x86_64-apple-darwin".to_string()
+                }
+                #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+                {
+                    "aarch64-apple-darwin".to_string()
+                }
+                #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+                {
+                    "x86_64-pc-windows-msvc".to_string()
+                }
+                #[cfg(all(target_os = "windows", target_arch = "aarch64"))]
+                {
+                    "aarch64-pc-windows-msvc".to_string()
+                }
+                #[cfg(not(any(
+                    all(
+                        target_os = "linux",
+                        any(target_arch = "x86_64", target_arch = "aarch64")
+                    ),
+                    all(
+                        target_os = "macos",
+                        any(target_arch = "x86_64", target_arch = "aarch64")
+                    ),
+                    all(
+                        target_os = "windows",
+                        any(target_arch = "x86_64", target_arch = "aarch64")
+                    )
+                )))]
+                {
+                    "unknown".to_string()
+                }
+            });
 
             let binary_name = if cfg!(windows) {
                 format!("llama-helper-{}.exe", target_triple)
@@ -261,6 +346,7 @@ impl SidecarManager {
 
     /// Ensure sidecar is running, spawn if needed
     pub async fn ensure_running(&self, model_path: PathBuf) -> Result<()> {
+        let _lifecycle = self.lifecycle.lock().await;
         // Check if already running with correct model
         {
             let current_model = self.current_model_path.read().await;
@@ -278,14 +364,15 @@ impl SidecarManager {
     /// Spawn the sidecar process
     async fn spawn(&self, model_path: PathBuf) -> Result<()> {
         // Shutdown existing process if running
-        self.shutdown().await?;
+        self.shutdown_inner().await?;
+        self.stop_monitors().await;
 
         log::info!("Spawning llama-helper sidecar");
         log::info!("Model path: {}", model_path.display());
 
         #[cfg(unix)]
         let mut command = tokio::process::Command::new("nice");
-        
+
         #[cfg(not(unix))]
         let mut command = tokio::process::Command::new(&self.helper_binary_path);
 
@@ -293,6 +380,7 @@ impl SidecarManager {
         command.arg("-n").arg("10").arg(&self.helper_binary_path);
 
         command
+            .kill_on_drop(true)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             // Release builds have no console, so stderr goes to the log.
@@ -307,12 +395,28 @@ impl SidecarManager {
             command.creation_flags(CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS);
         }
 
-        let mut child = command
-            .spawn()
-            .with_context(|| format!("Failed to spawn llama-helper at {:?}", self.helper_binary_path))?;
+        let mut child = command.spawn().with_context(|| {
+            format!(
+                "Failed to spawn llama-helper at {:?}",
+                self.helper_binary_path
+            )
+        })?;
 
-        let stdin = child.stdin.take().ok_or_else(|| anyhow!("Failed to get stdin"))?;
-        let stdout = child.stdout.take().ok_or_else(|| anyhow!("Failed to get stdout"))?;
+        #[cfg(windows)]
+        if let Some(pid) = child.id() {
+            if let Err(error) = job::assign(pid) {
+                log::warn!("Could not attach llama-helper to Job Object: {}", error);
+            }
+        }
+
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| anyhow!("Failed to get stdin"))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| anyhow!("Failed to get stdout"))?;
         if let Some(stderr) = child.stderr.take() {
             tokio::spawn(log_helper_stderr(stderr));
         }
@@ -323,15 +427,7 @@ impl SidecarManager {
             *child_lock = Some(child);
         }
 
-        {
-            let mut stdin_lock = self.stdin_writer.lock().await;
-            *stdin_lock = Some(stdin);
-        }
-
-        {
-            let mut stdout_lock = self.stdout_reader.lock().await;
-            *stdout_lock = Some(BufReader::new(stdout));
-        }
+        *self.transport.lock().await = Some(Transport::new(stdout, stdin));
 
         // Update state
         {
@@ -346,8 +442,7 @@ impl SidecarManager {
         log::info!("Sidecar spawned successfully");
 
         // Start background tasks
-        self.start_health_check_loop();
-        self.start_idle_check_loop();
+        self.start_monitors().await;
 
         Ok(())
     }
@@ -357,90 +452,74 @@ impl SidecarManager {
         // Track active request
         let _guard = RequestGuard::new(self.active_request_count.clone());
 
-        // Write request to stdin
-        {
-            let mut stdin_lock = self.stdin_writer.lock().await;
-            let stdin = stdin_lock
+        let mut exchange_started = false;
+        let exchange = async {
+            let mut transport = self.transport.lock().await;
+            let transport = transport
                 .as_mut()
                 .ok_or_else(|| anyhow!("Sidecar not running"))?;
-
-            stdin
-                .write_all(request_json.as_bytes())
-                .await
-                .context("Failed to write request to stdin")?;
-            stdin
-                .write_all(b"\n")
-                .await
-                .context("Failed to write newline")?;
-            stdin.flush().await.context("Failed to flush stdin")?;
-        }
-
-        // Read response from stdout with timeout
-        match tokio::time::timeout(timeout, self.read_response()).await {
-            Ok(Ok(response)) => {
-                self.update_activity().await;
-                Ok(response)
+            exchange_started = true;
+            transport.exchange(&request_json).await
+        };
+        match tokio::time::timeout(timeout, exchange).await {
+            Ok(result) => {
+                if result.is_ok() {
+                    self.update_activity().await;
+                } else {
+                    self.is_healthy.store(false, Ordering::SeqCst);
+                }
+                result
             }
-            Ok(Err(e)) => Err(e),
             Err(_) => {
-                // Timeout reached - shutdown sidecar to stop generation
-                log::error!("Request timeout after {:?}, shutting down sidecar", timeout);
-                if let Err(shutdown_err) = self.shutdown().await {
-                    log::error!("Failed to shutdown sidecar after timeout: {}", shutdown_err);
+                if exchange_started {
+                    self.shutdown().await?;
                 }
                 Err(anyhow!("Request timed out after {:?}", timeout))
             }
         }
     }
 
-    /// Read a single line response from stdout
-    async fn read_response(&self) -> Result<String> {
-        let mut stdout_lock = self.stdout_reader.lock().await;
-        let reader = stdout_lock
-            .as_mut()
-            .ok_or_else(|| anyhow!("Sidecar not running"))?;
-
-        let mut line = String::new();
-        reader
-            .read_line(&mut line)
-            .await
-            .context("Failed to read response from stdout")?;
-
-        if line.is_empty() {
-            return Err(anyhow!("Sidecar closed stdout (process may have crashed)"));
+    async fn stop_monitors(&self) {
+        let tasks = {
+            let mut monitors = self.monitors.lock().await;
+            monitors.token.cancel();
+            std::mem::take(&mut monitors.tasks)
+        };
+        for task in tasks {
+            task.abort();
+            let _ = task.await;
         }
-
-        Ok(line.trim().to_string())
     }
 
-    /// Send ping to keep sidecar alive
+    async fn start_monitors(&self) {
+        self.stop_monitors().await;
+        let mut monitors = self.monitors.lock().await;
+        monitors.token = CancellationToken::new();
+        let token = monitors.token.clone();
+        monitors
+            .tasks
+            .push(self.start_health_check_loop(token.clone()));
+        monitors.tasks.push(self.start_idle_check_loop(token));
+    }
+
     async fn send_ping(&self) -> Result<()> {
-        let request = serde_json::json!({"type": "ping"}).to_string();
-        let timeout = Duration::from_secs(5);
-
-        // Note: We don't use send_request here to avoid incrementing active_request_count
-        // for internal health checks, as that would prevent graceful shutdown
-        
-        // Write request
-        {
-            let mut stdin_lock = self.stdin_writer.lock().await;
-            if let Some(stdin) = stdin_lock.as_mut() {
-                stdin.write_all(request.as_bytes()).await?;
-                stdin.write_all(b"\n").await?;
-                stdin.flush().await?;
-            } else {
-                return Err(anyhow!("Sidecar not running"));
-            }
-        }
-
-        // Read response
-        let response = tokio::time::timeout(timeout, self.read_response()).await??;
-
-        let resp: serde_json::Value = serde_json::from_str(&response)?;
-        if resp.get("type").and_then(|t| t.as_str()) == Some("pong") {
+        // A busy generator owns the complete transaction. Never queue a health ping.
+        let Ok(mut transport) = self.transport.try_lock() else {
+            return Ok(());
+        };
+        let transport = transport
+            .as_mut()
+            .ok_or_else(|| anyhow!("Sidecar not running"))?;
+        let response = tokio::time::timeout(
+            Duration::from_secs(5),
+            transport.exchange(r#"{"type":"ping"}"#),
+        )
+        .await??;
+        let response: serde_json::Value = serde_json::from_str(&response)?;
+        if response["type"] == "pong" {
             Ok(())
         } else {
-            Err(anyhow!("Unexpected ping response: {}", response))
+            Err(anyhow!("Helper rejected health ping"))
         }
     }
 
@@ -448,86 +527,61 @@ impl SidecarManager {
     /// Waits for active requests to complete before killing the process
     pub async fn shutdown_gracefully(&self) -> Result<()> {
         log::info!("Initiating graceful shutdown of sidecar");
-        
+
         // Set shutdown flag to prevent new internal tasks
         self.should_shutdown.store(true, Ordering::SeqCst);
-        
+
         // Wait for active requests to complete
         // We poll every 500ms
         let start = Instant::now();
         let max_wait = Duration::from_secs(600); // Wait up to 10 minutes for long generations
-        
+
         loop {
             let count = self.active_request_count.load(Ordering::SeqCst);
             if count == 0 {
                 log::info!("No active requests, proceeding with shutdown");
                 break;
             }
-            
+
             if start.elapsed() > max_wait {
-                log::warn!("Timed out waiting for active requests ({} active), forcing shutdown", count);
+                log::warn!(
+                    "Timed out waiting for active requests ({} active), forcing shutdown",
+                    count
+                );
                 break;
             }
-            
+
             log::debug!("Waiting for {} active requests to complete...", count);
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
-        
+
         self.shutdown().await
     }
 
     /// Force shutdown the sidecar
     pub async fn shutdown(&self) -> Result<()> {
+        let _lifecycle = self.lifecycle.lock().await;
+        self.shutdown_inner().await
+    }
+
+    async fn shutdown_inner(&self) -> Result<()> {
         // Set shutdown flag
         self.should_shutdown.store(true, Ordering::SeqCst);
 
-        // Send shutdown command
-        if self.is_healthy() {
-            let request = serde_json::json!({"type": "shutdown"}).to_string();
-            let _timeout = Duration::from_secs(5);
-
-            // Try to send shutdown command, but ignore errors
-            // We don't use send_request to avoid incrementing counter
-            let _ = async {
-                let mut stdin_lock = self.stdin_writer.lock().await;
-                if let Some(stdin) = stdin_lock.as_mut() {
-                    stdin.write_all(request.as_bytes()).await?;
-                    stdin.write_all(b"\n").await?;
-                    stdin.flush().await?;
-                }
-                Ok::<(), anyhow::Error>(())
-            }.await;
-        }
+        self.monitors.lock().await.token.cancel();
 
         // Kill process if still running
         {
             let mut child_lock = self.child_process.lock().await;
             if let Some(mut child) = child_lock.take() {
-                match tokio::time::timeout(Duration::from_secs(3), child.wait()).await {
-                    Ok(Ok(status)) => {
-                        log::info!("Sidecar exited with status: {}", status);
-                    }
-                    Ok(Err(e)) => {
-                        log::error!("Failed to wait for sidecar: {}", e);
-                    }
-                    Err(_) => {
-                        log::warn!("Sidecar didn't exit gracefully, killing");
-                        let _ = child.kill().await;
-                    }
-                }
+                child
+                    .kill()
+                    .await
+                    .context("Failed to terminate llama-helper")?;
             }
         }
 
-        // Clear handles
-        {
-            let mut stdin_lock = self.stdin_writer.lock().await;
-            *stdin_lock = None;
-        }
-
-        {
-            let mut stdout_lock = self.stdout_reader.lock().await;
-            *stdout_lock = None;
-        }
+        *self.transport.lock().await = None;
 
         {
             let mut current_model = self.current_model_path.write().await;
@@ -558,11 +612,15 @@ impl SidecarManager {
     }
 
     /// Start health check loop (runs in background)
-    fn start_health_check_loop(&self) {
+    fn start_health_check_loop(&self, token: CancellationToken) -> tokio::task::JoinHandle<()> {
         let manager = Self {
             child_process: self.child_process.clone(),
-            stdin_writer: self.stdin_writer.clone(),
-            stdout_reader: self.stdout_reader.clone(),
+            transport: self.transport.clone(),
+            monitors: self.monitors.clone(),
+            lifecycle: self.lifecycle.clone(),
+            health_live: self.health_live.clone(),
+            idle_live: self.idle_live.clone(),
+            owns_tasks: false,
             last_activity: self.last_activity.clone(),
             is_healthy: self.is_healthy.clone(),
             should_shutdown: self.should_shutdown.clone(),
@@ -573,11 +631,16 @@ impl SidecarManager {
         };
 
         tokio::spawn(async move {
+            let _guard = RequestGuard::new(manager.health_live.clone());
             let mut interval = tokio::time::interval(Duration::from_secs(30));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
             loop {
-                interval.tick().await;
+                tokio::select! {
+                    biased;
+                    _ = token.cancelled() => break,
+                    _ = interval.tick() => {}
+                }
 
                 if manager.should_shutdown.load(Ordering::SeqCst) {
                     log::debug!("Health check loop: shutdown flag set, exiting");
@@ -595,22 +658,31 @@ impl SidecarManager {
                 }
 
                 log::debug!("Health check: sending ping");
-                if let Err(e) = manager.send_ping().await {
+                let ping = tokio::select! {
+                    biased;
+                    _ = token.cancelled() => break,
+                    result = manager.send_ping() => result,
+                };
+                if let Err(e) = ping {
                     log::warn!("Health check failed: {}", e);
                     manager.is_healthy.store(false, Ordering::SeqCst);
                 }
             }
 
             log::debug!("Health check loop exited");
-        });
+        })
     }
 
     /// Start idle check loop (runs in background)
-    fn start_idle_check_loop(&self) {
+    fn start_idle_check_loop(&self, token: CancellationToken) -> tokio::task::JoinHandle<()> {
         let manager = Self {
             child_process: self.child_process.clone(),
-            stdin_writer: self.stdin_writer.clone(),
-            stdout_reader: self.stdout_reader.clone(),
+            transport: self.transport.clone(),
+            monitors: self.monitors.clone(),
+            lifecycle: self.lifecycle.clone(),
+            health_live: self.health_live.clone(),
+            idle_live: self.idle_live.clone(),
+            owns_tasks: false,
             last_activity: self.last_activity.clone(),
             is_healthy: self.is_healthy.clone(),
             should_shutdown: self.should_shutdown.clone(),
@@ -621,11 +693,16 @@ impl SidecarManager {
         };
 
         tokio::spawn(async move {
+            let _guard = RequestGuard::new(manager.idle_live.clone());
             let mut interval = tokio::time::interval(Duration::from_secs(60));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
             loop {
-                interval.tick().await;
+                tokio::select! {
+                    biased;
+                    _ = token.cancelled() => break,
+                    _ = interval.tick() => {}
+                }
 
                 if manager.should_shutdown.load(Ordering::SeqCst) {
                     log::debug!("Idle check loop: shutdown flag set, exiting");
@@ -658,13 +735,18 @@ impl SidecarManager {
             }
 
             log::debug!("Idle check loop exited");
-        });
+        })
     }
 }
 
 impl Drop for SidecarManager {
     fn drop(&mut self) {
-        // Set shutdown flag
+        if !self.owns_tasks {
+            return;
+        }
+        if let Ok(monitors) = self.monitors.try_lock() {
+            monitors.token.cancel();
+        }
         self.should_shutdown.store(true, Ordering::SeqCst);
 
         // Note: Actual cleanup happens in shutdown() method
@@ -688,3 +770,11 @@ async fn log_helper_stderr(stderr: tokio::process::ChildStderr) {
         }
     }
 }
+
+#[cfg(windows)]
+#[path = "sidecar_job.rs"]
+mod job;
+
+#[cfg(test)]
+#[path = "sidecar_tests.rs"]
+mod tests;
