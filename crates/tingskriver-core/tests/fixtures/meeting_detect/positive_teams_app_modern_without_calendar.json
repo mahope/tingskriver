@@ -1,0 +1,38 @@
+{
+  "steps": [
+    {
+      "snapshot": {
+        "now": 100,
+        "microphone_users": [
+          {
+            "process_name": "ms-teams.exe",
+            "started_at": 90
+          }
+        ],
+        "windows": [
+          {
+            "process_name": "ms-teams.exe",
+            "title": "Synthetic call | Microsoft Teams",
+            "is_browser": false,
+            "is_foreground": true
+          }
+        ],
+        "calendar": [],
+        "dictation_active": false,
+        "recording_active": false,
+        "last_speech_at": null
+      },
+      "expected": {
+        "source": "teams_app",
+        "confidence": "high",
+        "signals": [
+          "matching_microphone",
+          "meeting_window",
+          "foreground_window"
+        ],
+        "action": "start",
+        "reason": "meeting_detected"
+      }
+    }
+  ]
+}

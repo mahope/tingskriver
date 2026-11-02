@@ -1,0 +1,46 @@
+{
+  "steps": [
+    {
+      "snapshot": {
+        "now": 100,
+        "microphone_users": [
+          {
+            "process_name": "firefox.exe",
+            "started_at": 90
+          }
+        ],
+        "windows": [
+          {
+            "process_name": "firefox.exe",
+            "title": "Zoom Meeting",
+            "is_browser": true,
+            "is_foreground": true
+          }
+        ],
+        "calendar": [
+          {
+            "title": "Synthetic planning",
+            "start": 0,
+            "end": 200,
+            "attendee_count": 3
+          }
+        ],
+        "dictation_active": false,
+        "recording_active": false,
+        "last_speech_at": null
+      },
+      "expected": {
+        "source": "zoom_browser",
+        "confidence": "high",
+        "signals": [
+          "matching_microphone",
+          "meeting_window",
+          "foreground_window",
+          "calendar_overlap"
+        ],
+        "action": "start",
+        "reason": "meeting_detected"
+      }
+    }
+  ]
+}

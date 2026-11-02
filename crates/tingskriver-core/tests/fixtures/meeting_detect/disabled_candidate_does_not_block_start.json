@@ -1,0 +1,52 @@
+{
+  "steps": [
+    {
+      "snapshot": {
+        "now": 100,
+        "microphone_users": [
+          {
+            "process_name": "Zoom.exe",
+            "started_at": 90
+          },
+          {
+            "process_name": "Teams.exe",
+            "started_at": 90
+          }
+        ],
+        "windows": [
+          {
+            "process_name": "Zoom.exe",
+            "title": "Zoom Meeting",
+            "is_browser": false,
+            "is_foreground": true
+          },
+          {
+            "process_name": "Teams.exe",
+            "title": "Synthetic call | Microsoft Teams",
+            "is_browser": false,
+            "is_foreground": true
+          }
+        ],
+        "calendar": [],
+        "dictation_active": false,
+        "recording_active": false,
+        "last_speech_at": null,
+        "start_modes": {
+          "teams_app": "off",
+          "zoom_app": "automatic"
+        }
+      },
+      "expected": {
+        "source": "zoom_app",
+        "confidence": "high",
+        "signals": [
+          "matching_microphone",
+          "meeting_window",
+          "foreground_window"
+        ],
+        "action": "start",
+        "reason": "meeting_detected"
+      }
+    }
+  ]
+}

@@ -1,0 +1,88 @@
+{
+  "steps": [
+    {
+      "snapshot": {
+        "now": 100,
+        "microphone_users": [
+          {
+            "process_name": "Zoom.exe",
+            "started_at": 90
+          }
+        ],
+        "windows": [
+          {
+            "process_name": "Zoom.exe",
+            "title": "Zoom Meeting",
+            "is_browser": false,
+            "is_foreground": true
+          }
+        ],
+        "calendar": [],
+        "dictation_active": false,
+        "recording_active": false,
+        "last_speech_at": null
+      },
+      "expected": {
+        "source": "zoom_app",
+        "confidence": "high",
+        "signals": [
+          "matching_microphone",
+          "meeting_window",
+          "foreground_window"
+        ],
+        "action": "start",
+        "reason": "meeting_detected"
+      }
+    },
+    {
+      "snapshot": {
+        "now": 110,
+        "microphone_users": [],
+        "windows": [
+          {
+            "process_name": "Zoom.exe",
+            "title": "Zoom Meeting",
+            "is_browser": false,
+            "is_foreground": true
+          }
+        ],
+        "calendar": [],
+        "dictation_active": false,
+        "recording_active": true,
+        "last_speech_at": null
+      },
+      "expected": {
+        "source": "unknown",
+        "confidence": "low",
+        "signals": [],
+        "action": "none",
+        "reason": "no_meeting"
+      }
+    },
+    {
+      "snapshot": {
+        "now": 200,
+        "microphone_users": [],
+        "windows": [
+          {
+            "process_name": "Zoom.exe",
+            "title": "Zoom Meeting",
+            "is_browser": false,
+            "is_foreground": true
+          }
+        ],
+        "calendar": [],
+        "dictation_active": false,
+        "recording_active": true,
+        "last_speech_at": null
+      },
+      "expected": {
+        "source": "unknown",
+        "confidence": "low",
+        "signals": [],
+        "action": "none",
+        "reason": "no_meeting"
+      }
+    }
+  ]
+}

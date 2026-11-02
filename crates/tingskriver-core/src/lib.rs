@@ -44,6 +44,7 @@ pub mod host;
 pub mod install;
 pub mod groq;
 pub mod logging;
+pub mod meeting_detect;
 pub mod ollama;
 pub mod openai;
 pub mod openrouter;

@@ -1,0 +1,38 @@
+{
+  "steps": [
+    {
+      "snapshot": {
+        "now": 100,
+        "microphone_users": [
+          {
+            "process_name": "Teams.exe",
+            "started_at": 90
+          }
+        ],
+        "windows": [
+          {
+            "process_name": "Teams.exe",
+            "title": "Syntetisk møde | Microsoft Teams",
+            "is_browser": false,
+            "is_foreground": true
+          }
+        ],
+        "calendar": [],
+        "dictation_active": false,
+        "recording_active": false,
+        "last_speech_at": null
+      },
+      "expected": {
+        "source": "teams_app",
+        "confidence": "high",
+        "signals": [
+          "matching_microphone",
+          "meeting_window",
+          "foreground_window"
+        ],
+        "action": "start",
+        "reason": "meeting_detected"
+      }
+    }
+  ]
+}
