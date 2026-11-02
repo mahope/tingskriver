@@ -37,7 +37,7 @@ konkrete fils licens, transitive biblioteker, modellicens og NOTICE kontrolleres
 | Projekt og primær kilde | Arkitektur og modenhed | Licens og mulighed for genbrug |
 | --- | --- | --- |
 | [FUTO Voice Input](https://github.com/futo-org/voice-input), [licens](https://github.com/futo-org/voice-input/blob/master/LICENSE.md) | Lokal Whisper, voice input som separat IME; etableret brugerprodukt og kildekodespejl fra FUTO GitLab | FUTO Source First 1.0 begrænser bl.a. kommerciel brug og sublicensering. Ikke OSI open source, ikke MIT-genbrug; læs som inspiration |
-| [FUTO Keyboard](https://github.com/futo-org/android-keyboard), [voice input](https://docs.keyboard.futo.tech/settings/voiceinput) | Fuldt tastatur med integreret lokal tale og mulighed for ekstern taletjeneste; langt større vedligeholdelsesflade end vores behov | Source-first produkt; ikke grundlag for at kopiere kode ind under MIT. Kontroller også den særskilte keyboard-licens før eventuelt genbrug |
+| [FUTO Keyboard](https://github.com/futo-org/android-keyboard), [voice input](https://docs.keyboard.futo.tech/settings/voiceinput), [licens](https://github.com/futo-org/android-keyboard/blob/master/LICENSE.md) | Fuldt tastatur med integreret lokal tale og mulighed for ekstern taletjeneste; langt større vedligeholdelsesflade end vores behov | FUTO Source First 1.1-kb; særskilt fra voice-inputs 1.0. Ikke grundlag for at kopiere kode ind under MIT |
 | [Sayboard](https://github.com/ElishaAz/Sayboard), [licens](https://github.com/ElishaAz/Sayboard/blob/master/LICENSE.txt) | Vosk-baseret lokal voice IME, modeldownload; mindre projekt, seneste registrerede push juli 2025 | GPL-3.0: kan bruges i et GPL-kompatibelt samlet produkt med GPL-forpligtelser, men den kopierede kode kan ikke bare relicenseres MIT. Ingen kodegenbrug i v0 |
 | [WhisperInput](https://github.com/alex-vt/WhisperInput), [licens](https://github.com/alex-vt/WhisperInput/blob/master/LICENSE) | Eksperimentel lokal Whisper/whisper.cpp med Kõnele-komponenter; IME, panel og assistent. Standardmodel er engelsk, skal erstattes til dansk | Egen kode MIT, Kõnele Apache-2.0. Muligt med bevarede notices og kontrol af alle komponenter; ikke valgt som base |
 | [whisper-to-input](https://github.com/j3soon/whisper-to-input), [licens](https://github.com/j3soon/whisper-to-input/blob/master/LICENSE) | Android IME med fjernbackend, bl.a. OpenAI og selvhostet Whisper; ikke det samme som WhisperInput. Mindre projekt, registreret push december 2025 | GPLv3 ifølge README og LICENSE; ikke kopiering ind som ren MIT. Arkitekturreference |
@@ -135,6 +135,19 @@ JVM-tests bruger JUnit 4.13.2 (JUnit-teamet, udgivet 2021) og Hamcrest 1.3
 transitivt. Ingen AndroidX/Compose, SDK'er til analyse eller STT-pakker endnu.
 Konklusion: **installér** de fastlåste officielle buildartefakter i CI uden
 projektsecrets; ingen automatisk installation af Android SDK eller JDK lokalt.
+
+CI-actions er fastlåst til checkout 7.0.1 (20. juli), setup-java 6.1.0
+(14. oktober), upload-artifact 7.0.2 (7. oktober) og Gradle setup 6.4.1
+(28. oktober), kontrolleret i deres officielle GitHub releases. Alle er ældre
+end tre døgn. De vedligeholdes af GitHub/Gradle og kører Node 24-buildkode med
+fil-/miljøadgang og netværk til toolchains og artifacts; der gives kun read-
+rettigheder, ingen projektsecrets og checkout gemmer ikke git-credentials.
+Deres bundler indeholder transitive afhængigheder, som ikke er fuldt optalt her.
+Konklusion: **installér** disse officielle fastlåste CI-actions. Det første
+forsøg med ældre actions fejlede ved ekstra Android-SDK-setup, før Gradle;
+workflowen bruger nu runnerens præinstallerede SDK og installerer kun den
+angivne platform/build-tools med sdkmanager. Kilde:
+[Ubuntu-runnerens værktøjer](https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2604-Readme.md).
 
 ## Resterende evidens
 
