@@ -563,10 +563,11 @@ pub(super) struct FolderGuard(PathBuf);
 
 impl FolderGuard {
     pub(super) fn acquire(folder: &Path) -> Option<Self> {
+        let folder = folder.canonicalize().ok()?;
         let mut guard = IN_PROGRESS.lock().unwrap_or_else(|e| e.into_inner());
         let set = guard.get_or_insert_with(HashSet::new);
-        if set.insert(folder.to_path_buf()) {
-            Some(Self(folder.to_path_buf()))
+        if set.insert(folder.clone()) {
+            Some(Self(folder))
         } else {
             None
         }
@@ -810,7 +811,10 @@ pub fn pending_finalize_folders(recordings_dir: &Path) -> Vec<PathBuf> {
             let raw = folder.join(RAW_DIR);
             has_raw_tracks(&raw)
                 && read_manifest(&raw).is_ok_and(|m| m.complete)
-                && matches!(read_verified_status(&raw), None | Some(AudioSaveStatus::Failed))
+                && matches!(
+                    read_verified_status(&raw),
+                    None | Some(AudioSaveStatus::Failed)
+                )
                 && read_attempts(&raw) < MAX_STARTUP_ATTEMPTS
         })
         .collect();
@@ -837,7 +841,10 @@ pub fn finalize_pending_recordings(
             let raw = folder.join(RAW_DIR);
             let attempts = read_attempts(&raw) + 1;
             if let Err(e) = std::fs::write(raw.join(ATTEMPTS_FILE), attempts.to_string()) {
-                log::warn!("Could not record the finalize attempt in {}: {e}", raw.display());
+                log::warn!(
+                    "Could not record the finalize attempt in {}: {e}",
+                    raw.display()
+                );
             }
             log::info!(
                 "Finishing the audio of {} (startup attempt {attempts})",
@@ -1124,7 +1131,10 @@ mod tests {
         write_manifest(&raw, &manifest).unwrap();
         std::fs::create_dir_all(recordings.path().join("empty")).unwrap();
 
-        assert_eq!(pending_finalize_folders(recordings.path()), vec![stopped.clone()]);
+        assert_eq!(
+            pending_finalize_folders(recordings.path()),
+            vec![stopped.clone()]
+        );
 
         // FFmpeg missing: failed, kept, and retried only MAX_STARTUP_ATTEMPTS times.
         let missing = recordings.path().join("no-such-ffmpeg");
@@ -1144,7 +1154,12 @@ mod tests {
         std::fs::remove_file(stopped.join(RAW_DIR).join(ATTEMPTS_FILE)).unwrap();
         let done = finalize_pending_recordings(recordings.path(), Some(&ffmpeg));
         assert_eq!(done.len(), 1);
-        assert_eq!(done[0].1.status, AudioSaveStatus::Ok, "{}", done[0].1.message);
+        assert_eq!(
+            done[0].1.status,
+            AudioSaveStatus::Ok,
+            "{}",
+            done[0].1.message
+        );
         assert!(stopped.join(MIXED_FILE).exists());
         assert!(!stopped.join(RAW_DIR).exists());
         assert!(pending_finalize_folders(recordings.path()).is_empty());

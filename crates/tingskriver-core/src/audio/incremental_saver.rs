@@ -104,6 +104,11 @@ fn recover_legacy_mp4_checkpoints(
 ) -> Result<AudioRecoveryStatus, String> {
     let _guard =
         FolderGuard::acquire(folder_path).ok_or_else(|| "Lyden samles allerede.".to_string())?;
+    match std::fs::remove_file(checkpoints_dir.join(VERIFIED_MARKER)) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(format!("{KEPT_MESSAGE} ({e})")),
+    }
     let mut checkpoint_files: Vec<_> = std::fs::read_dir(checkpoints_dir)
         .map_err(|e| format!("Failed to read checkpoints directory: {}", e))?
         .filter_map(|entry| entry.ok())
@@ -122,11 +127,6 @@ fn recover_legacy_mp4_checkpoints(
     // Sort by filename (audio_chunk_000.mp4, audio_chunk_001.mp4, etc.)
     checkpoint_files.sort();
 
-    match std::fs::remove_file(checkpoints_dir.join(VERIFIED_MARKER)) {
-        Ok(()) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => return Err(format!("{KEPT_MESSAGE} ({e})")),
-    }
     let original_count = checkpoint_files.len();
     let mut estimated_duration = 0.0;
     checkpoint_files.retain(|path| match decoded_duration_seconds(path) {
@@ -285,18 +285,17 @@ pub async fn cleanup_checkpoints(meeting_folder: String) -> Result<(), String> {
         return Ok(());
     }
 
-    let raw = checkpoints_dir.clone();
-    let _guard =
-        FolderGuard::acquire(&folder_path).ok_or_else(|| "Lyden samles allerede.".to_string())?;
-    tokio::task::spawn_blocking(move || verify_saved_outputs(&raw))
-        .await
-        .map_err(|e| format!("{KEPT_MESSAGE} ({e})"))?
-        .map_err(|e| format!("{KEPT_MESSAGE} ({e})"))?;
-
-    std::fs::remove_dir_all(&checkpoints_dir)
-        .map_err(|e| format!("Failed to remove checkpoints directory: {}", e))?;
-    info!("Successfully cleaned up checkpoints directory");
-    Ok(())
+    tokio::task::spawn_blocking(move || {
+        let _guard = FolderGuard::acquire(&folder_path)
+            .ok_or_else(|| "Lyden samles allerede.".to_string())?;
+        verify_saved_outputs(&checkpoints_dir).map_err(|e| format!("{KEPT_MESSAGE} ({e})"))?;
+        std::fs::remove_dir_all(&checkpoints_dir)
+            .map_err(|e| format!("Failed to remove checkpoints directory: {}", e))?;
+        info!("Successfully cleaned up checkpoints directory");
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("{KEPT_MESSAGE} ({e})"))?
 }
 
 /// Check if a meeting folder has audio to recover: WAV track segments, or
@@ -500,5 +499,45 @@ mod tests {
             .unwrap_err();
         assert_eq!(error, "Lyden samles allerede.");
         assert!(dir.path().join(RAW_DIR).exists());
+    }
+
+    #[tokio::test]
+    async fn cleanup_refuses_folder_alias_while_finalization_is_running() {
+        let dir = tempfile::tempdir().unwrap();
+        record(dir.path());
+        let _guard = FolderGuard::acquire(dir.path()).unwrap();
+        let alias = dir.path().join(RAW_DIR).join("..");
+        let error = cleanup_checkpoints(alias.to_string_lossy().into_owned())
+            .await
+            .unwrap_err();
+        assert_eq!(error, "Lyden samles allerede.");
+        assert!(dir.path().join(RAW_DIR).exists());
+    }
+
+    #[tokio::test]
+    async fn empty_legacy_retry_invalidates_previous_verification() {
+        let dir = tempfile::tempdir().unwrap();
+        let raw = dir.path().join(RAW_DIR);
+        std::fs::create_dir_all(&raw).unwrap();
+        let marker = serde_json::json!({
+            "status": "ok", "message": "Lyden er gemt.",
+            "audio_file": dir.path().join(MIXED_FILE), "track_files": [],
+            "duration_seconds": 1.0, "segment_count": 1,
+            "raw_kept": true, "problems": []
+        });
+        std::fs::write(raw.join(VERIFIED_MARKER), marker.to_string()).unwrap();
+        assert_eq!(
+            super::super::finalize::read_verified_status(&raw),
+            Some(AudioSaveStatus::Ok)
+        );
+        let folder = dir.path().to_string_lossy().into_owned();
+        assert_eq!(
+            recover_audio_from_checkpoints(folder, 48000)
+                .await
+                .unwrap()
+                .status,
+            "none"
+        );
+        assert_eq!(super::super::finalize::read_verified_status(&raw), None);
     }
 }

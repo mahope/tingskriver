@@ -212,6 +212,9 @@ transcription leaves the saved meeting available and reports the error.
   deleting originals, even when an earlier verification reported `ok`.
   Legacy MP4 recovery also skips damaged chunks, verifies the merged duration
   against the decoded input durations, and permits cleanup only on `ok`.
+  Every recovery attempt invalidates earlier verification, even with no
+  chunks left. Recovery and cleanup share a lock on the canonical folder
+  path; verification and deletion both run on a blocking worker.
 
 ## AI providers: one model, a chain per function
 

@@ -81,8 +81,6 @@ windows = { version = "0.61", features = [
     # Install hooks: start with Windows and leftovers of earlier builds (src/install)
     "Win32_System_Registry",
     "Win32_Graphics_Gdi",
-    # Crash dumps: the per-exe Windows Error Reporting LocalDumps key
-    "Win32_System_Registry",
 ] }
 windows-core = "0.61"
 
