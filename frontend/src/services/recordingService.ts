@@ -20,6 +20,15 @@ export interface RecordingStoppedPayload {
   message: string;
   folder_path?: string;
   meeting_name?: string;
+  audio_status?: RecordingSaveResult['status'];
+  audio_message?: string;
+}
+
+export interface RecordingSaveResult {
+  status: 'ok' | 'delvis' | 'fejlet';
+  message: string;
+  meeting_folder: string | null;
+  duration_seconds: number;
 }
 
 // Bound the start invoke: > ~40s Bluetooth mic cold-start and ~90s worst-case
@@ -102,9 +111,9 @@ export class RecordingService {
   /**
    * Stop recording and save to file
    * @param savePath - Path to save audio file
-   * @returns Promise<void>
+   * @returns The disk save status; final encoding is reported by event.
    */
-  async stopRecording(savePath: string): Promise<void> {
+  async stopRecording(savePath: string): Promise<RecordingSaveResult | null> {
     return invoke('stop_recording', {
       args: { save_path: savePath }
     });

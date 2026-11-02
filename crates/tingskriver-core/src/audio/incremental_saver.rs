@@ -10,13 +10,14 @@
 
 use std::path::{Path, PathBuf};
 
-use log::{error, info, warn};
+use log::{error, info};
 use serde::{Deserialize, Serialize};
 
 use super::ffmpeg::find_ffmpeg_path;
 use super::finalize::{
-    has_raw_tracks, read_verified_status, recover_raw_tracks, scan_raw_tracks, AudioSaveStatus,
-    MIXED_FILE, RAW_DIR,
+    decoded_duration_seconds, finish_with_cleanup, has_raw_tracks, recover_raw_tracks,
+    scan_raw_tracks, verify_saved_outputs, AudioSaveStatus, FinalizeOutcome, FolderGuard,
+    KEPT_MESSAGE, MAX_DURATION_DEVIATION, MIXED_FILE, RAW_DIR, VERIFIED_MARKER,
 };
 
 /// Audio recovery status for transcript recovery feature
@@ -88,15 +89,21 @@ pub async fn recover_audio_from_checkpoints(
         });
     }
 
-    recover_legacy_mp4_checkpoints(&folder_path, &checkpoints_dir).await
+    tokio::task::spawn_blocking(move || {
+        recover_legacy_mp4_checkpoints(&folder_path, &checkpoints_dir)
+    })
+    .await
+    .map_err(|e| format!("{KEPT_MESSAGE} ({e})"))?
 }
 
 /// Folders from before the track writer: 30 s mp4 checkpoints merged with
 /// FFmpeg's concat demuxer.
-async fn recover_legacy_mp4_checkpoints(
+fn recover_legacy_mp4_checkpoints(
     folder_path: &Path,
     checkpoints_dir: &Path,
 ) -> Result<AudioRecoveryStatus, String> {
+    let _guard =
+        FolderGuard::acquire(folder_path).ok_or_else(|| "Lyden samles allerede.".to_string())?;
     let mut checkpoint_files: Vec<_> = std::fs::read_dir(checkpoints_dir)
         .map_err(|e| format!("Failed to read checkpoints directory: {}", e))?
         .filter_map(|entry| entry.ok())
@@ -115,8 +122,34 @@ async fn recover_legacy_mp4_checkpoints(
     // Sort by filename (audio_chunk_000.mp4, audio_chunk_001.mp4, etc.)
     checkpoint_files.sort();
 
+    match std::fs::remove_file(checkpoints_dir.join(VERIFIED_MARKER)) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(format!("{KEPT_MESSAGE} ({e})")),
+    }
+    let original_count = checkpoint_files.len();
+    let mut estimated_duration = 0.0;
+    checkpoint_files.retain(|path| match decoded_duration_seconds(path) {
+        Ok(duration) => {
+            estimated_duration += duration;
+            true
+        }
+        Err(e) => {
+            log::warn!("Skipping damaged checkpoint {}: {e}", path.display());
+            false
+        }
+    });
+    if checkpoint_files.is_empty() {
+        return Ok(AudioRecoveryStatus {
+            status: "failed".to_string(),
+            chunk_count: 0,
+            estimated_duration_seconds: 0.0,
+            audio_file_path: None,
+            message: KEPT_MESSAGE.to_string(),
+        });
+    }
     let chunk_count = checkpoint_files.len() as u32;
-    let estimated_duration = (chunk_count as f64) * 30.0; // 30 seconds per chunk
+    let partial = checkpoint_files.len() != original_count;
 
     let concat_file_path = checkpoints_dir.join("concat_list.txt");
     let mut concat_content = String::new();
@@ -170,13 +203,48 @@ async fn recover_legacy_mp4_checkpoints(
     match command.output() {
         Ok(output) if output.status.success() => {
             let _ = std::fs::remove_file(concat_file_path);
+            let verified = decoded_duration_seconds(&output_path).is_ok_and(|duration| {
+                (duration - estimated_duration).abs() <= MAX_DURATION_DEVIATION
+            });
+            if !verified {
+                return Ok(AudioRecoveryStatus {
+                    status: "failed".to_string(),
+                    chunk_count,
+                    estimated_duration_seconds: estimated_duration,
+                    audio_file_path: None,
+                    message: KEPT_MESSAGE.to_string(),
+                });
+            }
+            let message = if partial {
+                "Lyden er delvist gemt. Originalen er gemt.".to_string()
+            } else {
+                format!("Successfully recovered {} audio chunks", chunk_count)
+            };
+            finish_with_cleanup(
+                checkpoints_dir,
+                FinalizeOutcome {
+                    status: if partial {
+                        AudioSaveStatus::Partial
+                    } else {
+                        AudioSaveStatus::Ok
+                    },
+                    message: message.clone(),
+                    audio_file: Some(output_path),
+                    track_files: Vec::new(),
+                    duration_seconds: estimated_duration,
+                    segment_count: chunk_count as usize,
+                    raw_kept: true,
+                    problems: Vec::new(),
+                },
+                false,
+            );
             info!("Successfully recovered audio: {}", output_path_str);
             Ok(AudioRecoveryStatus {
-                status: "success".to_string(),
+                status: if partial { "partial" } else { "success" }.to_string(),
                 chunk_count,
                 estimated_duration_seconds: estimated_duration,
                 audio_file_path: Some(output_path_str),
-                message: format!("Successfully recovered {} audio chunks", chunk_count),
+                message,
             })
         }
         Ok(output) => {
@@ -217,24 +285,13 @@ pub async fn cleanup_checkpoints(meeting_folder: String) -> Result<(), String> {
         return Ok(());
     }
 
-    if has_raw_tracks(&checkpoints_dir) {
-        match read_verified_status(&checkpoints_dir) {
-            Some(AudioSaveStatus::Ok) => {}
-            status => {
-                warn!(
-                    "Keeping raw tracks in {}: last finalize status {:?}",
-                    checkpoints_dir.display(),
-                    status
-                );
-                return Err(
-                    "Rå-sporene bevares, fordi lyden ikke er samlet og verificeret.".to_string(),
-                );
-            }
-        }
-    } else if !folder_path.join(MIXED_FILE).exists() {
-        // Legacy mp4 checkpoints without a merged file: keep them.
-        return Err("Rå-sporene bevares, fordi der ikke findes en samlet lydfil.".to_string());
-    }
+    let raw = checkpoints_dir.clone();
+    let _guard =
+        FolderGuard::acquire(&folder_path).ok_or_else(|| "Lyden samles allerede.".to_string())?;
+    tokio::task::spawn_blocking(move || verify_saved_outputs(&raw))
+        .await
+        .map_err(|e| format!("{KEPT_MESSAGE} ({e})"))?
+        .map_err(|e| format!("{KEPT_MESSAGE} ({e})"))?;
 
     std::fs::remove_dir_all(&checkpoints_dir)
         .map_err(|e| format!("Failed to remove checkpoints directory: {}", e))?;
@@ -307,33 +364,44 @@ mod tests {
         std::fs::create_dir_all(&raw).unwrap();
         std::fs::write(raw.join("audio_chunk_000.mp4"), b"original").unwrap();
         std::fs::write(dir.path().join(MIXED_FILE), b"").unwrap();
-        assert!(cleanup_checkpoints(dir.path().to_string_lossy().into_owned()).await.is_err());
+        assert!(
+            cleanup_checkpoints(dir.path().to_string_lossy().into_owned())
+                .await
+                .is_err()
+        );
         assert!(raw.exists());
     }
 
     #[tokio::test]
     async fn legacy_recovery_skips_truncated_last_file() {
-        let Some(ffmpeg) = find_ffmpeg_path() else { return };
+        let Some(ffmpeg) = find_ffmpeg_path() else {
+            return;
+        };
         let dir = tempfile::tempdir().unwrap();
         let raw = dir.path().join(RAW_DIR);
         std::fs::create_dir_all(&raw).unwrap();
         let first = raw.join("audio_chunk_000.mp4");
         let mut sent = false;
         super::super::encode::encode_pcm_s16(&ffmpeg, 48000, "96k", &first, |block| {
-            if sent { return Ok(false); }
-            block.extend((0..48000 * 4).map(|i| ((i as f32 * 0.05).sin() * 10000.0) as i16));
+            if sent {
+                return Ok(false);
+            }
+            block.extend((0..48000).map(|i| ((i as f32 * 0.05).sin() * 10000.0) as i16));
             sent = true;
             Ok(true)
-        }).unwrap();
+        })
+        .unwrap();
         let last = raw.join("audio_chunk_001.mp4");
         std::fs::copy(&first, &last).unwrap();
         let file = std::fs::OpenOptions::new().write(true).open(&last).unwrap();
         file.set_len(file.metadata().unwrap().len() / 2).unwrap();
         let folder = dir.path().to_string_lossy().into_owned();
-        let outcome = recover_audio_from_checkpoints(folder.clone(), 48000).await.unwrap();
+        let outcome = recover_audio_from_checkpoints(folder.clone(), 48000)
+            .await
+            .unwrap();
         assert_eq!(outcome.status, "partial", "{}", outcome.message);
         assert_eq!(outcome.chunk_count, 1);
-        assert!((outcome.estimated_duration_seconds - 4.0).abs() < 0.1);
+        assert!((outcome.estimated_duration_seconds - 1.0).abs() < 0.1);
         assert!(outcome.audio_file_path.is_some());
         assert!(cleanup_checkpoints(folder).await.is_err());
         assert!(raw.exists());
@@ -376,14 +444,61 @@ mod tests {
 
     #[tokio::test]
     async fn cleanup_rechecks_verified_files_before_deleting_originals() {
-        if find_ffmpeg_path().is_none() { return; }
+        if find_ffmpeg_path().is_none() {
+            return;
+        }
         let dir = tempfile::tempdir().unwrap();
         record(dir.path());
         let folder = dir.path().to_string_lossy().into_owned();
-        let outcome = recover_audio_from_checkpoints(folder.clone(), 48000).await.unwrap();
+        let outcome = recover_audio_from_checkpoints(folder.clone(), 48000)
+            .await
+            .unwrap();
         assert_eq!(outcome.status, "success", "{}", outcome.message);
         std::fs::write(dir.path().join("microphone.m4a"), b"").unwrap();
         assert!(cleanup_checkpoints(folder).await.is_err());
+        assert!(dir.path().join(RAW_DIR).exists());
+    }
+
+    #[tokio::test]
+    async fn failed_retry_invalidates_previous_verification() {
+        if find_ffmpeg_path().is_none() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        record(dir.path());
+        let folder = dir.path().to_string_lossy().into_owned();
+        assert_eq!(
+            recover_audio_from_checkpoints(folder.clone(), 48000)
+                .await
+                .unwrap()
+                .status,
+            "success"
+        );
+        std::fs::write(
+            dir.path().join(RAW_DIR).join("microphone_000.wav"),
+            b"broken",
+        )
+        .unwrap();
+        assert_eq!(
+            recover_audio_from_checkpoints(folder.clone(), 48000)
+                .await
+                .unwrap()
+                .status,
+            "failed"
+        );
+        assert!(cleanup_checkpoints(folder).await.is_err());
+        assert!(dir.path().join(RAW_DIR).exists());
+    }
+
+    #[tokio::test]
+    async fn cleanup_refuses_while_finalization_is_running() {
+        let dir = tempfile::tempdir().unwrap();
+        record(dir.path());
+        let _guard = FolderGuard::acquire(dir.path()).unwrap();
+        let error = cleanup_checkpoints(dir.path().to_string_lossy().into_owned())
+            .await
+            .unwrap_err();
+        assert_eq!(error, "Lyden samles allerede.");
         assert!(dir.path().join(RAW_DIR).exists());
     }
 }

@@ -19,6 +19,8 @@ use super::{
     RecordingManager,
 };
 use super::device_monitor::{DeviceEvent, DeviceMonitorType};
+use super::finalize::{AudioSaveStatus, KEPT_MESSAGE};
+use super::recording_saver::SaveResult;
 
 // Import transcription modules
 use super::transcription::reset_speech_detected_flag;
@@ -527,14 +529,14 @@ pub async fn start_recording_with_devices_and_meeting(
 pub async fn stop_recording(
     app: HostHandle,
     _args: RecordingArgs,
-) -> Result<(), String> {
+) -> Result<Option<SaveResult>, String> {
     info!("🛑 Stopping recording");
     let stop_started = std::time::Instant::now();
 
     // Check if recording is active
     if !IS_RECORDING.load(Ordering::SeqCst) {
         info!("Recording was not active");
-        return Ok(());
+        return Ok(None);
     }
 
     // Emit shutdown progress to frontend
@@ -609,6 +611,12 @@ pub async fn stop_recording(
             Ok(Ok(None)) => info!("ℹ️ No audio was being written"),
             Ok(Err(e)) => {
                 error!("❌ Saving the recording failed: {}", e);
+                save_status = Some(SaveResult {
+                    status: AudioSaveStatus::Failed,
+                    message: KEPT_MESSAGE.to_string(),
+                    meeting_folder: meeting_folder.clone(),
+                    duration_seconds: 0.0,
+                });
                 let _ = app.emit(
                     "recording-storage-error",
                     serde_json::json!({ "message": format!("Lyden kunne ikke gemmes: {e}"), "kind": "other" }),
@@ -616,6 +624,12 @@ pub async fn stop_recording(
             }
             Err(_) => {
                 error!("⏱️ Saving the recording timed out after 5 minutes");
+                save_status = Some(SaveResult {
+                    status: AudioSaveStatus::Failed,
+                    message: KEPT_MESSAGE.to_string(),
+                    meeting_folder: meeting_folder.clone(),
+                    duration_seconds: 0.0,
+                });
                 let _ = app.emit(
                     "recording-storage-error",
                     serde_json::json!({ "message": "Lyden kunne ikke gemmes: disken svarer ikke", "kind": "other" }),
@@ -719,7 +733,7 @@ pub async fn stop_recording(
     app.refresh_status_ui();
 
     info!("🎉 Recording stopped in {} ms", stop_started.elapsed().as_millis());
-    Ok(())
+    Ok(save_status)
 }
 
 /// Check if recording is active
