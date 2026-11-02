@@ -44,6 +44,7 @@ pub mod strings;
 pub mod crash_dumps;
 pub mod database;
 pub mod dictation;
+pub mod diagnose;
 pub mod fake_device;
 pub mod host;
 pub mod install;

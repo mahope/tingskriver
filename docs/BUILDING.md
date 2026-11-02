@@ -28,6 +28,14 @@ cargo test -p tingskriver-core dictation
 cargo test --workspace                  # everything; the Tauri crate needs the Linux Tauri libraries
 ```
 
+The database startup suite checks loading a three-hour meeting among 50 meetings
+without a wall-clock deadline. Run its separate 200 ms performance check in
+release mode on an idle runner:
+
+```bash
+cargo test --locked --release -p tingskriver-core --test database_startup three_hour_meeting_loads_in_under_200_ms_with_50_meetings -- --ignored --exact --nocapture
+```
+
 Dictation insertion has a test against a real window and the real clipboard. It only runs on a Windows desktop session and on request, since it types into a test window (do not touch the keyboard while it runs):
 
 ```powershell
