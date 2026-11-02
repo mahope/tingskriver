@@ -52,6 +52,7 @@ pub enum Phase {
 }
 #[async_trait::async_trait]
 pub trait Model: Send {
+    #[must_use = "Await generation to run the model and handle its result"]
     async fn generate(&mut self, phase: Phase, system: &str, input: &str)
         -> Result<String, String>;
 }
