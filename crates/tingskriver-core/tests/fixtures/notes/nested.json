@@ -1,0 +1,27 @@
+[
+  {
+    "type": "bulletListItem",
+    "props": {},
+    "content": [
+      {
+        "type": "text",
+        "text": "Ydre",
+        "styles": {}
+      }
+    ],
+    "children": [
+      {
+        "type": "bulletListItem",
+        "props": {},
+        "content": [
+          {
+            "type": "text",
+            "text": "Indre",
+            "styles": {}
+          }
+        ],
+        "children": []
+      }
+    ]
+  }
+]

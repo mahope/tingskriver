@@ -1,0 +1,17 @@
+[
+  {
+    "type": "paragraph",
+    "props": {},
+    "content": [
+      {
+        "type": "text",
+        "text": "sammen",
+        "styles": {
+          "bold": true,
+          "italic": true
+        }
+      }
+    ],
+    "children": []
+  }
+]
