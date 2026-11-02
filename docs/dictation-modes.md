@@ -39,7 +39,8 @@ when recording starts. The existing per-program raw settings still apply.
 ```
 
 Providers are `auto`, `syv`, or `local`. A local mode's explicit model is
-loaded through the existing Parakeet engine; a Syv model is sent with the
+loaded through the existing Parakeet engine, including when `auto` selects
+local recognition without a Syv key; a Syv model is sent with the
 request. Syv accepts the language override. Parakeet detects language itself.
 Style, prompt and formatting instructions are passed to Syv and to optional
 polishing. Number format and code switching are prompt policies, not a new
@@ -55,10 +56,11 @@ when the recording must stay local from the outset. Spoken triggers and Enter
 commands are disabled in known editors and terminals.
 
 `insert` is the default output. `insertAndEnter` removes a final whole trigger
-phrase (ignoring case and trailing sentence punctuation). A trigger in the
+phrase (ignoring case, repeated whitespace and trailing sentence punctuation). A trigger in the
 middle, or a recording containing only the trigger, does not submit. Enter is
 sent only after confirmed insertion, while the same foreground window remains
-active, and never to a known editor. An insertion failure never sends Enter.
+active from recording start, and never to a known editor. Changing foreground
+windows during transcription prevents insertion. An insertion failure never sends Enter.
 
 `ModeCollection::export/import` round-trip JSON and reject unknown versions,
 duplicate ids, invalid shortcuts and empty names/rules/Enter triggers.

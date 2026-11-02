@@ -365,6 +365,7 @@ impl Service {
 struct Session {
     recorder: Recorder,
     target_app: Option<String>,
+    target_window: usize,
     settings: DictationSettings,
     mode: Option<Mode>,
     /// Shortcut pressed until the microphone was open.
@@ -387,6 +388,13 @@ fn foreground_context() -> (Option<String>, Option<String>, Option<String>) {
 #[cfg(not(windows))]
 fn foreground_context() -> (Option<String>, Option<String>, Option<String>) {
     (None, None, None)
+}
+
+fn foreground_window() -> usize {
+    #[cfg(windows)]
+    { super::win::foreground_window() }
+    #[cfg(not(windows))]
+    { 0 }
 }
 
 fn flash_error(overlay: &Arc<dyn Overlay>) {
@@ -429,6 +437,7 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant, Optio
                     if session.is_some() {
                         continue;
                     }
+                    let target_window = foreground_window();
                     let (target_app, window_class, title) = foreground_context();
                     let settings = service.settings();
                     let mode = settings.modes.select(&Context {
@@ -450,6 +459,7 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant, Optio
                             session = Some(Session {
                                 recorder,
                                 target_app,
+                                target_window,
                                 settings,
                                 mode,
                                 start_ms,
@@ -484,7 +494,7 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant, Optio
                                 service: service.clone(),
                                 ticket,
                             };
-                            service.process(samples, target_app, (s.settings, s.mode), at, start_ms, &turn).await;
+                            service.process(samples, target_app, s.target_window, (s.settings, s.mode), at, start_ms, &turn).await;
                         });
                     }
                 }
@@ -596,8 +606,8 @@ impl Service {
             .ok_or_else(|| "Ingen transskription: sæt en Syv.ai-nøgle eller hent en lokal Parakeet-model".to_string())?;
 
         let Some(key) = key.filter(|_| plan.primary == Engine::Syv) else {
-            if let Some(model) = mode.filter(|_| preference == EnginePreference::LocalOnly).and_then(|m| m.model.clone()) {
-                crate::parakeet_engine::commands::parakeet_load_model(self.app.clone(), model).await?;
+            if let Some(model) = mode.and_then(|m| m.local_model(plan.primary)) {
+                crate::parakeet_engine::commands::parakeet_load_model(self.app.clone(), model.to_string()).await?;
             }
             return transcribe_local(samples.to_vec()).await.map(|text| Transcript {
                 text,
@@ -751,6 +761,7 @@ impl Service {
         self: Arc<Self>,
         samples: Vec<f32>,
         target_app: Option<String>,
+        target_window: usize,
         selection: (DictationSettings, Option<Mode>),
         released_at: Instant,
         start_ms: u64,
@@ -790,7 +801,7 @@ impl Service {
                 settings.apply_mode(&spoken);
                 let needs_transcription = previous.engine != settings.engine
                     || previous.syv_model != settings.syv_model
-                    || mode.as_ref().and_then(|m| m.language.as_ref()) != spoken.language.as_ref();
+                    || spoken.transcription_changed(mode.as_ref());
                 mode = Some(spoken);
                 if needs_transcription {
                     transcript = match self.transcribe(&settings, mode.as_ref(), &samples, &rules).await {
@@ -843,7 +854,7 @@ impl Service {
             paste_timeout: Duration::from_millis(settings.paste_timeout_ms),
             app: target_app.clone(),
         };
-        let inserted = insert(text.clone(), options, enter).await;
+        let inserted = insert(text.clone(), options, enter, target_window).await;
         let (insert_method, inserted_at) = match inserted {
             Ok((method, at)) => {
                 self.set_error(None);
@@ -954,15 +965,15 @@ struct InsertOptions {
 }
 
 #[cfg(windows)]
-async fn insert(text: String, options: InsertOptions, enter: bool) -> Result<(&'static str, Instant), String> {
-    tokio::task::spawn_blocking(move || super::win::insert_output(&text, &options, enter))
+async fn insert(text: String, options: InsertOptions, enter: bool, target_window: usize) -> Result<(&'static str, Instant), String> {
+    tokio::task::spawn_blocking(move || super::win::insert_output_at(&text, &options, enter, target_window))
         .await
         .map_err(|e| e.to_string())?
         .map(|(method, at)| (method.as_str(), at))
 }
 
 #[cfg(not(windows))]
-async fn insert(_text: String, options: InsertOptions, _enter: bool) -> Result<(&'static str, Instant), String> {
+async fn insert(_text: String, options: InsertOptions, _enter: bool, _target_window: usize) -> Result<(&'static str, Instant), String> {
     let _ = (options.restore_after, options.paste_timeout, options.app);
     Err("Indsættelse understøttes kun på Windows".to_string())
 }

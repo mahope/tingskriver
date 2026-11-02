@@ -51,19 +51,19 @@ impl Output {
             let end = text.trim_end_matches(|c: char| c.is_whitespace() || ".!?".contains(c));
             let trigger = trigger.trim();
             if !code_editor && !trigger.is_empty() {
-                let words = trigger.split_whitespace().count();
-                let start = end
-                    .char_indices()
-                    .rev()
-                    .filter(|(_, c)| c.is_whitespace())
-                    .nth(words - 1)
-                    .map(|(i, c)| i + c.len_utf8());
-                if let Some(start) = start {
-                    if end[start..].to_lowercase() == trigger.to_lowercase()
-                        && !end[..start].trim().is_empty()
-                    {
-                        return (end[..start].trim_end().to_string(), true);
+                let mut remaining = end;
+                for word in trigger.split_whitespace().rev() {
+                    let start = remaining
+                        .rfind(char::is_whitespace)
+                        .map(|i| i + remaining[i..].chars().next().unwrap().len_utf8())
+                        .unwrap_or(0);
+                    if remaining[start..].to_lowercase() != word.to_lowercase() {
+                        return (text.to_string(), false);
                     }
+                    remaining = remaining[..start].trim_end();
+                }
+                if !remaining.is_empty() {
+                    return (remaining.to_string(), true);
                 }
             }
         }
@@ -302,6 +302,17 @@ impl ModeCollection {
 }
 
 impl Mode {
+    pub fn local_model(&self, engine: super::logic::engine::Engine) -> Option<&str> {
+        (engine == super::logic::engine::Engine::Local)
+            .then_some(self.model.as_deref())
+            .flatten()
+    }
+
+    pub fn transcription_changed(&self, previous: Option<&Self>) -> bool {
+        previous.map(|m| (&m.provider, &m.model, &m.language))
+            != Some((&self.provider, &self.model, &self.language))
+    }
+
     pub fn prompt(&self) -> String {
         let mut prompt = format!("{} {}", self.style.instruction(), self.prompt);
         if let Some(format) = &self.formatting.number_format {
@@ -320,6 +331,27 @@ impl Mode {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn explicit_provider_and_local_model_change_transcription() {
+        let mut mode = super::ModeCollection::default().modes.remove(0);
+        mode.provider = Some("auto".into());
+        mode.model = Some("parakeet".into());
+        let mut next = mode.clone();
+        next.provider = Some("syv".into());
+        assert!(next.transcription_changed(Some(&mode)));
+        assert!(!mode.transcription_changed(Some(&mode)));
+        let plan = super::super::logic::engine::plan(
+            super::super::logic::engine::EnginePreference::Auto,
+            false,
+            true,
+        )
+        .unwrap();
+        assert_eq!(mode.local_model(plan.primary), Some("parakeet"));
+        assert_eq!(
+            mode.local_model(super::super::logic::engine::Engine::Syv),
+            None
+        );
+    }
     use super::*;
 
     #[test]
@@ -420,6 +452,13 @@ mod tests {
         let output = Output::InsertAndEnter {
             trigger: "send nu".into(),
         };
+        for text in ["Hej send  nu", "Hej send\t nu!", "Hej send\u{a0}nu"] {
+            assert_eq!(output.prepare(text, false), ("Hej".into(), true));
+        }
+        let spaced = Output::InsertAndEnter {
+            trigger: "send  nu".into(),
+        };
+        assert_eq!(spaced.prepare("Hej send nu", false), ("Hej".into(), true));
         assert_eq!(
             output.prepare("Hej, SEND NU!", false),
             ("Hej,".into(), true)

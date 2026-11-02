@@ -272,6 +272,10 @@ fn send_masked_win_release(win_vk: u16) {
 // Foreground program
 // ---------------------------------------------------------------------------
 
+pub fn foreground_window() -> usize {
+    unsafe { GetForegroundWindow() }.0 as usize
+}
+
 /// File name of the program owning the foreground window, e.g. "Code.exe".
 pub fn foreground_process() -> Option<String> {
     process_for(unsafe { GetForegroundWindow() })
@@ -856,14 +860,18 @@ pub fn insert_text(text: &str, options: &InsertOptions) -> Result<(InsertMethod,
 }
 
 pub fn insert_output(text: &str, options: &InsertOptions, enter: bool) -> Result<(InsertMethod, Instant), String> {
+    insert_output_at(text, options, enter, foreground_window())
+}
+
+pub fn insert_output_at(text: &str, options: &InsertOptions, enter: bool, target: usize) -> Result<(InsertMethod, Instant), String> {
     let _one_at_a_time = INSERT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    let foreground = unsafe { GetForegroundWindow() };
-    let result = insert_text_inner(text, options, enter)?;
+    check_target(target)?;
+    let result = insert_text_inner(text, options, enter, target)?;
     if enter {
         if [VK_CONTROL, VK_LWIN, VK_RWIN, VK_MENU, VK_SHIFT].iter().any(|vk| key_is_down(*vk)) {
             return Err("Teksten er indsat; slip genvejstasterne før Enter".into());
         }
-        if foreground != unsafe { GetForegroundWindow() } || super::logic::app_style::is_code_editor(foreground_process().as_deref()) {
+        if !paste::same_target(target, foreground_window()) || super::logic::app_style::is_code_editor(foreground_process().as_deref()) {
             return Err("Programmet skiftede før Enter; teksten er indsat".into());
         }
         if !send_inputs(&[
@@ -876,9 +884,18 @@ pub fn insert_output(text: &str, options: &InsertOptions, enter: bool) -> Result
     Ok(result)
 }
 
-fn insert_text_inner(text: &str, options: &InsertOptions, enter: bool) -> Result<(InsertMethod, Instant), String> {
+fn check_target(target: usize) -> Result<(), String> {
+    if paste::same_target(target, foreground_window()) {
+        Ok(())
+    } else {
+        Err("Forgrundsvinduet skiftede siden optagelsesstart".into())
+    }
+}
+
+fn insert_text_inner(text: &str, options: &InsertOptions, enter: bool, target: usize) -> Result<(InsertMethod, Instant), String> {
     wait_for_modifiers_released(Duration::from_millis(1500));
 
+    check_target(target)?;
     let own = integrity_level(unsafe { GetCurrentProcess() });
     let access = paste::target_access(own, foreground_integrity_level());
     if access == TargetAccess::Elevated {
@@ -890,20 +907,20 @@ fn insert_text_inner(text: &str, options: &InsertOptions, enter: bool) -> Result
         Ok(owner) => owner,
         Err(e) => {
             log::warn!("Dictation: no clipboard window ({e}); typing instead");
-            return typed(text);
+            return check_target(target).and_then(|_| typed(text));
         }
     };
     let saved = match save_clipboard(&owner) {
         Ok(saved) => saved,
         Err(e) => {
             log::warn!("Dictation: clipboard not saved ({e}); typing instead");
-            return typed(text);
+            return check_target(target).and_then(|_| typed(text));
         }
     };
     if let Err(e) = owner.offer(text) {
         log::warn!("Dictation: could not set clipboard ({e}); typing instead");
         let _ = restore_clipboard(&owner, &saved);
-        return typed(text);
+        return check_target(target).and_then(|_| typed(text));
     }
 
     // A clipboard monitor that ignores the exclusion format reads right after
@@ -916,6 +933,11 @@ fn insert_text_inner(text: &str, options: &InsertOptions, enter: bool) -> Result
     }
     owner.set_paste_sent();
     let sent_at = Instant::now();
+    if let Err(e) = check_target(target) {
+        owner.withdraw();
+        let _ = restore_clipboard(&owner, &saved);
+        return Err(e);
+    }
     let ctrl_v_sent = send_ctrl_v();
     if ctrl_v_sent {
         while sent_at.elapsed() < options.paste_timeout {
@@ -953,7 +975,7 @@ fn insert_text_inner(text: &str, options: &InsertOptions, enter: bool) -> Result
             WhenBlocked::Type => {
                 log::info!("Dictation: the field did not take Ctrl+V; typing instead");
                 owner.withdraw();
-                typed(text)
+                check_target(target).and_then(|_| typed(text))
             }
             WhenBlocked::Report => Err(paste::not_received_message(options.app.as_deref())),
         },
