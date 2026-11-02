@@ -52,6 +52,14 @@ parentheses and brackets, explicit quotes, `procenttegn`, `lighedstegn`,
 `plustegn`, hash/number signs, ellipsis, division, plus/minus, yen and smileys.
 The aliases follow [Microsoft's Danish voice typing tables](https://support.microsoft.com/da-dk/accessibility/windows/use-voice-typing-to-talk-instead-of-type-on-your-pc).
 
+Explicit opening and closing quotes retain their direction, including when
+the opening quote belongs to an earlier dictation. For example, `hej lukkende
+anførselstegn tak` becomes `hej" tak`, and `startende enkelt anførselstegn hej
+lukkende enkelt anførselstegn tak` becomes `'hej' tak`. Opening quotes attach
+to the following word; closing quotes attach to the preceding word. The plain
+`anførselstegn` command still alternates, while `apostrof` joins words and
+`apostrof s` produces a suffix followed by a space before the next word.
+
 ## Editing commands
 
 These are recognised only when they make up the entire transcription, with

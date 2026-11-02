@@ -153,6 +153,7 @@ enum Tok {
     Word { text: String, protected: bool },
     Punct(char),
     Symbol(String),
+    Quote { mark: char, open: bool },
     Break(u8),
 }
 
@@ -160,6 +161,7 @@ enum Tok {
 enum Action {
     Punct(char),
     Symbol(String),
+    Quote { mark: char, open: bool },
     Break(u8),
     /// Fixed text. `drop_following_punct` is set for snippets, whose trigger
     /// usually gets a period from the speech model.
@@ -290,9 +292,24 @@ fn build_matchers(rules: &Rules) -> Matchers {
     }
 
     for (phrase, symbol) in SYMBOLS.iter().chain(WINDOWS_SYMBOLS) {
+        let action = if matches!(*symbol, "\"" | "'") && phrase.ends_with("anførselstegn") {
+            match phrase.split_whitespace().next().unwrap_or_default() {
+                "begyndende" | "startende" | "åbnende" => Action::Quote {
+                    mark: symbol.chars().next().unwrap(),
+                    open: true,
+                },
+                "lukkende" | "afsluttende" => Action::Quote {
+                    mark: symbol.chars().next().unwrap(),
+                    open: false,
+                },
+                _ => Action::Symbol(symbol.to_string()),
+            }
+        } else {
+            Action::Symbol(symbol.to_string())
+        };
         matchers.push(Matcher {
             words: phrase_words(phrase),
-            action: Action::Symbol(symbol.to_string()),
+            action,
         });
     }
     // Escapes precede user rules, so their result is never interpreted again.
@@ -400,6 +417,13 @@ fn apply_phrases(tokens: Vec<Tok>, matchers: &Matchers) -> Vec<Tok> {
 
         i += m.words.len();
         let drop_following = match &m.action {
+            Action::Quote { mark, open } => {
+                out.push(Tok::Quote {
+                    mark: *mark,
+                    open: *open,
+                });
+                true
+            }
             Action::Symbol(text) => {
                 out.push(Tok::Symbol(text.clone()));
                 true
@@ -461,7 +485,7 @@ fn push_punct(out: &mut Vec<Tok>, c: char) {
                 out.push(Tok::Punct(c));
             }
         }
-        Some(Tok::Word { .. } | Tok::Symbol(_)) => out.push(Tok::Punct(c)),
+        Some(Tok::Word { .. } | Tok::Symbol(_) | Tok::Quote { .. }) => out.push(Tok::Punct(c)),
     }
 }
 
@@ -474,14 +498,15 @@ fn push_break(out: &mut Vec<Tok>, n: u8) {
 }
 
 fn is_sentence_start(out: &[Tok]) -> bool {
-    let end = out.iter().rposition(
-        |t| !matches!(t, Tok::Symbol(s) if matches!(s.as_str(), "(" | "[" | "{" | "\"")),
-    );
+    let end = out.iter().rposition(|t| {
+        !matches!(t, Tok::Symbol(s) if matches!(s.as_str(), "(" | "[" | "{" | "\""))
+            && !matches!(t, Tok::Quote { .. })
+    });
     let out = &out[..end.map_or(0, |i| i + 1)];
     match out.last() {
         None | Some(Tok::Break(_)) => true,
         Some(Tok::Punct(c)) => matches!(c, '.' | '?' | '!') && !ends_with_abbreviation(out),
-        Some(Tok::Word { .. } | Tok::Symbol(_)) => false,
+        Some(Tok::Word { .. } | Tok::Symbol(_) | Tok::Quote { .. }) => false,
     }
 }
 
@@ -563,6 +588,16 @@ fn render(tokens: &[Tok]) -> String {
     let mut quote_open = false;
     for tok in tokens {
         match tok {
+            Tok::Quote { mark, open } => {
+                if *open && need_space {
+                    out.push(' ');
+                }
+                out.push(*mark);
+                need_space = !open;
+                if *mark == '"' {
+                    quote_open = *open;
+                }
+            }
             Tok::Word { text, .. } => {
                 if need_space {
                     out.push(' ');
@@ -573,8 +608,8 @@ fn render(tokens: &[Tok]) -> String {
             Tok::Symbol(text) => {
                 let (before, after) = match text.as_str() {
                     "(" | "[" | "{" | "#" | "€" | "$" | "£" | "¥" | "§" => (true, false),
-                    ")" | "]" | "}" | "%" | "°" | "…" | "..." => (false, true),
-                    "-" | "/" | "\\" | "@" | "_" | "'" | "'s" => (false, false),
+                    ")" | "]" | "}" | "%" | "°" | "…" | "..." | "'s" => (false, true),
+                    "-" | "/" | "\\" | "@" | "_" | "'" => (false, false),
                     "\"" => {
                         quote_open = !quote_open;
                         (quote_open, !quote_open)
@@ -617,6 +652,53 @@ mod tests {
 
     fn raw(input: &str) -> String {
         clean(input, Style::Raw, &Rules::default())
+    }
+
+    #[test]
+    fn explicit_quotes_keep_direction_and_word_spacing() {
+        for (open, close, symbol) in [
+            ("begyndende anførselstegn", "lukkende anførselstegn", "\""),
+            ("startende anførselstegn", "afsluttende anførselstegn", "\""),
+            (
+                "åbnende enkelt anførselstegn",
+                "afsluttende enkelt anførselstegn",
+                "'",
+            ),
+            (
+                "startende enkelt anførselstegn",
+                "lukkende enkelt anførselstegn",
+                "'",
+            ),
+        ] {
+            assert_eq!(
+                raw(&format!("{open} hej {close} tak")),
+                format!("{symbol}hej{symbol} tak"),
+            );
+            assert_eq!(raw(&format!("hej {close} tak")), format!("hej{symbol} tak"));
+            assert_eq!(
+                raw(&format!("før {open} hej {close} tak")),
+                format!("før {symbol}hej{symbol} tak"),
+            );
+            assert_eq!(
+                normal(&format!("{open} hej {close} tak")),
+                format!("{symbol}Hej{symbol} tak"),
+            );
+            assert_eq!(
+                normal(&format!("{open} hej punktum {close} tak")),
+                format!("{symbol}Hej.{symbol} Tak"),
+            );
+            assert_eq!(raw(&format!("skriv ordet {open}")), open);
+            assert_eq!(raw(&format!("skriv ordet {close}")), close);
+        }
+        assert_eq!(
+            raw("startende anførselstegn hej anførselstegn tak"),
+            "\"hej\" tak",
+        );
+        assert_eq!(
+            raw("hej lukkende anførselstegn anførselstegn tak"),
+            "hej\" \"tak",
+        );
+        assert_eq!(raw("Peter apostrof s bog"), "Peter's bog");
     }
 
     fn rules() -> Rules {
