@@ -409,20 +409,18 @@ async fn transcribe_chunk_with_provider(
         chunk.data
     };
 
-    // Skip VAD processing here since the pipeline already extracted speech using VAD
-    let speech_samples = transcription_data;
-
-    // Check for empty samples - improved error handling
-    if speech_samples.is_empty() {
-        warn!(
-            "Audio chunk {} is empty, skipping transcription",
-            chunk.chunk_id
-        );
-        return Err(TranscriptionError::AudioTooShort {
-            samples: 0,
-            minimum: 1600, // 100ms at 16kHz
-        });
+    // VAD runs after capture, immediately before the transcription engine.
+    // Chunk timestamps remain on the original recording clock.
+    let trimmed = tokio::task::spawn_blocking(move || {
+        crate::vad_trim::trim(&transcription_data, &crate::vad_trim::TrimConfig::default())
+    })
+    .await
+    .map_err(|_| TranscriptionError::EngineFailed("VAD task failed".into()))?
+    .map_err(|_| TranscriptionError::EngineFailed("VAD preprocessing failed".into()))?;
+    if trimmed.samples.is_empty() {
+        return Ok((String::new(), None, false));
     }
+    let speech_samples = trimmed.samples;
 
     // Calculate energy for logging/monitoring only
     let energy: f32 =
