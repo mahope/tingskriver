@@ -19,6 +19,18 @@ pub async fn transcribe(
     wav: Vec<u8>,
     prompt: Option<String>,
 ) -> Result<String, String> {
+    transcribe_language(client, endpoint, api_key, model, wav, prompt, "da").await
+}
+
+pub async fn transcribe_language(
+    client: &reqwest::Client,
+    endpoint: &str,
+    api_key: &str,
+    model: &str,
+    wav: Vec<u8>,
+    prompt: Option<String>,
+    language: &str,
+) -> Result<String, String> {
     let file = Part::bytes(wav)
         .file_name("diktering.wav")
         .mime_str("audio/wav")
@@ -26,7 +38,7 @@ pub async fn transcribe(
     let mut form = Form::new()
         .part("file", file)
         .text("model", model.to_string())
-        .text("language", "da")
+        .text("language", language.to_string())
         .text("response_format", "json");
     if let Some(prompt) = prompt.filter(|p| !p.trim().is_empty()) {
         form = form.text("prompt", prompt);
@@ -131,6 +143,16 @@ mod tests {
             );
         }
         assert!(request.contains("filename=\"diktering.wav\""));
+    }
+
+    #[tokio::test]
+    async fn mode_can_override_language_and_prompt() {
+        let (endpoint, server) = fake_server("200 OK", r#"{"text":"Hello"}"#).await;
+        transcribe_language(&reqwest::Client::new(), &endpoint, "test", "chosen-model", vec![1], Some("Keep English words".into()), "en").await.unwrap();
+        let request = server.await.unwrap();
+        for (name, value) in [("model", "chosen-model"), ("language", "en"), ("prompt", "Keep English words")] {
+            assert!(request.contains(&format!("name=\"{name}\"\r\n\r\n{value}\r\n")));
+        }
     }
 
     #[tokio::test]

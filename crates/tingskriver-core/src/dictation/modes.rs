@@ -107,7 +107,10 @@ impl Rule {
                         .is_some_and(|v| v.to_lowercase().contains(&s.to_lowercase()))
             }
             Self::TriggerWord(w) => eq(context.trigger_word, w),
-            Self::Shortcut(s) => eq(context.shortcut, s),
+            Self::Shortcut(s) => context.shortcut.is_some_and(|v| {
+                let parse = super::logic::hotkey::Chord::parse;
+                matches!((parse(v), parse(s)), (Ok(a), Ok(b)) if a == b)
+            }),
         }
     }
 
@@ -173,12 +176,7 @@ impl Default for ModeCollection {
         Self {
             version: 1,
             modes: vec![
-                mode(
-                    "standard",
-                    "Standard",
-                    ModeStyle::Formal,
-                    vec![Rule::Program("Outlook.exe".into())],
-                ),
+                mode("standard", "Standard", ModeStyle::Normal, vec![]),
                 mode(
                     "chat",
                     "Chat",
@@ -200,18 +198,54 @@ impl Default for ModeCollection {
                             .collect(),
                     )
                 },
+                mode(
+                    "formal",
+                    "Formel",
+                    ModeStyle::Formal,
+                    vec![Rule::Program("Outlook.exe".into())],
+                ),
             ],
         }
     }
 }
 
 impl ModeCollection {
+    pub fn spoken<'a>(&self, text: &'a str, process: Option<&str>) -> Option<(&Mode, &'a str)> {
+        if app_style::is_code_editor(process) {
+            return None;
+        }
+        let text = text.trim_start();
+        for mode in &self.modes {
+            for rule in &mode.rules {
+                if let Rule::TriggerWord(word) = rule {
+                    let word = word.trim();
+                    if !word.is_empty()
+                        && text
+                            .get(..word.len())
+                            .is_some_and(|s| s.to_lowercase() == word.to_lowercase())
+                    {
+                        let rest = text.get(word.len()..)?;
+                        if rest.starts_with(char::is_whitespace) && !rest.trim().is_empty() {
+                            return Some((mode, rest.trim_start()));
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         if self.version != 1 || self.modes.is_empty() {
             return Err("Ukendt tilstandsversion eller ingen tilstande".into());
         }
         let mut ids = std::collections::HashSet::new();
         for mode in &self.modes {
+            for rule in &mode.rules {
+                if let Rule::Shortcut(s) = rule {
+                    super::logic::hotkey::Chord::parse(s)?;
+                }
+            }
             if mode.id.trim().is_empty() || mode.name.trim().is_empty() || !ids.insert(&mode.id) {
                 return Err("Tilstande skal have et navn og et unikt id".into());
             }
@@ -289,6 +323,63 @@ mod tests {
     use super::*;
 
     #[test]
+    fn spoken_prefix_selects_a_mode_without_eating_normal_words() {
+        let mut modes = ModeCollection::default();
+        modes.modes[1]
+            .rules
+            .push(Rule::TriggerWord("besked".into()));
+        let (mode, text) = modes
+            .spoken("Besked hej med dig", Some("Outlook.exe"))
+            .unwrap();
+        assert_eq!(mode.name, "Chat");
+        assert_eq!(text, "hej med dig");
+        assert!(modes.spoken("beskeden er klar", None).is_none());
+        assert!(modes.spoken("en besked til dig", None).is_none());
+        assert!(modes.spoken("besked hej", Some("Code.exe")).is_none());
+    }
+
+    #[test]
+    #[ignore = "manual microbenchmark; run with --ignored --nocapture"]
+    fn measure_foreground_matching() {
+        use std::{hint::black_box, time::Instant};
+        let modes = ModeCollection::default();
+        let rules = app_style::default_rules();
+        let process = "C:\\Office\\OUTLOOK.EXE";
+        let old_base = |p: &str| {
+            p.rsplit(['\\', '/'])
+                .next()
+                .unwrap()
+                .trim()
+                .to_lowercase()
+                .trim_end_matches(".exe")
+                .to_string()
+        };
+        let start = Instant::now();
+        for _ in 0..100_000 {
+            let name = old_base(black_box(process));
+            black_box(rules.iter().find(|r| old_base(&r.process) == name));
+        }
+        let before = start.elapsed();
+        let start = Instant::now();
+        for _ in 0..100_000 {
+            black_box(app_style::style_for(Some(black_box(process)), &rules));
+        }
+        let after = start.elapsed();
+        let context = Context {
+            process: Some(process),
+            ..Context::default()
+        };
+        let start = Instant::now();
+        for _ in 0..100_000 {
+            black_box(modes.select(black_box(&context)));
+        }
+        println!(
+            "100k lookups: previous app style {before:?}, current app style {after:?}, modes {:?}",
+            start.elapsed()
+        );
+    }
+
+    #[test]
     fn outlook_selects_formal_with_a_fake_foreground() {
         let modes = ModeCollection::default();
         let foreground = Context {
@@ -296,8 +387,12 @@ mod tests {
             ..Context::default()
         };
         let mode = modes.select(&foreground).unwrap();
-        assert_eq!(mode.name, "Standard");
+        assert_eq!(mode.name, "Formel");
         assert_eq!(mode.style, ModeStyle::Formal);
+        assert_eq!(
+            modes.select(&Context::default()).unwrap().style,
+            ModeStyle::Normal
+        );
         assert_eq!(
             modes
                 .select(&Context {
@@ -349,7 +444,7 @@ mod tests {
 
     #[test]
     fn versioned_json_round_trip_and_danish_presets() {
-        let modes = ModeCollection::default();
+        let mut modes = ModeCollection::default();
         assert_eq!(
             ModeCollection::import(&modes.export().unwrap()).unwrap(),
             modes
@@ -360,12 +455,29 @@ mod tests {
                 .iter()
                 .map(|m| m.name.as_str())
                 .collect::<Vec<_>>(),
-            ["Standard", "Chat", "Kode/rå"]
+            ["Standard", "Chat", "Kode/rå", "Formel"]
         );
         assert!(modes
             .modes
             .iter()
             .all(|m| m.language.as_deref() == Some("da")));
+        let mode = &mut modes.modes[1];
+        mode.provider = Some("syv".into());
+        mode.model = Some("syv-transcribe".into());
+        mode.language = Some("en".into());
+        mode.polish = Some(true);
+        mode.prompt = "Bevar æøå og fagord".into();
+        mode.formatting = Formatting {
+            number_format: Some("dansk".into()),
+            code_switching: Some(true),
+        };
+        mode.output = Output::InsertAndEnter {
+            trigger: "send nu".into(),
+        };
+        assert_eq!(
+            ModeCollection::import(&modes.export().unwrap()).unwrap(),
+            modes
+        );
         assert!(ModeCollection::import(r#"{"version":99,"modes":[]}"#).is_err());
         assert!(ModeCollection::import(r#"{"version":1,"modes":[]}"#).is_err());
     }

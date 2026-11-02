@@ -90,17 +90,21 @@ impl DictationSettings {
         let mode = self.modes.select(context).cloned();
         let mut settings = self.clone();
         if let Some(mode) = &mode {
-            if let Some(provider) = &mode.provider {
-                settings.engine = if provider == "syv" { "auto".into() } else { provider.clone() };
-            }
-            if let Some(model) = &mode.model {
-                settings.syv_model = model.clone();
-            }
-            if let Some(polish) = mode.polish {
-                settings.polish_enabled = polish;
-            }
+            settings.apply_mode(mode);
         }
         (settings, mode)
+    }
+
+    pub fn apply_mode(&mut self, mode: &Mode) {
+        if let Some(provider) = &mode.provider {
+            self.engine = if provider == "syv" { "auto".into() } else { provider.clone() };
+        }
+        if let Some(model) = &mode.model {
+            self.syv_model = model.clone();
+        }
+        if let Some(polish) = mode.polish {
+            self.polish_enabled = polish;
+        }
     }
 
     pub fn chord(&self) -> Result<Chord, String> {
@@ -184,7 +188,7 @@ mod mode_tests {
     #[test]
     fn old_settings_gain_presets_without_losing_preferences() {
         let settings: DictationSettings = serde_json::from_str(r#"{"engine":"local","polishEnabled":true}"#).unwrap();
-        assert_eq!(settings.modes.modes.len(), 3);
+        assert_eq!(settings.modes.modes.len(), 4);
         assert_eq!(settings.engine, "local");
         assert!(settings.polish_enabled);
     }

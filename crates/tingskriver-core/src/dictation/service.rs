@@ -22,6 +22,7 @@ use super::logic::hotkey::ChordSignal;
 use super::logic::order::Order;
 use super::logic::timing::{self, Steps};
 use super::overlay::{Overlay, OverlayState};
+use super::modes::{Context, Mode};
 use super::secrets;
 use super::settings::DictationSettings;
 use super::store::{NewHistoryEntry, Store};
@@ -71,7 +72,7 @@ pub struct Service {
     hook: Mutex<Option<super::win::KeyboardHook>>,
     /// Feeds the control loop like the hook does (tray menu "Diktér").
     #[cfg(windows)]
-    trigger: Mutex<Option<std::sync::mpsc::Sender<(ChordSignal, Instant)>>>,
+    trigger: Mutex<Option<std::sync::mpsc::Sender<(ChordSignal, Instant, Option<String>)>>>,
 }
 
 fn now_ms() -> i64 {
@@ -137,6 +138,17 @@ impl Service {
         self.settings.read().map(|s| s.clone()).unwrap_or_default()
     }
 
+    pub fn export_modes(&self) -> Result<String, String> {
+        self.settings().modes.export()
+    }
+
+    pub async fn import_modes(self: &Arc<Self>, json: &str) -> Result<DictationSettings, String> {
+        let modes = super::modes::ModeCollection::import(json)?;
+        let mut settings = self.settings();
+        settings.modes = modes;
+        self.save_settings(settings).await
+    }
+
     fn rules(&self) -> Rules {
         self.rules.read().map(|r| r.clone()).unwrap_or_default()
     }
@@ -165,7 +177,7 @@ impl Service {
         if previous.residency_policy() != settings.residency_policy() {
             super::warm::set_policy(settings.residency_policy());
         }
-        if previous.enabled != settings.enabled || previous.shortcut != settings.shortcut {
+        if previous.enabled != settings.enabled || previous.shortcut != settings.shortcut || previous.modes != settings.modes {
             self.apply_shortcut();
         }
         Ok(settings)
@@ -270,7 +282,10 @@ impl Service {
 
         let (tx, rx) = std::sync::mpsc::channel();
         let trigger = tx.clone();
-        match super::win::KeyboardHook::start(chord, tx) {
+        let shortcuts = settings.modes.modes.iter().flat_map(|m| &m.rules).filter_map(|r| {
+            if let super::modes::Rule::Shortcut(s) = r { super::logic::hotkey::Chord::parse(s).ok() } else { None }
+        }).collect();
+        match super::win::KeyboardHook::start(chord, shortcuts, tx) {
             Ok(hook) => {
                 *slot = Some(hook);
                 if let Ok(mut slot) = self.trigger.lock() {
@@ -310,7 +325,7 @@ impl Service {
         for _ in 0..taps {
             for signal in [ChordSignal::Pressed, ChordSignal::Released] {
                 trigger
-                    .send((signal, now))
+                    .send((signal, now, None))
                     .map_err(|_| "Diktering kører ikke".to_string())?;
             }
         }
@@ -350,6 +365,8 @@ impl Service {
 struct Session {
     recorder: Recorder,
     target_app: Option<String>,
+    settings: DictationSettings,
+    mode: Option<Mode>,
     /// Shortcut pressed until the microphone was open.
     start_ms: u64,
 }
@@ -363,13 +380,13 @@ fn gesture_event(signal: ChordSignal) -> GestureEvent {
 }
 
 #[cfg(windows)]
-fn foreground_process() -> Option<String> {
-    super::win::foreground_process()
+fn foreground_context() -> (Option<String>, Option<String>, Option<String>) {
+    super::win::foreground_context()
 }
 
 #[cfg(not(windows))]
-fn foreground_process() -> Option<String> {
-    None
+fn foreground_context() -> (Option<String>, Option<String>, Option<String>) {
+    (None, None, None)
 }
 
 fn flash_error(overlay: &Arc<dyn Overlay>) {
@@ -384,15 +401,21 @@ fn flash_error(overlay: &Arc<dyn Overlay>) {
 }
 
 /// Runs on its own thread for as long as the keyboard hook is installed.
-fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant)>) {
+fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant, Option<String>)>) {
     let epoch = Instant::now();
     let ms = |t: Instant| t.saturating_duration_since(epoch).as_millis() as u64;
     let mut gesture = Gesture::new(GestureConfig::default());
     let mut session: Option<Session> = None;
+    let mut selected_shortcut: Option<String> = None;
 
     loop {
         let (actions, at) = match rx.recv_timeout(Duration::from_millis(50)) {
-            Ok((signal, at)) => (gesture.on_event(gesture_event(signal), ms(at)), at),
+            Ok((signal, at, shortcut)) => {
+                if signal == ChordSignal::Pressed && session.is_none() {
+                    selected_shortcut = shortcut;
+                }
+                (gesture.on_event(gesture_event(signal), ms(at)), at)
+            }
             Err(RecvTimeoutError::Timeout) => {
                 let now = Instant::now();
                 (gesture.tick(ms(now)), now)
@@ -406,7 +429,17 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant)>) {
                     if session.is_some() {
                         continue;
                     }
-                    let target_app = foreground_process();
+                    let (target_app, window_class, title) = foreground_context();
+                    let settings = service.settings();
+                    let mode = settings.modes.select(&Context {
+                        process: target_app.as_deref(),
+                        window_class: window_class.as_deref(),
+                        title: title.as_deref(),
+                        shortcut: selected_shortcut.as_deref().or(Some(settings.shortcut.as_str())),
+                        ..Context::default()
+                    }).cloned();
+                    service.overlay.set_mode(mode.as_ref());
+                    let _ = service.app.emit("dictation-mode-changed", &mode);
                     // Load the local model while the user speaks, so neither
                     // the local engine nor the fallback pays for a load.
                     super::warm::prewarm_parakeet();
@@ -417,6 +450,8 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant)>) {
                             session = Some(Session {
                                 recorder,
                                 target_app,
+                                settings,
+                                mode,
                                 start_ms,
                             });
                         }
@@ -449,7 +484,7 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant)>) {
                                 service: service.clone(),
                                 ticket,
                             };
-                            service.process(samples, target_app, at, start_ms, &turn).await;
+                            service.process(samples, target_app, (s.settings, s.mode), at, start_ms, &turn).await;
                         });
                     }
                 }
@@ -548,16 +583,22 @@ fjern gentagelser og selvrettelser (behold den rettede udgave), og lav punktopst
 teksten opremser flere ting. Bevar betydning, sprog og tone. Svar kun med den rettede tekst.";
 
 impl Service {
-    async fn transcribe(&self, settings: &DictationSettings, samples: &[f32], rules: &Rules) -> Result<Transcript, String> {
+    async fn transcribe(&self, settings: &DictationSettings, mode: Option<&Mode>, samples: &[f32], rules: &Rules) -> Result<Transcript, String> {
         let preference = EnginePreference::parse(&settings.engine);
         let key = match preference {
             EnginePreference::Auto => secrets::syv_key(),
             EnginePreference::LocalOnly => None,
         };
+        if mode.and_then(|m| m.provider.as_deref()) == Some("syv") && key.is_none() {
+            return Err("Tilstanden kræver en Syv.ai-nøgle".into());
+        }
         let plan = engine::plan(preference, key.is_some(), local_engine_available().await)
             .ok_or_else(|| "Ingen transskription: sæt en Syv.ai-nøgle eller hent en lokal Parakeet-model".to_string())?;
 
         let Some(key) = key.filter(|_| plan.primary == Engine::Syv) else {
+            if let Some(model) = mode.filter(|_| preference == EnginePreference::LocalOnly).and_then(|m| m.model.clone()) {
+                crate::parakeet_engine::commands::parakeet_load_model(self.app.clone(), model).await?;
+            }
             return transcribe_local(samples.to_vec()).await.map(|text| Transcript {
                 text,
                 engine: Engine::Local,
@@ -565,13 +606,14 @@ impl Service {
             });
         };
 
-        let prompt = cleanup::prompt_words(rules).join(", ");
+        let prompt = format!("{} {}", mode.map(Mode::prompt).unwrap_or_default(), cleanup::prompt_words(rules).join(", "));
+        let language = mode.and_then(|m| m.language.clone()).unwrap_or_else(|| "da".into());
         let mut syv_task = tokio::spawn({
             let client = self.http.clone();
             let endpoint = settings.syv_endpoint.clone();
             let model = settings.syv_model.clone();
             let wav = audio::wav_bytes(samples, audio::TARGET_RATE);
-            async move { syv::transcribe(&client, &endpoint, &key, &model, wav, Some(prompt)).await }
+            async move { syv::transcribe_language(&client, &endpoint, &key, &model, wav, Some(prompt), &language).await }
         });
 
         let deadline = Duration::from_millis(settings.fallback_after_ms);
@@ -646,7 +688,7 @@ impl Service {
         }
     }
 
-    async fn polish(&self, settings: &DictationSettings, text: String) -> String {
+    async fn polish(&self, settings: &DictationSettings, mode: Option<&Mode>, text: String) -> String {
         use crate::summary::llm_client::{generate_summary, LLMProvider};
 
         let provider = match settings.polish_provider.as_str() {
@@ -665,12 +707,16 @@ impl Service {
             log::info!("Dictation polishing skipped: no model chosen");
             return text;
         }
+        let prompt = format!("{POLISH_PROMPT} {}", mode.map(Mode::prompt).unwrap_or_default());
+        let prompt = if let Some(language) = mode.and_then(|m| m.language.as_deref()) {
+            format!("{prompt} Tekstens sprog er {language}; bevar dette sprog.")
+        } else { prompt };
         let request = generate_summary(
             &self.http,
             &provider,
             &model,
             "",
-            POLISH_PROMPT,
+            &prompt,
             &text,
             endpoint,
             None,
@@ -705,12 +751,15 @@ impl Service {
         self: Arc<Self>,
         samples: Vec<f32>,
         target_app: Option<String>,
+        selection: (DictationSettings, Option<Mode>),
         released_at: Instant,
         start_ms: u64,
         turn: &Turn,
     ) {
+        let (base_settings, mut mode) = selection;
+        let mut settings = base_settings.clone();
+        if let Some(mode) = &mode { settings.apply_mode(mode); }
         let capture_ms = released_at.elapsed().as_millis() as u64;
-        let settings = self.settings();
         let audio_ms = audio::duration_ms(samples.len(), audio::TARGET_RATE);
         if audio_ms < 300 || !audio::has_signal(&samples) {
             log::info!("Dictation: no speech in {audio_ms} ms recording");
@@ -718,10 +767,11 @@ impl Service {
             return;
         }
 
-        let style = app_style::style_for(target_app.as_deref(), &settings.style_rules());
+        let legacy_style = app_style::style_for(target_app.as_deref(), &settings.style_rules());
+        let code_editor = app_style::is_code_editor(target_app.as_deref());
         let rules = self.rules();
         let transcribe_started = Instant::now();
-        let transcript = match self.transcribe(&settings, &samples, &rules).await {
+        let mut transcript = match self.transcribe(&settings, mode.as_ref(), &samples, &rules).await {
             Ok(t) => t,
             Err(e) => {
                 log::warn!("Dictation transcription failed: {e}");
@@ -731,13 +781,53 @@ impl Service {
             }
         };
 
+        if legacy_style != Style::Raw {
+            if let Some((spoken, rest)) = settings.modes.spoken(&transcript.text, target_app.as_deref()) {
+                let spoken = spoken.clone();
+                let rest = rest.to_string();
+                let previous = settings.clone();
+                settings = base_settings.clone();
+                settings.apply_mode(&spoken);
+                let needs_transcription = previous.engine != settings.engine
+                    || previous.syv_model != settings.syv_model
+                    || mode.as_ref().and_then(|m| m.language.as_ref()) != spoken.language.as_ref();
+                mode = Some(spoken);
+                if needs_transcription {
+                    transcript = match self.transcribe(&settings, mode.as_ref(), &samples, &rules).await {
+                        Ok(t) => t,
+                        Err(e) => {
+                            self.set_error(Some(e));
+                            flash_error(&self.overlay);
+                            return;
+                        }
+                    };
+                    if let Some((spoken, rest)) = settings.modes.spoken(&transcript.text, target_app.as_deref()) {
+                        if mode.as_ref().is_some_and(|m| m.id == spoken.id) {
+                            transcript.text = rest.to_string();
+                        }
+                    }
+                } else {
+                    transcript.text = rest;
+                }
+                self.overlay.set_mode(mode.as_ref());
+                let _ = self.app.emit("dictation-mode-changed", &mode);
+            }
+        }
+        let style = if code_editor || legacy_style == Style::Raw {
+            Style::Raw
+        } else {
+            mode.as_ref().map(|m| m.style.cleanup()).unwrap_or(legacy_style)
+        };
+
         let transcribe_ms = transcribe_started.elapsed().as_millis() as u64;
 
-        let mut text = cleanup::clean(&transcript.text, style, &rules);
+        let (input, enter) = mode.as_ref().map(|m| m.output.prepare(&transcript.text, code_editor || style == Style::Raw))
+            .unwrap_or_else(|| (transcript.text.clone(), false));
+        let mut text = cleanup::clean(&input, style, &rules);
         let mut polish_ms = None;
         if settings.polish_enabled && style == Style::Normal && !text.is_empty() {
             let polish_started = Instant::now();
-            text = self.polish(&settings, text).await;
+            text = self.polish(&settings, mode.as_ref(), text).await;
             polish_ms = Some(polish_started.elapsed().as_millis() as u64);
         }
         self.overlay.set(OverlayState::Hidden);
@@ -753,7 +843,7 @@ impl Service {
             paste_timeout: Duration::from_millis(settings.paste_timeout_ms),
             app: target_app.clone(),
         };
-        let inserted = insert(text.clone(), options).await;
+        let inserted = insert(text.clone(), options, enter).await;
         let (insert_method, inserted_at) = match inserted {
             Ok((method, at)) => {
                 self.set_error(None);
@@ -864,15 +954,15 @@ struct InsertOptions {
 }
 
 #[cfg(windows)]
-async fn insert(text: String, options: InsertOptions) -> Result<(&'static str, Instant), String> {
-    tokio::task::spawn_blocking(move || super::win::insert_text(&text, &options))
+async fn insert(text: String, options: InsertOptions, enter: bool) -> Result<(&'static str, Instant), String> {
+    tokio::task::spawn_blocking(move || super::win::insert_output(&text, &options, enter))
         .await
         .map_err(|e| e.to_string())?
         .map(|(method, at)| (method.as_str(), at))
 }
 
 #[cfg(not(windows))]
-async fn insert(_text: String, options: InsertOptions) -> Result<(&'static str, Instant), String> {
+async fn insert(_text: String, options: InsertOptions, _enter: bool) -> Result<(&'static str, Instant), String> {
     let _ = (options.restore_after, options.paste_timeout, options.app);
     Err("Indsættelse understøttes kun på Windows".to_string())
 }
