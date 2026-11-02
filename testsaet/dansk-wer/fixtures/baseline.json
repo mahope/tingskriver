@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "normalization": "unicode-alphanumeric-lower-v1",
+  "dataset_kind": "fixture-text",
+  "engine": "fixture",
+  "date": "2026-11-01T19:12:02.936706866+00:00",
+  "git_sha": "52ff15a74f0a00034324077fbd6daaa09b0f647c",
+  "clips": [
+    {
+      "id": "danish-01",
+      "reference": "Jeg spiser æbler ved åen.",
+      "hypothesis": "jeg spiser æbler ved åen.\n",
+      "score": {
+        "reference_words": 5,
+        "substitutions": 0,
+        "insertions": 0,
+        "deletions": 0
+      },
+      "wer": 0.0
+    },
+    {
+      "id": "danish-02",
+      "reference": "Vi mødes klokken 12 på øen.",
+      "hypothesis": "vi mødes klokken 12 på øen.\n",
+      "score": {
+        "reference_words": 6,
+        "substitutions": 0,
+        "insertions": 0,
+        "deletions": 0
+      },
+      "wer": 0.0
+    }
+  ],
+  "total": {
+    "reference_words": 11,
+    "substitutions": 0,
+    "insertions": 0,
+    "deletions": 0
+  },
+  "wer": 0.0
+}

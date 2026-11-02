@@ -176,7 +176,9 @@ jobs:
 
       - name: List artifacts
         shell: bash
-        run: find target/x86_64-pc-windows-msvc/release/bundle -type f -exec ls -lh {} \;
+        run: |
+          find target/x86_64-pc-windows-msvc/release/bundle -type f -exec ls -lh {} \;
+          ls -lh target/x86_64-pc-windows-msvc/release/*.exe target/x86_64-pc-windows-msvc/release/*.pdb
 
       - name: Upload installer
         uses: actions/upload-artifact@v4
@@ -186,3 +188,13 @@ jobs:
             target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
             target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe.sig
           retention-days: 14
+
+      # The symbols for crash dumps (%LOCALAPPDATA%\dk.mahoje.tingskriver\dumps)
+      # and backtraces. Not in the installer; open a .dmp with this PDB.
+      - name: Upload debug symbols
+        uses: actions/upload-artifact@v4
+        with:
+          name: tingskriver-windows-x64-symbols-${{ steps.version.outputs.version }}-${{ github.sha }}
+          path: target/x86_64-pc-windows-msvc/release/tingskriver.pdb
+          if-no-files-found: error
+          retention-days: 90

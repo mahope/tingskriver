@@ -80,6 +80,8 @@ windows = { version = "0.61", features = [
     # Install hooks: start with Windows and leftovers of earlier builds (src/install)
     "Win32_System_Registry",
     "Win32_Graphics_Gdi",
+    # Crash dumps: the per-exe Windows Error Reporting LocalDumps key
+    "Win32_System_Registry",
 ] }
 windows-core = "0.61"
 
@@ -87,4 +89,6 @@ windows-core = "0.61"
 whisper-rs = { version = "0.13.2", features = ["raw-api"] }
 
 [dev-dependencies]
+proptest = "1"
+tokio = { version = "1.32.0", features = ["test-util"] }
 tempfile = "3.3.0"

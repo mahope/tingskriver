@@ -3,13 +3,10 @@
     windows_subsystem = "windows"
 )]
 
-use log;
-
 fn main() {
+    tingskriver_core::logging::mark_process_start();
     std::env::set_var("RUST_LOG", "info");
+    // Log file and panic hook: release builds have no console.
     app_lib::file_logger::init();
-
-    // Async logger will be initialized lazily when first needed (after Tauri runtime starts)
-    log::info!("Starting application...");
     app_lib::run();
 }

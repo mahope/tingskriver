@@ -3,10 +3,10 @@ use anyhow::Result;
 use cpal::traits::{DeviceTrait, StreamTrait};
 use cpal::{Device, Stream, SupportedStreamConfig};
 use log::{error, info, warn};
-use tokio::sync::mpsc;
 
 use super::devices::{AudioDevice, get_device_and_config};
 use super::pipeline::AudioCapture;
+use super::recording_writer::StorageSender;
 use super::recording_state::{RecordingState, DeviceType};
 use super::capture::{AudioCaptureBackend, get_current_backend};
 
@@ -32,6 +32,8 @@ unsafe impl Send for StreamBackend {}
 pub struct AudioStream {
     device: Arc<AudioDevice>,
     backend: StreamBackend,
+    /// Kept to flush the resampler tail after the callbacks stopped.
+    capture: Option<AudioCapture>,
 }
 
 // SAFETY: AudioStream contains StreamBackend which we've marked as Send
@@ -43,7 +45,7 @@ impl AudioStream {
         device: Arc<AudioDevice>,
         state: Arc<RecordingState>,
         device_type: DeviceType,
-        recording_sender: Option<mpsc::UnboundedSender<super::recording_state::AudioChunk>>,
+        recording_sender: Option<StorageSender>,
     ) -> Result<Self> {
         // Get current backend from global config
         let backend_type = get_current_backend();
@@ -55,7 +57,7 @@ impl AudioStream {
         device: Arc<AudioDevice>,
         state: Arc<RecordingState>,
         device_type: DeviceType,
-        recording_sender: Option<mpsc::UnboundedSender<super::recording_state::AudioChunk>>,
+        recording_sender: Option<StorageSender>,
         backend_type: AudioCaptureBackend,
     ) -> Result<Self> {
         info!("🎵 Stream: Creating audio stream for device: {} with backend: {:?}, device_type: {:?}",
@@ -107,7 +109,7 @@ impl AudioStream {
         device: Arc<AudioDevice>,
         state: Arc<RecordingState>,
         device_type: DeviceType,
-        recording_sender: Option<mpsc::UnboundedSender<super::recording_state::AudioChunk>>,
+        recording_sender: Option<StorageSender>,
     ) -> Result<Self> {
         info!("Creating CPAL stream for device: {}", device.name);
 
@@ -137,6 +139,7 @@ impl AudioStream {
         Ok(Self {
             device,
             backend: StreamBackend::Cpal(stream),
+            capture: Some(capture),
         })
     }
 
@@ -146,7 +149,7 @@ impl AudioStream {
         device: Arc<AudioDevice>,
         state: Arc<RecordingState>,
         device_type: DeviceType,
-        recording_sender: Option<mpsc::UnboundedSender<super::recording_state::AudioChunk>>,
+        recording_sender: Option<StorageSender>,
     ) -> Result<Self> {
         info!("🔊 Stream: Creating Core Audio stream for device: {}", device.name);
 
@@ -230,6 +233,7 @@ impl AudioStream {
             backend: StreamBackend::CoreAudio {
                 task: Some(task),
             },
+            capture: Some(capture),
         })
     }
 
@@ -319,8 +323,9 @@ impl AudioStream {
     /// Stop the stream
     pub fn stop(self) -> Result<()> {
         info!("Stopping audio stream for device: {}", self.device.name);
+        let AudioStream { device, backend, capture } = self;
 
-        match self.backend {
+        match backend {
             StreamBackend::Cpal(stream) => {
                 // CRITICAL: Pause the stream first to stop callbacks immediately
                 // This ensures closures stop executing before we drop the stream,
@@ -345,8 +350,13 @@ impl AudioStream {
             }
         }
 
+        // No more callbacks: the last samples in the resampler go to the track.
+        if let Some(capture) = capture {
+            capture.flush_tail();
+        }
+
         // Explicitly drop self.device Arc reference
-        drop(self.device);
+        drop(device);
         info!("Audio stream stopped and device reference dropped");
         Ok(())
     }
@@ -376,7 +386,7 @@ impl AudioStreamManager {
         &mut self,
         microphone_device: Option<Arc<AudioDevice>>,
         system_device: Option<Arc<AudioDevice>>,
-        recording_sender: Option<mpsc::UnboundedSender<super::recording_state::AudioChunk>>,
+        recording_sender: Option<StorageSender>,
     ) -> Result<()> {
         use super::capture::get_current_backend;
         let backend = get_current_backend();

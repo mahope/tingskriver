@@ -74,27 +74,24 @@ The archived FastAPI service had unauthenticated, development-oriented CORS beha
 
 The current app does not require a separate FastAPI tier. Meeting persistence, local transcription, and summary orchestration are handled through the Rust/Tauri core.
 
-### Audio Processing Pipeline (Critical Understanding)
+### Audio Recording Path (Critical Understanding)
 
-The audio system has **two parallel paths** with different purposes:
+The recording only captures and saves. There is no VAD, transcription model or
+ffmpeg during a recording, so a crash in any of them cannot cost audio:
 
 ```
-Raw Audio (Mic + System)
-         ↓
-┌────────────────────────────────────────────────────────────┐
-│              Audio Pipeline Manager                         │
-│  (crates/tingskriver-core/src/audio/pipeline.rs)           │
-└─────────────┬──────────────────────────┬───────────────────┘
-              ↓                          ↓
-    ┌─────────────────┐        ┌─────────────────────┐
-    │ Recording Path  │        │ Transcription Path  │
-    │ (Pre-mixed)     │        │ (VAD-filtered)      │
-    └─────────────────┘        └─────────────────────┘
-              ↓                          ↓
-    RecordingSaver.save()      WhisperEngine.transcribe()
+Mic callback ──┐                                  ┌─ microphone_000.wav ...
+               ├─ AudioCapture (pipeline.rs) ─────┤   (.checkpoints/, committed every 1 s)
+System callback┘  bounded channel, never blocks   └─ system_000.wav ...
+                  RecordingWriter thread                     ↓ after stop, in the background
+                  (recording_writer.rs, track_writer.rs)     finalize.rs: microphone.m4a,
+                                                             system.m4a, audio.mp4, verified
 ```
 
-**Key Insight**: The pipeline performs **professional audio mixing** (RMS-based ducking, clipping prevention) for recording, while simultaneously applying **Voice Activity Detection (VAD)** to send only speech segments to Whisper for transcription.
+**Key Insight**: stop means "the audio is on disk" (the writer drains its queue
+and returns within seconds). Encoding, verification and deletion of the raw
+tracks (only on status `ok`) happen afterwards; transcription runs from the
+saved files. See [docs/arkitektur.md](docs/arkitektur.md#recording-the-audio-is-saved-first).
 
 ### Audio Device Modularization (Recently Completed)
 
@@ -115,7 +112,7 @@ crates/tingskriver-core/src/audio/
 │   ├── microphone.rs          # Microphone capture stream
 │   ├── system.rs              # System audio capture stream
 │   └── core_audio.rs          # macOS ScreenCaptureKit integration
-├── pipeline.rs                # Audio mixing and VAD processing
+├── pipeline.rs                # Capture processing (resampling, mic filters) -> writer
 ├── recording_manager.rs       # High-level recording coordination
 ├── recording_commands.rs      # Start/stop orchestration (Tauri wrappers in frontend/src-tauri/src/audio/)
 └── recording_saver.rs         # Audio file writing
@@ -125,7 +122,7 @@ crates/tingskriver-core/src/audio/
 - Device detection issues → `devices/discovery.rs` or `devices/platform/{windows,macos,linux}.rs`
 - Microphone/speaker problems → `devices/microphone.rs` or `devices/speakers.rs`
 - Audio capture issues → `capture/microphone.rs` or `capture/system.rs`
-- Mixing/processing problems → `pipeline.rs`
+- Capture processing problems → `pipeline.rs`; saving → `recording_writer.rs` / `track_writer.rs`; final files and crash recovery → `finalize.rs`
 - Recording workflow → `recording_manager.rs`
 
 ### Rust ↔ Frontend Communication (Tauri Architecture)
@@ -194,11 +191,11 @@ pub async fn load_model(&self, model_name: &str) -> Result<()> {
 
 ### 1. Audio Buffer Management
 
-**Ring Buffer Mixing** (pipeline.rs):
-- Mic and system audio arrive asynchronously at different rates
-- Ring buffer accumulates samples until both streams have aligned windows (50ms)
-- Professional mixing applies RMS-based ducking to prevent system audio from drowning out microphone
-- Uses `VecDeque` for efficient windowed processing
+**Separate tracks, mixed after stop** (pipeline.rs, recording_writer.rs, finalize.rs):
+- Mic and system audio arrive asynchronously at different rates and are never mixed live
+- `AudioCapture` resamples each stream and sends it with its position on the recording clock over a bounded channel (it drops rather than blocks)
+- The writer thread keeps one WAV track per source and fills gaps with silence, so both tracks stay on the same time axis
+- `finalize.rs` mixes the tracks into `audio.mp4` after stop
 
 ### 2. Thread Safety and Async Boundaries
 
@@ -279,9 +276,9 @@ macro_rules! perf_debug {
 **Location**: `crates/tingskriver-core/src/audio/pipeline.rs`
 
 Key components:
-- `AudioMixerRingBuffer`: Manages mic + system audio synchronization
-- `ProfessionalAudioMixer`: RMS-based ducking and mixing
-- `AudioPipelineManager`: Orchestrates VAD, mixing, and distribution
+- `AudioCapture` (pipeline.rs): resampling, mic filters, hand-off to the writer
+- The writer thread (`spawn_writer`, recording_writer.rs) and `TrackWriter` (track_writer.rs): WAV segments, gap filling, storage errors
+- `finalize_raw_tracks` (finalize.rs): encode, verify, mix and crash recovery
 
 **Testing Audio Changes**:
 ```bash
@@ -319,10 +316,9 @@ $env:RUST_LOG="debug"; ./clean_run_windows.bat
 ### Audio Pipeline Debugging
 
 **Key Metrics** (emitted by pipeline):
-- Buffer sizes (mic/system)
-- Mixing window count
-- VAD detection rate
-- Dropped chunk warnings
+- Writer backlog (seconds of audio waiting for the disk)
+- Dropped chunk and storage error warnings
+- Per-track summary at stop (saved, silence filled, lost)
 
 **Monitor via Developer Console**: The app includes real-time metrics display when recording.
 
@@ -349,9 +345,9 @@ $env:RUST_LOG="debug"; ./clean_run_windows.bat
 
 ### Audio Processing
 - Use `perf_debug!()` / `perf_trace!()` for hot-path logging (zero cost in release)
-- Batch audio metrics using `AudioMetricsBatcher` (pipeline.rs)
+- Batch audio metrics using `AudioMetricsBatcher` (batch_processor.rs)
 - Pre-allocate buffers with `AudioBufferPool` (buffer_pool.rs)
-- VAD filtering reduces Whisper load by ~70% (only processes speech)
+- VAD runs in transcription from the saved file, not during the recording
 
 ### Whisper Transcription
 - **Model Selection**: Balance accuracy vs speed
@@ -407,7 +403,7 @@ $env:RUST_LOG="debug"; ./clean_run_windows.bat
 **Audio System**:
 - [crates/tingskriver-core/src/audio/recording_commands.rs](crates/tingskriver-core/src/audio/recording_commands.rs) - Start/stop recording orchestration
 - [crates/tingskriver-core/src/audio/recording_manager.rs](crates/tingskriver-core/src/audio/recording_manager.rs) - Recording orchestration
-- [crates/tingskriver-core/src/audio/pipeline.rs](crates/tingskriver-core/src/audio/pipeline.rs) - Audio mixing and VAD
+- [crates/tingskriver-core/src/audio/pipeline.rs](crates/tingskriver-core/src/audio/pipeline.rs) - Capture processing and hand-off to the disk writer
 - [crates/tingskriver-core/src/audio/recording_saver.rs](crates/tingskriver-core/src/audio/recording_saver.rs) - Audio file writing
 
 **UI Components**:
