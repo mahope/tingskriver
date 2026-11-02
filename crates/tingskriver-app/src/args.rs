@@ -6,6 +6,8 @@ pub struct StartupArgs {
     /// `--hidden`: start without a window (start with Windows, tray). A
     /// later launch shows the window through the single-instance signal.
     pub hidden: bool,
+    pub diagnose: bool,
+    pub json: bool,
     /// `--page meetings|dictation|settings`: the page the window opens on
     /// (manual tests and screenshots).
     pub page: Option<String>,
@@ -24,6 +26,8 @@ impl StartupArgs {
         let mut args = args.into_iter().map(Into::into);
         while let Some(arg) = args.next() {
             match arg.as_str() {
+                "--diagnose" => parsed.diagnose = true,
+                "--json" => parsed.json = true,
                 "--hidden" | "--minimized" => parsed.hidden = true,
                 "--page" => match args.next() {
                     Some(page) => parsed.page = Some(page),
@@ -46,6 +50,16 @@ impl StartupArgs {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn diagnose_and_json_are_order_independent() {
+        for flags in [["--diagnose", "--json"], ["--json", "--diagnose"]] {
+            let args = StartupArgs::parse(flags);
+            assert!(args.diagnose && args.json);
+            assert!(args.unknown.is_empty());
+        }
+        assert!(StartupArgs::parse(["--diagnose"]).diagnose);
+    }
 
     #[test]
     fn no_arguments_open_the_window() {
