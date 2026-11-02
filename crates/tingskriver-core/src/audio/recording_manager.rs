@@ -10,23 +10,14 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 use super::devices::AudioDevice;
 
-use super::recording_state::{RecordingState, AudioChunk};
-use super::pipeline::AudioPipelineManager;
+use super::recording_state::RecordingState;
 use super::stream::AudioStreamManager;
-use super::recording_saver::RecordingSaver;
+use super::recording_saver::{RecordingSaver, SaveResult};
 use super::device_monitor::{AudioDeviceMonitor, DeviceEvent};
 
 /// Stream manager type enumeration
 pub enum StreamManagerType {
     Standard(AudioStreamManager),
-}
-
-#[derive(Debug, thiserror::Error)]
-pub(crate) enum RecordingStartError {
-    #[error("Failed to initialize speech recognition: {0}")]
-    TranscriptionRuntime(#[source] anyhow::Error),
-    #[error(transparent)]
-    Other(#[from] anyhow::Error),
 }
 
 // ============================================================================
@@ -188,7 +179,6 @@ pub async fn wake_audio_connection_for_swap(speaker_device_name: &str) -> Result
 pub struct RecordingManager {
     state: Arc<RecordingState>,
     stream_manager: AudioStreamManager,
-    pipeline_manager: AudioPipelineManager,
     recording_saver: RecordingSaver,
     device_monitor: Option<AudioDeviceMonitor>,
     device_event_receiver: Option<mpsc::UnboundedReceiver<DeviceEvent>>,
@@ -202,13 +192,11 @@ impl RecordingManager {
     pub fn new() -> Self {
         let state = RecordingState::new();
         let stream_manager = AudioStreamManager::new(state.clone());
-        let pipeline_manager = AudioPipelineManager::new();
         let (device_monitor, device_event_receiver) = AudioDeviceMonitor::new();
 
         Self {
             state,
             stream_manager,
-            pipeline_manager,
             recording_saver: RecordingSaver::new(),
             device_monitor: Some(device_monitor),
             device_event_receiver: Some(device_event_receiver),
@@ -217,84 +205,42 @@ impl RecordingManager {
 
     // Remove app handle storage for now - will be passed directly when saving
 
-    /// Start recording with specified devices
-    ///
-    /// On macOS, the command entry points wake audio and verify microphone
-    /// access before constructing the manager and calling this method.
-    ///
-    /// # Arguments
-    /// * `microphone_device` - Optional microphone device to use
-    /// * `system_device` - Optional system audio device to use
-    /// * `auto_save` - Whether to save audio checkpoints (true) or just transcripts/metadata (false)
+    /// Start a recording: meeting folder and disk writer first, then the
+    /// capture streams. No transcription model or VAD is involved; the
+    /// transcript is made from the saved files after the meeting.
     pub(crate) async fn start_recording(
         &mut self,
+        app: &HostHandle,
         microphone_device: Option<Arc<AudioDevice>>,
         system_device: Option<Arc<AudioDevice>>,
-        auto_save: bool,
-    ) -> std::result::Result<mpsc::UnboundedReceiver<AudioChunk>, RecordingStartError> {
-        info!("Starting recording manager (auto_save: {})", auto_save);
+    ) -> Result<()> {
+        info!("Starting recording manager");
 
-        // Set up transcription channel
-        let (transcription_sender, transcription_receiver) = mpsc::unbounded_channel::<AudioChunk>();
-        let (recording_sender, recording_receiver) = mpsc::unbounded_channel::<AudioChunk>();
-
-        // Start recording state first
         self.state.start_recording()?;
 
-        // Get device information for adaptive mixing
-        // The pipeline uses device kind (Bluetooth vs Wired) to apply adaptive buffering:
-        // - Bluetooth: Larger buffers (80-200ms) to handle jitter
-        // - Wired: Smaller buffers (20-50ms) for low latency
-        let (mic_name, mic_kind) = if let Some(ref mic) = microphone_device {
-            let device_kind = super::device_detection::InputDeviceKind::detect(&mic.name, 512, 48000);
-            (mic.name.clone(), device_kind)
-        } else {
-            ("No Microphone".to_string(), super::device_detection::InputDeviceKind::Unknown)
+        let sender = match self.recording_saver.start_accumulation(app) {
+            Ok(sender) => sender,
+            Err(e) => {
+                self.state.stop_recording();
+                return Err(e);
+            }
         };
-
-        let (sys_name, sys_kind) = if let Some(ref sys) = system_device {
-            let device_kind = super::device_detection::InputDeviceKind::detect(&sys.name, 512, 48000);
-            (sys.name.clone(), device_kind)
-        } else {
-            ("No System Audio".to_string(), super::device_detection::InputDeviceKind::Unknown)
-        };
-
-        // Start the audio processing pipeline with FFmpeg adaptive mixer
-        // Pipeline will: 1) Mix mic+system audio with adaptive buffering, 2) Send mixed to recording_sender,
-        // 3) Apply VAD and send speech segments to transcription
-        if let Err(error) = self.pipeline_manager.start(
-            self.state.clone(),
-            transcription_sender,
-            0, // Ignored - using dynamic sizing internally
-            48000, // 48kHz sample rate
-            Some(recording_sender), // CRITICAL: Pass recording sender to receive pre-mixed audio
-            mic_name,
-            mic_kind,
-            sys_name,
-            sys_kind,
-        ) {
-            self.state.stop_recording();
-            return Err(RecordingStartError::TranscriptionRuntime(error));
-        }
-
-        self.recording_saver.start_accumulation(auto_save, recording_receiver);
+        self.state.set_audio_sender(sender);
         self.recording_saver.set_device_info(
             microphone_device.as_ref().map(|d| d.name.clone()),
             system_device.as_ref().map(|d| d.name.clone())
         );
 
-        // Give the pipeline a moment to fully initialize before starting streams
-        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+        if let Err(e) = self.stream_manager.start_streams(microphone_device.clone(), system_device.clone(), None).await {
+            // Closing the sender lets the writer finish on its own.
+            self.state.stop_recording();
+            return Err(e);
+        }
 
-        // Start audio streams - they send RAW unmixed chunks to pipeline for mixing
-        // Pipeline handles mixing and distribution to both recording and transcription
-        self.stream_manager.start_streams(microphone_device.clone(), system_device.clone(), None).await?;
-
-        // Start device monitoring to detect disconnects
+        // Start device monitoring for disconnect/reconnect detection
         if let Some(ref mut monitor) = self.device_monitor {
             if let Err(e) = monitor.start_monitoring(microphone_device, system_device) {
                 warn!("Failed to start device monitoring: {}", e);
-                // Non-fatal - continue without monitoring
             } else {
                 info!("✅ Device monitoring started");
             }
@@ -303,129 +249,64 @@ impl RecordingManager {
         info!("Recording manager started successfully with {} active streams",
                self.stream_manager.active_stream_count());
 
-        Ok(transcription_receiver)
+        Ok(())
     }
 
-    /// Stop recording streams without saving (for use when waiting for transcription)
-    pub async fn stop_streams_only(&mut self) -> Result<()> {
-        info!("Stopping recording streams only");
-
-        // Stop device monitoring
+    /// Stop capture and close the writer's queue: streams first (their last
+    /// callbacks and resampler tails still reach the writer), then the
+    /// sender, so the writer drains everything and finishes.
+    async fn stop_capture(&mut self) {
         if let Some(ref mut monitor) = self.device_monitor {
             monitor.stop_monitoring().await;
         }
 
-        // Stop recording state first
-        self.state.stop_recording();
-
-        // Stop audio streams
         if let Err(e) = self.stream_manager.stop_streams() {
             error!("Error stopping audio streams: {}", e);
         }
 
-        // Stop audio pipeline
-        if let Err(e) = self.pipeline_manager.stop().await {
-            error!("Error stopping audio pipeline: {}", e);
-        }
+        self.state.stop_recording();
+    }
 
+    /// Stop capture only (the writer drains in the background until
+    /// `save_recording_only` collects it).
+    pub async fn stop_streams_only(&mut self) -> Result<()> {
+        info!("Stopping recording streams only");
+        self.stop_capture().await;
         debug!("Recording streams stopped successfully");
         Ok(())
     }
 
-    /// Stop streams and force immediate pipeline flush to process all accumulated audio
+    /// Stop capture; kept under its old name for the stop command. There is
+    /// no pipeline to flush any more: every chunk goes straight to the writer.
     pub async fn stop_streams_and_force_flush(&mut self) -> Result<()> {
-        info!("🚀 Stopping recording streams with IMMEDIATE pipeline flush");
-
-        // CRITICAL: Stop device monitor FIRST to prevent continuous WASAPI polling on Windows
-        // This fixes the slow shutdown issue where device enumeration runs for 90+ seconds
-        if let Some(ref mut monitor) = self.device_monitor {
-            info!("Stopping device monitor first...");
-            monitor.stop_monitoring().await;
-        }
-
-        // Stop recording state first - this clears device references
-        self.state.stop_recording();
-
-        // Stop audio streams immediately
-        if let Err(e) = self.stream_manager.stop_streams() {
-            error!("Error stopping audio streams: {}", e);
-        }
-
-        // CRITICAL: Force pipeline to flush ALL accumulated audio before stopping
-        debug!("💨 Forcing pipeline to flush accumulated audio immediately");
-        if let Err(e) = self.pipeline_manager.force_flush_and_stop().await {
-            error!("Error during force flush: {}", e);
-        }
-
-        // CRITICAL: Full cleanup to release all Arc references and resources
-        // This ensures microphone is released even if Drop is delayed
-        self.state.cleanup();
-
-        info!("✅ Recording streams stopped with immediate flush completed");
+        info!("Stopping recording streams");
+        self.stop_capture().await;
+        info!("✅ Recording streams stopped");
         Ok(())
     }
 
-    /// Save recording after transcription is complete
-    pub async fn save_recording_only(&mut self, app: &HostHandle) -> Result<()> {
-        debug!("Saving recording with transcript chunks");
-
-        // Get actual recording duration from state
+    /// Wait for the writer, write metadata and report the save status.
+    pub async fn save_recording_only(&mut self, app: &HostHandle) -> std::result::Result<Option<SaveResult>, String> {
         let recording_duration = self.state.get_active_recording_duration();
         info!("Recording duration from state: {:?}s", recording_duration);
 
-        // Save the recording with actual duration
-        match self.recording_saver.stop_and_save(app, recording_duration).await {
-            Ok(Some(file_path)) => {
-                info!("Recording saved successfully to: {}", file_path);
-            }
-            Ok(None) => {
-                debug!("Recording not saved (auto-save disabled or no audio data)");
-            }
-            Err(e) => {
-                error!("Failed to save recording: {}", e);
-                // Don't fail the stop operation if saving fails
-            }
+        let result = self.recording_saver.stop_and_save(app, recording_duration).await;
+        match &result {
+            Ok(Some(saved)) => info!("Recording saved ({}): {}", saved.status.as_str(), saved.message),
+            Ok(None) => debug!("Recording not saved (no writer was started)"),
+            Err(e) => error!("Failed to save recording: {}", e),
         }
-
-        debug!("Recording save operation completed");
-        Ok(())
+        self.state.cleanup();
+        result
     }
 
-    /// Stop recording and save audio (legacy method)
+    /// Stop recording and save
     pub async fn stop_recording(&mut self, app: &HostHandle) -> Result<()> {
         info!("Stopping recording manager");
-
-        // Get recording duration BEFORE stopping (important!)
-        let recording_duration = self.state.get_active_recording_duration();
-        info!("Recording duration before stop: {:?}s", recording_duration);
-
-        // Stop recording state first
-        self.state.stop_recording();
-
-        // Stop audio streams
-        if let Err(e) = self.stream_manager.stop_streams() {
-            error!("Error stopping audio streams: {}", e);
+        self.stop_capture().await;
+        if let Err(e) = self.save_recording_only(app).await {
+            error!("Failed to save recording: {}", e);
         }
-
-        // Stop audio pipeline
-        if let Err(e) = self.pipeline_manager.stop().await {
-            error!("Error stopping audio pipeline: {}", e);
-        }
-
-        // Save the recording with actual duration
-        match self.recording_saver.stop_and_save(app, recording_duration).await {
-            Ok(Some(file_path)) => {
-                info!("Recording saved successfully to: {}", file_path);
-            }
-            Ok(None) => {
-                info!("Recording not saved (auto-save disabled or no audio data)");
-            }
-            Err(e) => {
-                error!("Failed to save recording: {}", e);
-                // Don't fail the stop operation if saving fails
-            }
-        }
-
         info!("Recording manager stopped");
         Ok(())
     }
@@ -537,29 +418,20 @@ impl RecordingManager {
         self.recording_saver.get_meeting_name()
     }
 
+    /// The storage error being shown to the user right now, if any.
+    pub fn storage_error(&self) -> Option<String> {
+        self.recording_saver.storage_error()
+    }
+
     /// Cleanup all resources without saving
     pub async fn cleanup_without_save(&mut self) {
         if self.is_recording() {
             debug!("Stopping recording without saving during cleanup");
-
-            // Stop recording state first
-            self.state.stop_recording();
-
-            // Stop audio streams
-            if let Err(e) = self.stream_manager.stop_streams() {
-                error!("Error stopping audio streams during cleanup: {}", e);
-            }
-
-            // Stop audio pipeline
-            if let Err(e) = self.pipeline_manager.stop().await {
-                error!("Error stopping audio pipeline during cleanup: {}", e);
-            }
+            self.stop_capture().await;
         }
         self.state.cleanup();
     }
 
-    /// Get the meeting folder path (if available)
-    /// Returns None if no meeting name was set or folder structure not initialized
     pub fn get_meeting_folder(&self) -> Option<std::path::PathBuf> {
         self.recording_saver.get_meeting_folder().map(|p| p.clone())
     }

@@ -1,0 +1,54 @@
+{
+  "mic": [
+    {
+      "start_ms": 9,
+      "slut_ms": 12,
+      "tekst": "late",
+      "taler": null
+    },
+    {
+      "start_ms": 0,
+      "slut_ms": 2,
+      "tekst": "early",
+      "taler": null
+    }
+  ],
+  "system": [
+    {
+      "start_ms": 5,
+      "slut_ms": 7,
+      "tekst": "middle",
+      "taler": "x"
+    }
+  ],
+  "diarized": true,
+  "expected": [
+    {
+      "start_ms": 0,
+      "slut_ms": 2,
+      "tekst": "early",
+      "kilde": "Mikrofon",
+      "label": "Mig",
+      "overlapper": false,
+      "taler_mangler": false
+    },
+    {
+      "start_ms": 5,
+      "slut_ms": 7,
+      "tekst": "middle",
+      "kilde": "System",
+      "label": "Taler 1",
+      "overlapper": false,
+      "taler_mangler": false
+    },
+    {
+      "start_ms": 9,
+      "slut_ms": 12,
+      "tekst": "late",
+      "kilde": "Mikrofon",
+      "label": "Mig",
+      "overlapper": false,
+      "taler_mangler": false
+    }
+  ]
+}

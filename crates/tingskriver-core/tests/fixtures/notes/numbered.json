@@ -1,0 +1,14 @@
+[
+  {
+    "type": "numberedListItem",
+    "props": {},
+    "content": [
+      {
+        "type": "text",
+        "text": "Nummer",
+        "styles": {}
+      }
+    ],
+    "children": []
+  }
+]

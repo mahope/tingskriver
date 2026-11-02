@@ -75,6 +75,33 @@ Ikke kildebelagte; ejeren godkender efter første måling. Maskinlæsbart, til e
 }
 ```
 
+## Port ved release
+
+`python scripts/ydeevne-port.py maaling.md` sammenligner JSON-nøglerne under
+`resultater` med `docs/ydeevne-baseline.json`. Alle målinger er lavere-er-bedre.
+Mere end 20 % forværring giver exit 1; præcis 20 % accepteres. Exit 0 betyder,
+at de fælles målte værdier passerer. Exit 2 betyder manglende/ikke målt baseline,
+ingen fælles målte nøgler eller ugyldigt input. Release skal stoppe ved både 1 og 2.
+En baseline på nul accepterer kun nul. Ukendte nøgler ignoreres med advarsel;
+manglende nøgler og `null` vises som "ikke målt". Der anvendes ingen absolutte
+budgetgrænser i porten; budgetterne ovenfor er fortsat foreslåede mål.
+
+`--profil ci` tillader højst 40 % forværring og sammenligner kun
+`diktering_local_transcribe_p50_ms` og `diktering_local_polish_p50_ms`.
+Disse lokale beregningstrin kan måles med faste fixtures uden Windows-vinduer,
+indsættelse i andre programmer eller netværk. De kræver samme runner-type,
+model og konfiguration i måling og CI-baseline. Opstart, hukommelse, CPU,
+netværksudbyderen Syv og samlede dikteringstider udelades fra CI-profilen.
+Ingen fælles målte CI-nøgler giver exit 2, ikke en falsk grøn sammenligning.
+
+`--tillad-uden-baseline` kan gøre valgfrie push-sammenligninger grønne, når
+baseline mangler/ikke er målt eller fælles målte nøgler mangler. Flaget tilsidesætter
+hverken regressioner eller ugyldigt input og må ikke bruges til releases.
+README-afsnittet genereres med `--skriv-readme` fra budgetterne her og baseline-filen;
+`--tjek-readme` fejler, hvis tal eller status er drevet. Se
+[release-checklisten](release-checkliste.md) for ansvar, fejlhåndtering og den senere
+tilkobling af det genbrugelige workflow. Push/PR-workflowet måler ikke appen selv.
+
 ## Resultater
 
 Medianer af fem kørsler. Udfyldes af Mads på referencemaskinen (kræver 0.5.0-dev.2 installeret).

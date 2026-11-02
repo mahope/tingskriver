@@ -1,0 +1,39 @@
+{
+  "mic": [
+    {
+      "start_ms": 0,
+      "slut_ms": 2,
+      "tekst": "mic",
+      "taler": null
+    }
+  ],
+  "system": [
+    {
+      "start_ms": 3,
+      "slut_ms": 5,
+      "tekst": "sys",
+      "taler": "ignored"
+    }
+  ],
+  "diarized": false,
+  "expected": [
+    {
+      "start_ms": 0,
+      "slut_ms": 2,
+      "tekst": "mic",
+      "kilde": "Mikrofon",
+      "label": "Mig",
+      "overlapper": false,
+      "taler_mangler": false
+    },
+    {
+      "start_ms": 3,
+      "slut_ms": 5,
+      "tekst": "sys",
+      "kilde": "System",
+      "label": "Ukendt taler",
+      "overlapper": false,
+      "taler_mangler": true
+    }
+  ]
+}

@@ -23,7 +23,10 @@ pub mod recording_manager;
 pub mod recording_commands;
 pub mod recording_preferences;
 pub mod recording_saver;
-pub mod incremental_saver;  // NEW: Incremental audio saving with checkpoints
+pub mod incremental_saver;  // Crash recovery and cleanup commands for the raw tracks
+pub mod track_writer;       // One track written continuously as WAV segments
+pub mod recording_writer;   // Writer thread: capture -> bounded channel -> track files
+pub mod finalize;           // Raw tracks -> verified final files (after stop or a crash)
 pub mod level_monitor;
 pub mod simple_level_monitor;
 pub mod buffer_pool;
@@ -79,7 +82,7 @@ pub use system_detector::{
 
 // Export new simplified components
 pub use recording_state::{RecordingState, AudioChunk, ProcessedAudioChunk, AudioError, DeviceType as RecordingDeviceType};
-pub use pipeline::{AudioPipelineManager};
+
 pub use stream::{AudioStreamManager};
 pub use recording_manager::{RecordingManager};
 pub use recording_commands::{

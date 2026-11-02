@@ -1,0 +1,14 @@
+[
+  {
+    "type": "bulletListItem",
+    "props": {},
+    "content": [
+      {
+        "type": "text",
+        "text": "Punkt",
+        "styles": {}
+      }
+    ],
+    "children": []
+  }
+]

@@ -1,6 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { listen } from '@tauri-apps/api/event';
+import { invoke } from '@tauri-apps/api/core';
+import { useConfig } from '@/contexts/ConfigContext';
+import { transcribeSavedRecording } from '@/lib/recording-finalization';
+import { getProviderCommands } from '@/lib/transcription-model-readiness';
 import { toast } from 'sonner';
 import { useTranscripts } from '@/contexts/TranscriptContext';
 import { useSidebar } from '@/components/Sidebar/SidebarProvider';
@@ -68,6 +72,7 @@ export function useRecordingStop(
   } = useSidebar();
 
   const router = useRouter();
+  const { transcriptModelConfig, selectedLanguage } = useConfig();
 
   // Guard to prevent duplicate/concurrent stop calls (e.g., from UI and tray simultaneously)
   const stopInProgressRef = useRef(false);
@@ -265,6 +270,42 @@ export function useRecordingStop(
             throw new Error('No meeting ID received from save operation');
           }
 
+          if (folderPath && freshTranscripts.length === 0 && getProviderCommands(transcriptModelConfig.provider)) {
+            try {
+              setStatus(RecordingStatus.PROCESSING_TRANSCRIPTS, 'Transskriberer den gemte lyd…');
+              await transcribeSavedRecording(folderPath, meetingId, async (meetingId, folderPath) => {
+                let complete!: () => void;
+                let fail!: (error: Error) => void;
+                const finished = new Promise<void>((resolve, reject) => { complete = resolve; fail = reject; });
+                const unlistenComplete = await listen<{ meeting_id: string }>('retranscription-complete', ({ payload }) => {
+                  if (payload.meeting_id === meetingId) complete();
+                });
+                let unlistenError: (() => void) | undefined;
+                try {
+                  unlistenError = await listen<{ meeting_id: string; error: string }>('retranscription-error', ({ payload }) => {
+                    if (payload.meeting_id === meetingId) fail(new Error(payload.error));
+                  });
+                  // Attach the rejection handler before starting the job: events may arrive before invoke returns.
+                  await Promise.all([finished, invoke('start_retranscription_command', {
+                    meetingId,
+                    meetingFolderPath: folderPath,
+                    provider: transcriptModelConfig.provider,
+                    model: transcriptModelConfig.model || null,
+                    language: transcriptModelConfig.provider === 'parakeet' || selectedLanguage === 'auto' ? null : selectedLanguage,
+                  })]);
+                } finally {
+                  unlistenComplete();
+                  unlistenError?.();
+                }
+              });
+            } catch (error) {
+              console.error('Automatic file transcription failed:', error);
+              toast.error('Mødet er gemt, men lyden kunne ikke transskriberes', {
+                description: error instanceof Error ? error.message : String(error),
+              });
+            }
+          }
+
           let shouldDetectSummaryLanguage = false;
           try {
             shouldDetectSummaryLanguage = !(await applyPinnedSummaryLanguageToMeeting(meetingId));
@@ -435,6 +476,8 @@ export function useRecordingStop(
     meetings,
     setIsMeetingActive,
     router,
+    transcriptModelConfig,
+    selectedLanguage,
   ]);
 
   // Expose handleRecordingStop function to window for Rust callbacks

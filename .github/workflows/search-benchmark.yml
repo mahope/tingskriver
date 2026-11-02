@@ -1,0 +1,34 @@
+name: Search benchmark
+
+on:
+  push:
+    paths:
+      - '.github/workflows/search-benchmark.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/tingskriver-core/Cargo.toml'
+      - 'crates/tingskriver-core/migrations/**'
+      - 'crates/tingskriver-core/src/database/repositories/search.rs'
+      - 'crates/tingskriver-core/tests/search_fts5.rs'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  search-release:
+    name: FTS5 correctness and 100 ms release benchmark
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libasound2-dev cmake clang
+      - uses: swatinem/rust-cache@v2
+        with:
+          prefix-key: tingskriver-search-release-v1
+      - name: Test FTS5 and benchmark release search
+        run: .github/scripts/annotate-errors.sh cargo test --locked --release -p tingskriver-core --test search_fts5 -- --nocapture
