@@ -6,6 +6,7 @@ use super::logic::app_style::{self, AppStyleRule};
 use super::logic::cleanup::Style;
 use super::logic::hotkey::Chord;
 use super::logic::residency::{self, Policy};
+use super::modes::{Context, Mode, ModeCollection};
 
 pub const SYV_DEFAULT_ENDPOINT: &str = "https://platform.syv.ai/v1";
 pub const SYV_DEFAULT_MODEL: &str = "syv-transcribe";
@@ -49,6 +50,7 @@ pub struct DictationSettings {
     pub model_idle_minutes: u64,
     /// Local models that stay loaded however long they are idle.
     pub keep_warm_models: Vec<String>,
+    pub modes: ModeCollection,
 }
 
 impl Default for DictationSettings {
@@ -78,11 +80,29 @@ impl Default for DictationSettings {
                 .collect(),
             model_idle_minutes: residency::DEFAULT_IDLE_MINUTES,
             keep_warm_models: Vec::new(),
+            modes: ModeCollection::default(),
         }
     }
 }
 
 impl DictationSettings {
+    pub fn for_context(&self, context: &Context<'_>) -> (Self, Option<Mode>) {
+        let mode = self.modes.select(context).cloned();
+        let mut settings = self.clone();
+        if let Some(mode) = &mode {
+            if let Some(provider) = &mode.provider {
+                settings.engine = if provider == "syv" { "auto".into() } else { provider.clone() };
+            }
+            if let Some(model) = &mode.model {
+                settings.syv_model = model.clone();
+            }
+            if let Some(polish) = mode.polish {
+                settings.polish_enabled = polish;
+            }
+        }
+        (settings, mode)
+    }
+
     pub fn chord(&self) -> Result<Chord, String> {
         Chord::parse(&self.shortcut)
     }
@@ -104,6 +124,7 @@ impl DictationSettings {
 
     /// Validate and normalise user input before saving.
     pub fn normalized(mut self) -> Result<Self, String> {
+        self.modes.validate()?;
         self.shortcut = self.chord()?.label();
         if self.engine != "local" {
             self.engine = "auto".to_string();
@@ -136,5 +157,35 @@ impl DictationSettings {
             .collect();
         self.keep_warm_models.dedup();
         Ok(self)
+    }
+}
+
+#[cfg(test)]
+mod mode_tests {
+    use super::*;
+
+    #[test]
+    fn mode_overrides_leave_global_settings_untouched() {
+        let mut settings = DictationSettings::default();
+        let mode = &mut settings.modes.modes[1];
+        mode.provider = Some("local".into());
+        mode.model = Some("chosen-model".into());
+        mode.language = Some("en".into());
+        mode.polish = Some(true);
+        let (effective, mode) = settings.for_context(&Context { process: Some("Slack.exe"), ..Context::default() });
+        assert_eq!(effective.engine, "local");
+        assert_eq!(effective.syv_model, "chosen-model");
+        assert!(effective.polish_enabled);
+        assert_eq!(mode.unwrap().language.as_deref(), Some("en"));
+        assert_eq!(settings.engine, "auto");
+        assert!(!settings.polish_enabled);
+    }
+
+    #[test]
+    fn old_settings_gain_presets_without_losing_preferences() {
+        let settings: DictationSettings = serde_json::from_str(r#"{"engine":"local","polishEnabled":true}"#).unwrap();
+        assert_eq!(settings.modes.modes.len(), 3);
+        assert_eq!(settings.engine, "local");
+        assert!(settings.polish_enabled);
     }
 }

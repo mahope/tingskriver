@@ -39,6 +39,14 @@ fn base_name(process: &str) -> String {
     lower.strip_suffix(".exe").map(str::to_string).unwrap_or(lower)
 }
 
+pub fn same_program(left: &str, right: &str) -> bool {
+    base_name(left) == base_name(right)
+}
+
+pub fn is_code_editor(process: Option<&str>) -> bool {
+    style_for(process, &default_rules()) == Style::Raw
+}
+
 pub fn style_for(process: Option<&str>, rules: &[AppStyleRule]) -> Style {
     let Some(process) = process else {
         return Style::Normal;
