@@ -61,6 +61,24 @@ Mute skifter aldrig mikrofon. Det gælder både mute-knappen på headsettet, mut
 
 Tingskriver er en fork af [Meetily](https://github.com/Zackriya-Solutions/meetily) fra Zackriya Solutions (MIT-licens). Tingskriver har ingen tilknytning til Zackriya Solutions og er hverken godkendt eller sponsoreret af dem. Se [NOTICE.md](NOTICE.md), [LICENSE.md](LICENSE.md) og [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for licenser og tredjepartskomponenter, herunder FFmpeg (GPL-3.0).
 
+<!-- ydeevne:start -->
+### Ydeevne
+
+Baseline: **ikke målt endnu**.
+
+| Måling | Budget (foreslået) | Baseline |
+|---|---:|---:|
+| diktering_log_p50_15s_ms | 1500 ms | ikke målt |
+| efter_ws_total_mb | 200 MB | ikke målt |
+| optagelse_to_spor_ws_total_mb | 400 MB | ikke målt |
+| tastetryk_til_optagelse_ms | 150 ms | ikke målt |
+| tomgang_cpu_pct | 1 % | ikke målt |
+
+Release-port: højst 20 % forværring i forhold til baseline. CI-profil: højst 40 % for udvalgte lokale trin; kun relative grænser.
+
+Se [målemetoden](docs/ydeevne.md) og [release-checklisten](docs/release-checkliste.md).
+<!-- ydeevne:slut -->
+
 ### Udvikling
 
 - Udviklingen foregår her på GitHub: [mahope/tingskriver](https://github.com/mahope/tingskriver). Issues og pull requests er velkomne.

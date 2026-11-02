@@ -26,6 +26,7 @@ import { RecordingPostProcessingProvider } from '@/contexts/RecordingPostProcess
 import { ImportAudioDialog, ImportDropOverlay } from '@/components/ImportAudio'
 import { ImportDialogProvider } from '@/contexts/ImportDialogContext'
 import { isAudioExtension, getAudioFormatsDisplayList } from '@/constants/audioFormats'
+import { DatabaseGate } from '@/components/DatabaseGate'
 
 
 // Self-hostede skrifttyper (SIL OFL): Hanken Grotesk til brugerfladen, Literata til overskrifter.
@@ -246,6 +247,7 @@ export default function RootLayout({
     <html lang="da" suppressHydrationWarning>
       <body className={`${hanken.variable} ${literata.variable} font-sans antialiased`}>
         <ThemeProvider>
+        <DatabaseGate>
         <AnalyticsProvider>
           <RecordingStateProvider>
             <TranscriptProvider>
@@ -288,6 +290,7 @@ export default function RootLayout({
             </TranscriptProvider>
           </RecordingStateProvider>
         </AnalyticsProvider>
+        </DatabaseGate>
 
         <Toaster
           position="top-right"
