@@ -1,10 +1,37 @@
 use crate::api::{MeetingDetails, MeetingTranscript};
 use crate::database::models::{MeetingModel, Transcript};
 use chrono::Utc;
-use sqlx::{Connection, Error as SqlxError, SqliteConnection, SqlitePool};
+use serde::{Deserialize, Serialize};
+use sqlx::{Connection, Error as SqlxError, FromRow, Row, SqliteConnection, SqlitePool};
 use tracing::{error, info};
 
 pub struct MeetingsRepository;
+
+/// Where the next page of a meeting's transcripts starts: just after this
+/// segment in recording order (`audio_start_time`, then insertion order).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TranscriptCursor {
+    pub audio_start_time: Option<f64>,
+    pub row: i64,
+}
+
+/// The transcripts of a meeting in recording order, one page at a time.
+/// Both queries read `idx_transcripts_meeting_start`, whose entries end in
+/// the rowid, so the order needs no sort and a page seeks straight to the
+/// cursor instead of skipping rows like OFFSET. Segments without
+/// `audio_start_time` (old recordings) sort first, as NULLs do in SQLite.
+pub const TRANSCRIPT_PAGE_SQL: &str = "SELECT *, rowid AS cursor_row FROM transcripts
+     WHERE meeting_id = ?1 AND (audio_start_time, rowid) > (?2, ?3)
+     ORDER BY audio_start_time ASC, rowid ASC
+     LIMIT ?4";
+const TRANSCRIPT_PAGE_AFTER_NULL_SQL: &str = "SELECT *, rowid AS cursor_row FROM transcripts
+     WHERE meeting_id = ?1 AND (audio_start_time IS NOT NULL OR rowid > ?2)
+     ORDER BY audio_start_time ASC, rowid ASC
+     LIMIT ?3";
+const TRANSCRIPT_FIRST_PAGE_SQL: &str = "SELECT *, rowid AS cursor_row FROM transcripts
+     WHERE meeting_id = ?1
+     ORDER BY audio_start_time ASC, rowid ASC
+     LIMIT ?2";
 
 impl MeetingsRepository {
     pub async fn get_meetings(pool: &SqlitePool) -> Result<Vec<MeetingModel>, sqlx::Error> {
@@ -153,7 +180,7 @@ impl MeetingsRepository {
         let transcripts = sqlx::query_as::<_, Transcript>(
             "SELECT * FROM transcripts
              WHERE meeting_id = ?
-             ORDER BY audio_start_time ASC
+             ORDER BY audio_start_time ASC, rowid ASC
              LIMIT ? OFFSET ?"
         )
         .bind(meeting_id)
@@ -163,6 +190,72 @@ impl MeetingsRepository {
         .await?;
 
         Ok((transcripts, total.0))
+    }
+
+    /// One page of a meeting's transcripts in recording order, starting
+    /// after `after` (the first page when `None`), and the cursor for the
+    /// next page (`None` after the last page).
+    pub async fn get_meeting_transcripts_page(
+        pool: &SqlitePool,
+        meeting_id: &str,
+        after: Option<&TranscriptCursor>,
+        limit: i64,
+    ) -> Result<(Vec<Transcript>, Option<TranscriptCursor>), SqlxError> {
+        if meeting_id.trim().is_empty() {
+            return Err(SqlxError::Protocol(
+                "meeting_id cannot be empty".to_string(),
+            ));
+        }
+
+        let rows = match after {
+            None => {
+                sqlx::query(TRANSCRIPT_FIRST_PAGE_SQL)
+                    .bind(meeting_id)
+                    .bind(limit)
+                    .fetch_all(pool)
+                    .await?
+            }
+            Some(TranscriptCursor {
+                audio_start_time: None,
+                row,
+            }) => {
+                sqlx::query(TRANSCRIPT_PAGE_AFTER_NULL_SQL)
+                    .bind(meeting_id)
+                    .bind(row)
+                    .bind(limit)
+                    .fetch_all(pool)
+                    .await?
+            }
+            Some(TranscriptCursor {
+                audio_start_time: Some(start),
+                row,
+            }) => {
+                sqlx::query(TRANSCRIPT_PAGE_SQL)
+                    .bind(meeting_id)
+                    .bind(start)
+                    .bind(row)
+                    .bind(limit)
+                    .fetch_all(pool)
+                    .await?
+            }
+        };
+
+        let mut transcripts = Vec::with_capacity(rows.len());
+        let mut last_row = None;
+        for row in &rows {
+            transcripts.push(Transcript::from_row(row)?);
+            last_row = Some(row.try_get::<i64, _>("cursor_row")?);
+        }
+        let next = match (last_row, transcripts.last()) {
+            (Some(row), Some(last)) if transcripts.len() as i64 == limit => {
+                Some(TranscriptCursor {
+                    audio_start_time: last.audio_start_time,
+                    row,
+                })
+            }
+            _ => None,
+        };
+        Ok((transcripts, next))
     }
 
     pub async fn update_meeting_title(

@@ -1,0 +1,39 @@
+{
+  "mic": [
+    {
+      "start_ms": 0,
+      "slut_ms": 5,
+      "tekst": "one",
+      "taler": null
+    }
+  ],
+  "system": [
+    {
+      "start_ms": 10,
+      "slut_ms": 15,
+      "tekst": "two",
+      "taler": "a"
+    }
+  ],
+  "diarized": true,
+  "expected": [
+    {
+      "start_ms": 0,
+      "slut_ms": 5,
+      "tekst": "one",
+      "kilde": "Mikrofon",
+      "label": "Mig",
+      "overlapper": false,
+      "taler_mangler": false
+    },
+    {
+      "start_ms": 10,
+      "slut_ms": 15,
+      "tekst": "two",
+      "kilde": "System",
+      "label": "Taler 1",
+      "overlapper": false,
+      "taler_mangler": false
+    }
+  ]
+}

@@ -1,0 +1,47 @@
+[
+  {
+    "type": "codeBlock",
+    "props": {},
+    "content": [
+      {
+        "type": "text",
+        "text": "Kode",
+        "styles": {}
+      }
+    ],
+    "children": []
+  },
+  {
+    "type": "image",
+    "props": {
+      "caption": "Billede"
+    },
+    "content": [
+      {
+        "type": "text",
+        "text": "",
+        "styles": {}
+      }
+    ],
+    "children": []
+  },
+  {
+    "type": "table",
+    "content": {
+      "type": "tableContent",
+      "rows": [
+        {
+          "cells": [
+            [
+              {
+                "type": "text",
+                "text": "Celle",
+                "styles": {}
+              }
+            ]
+          ]
+        }
+      ]
+    }
+  }
+]

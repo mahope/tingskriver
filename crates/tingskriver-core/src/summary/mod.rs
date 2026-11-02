@@ -34,6 +34,7 @@ pub mod commands;
 pub mod language_detection;
 pub mod llm_client;
 pub mod metadata;
+pub mod map_reduce;
 pub mod processor;
 pub mod service;
 pub mod summary_engine;

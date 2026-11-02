@@ -1,0 +1,90 @@
+name: Ydeevne-port
+
+on:
+  push:
+    paths:
+      - 'scripts/ydeevne-port.py'
+      - 'scripts/tests/test_ydeevne_port.py'
+      - 'scripts/maal-ydeevne.ps1'
+      - 'docs/ydeevne*'
+      - 'docs/release-checkliste.md'
+      - 'README.md'
+      - '.github/workflows/ydeevne-port.yml'
+  pull_request:
+    paths:
+      - 'scripts/ydeevne-port.py'
+      - 'scripts/tests/test_ydeevne_port.py'
+      - 'scripts/maal-ydeevne.ps1'
+      - 'docs/ydeevne*'
+      - 'docs/release-checkliste.md'
+      - 'README.md'
+      - '.github/workflows/ydeevne-port.yml'
+  workflow_call:
+    inputs:
+      maaling:
+        description: Measurement path relative to the artifact root
+        required: true
+        type: string
+      artifact:
+        description: Artifact uploaded by the measurement job in this workflow run
+        required: true
+        type: string
+      profil:
+        description: release (20 percent) or ci (40 percent, local steps only)
+        default: release
+        type: string
+      baseline:
+        description: Baseline path in the checked-out repository
+        default: docs/ydeevne-baseline.json
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test performance gate
+        run: python scripts/tests/test_ydeevne_port.py
+      - name: Check README figures
+        run: python scripts/ydeevne-port.py --tjek-readme
+
+  gate:
+    if: ${{ inputs.artifact != '' }}
+    needs: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact }}
+          path: performance-input
+      - name: Compare measurement with baseline
+        env:
+          MEASUREMENT: ${{ inputs.maaling }}
+          BASELINE: ${{ inputs.baseline }}
+          PROFILE: ${{ inputs.profil }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          result=0
+          python scripts/ydeevne-port.py "performance-input/$MEASUREMENT" --baseline "$BASELINE" --profil "$PROFILE" > ydeevne-rapport.md 2>&1 || result=$?
+          cat ydeevne-rapport.md >> "$GITHUB_STEP_SUMMARY"
+          exit "$result"
+      - name: Attach gate report even on failure
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ydeevne-rapport-${{ inputs.profil }}
+          path: ydeevne-rapport.md
+          if-no-files-found: warn
