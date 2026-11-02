@@ -324,14 +324,14 @@ impl AudioCapture {
                     0
                 };
 
-                info!(
+                debug!(
                     "🔄 [{:?}] Persistent buffered resampler: {}Hz → {}Hz (ratio: {:.2}x)",
                     self.device_type,
                     self.sample_rate,
                     TARGET_SAMPLE_RATE,
                     ratio
                 );
-                info!(
+                debug!(
                     "   Chunk {}: {} → {} samples, RMS preservation: {:.1}%, buffer: {}",
                     chunk_id,
                     before_len,

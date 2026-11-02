@@ -295,7 +295,8 @@ impl SidecarManager {
         command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit()) // Log stderr to main process
+            // Release builds have no console, so stderr goes to the log.
+            .stderr(Stdio::piped())
             .env("LLAMA_IDLE_TIMEOUT", self.idle_timeout_secs.to_string());
 
         #[cfg(target_os = "windows")]
@@ -312,6 +313,9 @@ impl SidecarManager {
 
         let stdin = child.stdin.take().ok_or_else(|| anyhow!("Failed to get stdin"))?;
         let stdout = child.stdout.take().ok_or_else(|| anyhow!("Failed to get stdout"))?;
+        if let Some(stderr) = child.stderr.take() {
+            tokio::spawn(log_helper_stderr(stderr));
+        }
 
         // Store handles
         {
@@ -666,5 +670,21 @@ impl Drop for SidecarManager {
         // Note: Actual cleanup happens in shutdown() method
         // We can't do async work in Drop, so this is best-effort
         log::debug!("SidecarManager dropped");
+    }
+}
+
+/// Write each line the helper prints on stderr (model loading, VRAM,
+/// generation statistics; never prompt or output text) to the log.
+async fn log_helper_stderr(stderr: tokio::process::ChildStderr) {
+    let mut lines = BufReader::new(stderr).lines();
+    loop {
+        match lines.next_line().await {
+            Ok(Some(line)) => log::info!("llama-helper: {}", line),
+            Ok(None) => break,
+            Err(e) => {
+                log::warn!("llama-helper: could not read stderr: {}", e);
+                break;
+            }
+        }
     }
 }

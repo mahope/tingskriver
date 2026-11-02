@@ -195,6 +195,14 @@ impl WavSegmentStorage {
     /// Write `samples` into the open segment at its durable end, then the
     /// header, then sync.
     fn write_into_current(&mut self, samples: &[i16]) -> io::Result<()> {
+        self.write_into_current_with_sync(samples, File::sync_data)
+    }
+
+    fn write_into_current_with_sync(
+        &mut self,
+        samples: &[i16],
+        sync: impl FnOnce(&File) -> io::Result<()>,
+    ) -> io::Result<()> {
         self.bytes.clear();
         self.bytes.reserve(samples.len() * 2);
         for s in samples {
@@ -208,11 +216,11 @@ impl WavSegmentStorage {
         segment.file.write_all(&self.bytes)?;
         let committed = segment.committed + samples.len() as u64;
         update_wav_sizes(&mut segment.file, committed * 2)?;
-        segment.committed = committed;
         if segment.last_sync.elapsed() >= SYNC_INTERVAL {
-            segment.file.sync_data()?;
+            sync(&segment.file)?;
             segment.last_sync = Instant::now();
         }
+        segment.committed = committed;
         Ok(())
     }
 }
@@ -849,6 +857,25 @@ pub fn f32_to_i16(x: f32) -> i16 {
 pub(crate) mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn sync_failure_retry_does_not_duplicate_samples() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut storage = WavSegmentStorage::new(dir.path(), TrackKind::Microphone, 48000);
+        assert_eq!(storage.write(&[1]).committed, 1);
+        storage.current.as_mut().unwrap().last_sync = Instant::now() - SYNC_INTERVAL;
+        let result = storage.write_into_current_with_sync(&[2, 3], |_| {
+            Err(io::Error::other("injected sync failure"))
+        });
+        assert!(result.is_err());
+        assert_eq!(storage.write(&[2, 3]).committed, 2);
+        let bytes = std::fs::read(dir.path().join("microphone_000.wav")).unwrap();
+        let samples: Vec<_> = bytes[WAV_HEADER_LEN as usize..]
+            .chunks_exact(2)
+            .map(|b| i16::from_le_bytes([b[0], b[1]]))
+            .collect();
+        assert_eq!(samples, vec![1, 2, 3]);
+    }
 
     /// In-memory storage that can be told to fail.
     #[derive(Clone, Default)]

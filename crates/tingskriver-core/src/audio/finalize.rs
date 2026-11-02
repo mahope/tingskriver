@@ -197,6 +197,16 @@ pub fn scan_raw_tracks(raw_dir: &Path, repair: bool) -> io::Result<ScannedTracks
     for kind in TrackKind::ALL {
         let files: Vec<_> = segments.iter().filter(|s| s.0 == kind).collect();
         if files.is_empty() {
+            if manifest.as_ref().is_some_and(|m| {
+                m.tracks.iter().any(|t| {
+                    t.kind == kind
+                        && (!t.segments.is_empty()
+                            || t.recorded_samples.unwrap_or(0) > 0
+                            || t.lost_samples > 0)
+                })
+            }) {
+                problems.push(format!("{}-sporet mangler", danish_track_name(kind)));
+            }
             continue;
         }
         let mut sources = Vec::new();
@@ -934,6 +944,21 @@ mod tests {
         }
         drop(tx);
         handle.join().unwrap();
+    }
+
+    #[test]
+    fn missing_entire_track_remains_partial() {
+        let dir = tempfile::tempdir().unwrap();
+        record(dir.path(), 1);
+        let raw = dir.path().join(RAW_DIR);
+        std::fs::remove_file(raw.join("system_000.wav")).unwrap();
+        let scanned = scan_raw_tracks(&raw, false).unwrap();
+        assert!(!scanned.problems.is_empty());
+        let Some(ffmpeg) = ffmpeg() else { return };
+        let outcome = finalize_raw_tracks(dir.path(), Some(&ffmpeg));
+        assert_eq!(outcome.status, AudioSaveStatus::Partial);
+        assert!(outcome.raw_kept);
+        assert!(raw.exists());
     }
 
     #[test]

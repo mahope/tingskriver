@@ -62,9 +62,41 @@ registers at startup.
   convert `AppHandle` to a host handle and `State<T>` to `&T` and call core.
 - Code that needs Tauri itself: windows and the webview dictation overlay,
   the tray, notifications (`tauri-plugin-notification`), the file dialogs
-  (`tauri-plugin-dialog`), database initialisation that registers `AppState`
-  with `manage`, onboarding, the updater, logging setup and the commands for
-  the archived FastAPI backend.
+  (`tauri-plugin-dialog`), registering the opened database as `AppState`
+  with `manage`, onboarding, the updater and the commands for the archived
+  FastAPI backend.
+
+## Startup, database and logs
+
+- `tingskriver_core::logging::init(<file>)` installs the logger (stderr and
+  a rotating file in `%LOCALAPPDATA%\dk.mahoje.tingskriver\logs`) and a
+  panic hook that writes thread, message and backtrace to the log, from any
+  thread. `logging::startup_phase("...")` logs `Startup: <phase> after N ms`
+  from process start; the Tauri app marks `process start`, `tray ready`,
+  `DB ready` and `window ready`, so `grep Startup:` gives the timeline.
+- `DatabaseManager::open(app_data_dir)` never panics. It returns
+  `DbInitError` (`Locked`, `Corrupt`, `DiskFull`, `Migration`, `Other`) with
+  the database path, the log file and, for corrupt databases and failed
+  migrations, a copy of the database and its `-wal`/`-shm` files in
+  `backups/`. Nothing deletes `-wal` or `-shm` files: a WAL holds committed
+  transactions. `summary_da()` and `advice_da()` give the error page text.
+  The safety-copy space check resolves the nearest existing ancestor and
+  canonicalizes mount points too, including Windows verbatim drive paths,
+  so it works before the backup directory exists.
+- Connections use WAL, `synchronous=NORMAL`, `busy_timeout=5s` and foreign
+  keys (`database::manager::connect_options`).
+- The Tauri app opens the database in a background task after the window is
+  shown. The React `DatabaseGate` shows a loading state, and if opening fails
+  an error page with the log and the backup, from the `database-status`
+  event and the `get_database_status` command.
+- `crash_dumps::apply_in_background()` sets the per-exe Windows Error
+  Reporting `LocalDumps` key under HKLM for the running exe. This requires
+  administrator privileges; setup errors are logged at startup and returned
+  when changing the setting. Once configured, a native crash leaves a
+  minidump in `%LOCALAPPDATA%\dk.mahoje.tingskriver\dumps`. The release
+  profile keeps line tables in a separate PDB (`split-debuginfo`), which CI
+  uploads as the `...-symbols-...` artifact. The GPUI app should call
+  `apply_in_background()` at startup as well.
 
 The GPUI app will implement `AppHost` on its own event channel and call the
 same core functions. Today it calls core only on its own tokio runtime (the
@@ -123,6 +155,12 @@ Meetings and dictation share the Parakeet and Whisper engines in core.
 A recording captures and saves, nothing else. Transcription, VAD and the
 summary run after the meeting from the saved files, so a crash in a model
 (a native abort in ggml or ONNX Runtime) cannot stop the audio.
+
+The desktop stop flow saves the meeting first, waits for the matching
+`recording-audio-finalized` event, then runs file transcription with the
+configured local model and the saved database meeting id. Completion is
+retained if encoding finishes before the database save. Failed encoding or
+transcription leaves the saved meeting available and reports the error.
 
 - Capture (`audio::pipeline::AudioCapture`) resamples to 48 kHz mono and
   applies the microphone filters, then hands the chunk to the disk writer
@@ -242,3 +280,14 @@ polishing. `providers::chain_for` returns the resolved links for callers that
 need their own loop. The settings UI uses `config`, `save_config`,
 `statuses`, `set_key`, `delete_key` and `test_provider` (a real `GET /models`
 with the measured round trip).
+
+Database safety copies use a unique folder on every attempt, including the
+current WAL and rollback journal. Error advice only confirms a copy when its
+path is available; failed copies are reported explicitly.
+
+To verify WER with an actual native exception, run from an elevated Windows
+terminal: `cargo test --locked -p tingskriver-core
+crash_dumps::tests::native_crash_produces_a_minidump -- --ignored --exact`.
+The test registers only its uniquely named child executable, checks the dump
+signature and removes its HKLM key afterward. It is excluded from ordinary
+unit tests because it requires administrator access and the WER service.

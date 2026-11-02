@@ -405,6 +405,20 @@ async fn open_log_folder() -> Result<(), String> {
     Ok(())
 }
 
+/// Whether Windows saves a crash dump when the app crashes in native code.
+#[tauri::command]
+fn get_crash_dumps_enabled() -> bool {
+    tingskriver_core::crash_dumps::enabled()
+}
+
+/// Turn crash dumps on or off (the per-user WER LocalDumps key).
+#[tauri::command]
+async fn set_crash_dumps_enabled(enabled: bool) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || tingskriver_core::crash_dumps::set_enabled(enabled))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 pub fn run() {
     log::set_max_level(log::LevelFilter::Info);
 
@@ -435,9 +449,13 @@ pub fn run() {
         )) as NotificationManagerState<tauri::Wry>)
         .manage(audio::init_system_audio_state())
         .manage(summary::summary_engine::ModelManagerState(Arc::new(tokio::sync::Mutex::new(None))))
+        .manage(database::setup::DatabaseStatusState::default())
         .setup(|_app| {
             // Core spawns async work from audio and hook threads on Tauri's runtime.
             tingskriver_core::runtime::set_handle(tauri::async_runtime::handle().inner().clone());
+
+            // Windows Error Reporting writes a minidump on a native crash.
+            tingskriver_core::crash_dumps::apply_in_background();
 
             #[cfg(target_os = "windows")]
             match _app.path().resolve(
@@ -468,12 +486,11 @@ pub fn run() {
                 )),
             };
 
-            log::info!("Application setup complete");
-
             // Initialize system tray
             if let Err(e) = tray::create_tray(_app.handle()) {
                 log::error!("Failed to create system tray: {}", e);
             }
+            tingskriver_core::logging::startup_phase("tray ready");
 
             // Initialize notification system with proper defaults
             log::info!("Initializing notification system...");
@@ -549,11 +566,10 @@ pub fn run() {
             //     });
             // }
 
-            // Initialize database (handles first launch detection and conditional setup)
-            tauri::async_runtime::block_on(async {
-                database::setup::initialize_database_on_startup(&_app.handle()).await
-            })
-            .expect("Failed to initialize database");
+            // Open the database in the background: the window shows a loading
+            // state meanwhile and an error page if it fails, instead of the
+            // app exiting without a word.
+            database::setup::start_database_initialization(_app.handle());
 
             // Initialize bundled templates directory for dynamic template discovery
             log::info!("Initializing bundled templates directory...");
@@ -565,7 +581,16 @@ pub fn run() {
                 log::warn!("Failed to resolve resource directory for templates");
             }
 
+            log::info!("Application setup complete");
             Ok(())
+        })
+        .on_page_load(|webview, payload| {
+            static WINDOW_READY: std::sync::Once = std::sync::Once::new();
+            if webview.label() == "main"
+                && matches!(payload.event(), tauri::webview::PageLoadEvent::Finished)
+            {
+                WINDOW_READY.call_once(|| tingskriver_core::logging::startup_phase("window ready"));
+            }
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
@@ -735,6 +760,8 @@ pub fn run() {
             audio::recording_preferences::get_default_recordings_folder_path,
             audio::recording_preferences::open_recordings_folder,
             open_log_folder,
+            get_crash_dumps_enabled,
+            set_crash_dumps_enabled,
             audio::recording_preferences::select_recording_folder,
             audio::recording_preferences::get_available_audio_backends,
             audio::recording_preferences::get_current_audio_backend,
@@ -796,6 +823,8 @@ pub fn run() {
             // Database and Models path commands
             database::commands::get_database_directory,
             database::commands::open_database_folder,
+            database::setup::get_database_status,
+            database::setup::open_database_backup_folder,
             whisper_engine::commands::open_models_folder,
             // Onboarding commands
             onboarding::get_onboarding_status,
