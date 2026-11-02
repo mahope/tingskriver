@@ -829,6 +829,94 @@ fn foreground_integrity_level() -> Option<u32> {
 /// `paste::LATE_READ_GRACE` (a late read in between gets an empty string).
 pub fn insert_text(text: &str, options: &InsertOptions) -> Result<(InsertMethod, Instant), String> {
     let _one_at_a_time = INSERT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let before = editable_field();
+    // Invalidate even if this insertion fails; never fall back to older text.
+    let mut last = LAST_INSERTION.lock().unwrap_or_else(|p| p.into_inner());
+    *last = None;
+    let result = insert_text_inner(text, options);
+    if result.is_ok() {
+        if let (Some(before), Some(after)) = (before, editable_field()) {
+            *last = super::logic::commands::LastInsertion::record(&before, &after, text);
+        }
+    }
+    result
+}
+
+static LAST_INSERTION: Mutex<Option<super::logic::commands::LastInsertion>> = Mutex::new(None);
+
+// Bound every cross-process request: a hung target must not hang dictation.
+fn edit_message(window: HWND, message: u32, wparam: usize, lparam: isize) -> Option<usize> {
+    use windows::Win32::UI::WindowsAndMessaging::{SendMessageTimeoutW, SMTO_ABORTIFHUNG};
+    let mut result = 0;
+    let sent = unsafe {
+        SendMessageTimeoutW(window, message, WPARAM(wparam), LPARAM(lparam), SMTO_ABORTIFHUNG,
+            100, Some(&mut result))
+    };
+    (sent.0 != 0).then_some(result)
+}
+
+fn editable_field() -> Option<super::logic::commands::Field> {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetClassNameW, GetGUIThreadInfo, GUITHREADINFO, GWL_STYLE,
+    };
+    unsafe {
+        let mut info = GUITHREADINFO { cbSize: std::mem::size_of::<GUITHREADINFO>() as u32,
+            ..Default::default() };
+        GetGUIThreadInfo(0, &mut info).ok()?;
+        let window = info.hwndFocus;
+        if window.is_invalid() { return None; }
+        let mut class = [0u16; 64];
+        let len = GetClassNameW(window, &mut class) as usize;
+        // Custom/browser controls require UI Automation; do not guess with
+        // Ctrl+Z or backspaces. Password fields are never read or tracked.
+        if !String::from_utf16_lossy(&class[..len]).eq_ignore_ascii_case("Edit")
+            || GetWindowLongPtrW(window, GWL_STYLE) & 0x20 != 0 { return None; }
+        let len = edit_message(window, 0x000E /* WM_GETTEXTLENGTH */, 0, 0)?;
+        if len > 65_536 { return None; }
+        let mut text = vec![0u16; len + 1];
+        let read = edit_message(window, 0x000D /* WM_GETTEXT */, text.len(), text.as_mut_ptr() as isize)?;
+        if read != len { return None; }
+        text.truncate(read);
+        let (mut start, mut end) = (0u32, 0u32);
+        edit_message(window, 0x00B0 /* EM_GETSEL */, &mut start as *mut _ as usize,
+            &mut end as *mut _ as isize)?;
+        Some(super::logic::commands::Field { id: window.0 as isize, text,
+            selection: (start as usize, end as usize) })
+    }
+}
+
+pub fn edit_last(command: super::logic::commands::Command) -> Result<(), String> {
+    use super::logic::commands::Command;
+    if command == Command::Stop { return Ok(()); }
+    let _one_at_a_time = INSERT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let mut slot = LAST_INSERTION.lock().unwrap_or_else(|p| p.into_inner());
+    let mut last = slot.take().ok_or("Ingen sikkert registreret tekst at redigere i dette felt")?;
+    let current = editable_field().ok_or("Feltet understøtter ikke sikker stemmeredigering")?;
+    let (start, end) = last.range(&current).ok_or("Feltet eller teksten er ændret siden indsættelsen")?;
+    let window = HWND(current.id as *mut c_void);
+    edit_message(window, 0x00B1 /* EM_SETSEL */, start, end as isize)
+        .ok_or("Kunne ikke markere teksten")?;
+    last.selected();
+    // Recheck after selection, including focus, before any destructive message.
+    let selected = editable_field().ok_or("Feltet skiftede under markeringen")?;
+    last.range(&selected).ok_or("Teksten ændrede sig under markeringen")?;
+    if command == Command::Delete {
+        let empty = [0u16];
+        edit_message(window, 0x00C2 /* EM_REPLACESEL */, 1, empty.as_ptr() as isize)
+            .ok_or("Kunne ikke slette teksten")?;
+        let mut expected = selected;
+        expected.text.drain(start..end);
+        expected.selection = (start, start);
+        if editable_field().as_ref() != Some(&expected) {
+            return Err("Sletningen kunne ikke bekræftes".to_string());
+        }
+    } else {
+        *slot = Some(last);
+    }
+    Ok(())
+}
+
+fn insert_text_inner(text: &str, options: &InsertOptions) -> Result<(InsertMethod, Instant), String> {
     wait_for_modifiers_released(Duration::from_millis(1500));
 
     let own = integrity_level(unsafe { GetCurrentProcess() });
@@ -1182,6 +1270,32 @@ mod insertion_window {
             paste_timeout: Duration::from_millis(1000),
             app: Some("test".into()),
         }
+    }
+
+    #[test]
+    #[ignore = "needs a Windows desktop; types into a test window"]
+    fn commands_select_delete_and_reject_changed_text_and_focus() {
+        use crate::dictation::logic::commands::Command;
+        let first = test_window(false);
+        clear(first);
+        insert_text("æ😀 tekst", &options()).expect("insert");
+        edit_last(Command::Select).expect("select last insertion");
+        assert_eq!(editable_field().unwrap().selection, (0, 9));
+        edit_last(Command::Delete).expect("delete only last insertion");
+        assert_eq!(edit_text(first), "");
+        assert!(edit_last(Command::Delete).is_err());
+
+        insert_text("behold", &options()).expect("insert");
+        let changed = wide("rettet");
+        unsafe { SetWindowTextW(hwnd(first.edit), PCWSTR(changed.as_ptr())).unwrap(); }
+        assert!(edit_last(Command::Delete).is_err());
+        assert_eq!(edit_text(first), "rettet");
+
+        insert_text("ny tekst", &options()).expect("insert");
+        let second = test_window(false);
+        assert!(edit_last(Command::Delete).is_err());
+        assert_eq!(edit_text(second), "Tingskriver insertion test");
+        assert!(edit_text(first).contains("ny tekst"));
     }
 
     #[test]

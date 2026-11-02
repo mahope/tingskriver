@@ -748,15 +748,32 @@ impl Service {
 
         let transcribe_ms = transcribe_started.elapsed().as_millis() as u64;
 
+        if let Some(command) = super::logic::commands::parse(&transcript.text) {
+            turn.wait().await;
+            self.overlay.set(OverlayState::Hidden);
+            #[cfg(windows)]
+            {
+                let result = tokio::task::spawn_blocking(move || super::win::edit_last(command)).await;
+                self.set_error(match result {
+                    Ok(Ok(())) => None,
+                    Ok(Err(e)) => Some(e),
+                    Err(e) => Some(e.to_string()),
+                });
+            }
+            #[cfg(not(windows))]
+            { let _ = command; }
+            return;
+        }
+
         let mut text = cleanup::clean(&transcript.text, style, &rules);
         let mut polish_ms = None;
-        if settings.polish_enabled && style == Style::Normal && !text.is_empty() {
+        if settings.polish_enabled && style == Style::Normal && !text.trim().is_empty() {
             let polish_started = Instant::now();
             text = self.polish(&settings, text).await;
             polish_ms = Some(polish_started.elapsed().as_millis() as u64);
         }
         self.overlay.set(OverlayState::Hidden);
-        if text.trim().is_empty() {
+        if text.is_empty() {
             log::info!("Dictation: transcript empty after cleanup");
             return;
         }

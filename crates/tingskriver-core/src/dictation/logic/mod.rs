@@ -11,6 +11,7 @@
 pub mod app_style;
 pub mod audio;
 pub mod cleanup;
+pub mod commands;
 pub mod engine;
 pub mod gesture;
 pub mod hook_stats;

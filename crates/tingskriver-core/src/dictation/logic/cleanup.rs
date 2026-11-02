@@ -66,6 +66,50 @@ const ABBREVIATIONS: &[&str] = &[
     "pga", "vedr", "jf", "ift", "hhv", "tlf", "etc", "mr", "hr", "fr",
 ];
 
+const WINDOWS_SYMBOLS: &[(&str, &str)] = &[
+    ("venstre parentes", "("),
+    ("åben parentes", "("),
+    ("højre parentes", ")"),
+    ("lukket parentes", ")"),
+    ("procenttegn", "%"),
+    ("hash-tegn", "#"),
+    ("hash tegn", "#"),
+    ("pund-tegn", "#"),
+    ("pund tegn", "#"),
+    ("nummertegn", "#"),
+    ("lighedstegn", "="),
+    ("plustegn", "+"),
+    ("venstre kantet parentes", "["),
+    ("åben kantet parentes", "["),
+    ("højre kantet parentes", "]"),
+    ("lukket kantet parentes", "]"),
+    ("kantet højreparentes", "]"),
+    ("kantet lukket parentes", "]"),
+    ("åben venstreparentes", "["),
+    ("kantet venstreparentes", "["),
+    ("og-tegn", "&"),
+    ("euro-tegn", "€"),
+    ("grad-tegn", "°"),
+    ("pund sterling-tegn", "£"),
+    ("divisionstegn", "÷"),
+    ("plus- eller minustegn", "±"),
+    ("yen-tegn", "¥"),
+    ("ellipse", "..."),
+    ("begyndende anførselstegn", "\""),
+    ("startende anførselstegn", "\""),
+    ("lukkende anførselstegn", "\""),
+    ("afsluttende anførselstegn", "\""),
+    ("afsluttende enkelt anførselstegn", "'"),
+    ("lukkende enkelt anførselstegn", "'"),
+    ("åbnende enkelt anførselstegn", "'"),
+    ("startende enkelt anførselstegn", "'"),
+    ("apostrof s", "'s"),
+    ("blinkende smiley", ";-)"),
+    ("trist smiley", ":-("),
+    ("smilende ansigt", ":-)"),
+    ("hjerte", "<3"),
+];
+
 const SYMBOLS: &[(&str, &str)] = &[
     ("bindestreg", "-"),
     ("skråstreg", "/"),
@@ -125,6 +169,8 @@ enum Action {
     },
 }
 
+type Matchers = std::collections::HashMap<String, Vec<Matcher>>;
+
 struct Matcher {
     words: Vec<String>,
     action: Action,
@@ -133,13 +179,11 @@ struct Matcher {
 /// Clean dictated text according to `style` and the user's `rules`.
 pub fn clean(input: &str, style: Style, rules: &Rules) -> String {
     let tokens = tokenize(input);
-    static BUILTINS: std::sync::OnceLock<Vec<Matcher>> = std::sync::OnceLock::new();
+    static BUILTINS: std::sync::OnceLock<Matchers> = std::sync::OnceLock::new();
     let custom;
     let matchers =
         if rules.replacements.is_empty() && rules.snippets.is_empty() && rules.symbols.is_empty() {
-            BUILTINS
-                .get_or_init(|| build_matchers(&Rules::default()))
-                .as_slice()
+            BUILTINS.get_or_init(|| build_matchers(&Rules::default()))
         } else {
             custom = build_matchers(rules);
             &custom
@@ -178,7 +222,7 @@ fn phrase_words(phrase: &str) -> Vec<String> {
         .collect()
 }
 
-fn build_matchers(rules: &Rules) -> Vec<Matcher> {
+fn build_matchers(rules: &Rules) -> Matchers {
     let mut matchers = Vec::new();
 
     // User rules come first so they can override built-in commands.
@@ -207,6 +251,24 @@ fn build_matchers(rules: &Rules) -> Vec<Matcher> {
         }
     }
 
+    for r in &rules.symbols {
+        let words = phrase_words(&r.from);
+        if words.is_empty() {
+            continue;
+        }
+        let action = match r.to.as_str() {
+            "\n" => Action::Break(1),
+            "\n\n" => Action::Break(2),
+            text if text.chars().count() == 1
+                && TRAILING_PUNCT.contains(&text.chars().next().unwrap()) =>
+            {
+                Action::Punct(text.chars().next().unwrap())
+            }
+            _ => Action::Symbol(r.to.clone()),
+        };
+        matchers.push(Matcher { words, action });
+    }
+
     let commands: &[(&str, Action)] = &[
         ("punktum", Action::Punct('.')),
         ("komma", Action::Punct(',')),
@@ -227,18 +289,11 @@ fn build_matchers(rules: &Rules) -> Vec<Matcher> {
         });
     }
 
-    for (phrase, symbol) in rules
-        .symbols
-        .iter()
-        .map(|r| (r.from.as_str(), r.to.as_str()))
-        .chain(SYMBOLS.iter().copied())
-    {
-        if !phrase_words(phrase).is_empty() {
-            matchers.push(Matcher {
-                words: phrase_words(phrase),
-                action: Action::Symbol(symbol.to_string()),
-            });
-        }
+    for (phrase, symbol) in SYMBOLS.iter().chain(WINDOWS_SYMBOLS) {
+        matchers.push(Matcher {
+            words: phrase_words(phrase),
+            action: Action::Symbol(symbol.to_string()),
+        });
     }
     // Escapes precede user rules, so their result is never interpreted again.
     let mut literals = Vec::new();
@@ -257,7 +312,14 @@ fn build_matchers(rules: &Rules) -> Vec<Matcher> {
     let mut matchers = literals;
     // Longest phrase wins; the sort is stable so user rules win ties.
     matchers.sort_by(|a, b| b.words.len().cmp(&a.words.len()));
-    matchers
+    let mut by_first = Matchers::new();
+    for matcher in matchers {
+        by_first
+            .entry(matcher.words[0].clone())
+            .or_default()
+            .push(matcher);
+    }
+    by_first
 }
 
 fn tokenize(input: &str) -> Vec<Tok> {
@@ -294,9 +356,10 @@ fn tokenize(input: &str) -> Vec<Tok> {
 fn match_at<'m>(
     tokens: &[Option<String>],
     start: usize,
-    matchers: &'m [Matcher],
+    matchers: &'m Matchers,
 ) -> Option<&'m Matcher> {
-    matchers.iter().find(|m| {
+    let first = tokens.get(start)?.as_ref()?;
+    matchers.get(first)?.iter().find(|m| {
         if start + m.words.len() > tokens.len() {
             return false;
         }
@@ -307,7 +370,7 @@ fn match_at<'m>(
     })
 }
 
-fn apply_phrases(tokens: Vec<Tok>, matchers: &[Matcher]) -> Vec<Tok> {
+fn apply_phrases(tokens: Vec<Tok>, matchers: &Matchers) -> Vec<Tok> {
     let normalized: Vec<_> = tokens
         .iter()
         .map(|t| match t {
@@ -342,7 +405,12 @@ fn apply_phrases(tokens: Vec<Tok>, matchers: &[Matcher]) -> Vec<Tok> {
                 true
             }
             Action::Punct(c) => {
-                push_punct(&mut out, *c);
+                // A standalone spoken mark extends text from an earlier dictation.
+                if out.is_empty() && tokens[i..].iter().all(|t| matches!(t, Tok::Punct(_))) {
+                    out.push(Tok::Symbol(c.to_string()));
+                } else {
+                    push_punct(&mut out, *c);
+                }
                 true
             }
             Action::Break(n) => {
@@ -406,6 +474,10 @@ fn push_break(out: &mut Vec<Tok>, n: u8) {
 }
 
 fn is_sentence_start(out: &[Tok]) -> bool {
+    let end = out.iter().rposition(
+        |t| !matches!(t, Tok::Symbol(s) if matches!(s.as_str(), "(" | "[" | "{" | "\"")),
+    );
+    let out = &out[..end.map_or(0, |i| i + 1)];
     match out.last() {
         None | Some(Tok::Break(_)) => true,
         Some(Tok::Punct(c)) => matches!(c, '.' | '?' | '!') && !ends_with_abbreviation(out),
@@ -500,9 +572,9 @@ fn render(tokens: &[Tok]) -> String {
             }
             Tok::Symbol(text) => {
                 let (before, after) = match text.as_str() {
-                    "(" | "[" | "{" | "#" | "€" | "$" | "£" | "§" => (true, false),
-                    ")" | "]" | "}" | "%" | "°" | "…" => (false, true),
-                    "-" | "/" | "\\" | "@" | "_" | "'" => (false, false),
+                    "(" | "[" | "{" | "#" | "€" | "$" | "£" | "¥" | "§" => (true, false),
+                    ")" | "]" | "}" | "%" | "°" | "…" | "..." => (false, true),
+                    "-" | "/" | "\\" | "@" | "_" | "'" | "'s" => (false, false),
                     "\"" => {
                         quote_open = !quote_open;
                         (quote_open, !quote_open)
@@ -630,6 +702,57 @@ mod tests {
         assert_eq!(raw("to plus to lig med fire"), "to + to = fire");
         assert_eq!(raw("hashtag emne"), "#emne");
         assert_eq!(raw("anførselstegn hej anførselstegn"), "\"hej\"");
+    }
+
+    #[test]
+    fn custom_symbols_override_defaults_and_keep_literals() {
+        let r = Rules {
+            symbols: vec![Replacement {
+                from: "hashtag".into(),
+                to: "№".into(),
+            }],
+            ..Rules::default()
+        };
+        assert_eq!(clean("hashtag", Style::Normal, &r), "№");
+        assert_eq!(clean("skriv ordet hashtag", Style::Normal, &r), "hashtag");
+        assert_eq!(normal("parentes start hej parentes slut"), "(Hej)");
+        assert_eq!(normal("linjeskift"), "\n");
+        assert_eq!(normal("nyt afsnit"), "\n\n");
+    }
+
+    #[test]
+    fn custom_symbols_override_basic_punctuation() {
+        let r = Rules {
+            symbols: vec![Replacement {
+                from: "komma".into(),
+                to: ";".into(),
+            }],
+            ..Rules::default()
+        };
+        assert_eq!(clean("hej komma tak", Style::Normal, &r), "Hej; tak");
+    }
+
+    #[test]
+    fn windows_punctuation_aliases() {
+        for (phrase, symbol) in WINDOWS_SYMBOLS {
+            assert!(raw(&format!("x {phrase}")).ends_with(symbol), "{phrase}");
+        }
+        assert_eq!(raw("venstre parentes hej højre parentes"), "(hej)");
+    }
+
+    #[test]
+    fn standalone_punctuation_can_extend_the_previous_dictation() {
+        for (phrase, symbol) in [
+            ("komma", ","),
+            ("Punktum.", "."),
+            ("kolon", ":"),
+            ("semikolon", ";"),
+            ("spørgsmålstegn", "?"),
+            ("udråbstegn", "!"),
+        ] {
+            assert_eq!(normal(phrase), symbol);
+        }
+        assert_eq!(normal("Komma, hej"), "Hej");
     }
 
     #[test]
