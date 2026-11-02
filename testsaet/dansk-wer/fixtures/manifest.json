@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "kind": "fixture-text",
+  "clips": [
+    {
+      "id": "danish-01",
+      "file": "danish-01.txt",
+      "reference": "Jeg spiser æbler ved åen.",
+      "speech_type": "oplaesning",
+      "dialect": "unknown",
+      "source": "Repository-authored deterministic text fixture; not recorded speech",
+      "license": "MIT",
+      "attribution": "Tingskriver contributors",
+      "consent": "not-applicable"
+    },
+    {
+      "id": "danish-02",
+      "file": "danish-02.txt",
+      "reference": "Vi mødes klokken 12 på øen.",
+      "speech_type": "oplaesning",
+      "dialect": "unknown",
+      "source": "Repository-authored deterministic text fixture; not recorded speech",
+      "license": "MIT",
+      "attribution": "Tingskriver contributors",
+      "consent": "not-applicable"
+    }
+  ]
+}

@@ -61,6 +61,7 @@ pub mod state;
 pub mod summary;
 pub mod transcript_merge;
 pub mod whisper_engine;
+pub mod wer;
 
 #[cfg(target_os = "windows")]
 static ONNX_RUNTIME_INIT_ERROR: std::sync::OnceLock<String> = std::sync::OnceLock::new();
