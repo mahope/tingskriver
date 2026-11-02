@@ -41,6 +41,7 @@ pub mod config;
 pub mod crash_dumps;
 pub mod database;
 pub mod dictation;
+pub mod fake_device;
 pub mod host;
 pub mod install;
 pub mod groq;
