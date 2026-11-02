@@ -341,7 +341,8 @@ impl WhisperEngine {
                     WhisperCompiledBackend::current(),
                     hardware_profile.gpu_type,
                     hardware_profile.performance_tier,
-                );
+                )
+                .with_diagnose_policy(crate::diagnose::cpu_required());
 
                 let context_param = WhisperContextParameters {
                     use_gpu: acceleration.use_gpu,
