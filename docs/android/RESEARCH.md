@@ -126,14 +126,15 @@ fuldt testede AGP-interval slutter ved 9.3.1; kombinationen med nyere stabile
 AGP skal derfor bevises af Android-CI, ikke antages testet af JetBrains.
 
 Google/JetBrains/Gradle er mangeårige upstream-vedligeholdere. Artefakterne er
-ældre end tre døgn på undersøgelsesdatoen. Ingen fremmed repo er klonet og ingen
-ny byggetoolchain installeret her. Gradle-plugins er eksekverbar buildkode,
+ældre end tre døgn på undersøgelsesdatoen. Ingen fremmed repo er klonet.
+Wrapperens distribution og JAR kontrolleres med Gradles officielle SHA-256;
+`--version` kan hente distributionen uden Android SDK. Gradle-plugins er eksekverbar buildkode,
 kan læse buildmiljøet og henter transitive afhængigheder over netværket; deres
 fulde antal er ikke verificeret uden resolution. Runtime har kun Kotlin stdlib;
 JVM-tests bruger JUnit 4.13.2 (JUnit-teamet, udgivet 2021) og Hamcrest 1.3
 transitivt. Ingen AndroidX/Compose, SDK'er til analyse eller STT-pakker endnu.
 Konklusion: **installér** de fastlåste officielle buildartefakter i CI uden
-projektsecrets; ingen automatisk installation lokalt ved manglende SDK/JDK.
+projektsecrets; ingen automatisk installation af Android SDK eller JDK lokalt.
 
 ## Resterende evidens
 
