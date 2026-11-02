@@ -52,6 +52,8 @@ pub enum Phase {
 }
 #[async_trait::async_trait]
 pub trait Model: Send {
+    // async_trait adds #[must_use] to the already must-use boxed Future.
+    #[allow(clippy::double_must_use)]
     async fn generate(&mut self, phase: Phase, system: &str, input: &str)
         -> Result<String, String>;
 }
