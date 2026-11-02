@@ -1142,6 +1142,34 @@ mod tests {
     }
 
     #[test]
+    fn decoder_rejects_empty_audio() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("empty.wav");
+        write_segment(&path, &[], 0);
+        assert!(decoded_duration_seconds(&path).is_err());
+    }
+
+    #[test]
+    fn recovery_skips_truncated_last_segment_and_keeps_raw() {
+        let Some(ffmpeg) = ffmpeg() else { return };
+        let folder = tempfile::tempdir().unwrap();
+        let raw = folder.path().join(RAW_DIR);
+        std::fs::create_dir_all(&raw).unwrap();
+        write_segment(&raw.join(segment_file_name(TrackKind::Microphone, 0)), &[1; 48000], 48000);
+        write_segment(&raw.join(segment_file_name(TrackKind::Microphone, 1)), &[2; 48000], 480000);
+        for _ in 0..2 {
+            let outcome = recover_raw_tracks(folder.path(), Some(&ffmpeg));
+            assert_eq!(outcome.status, AudioSaveStatus::Partial, "{}", outcome.message);
+            assert_eq!(outcome.duration_seconds, 1.0);
+            assert!(outcome.raw_kept);
+            assert!(raw.exists());
+            let duration = decoded_duration_seconds(&folder.path().join(MIXED_FILE)).unwrap();
+            assert!((duration - 1.0).abs() < 0.1, "{duration}");
+            assert_eq!(read_verified_status(&raw), Some(AudioSaveStatus::Partial));
+        }
+    }
+
+    #[test]
     fn truncated_last_segment_gives_partial_with_the_other_pieces() {
         let dir = tempfile::tempdir().unwrap();
         write_manifest(
@@ -1182,7 +1210,7 @@ mod tests {
             scanned.problems,
             vec!["microphone_002.wav er afkortet".to_string()]
         );
-        assert_eq!(scanned.tracks[0].samples(), 4800 + 4800 + 1000);
+        assert_eq!(scanned.tracks[0].samples(), 4800 + 4800);
         // A repairing scan does not hide the loss from the next run.
         for _ in 0..2 {
             let scanned = scan_raw_tracks(dir.path(), true).unwrap();

@@ -301,6 +301,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cleanup_refuses_unverified_legacy_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let raw = dir.path().join(RAW_DIR);
+        std::fs::create_dir_all(&raw).unwrap();
+        std::fs::write(raw.join("audio_chunk_000.mp4"), b"original").unwrap();
+        std::fs::write(dir.path().join(MIXED_FILE), b"").unwrap();
+        assert!(cleanup_checkpoints(dir.path().to_string_lossy().into_owned()).await.is_err());
+        assert!(raw.exists());
+    }
+
+    #[tokio::test]
+    async fn legacy_recovery_skips_truncated_last_file() {
+        let Some(ffmpeg) = find_ffmpeg_path() else { return };
+        let dir = tempfile::tempdir().unwrap();
+        let raw = dir.path().join(RAW_DIR);
+        std::fs::create_dir_all(&raw).unwrap();
+        let first = raw.join("audio_chunk_000.mp4");
+        let mut sent = false;
+        super::super::encode::encode_pcm_s16(&ffmpeg, 48000, "96k", &first, |block| {
+            if sent { return Ok(false); }
+            block.extend((0..48000 * 4).map(|i| ((i as f32 * 0.05).sin() * 10000.0) as i16));
+            sent = true;
+            Ok(true)
+        }).unwrap();
+        let last = raw.join("audio_chunk_001.mp4");
+        std::fs::copy(&first, &last).unwrap();
+        let file = std::fs::OpenOptions::new().write(true).open(&last).unwrap();
+        file.set_len(file.metadata().unwrap().len() / 2).unwrap();
+        let folder = dir.path().to_string_lossy().into_owned();
+        let outcome = recover_audio_from_checkpoints(folder.clone(), 48000).await.unwrap();
+        assert_eq!(outcome.status, "partial", "{}", outcome.message);
+        assert_eq!(outcome.chunk_count, 1);
+        assert!((outcome.estimated_duration_seconds - 4.0).abs() < 0.1);
+        assert!(outcome.audio_file_path.is_some());
+        assert!(cleanup_checkpoints(folder).await.is_err());
+        assert!(raw.exists());
+    }
+
+    #[tokio::test]
     async fn recovery_merges_raw_tracks() {
         if find_ffmpeg_path().is_none() {
             eprintln!("ffmpeg not available, skipping");
@@ -333,5 +372,18 @@ mod tests {
             .unwrap();
         assert_eq!(status.status, "none");
         assert!(!has_audio_checkpoints(folder).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn cleanup_rechecks_verified_files_before_deleting_originals() {
+        if find_ffmpeg_path().is_none() { return; }
+        let dir = tempfile::tempdir().unwrap();
+        record(dir.path());
+        let folder = dir.path().to_string_lossy().into_owned();
+        let outcome = recover_audio_from_checkpoints(folder.clone(), 48000).await.unwrap();
+        assert_eq!(outcome.status, "success", "{}", outcome.message);
+        std::fs::write(dir.path().join("microphone.m4a"), b"").unwrap();
+        assert!(cleanup_checkpoints(folder).await.is_err());
+        assert!(dir.path().join(RAW_DIR).exists());
     }
 }
