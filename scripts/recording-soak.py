@@ -48,6 +48,7 @@ def run(binary, root, seconds, crash=False, interval=300):
                 return
             assert elapsed < seconds + 60, 'recorder timeout'
             time.sleep(0.05)
+        assert not crash, 'recorder exited before forced stop'
         assert child.returncode == 0, f'recorder failed: {child.returncode}'
         subprocess.run([str(binary), 'verify', str(folder), str(seconds)], check=True, timeout=600)
     finally:
