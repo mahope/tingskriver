@@ -3,7 +3,7 @@
 //!
 //! 1. Scan the WAV segments in `.checkpoints/` ([`scan_raw_tracks`]): repair
 //!    headers that lag their data (crash between data and header write),
-//!    skip truncated last segments and unreadable ones.
+//!    salvage whole samples from truncated segments and skip unreadable ones.
 //! 2. Encode `microphone.m4a`, `system.m4a` and the mixed `audio.mp4`, all on
 //!    the shared recording clock (a track's offset becomes leading silence).
 //! 3. Decode each file and require at most [`MAX_DURATION_DEVIATION`] from the
@@ -247,9 +247,6 @@ pub fn scan_raw_tracks(raw_dir: &Path, repair: bool) -> io::Result<ScannedTracks
                             wav.actual_data_bytes
                         );
                         problems.push(format!("{name} er afkortet"));
-                        if is_last {
-                            continue;
-                        }
                     }
                     // A truncated header is left as it is: shrinking it would
                     // hide the loss from the next scan (and turn `delvis`
@@ -1206,7 +1203,7 @@ mod tests {
     }
 
     #[test]
-    fn recovery_skips_truncated_last_segment_and_keeps_raw() {
+    fn recovery_salvages_truncated_last_segment_and_keeps_raw() {
         let Some(ffmpeg) = ffmpeg() else { return };
         let folder = tempfile::tempdir().unwrap();
         let raw = folder.path().join(RAW_DIR);
@@ -1229,11 +1226,11 @@ mod tests {
                 "{}",
                 outcome.message
             );
-            assert_eq!(outcome.duration_seconds, 1.0);
+            assert_eq!(outcome.duration_seconds, 2.0);
             assert!(outcome.raw_kept);
             assert!(raw.exists());
             let duration = decoded_duration_seconds(&folder.path().join(MIXED_FILE)).unwrap();
-            assert!((duration - 1.0).abs() < 0.1, "{duration}");
+            assert!((duration - 2.0).abs() < 0.1, "{duration}");
             assert_eq!(read_verified_status(&raw), Some(AudioSaveStatus::Partial));
         }
     }
@@ -1279,7 +1276,7 @@ mod tests {
             scanned.problems,
             vec!["microphone_002.wav er afkortet".to_string()]
         );
-        assert_eq!(scanned.tracks[0].samples(), 4800 + 4800);
+        assert_eq!(scanned.tracks[0].samples(), 4800 + 4800 + 1000);
         // A repairing scan does not hide the loss from the next run.
         for _ in 0..2 {
             let scanned = scan_raw_tracks(dir.path(), true).unwrap();
@@ -1287,6 +1284,7 @@ mod tests {
                 scanned.problems,
                 vec!["microphone_002.wav er afkortet".to_string()]
             );
+            assert_eq!(scanned.tracks[0].samples(), 4800 + 4800 + 1000);
         }
 
         // Unreadable last segment: skipped, the others remain.

@@ -203,9 +203,10 @@ transcription leaves the saved meeting available and reports the error.
   `ok`; otherwise the message is "Lyden kunne ikke samles. Originalen er
   gemt."
 - After a crash, `recover_audio_from_checkpoints` runs the same finalize:
-  headers that lag their data are repaired, a truncated last segment is
-  skipped, as is an unreadable one (silence keeps later segments
-  in place), and any of these gives `delvis` with the other pieces. Recovery
+  headers that lag their data are repaired, whole PCM samples in truncated
+  segments are salvaged, and unreadable segments are skipped (silence keeps
+  later segments in place). Truncated headers stay unchanged so retries still
+  report `delvis` and keep the originals. Recovery
   keeps the raw tracks until the frontend saves the meeting to the database
   and calls `cleanup_checkpoints`, allowing retries after a failed save.
   Cleanup decodes all final files again and checks their durations before

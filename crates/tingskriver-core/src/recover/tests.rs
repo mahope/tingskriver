@@ -63,6 +63,7 @@ async fn restore_verifies_audio_and_registers_meeting_idempotently() {
         .await
         .unwrap();
     assert_eq!(result.meeting_id, "existing");
+    assert_eq!(result.audio.status, AudioSaveStatus::Partial);
     assert!(result.audio.audio_file.is_some());
     assert!(
         (crate::audio::finalize::decoded_duration_seconds(&folder.join(MIXED_FILE)).unwrap() - 2.0)
@@ -77,6 +78,7 @@ async fn restore_verifies_audio_and_registers_meeting_idempotently() {
         .await
         .unwrap();
     assert_eq!(result.meeting_id, again.meeting_id);
+    assert_eq!(again.audio.status, AudioSaveStatus::Partial);
     let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM meetings")
         .fetch_one(db.pool())
         .await
