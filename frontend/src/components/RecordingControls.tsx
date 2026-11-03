@@ -11,6 +11,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import Analytics from '@/lib/analytics';
 import { useRecordingState } from '@/contexts/RecordingStateContext';
 import type { TranscriptionErrorPayload } from '@/services/transcriptService';
+import type { RecordingSaveResult } from '@/services/recordingService';
 
 interface RecordingControlsProps {
   isRecording: boolean;
@@ -148,7 +149,7 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
       const savePath = `${dataDir}/recording-${timestamp}.wav`;
       console.log('Saving recording to:', savePath);
       console.log('About to call stop_recording command');
-      const result = await invoke('stop_recording', {
+      const result = await invoke<RecordingSaveResult | null>('stop_recording', {
         args: {
           save_path: savePath
         }
@@ -159,7 +160,7 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
       setIsProcessing(false);
       // Track successful transcription
       Analytics.trackTranscriptionSuccess();
-      onRecordingStop(true);
+      onRecordingStop(result?.status !== 'fejlet');
     } catch (error) {
       console.error('Failed to stop recording:', error);
       if (error instanceof Error) {

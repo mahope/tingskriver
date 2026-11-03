@@ -192,7 +192,9 @@ transcription leaves the saved meeting available and reports the error.
 - Stop stops the streams (their last callbacks and the resampler tail still
   reach the writer), closes the channel and waits for the writer to drain it.
   The log line `Stop-to-saved: N ms` measures this. `recording-saved` and
-  `recording-stopped` carry the save status.
+  `recording-stopped` and the `stop_recording` return value carry the save
+  status (`ok`, `delvis`, `fejlet`). Writer failures and timeouts report
+  `fejlet`; they are never returned as a successful save.
 - In the background, `audio::finalize` encodes `microphone.m4a`,
   `system.m4a` and the mixed `audio.mp4` (all on the shared clock), decodes
   each and requires at most 1 s difference from the recorded length. The
@@ -201,11 +203,18 @@ transcription leaves the saved meeting available and reports the error.
   `ok`; otherwise the message is "Lyden kunne ikke samles. Originalen er
   gemt."
 - After a crash, `recover_audio_from_checkpoints` runs the same finalize:
-  headers that lag their data are repaired, a truncated segment keeps its
-  readable part, an unreadable one is skipped (silence keeps later segments
+  headers that lag their data are repaired, a truncated last segment is
+  skipped, as is an unreadable one (silence keeps later segments
   in place), and any of these gives `delvis` with the other pieces. Recovery
   keeps the raw tracks until the frontend saves the meeting to the database
   and calls `cleanup_checkpoints`, allowing retries after a failed save.
+  Cleanup decodes all final files again and checks their durations before
+  deleting originals, even when an earlier verification reported `ok`.
+  Legacy MP4 recovery also skips damaged chunks, verifies the merged duration
+  against the decoded input durations, and permits cleanup only on `ok`.
+  Every recovery attempt invalidates earlier verification, even with no
+  chunks left. Recovery and cleanup share a lock on the canonical folder
+  path; verification and deletion both run on a blocking worker.
 
 ## AI providers: one model, a chain per function
 

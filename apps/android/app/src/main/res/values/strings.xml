@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Tingskriver</string>
+    <string name="microphone">Mikrofon</string>
+    <string name="switch_keyboard">Skift tastatur</string>
+    <string name="unsupported_field">Diktering er slået fra i dette felt.</string>
+    <string name="settings_title">Tingskriver til Android</string>
+    <string name="settings_intro">Optag højst 30 sekunder i hukommelsen. Lyden kasseres ved stop. Talegenkendelse er ikke tilsluttet. Ingen lyd eller tekst gemmes eller sendes. Aktivér tastaturet i Androids indstillinger, og vælg det derefter i et tekstfelt.</string>
+    <string name="enable_keyboard">Åbn tastaturindstillinger</string>
+    <string name="allow_microphone">Giv adgang til mikrofon</string>
+    <string name="permission_explanation">Tingskriver bruger kun mikrofonen, når du starter optagelse i det synlige tastatur. Lyden bliver i hukommelsen i højst 30 sekunder og gemmes aldrig. Du kan altid annullere.</string>
+    <string name="permission_needed">Giv mikrofontilladelse i Tingskriver-appen. Optagelse er slået fra.</string>
+    <string name="permission_granted">Mikrofontilladelse er givet. Start selv optagelse i tastaturet.</string>
+    <string name="stop_recording">Stop optagelse</string>
+    <string name="cancel_recording">Annuller</string>
+    <string name="recording_status">Optager. Højst 30 sekunder. Tryk stop eller annuller.</string>
+    <string name="ready_status">Klar til optagelse. Talegenkendelse er ikke tilsluttet.</string>
+    <string name="stopped_status">Optagelse stoppet. Lyden er kasseret. Talegenkendelse er ikke tilsluttet.</string>
+    <string name="cancelled_status">Optagelse annulleret. Ingen lyd gemt.</string>
+    <string name="recording_error">Mikrofonen kunne ikke optage. Lyden er kasseret. Prøv igen.</string>
+</resources>

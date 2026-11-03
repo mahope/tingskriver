@@ -3,7 +3,7 @@
 //!
 //! 1. Scan the WAV segments in `.checkpoints/` ([`scan_raw_tracks`]): repair
 //!    headers that lag their data (crash between data and header write),
-//!    keep the readable part of truncated files and skip unreadable ones.
+//!    skip truncated last segments and unreadable ones.
 //! 2. Encode `microphone.m4a`, `system.m4a` and the mixed `audio.mp4`, all on
 //!    the shared recording clock (a track's offset becomes leading silence).
 //! 3. Decode each file and require at most [`MAX_DURATION_DEVIATION`] from the
@@ -247,6 +247,9 @@ pub fn scan_raw_tracks(raw_dir: &Path, repair: bool) -> io::Result<ScannedTracks
                             wav.actual_data_bytes
                         );
                         problems.push(format!("{name} er afkortet"));
+                        if is_last {
+                            continue;
+                        }
                     }
                     // A truncated header is left as it is: shrinking it would
                     // hide the loss from the next scan (and turn `delvis`
@@ -490,6 +493,7 @@ pub fn decoded_duration_seconds(path: &Path) -> anyhow::Result<f64> {
         .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
         .ok_or_else(|| anyhow::anyhow!("no audio track in {}", path.display()))?;
     let track_id = track.id;
+    let declared_frames = track.codec_params.n_frames;
     let mut decoder = symphonia::default::get_codecs()
         .make(&track.codec_params, &DecoderOptions::default())
         .map_err(|e| anyhow::anyhow!("no decoder for {}: {e}", path.display()))?;
@@ -499,7 +503,6 @@ pub fn decoded_duration_seconds(path: &Path) -> anyhow::Result<f64> {
         let packet = match format.next_packet() {
             Ok(p) => p,
             Err(SymphoniaError::IoError(e)) if e.kind() == io::ErrorKind::UnexpectedEof => break,
-            Err(SymphoniaError::ResetRequired) => break,
             Err(e) => return Err(anyhow::anyhow!("reading {} failed: {e}", path.display())),
         };
         if packet.track_id() != track_id {
@@ -510,14 +513,15 @@ pub fn decoded_duration_seconds(path: &Path) -> anyhow::Result<f64> {
                 frames += decoded.frames() as u64;
                 rate = decoded.spec().rate;
             }
-            Err(SymphoniaError::DecodeError(e)) => {
-                log::warn!("Decode error in {}: {e}", path.display())
-            }
             Err(e) => return Err(anyhow::anyhow!("decoding {} failed: {e}", path.display())),
         }
     }
-    if rate == 0 {
-        return Err(anyhow::anyhow!("unknown sample rate in {}", path.display()));
+    if rate == 0 || frames == 0 {
+        return Err(anyhow::anyhow!("no decoded audio in {}", path.display()));
+    }
+    // EOF can mean either the end of the stream or truncated packet data.
+    if declared_frames.is_some_and(|declared| declared > frames) {
+        return Err(anyhow::anyhow!("truncated audio in {}", path.display()));
     }
     Ok(frames as f64 / rate as f64)
 }
@@ -555,14 +559,15 @@ impl FinalizeOutcome {
 /// must not encode the same folder twice).
 static IN_PROGRESS: Mutex<Option<HashSet<PathBuf>>> = Mutex::new(None);
 
-struct FolderGuard(PathBuf);
+pub(super) struct FolderGuard(PathBuf);
 
 impl FolderGuard {
-    fn acquire(folder: &Path) -> Option<Self> {
+    pub(super) fn acquire(folder: &Path) -> Option<Self> {
+        let folder = folder.canonicalize().ok()?;
         let mut guard = IN_PROGRESS.lock().unwrap_or_else(|e| e.into_inner());
         let set = guard.get_or_insert_with(HashSet::new);
-        if set.insert(folder.to_path_buf()) {
-            Some(Self(folder.to_path_buf()))
+        if set.insert(folder.clone()) {
+            Some(Self(folder))
         } else {
             None
         }
@@ -599,6 +604,11 @@ fn finalize_tracks(
         return FinalizeOutcome::failed("Lyden samles allerede.".to_string(), None);
     };
     let raw_dir = meeting_folder.join(RAW_DIR);
+    match std::fs::remove_file(raw_dir.join(VERIFIED_MARKER)) {
+        Ok(()) => {}
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+        Err(e) => return FinalizeOutcome::failed(format!("{KEPT_MESSAGE} ({e})"), None),
+    }
     let started = std::time::Instant::now();
     let scanned = match scan_raw_tracks(&raw_dir, true) {
         Ok(s) => s,
@@ -734,7 +744,7 @@ fn finish(raw_dir: &Path, outcome: FinalizeOutcome) -> FinalizeOutcome {
     finish_with_cleanup(raw_dir, outcome, true)
 }
 
-fn finish_with_cleanup(
+pub(super) fn finish_with_cleanup(
     raw_dir: &Path,
     mut outcome: FinalizeOutcome,
     cleanup: bool,
@@ -801,7 +811,10 @@ pub fn pending_finalize_folders(recordings_dir: &Path) -> Vec<PathBuf> {
             let raw = folder.join(RAW_DIR);
             has_raw_tracks(&raw)
                 && read_manifest(&raw).is_ok_and(|m| m.complete)
-                && matches!(read_verified_status(&raw), None | Some(AudioSaveStatus::Failed))
+                && matches!(
+                    read_verified_status(&raw),
+                    None | Some(AudioSaveStatus::Failed)
+                )
                 && read_attempts(&raw) < MAX_STARTUP_ATTEMPTS
         })
         .collect();
@@ -828,7 +841,10 @@ pub fn finalize_pending_recordings(
             let raw = folder.join(RAW_DIR);
             let attempts = read_attempts(&raw) + 1;
             if let Err(e) = std::fs::write(raw.join(ATTEMPTS_FILE), attempts.to_string()) {
-                log::warn!("Could not record the finalize attempt in {}: {e}", raw.display());
+                log::warn!(
+                    "Could not record the finalize attempt in {}: {e}",
+                    raw.display()
+                );
             }
             log::info!(
                 "Finishing the audio of {} (startup attempt {attempts})",
@@ -846,7 +862,9 @@ pub async fn finalize_pending_at_startup() {
     let recordings = super::recording_preferences::get_default_recordings_folder();
     let result = tokio::task::spawn_blocking(move || {
         let ffmpeg = super::ffmpeg::find_ffmpeg_path();
-        finalize_pending_recordings(&recordings, ffmpeg.as_deref())
+        let done = finalize_pending_recordings(&recordings, ffmpeg.as_deref());
+        crate::recover::scan_at_startup(&recordings);
+        done
     })
     .await;
     match result {
@@ -870,6 +888,26 @@ pub fn read_verified_status(raw_dir: &Path) -> Option<AudioSaveStatus> {
     serde_json::from_str::<FinalizeOutcome>(&text)
         .ok()
         .map(|o| o.status)
+}
+
+/// Recovery and database persistence are separate calls; check the files
+/// again before allowing the latter to delete the originals.
+pub fn verify_saved_outputs(raw_dir: &Path) -> anyhow::Result<()> {
+    let outcome: FinalizeOutcome =
+        serde_json::from_slice(&std::fs::read(raw_dir.join(VERIFIED_MARKER))?)?;
+    anyhow::ensure!(outcome.status == AudioSaveStatus::Ok, "{KEPT_MESSAGE}");
+    let mixed = outcome
+        .audio_file
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!(KEPT_MESSAGE))?;
+    for path in outcome.track_files.iter().chain(std::iter::once(mixed)) {
+        let actual = decoded_duration_seconds(path)?;
+        anyhow::ensure!(
+            (actual - outcome.duration_seconds).abs() <= MAX_DURATION_DEVIATION,
+            "{KEPT_MESSAGE}"
+        );
+    }
+    Ok(())
 }
 
 /// Add the audio outcome to the meeting's metadata.json (if it exists).
@@ -1048,33 +1086,35 @@ mod tests {
             eprintln!("ffmpeg not available, skipping");
             return;
         };
-        let dir = tempfile::tempdir().unwrap();
-        record(dir.path(), 3);
-        // Reads all input but plays it three times too fast: a valid file of
-        // a third of the length.
-        let fake = dir.path().join("short-ffmpeg.sh");
-        let script = format!(
-            "#!/bin/bash\nargs=(\"$@\")\nout=\"${{args[-1]}}\"\nunset 'args[-1]'\nexec \"{}\" \"${{args[@]}}\" -af asetrate=144000 \"$out\"\n",
-            real.display()
+        for target in ["microphone", "system", "audio"] {
+            let dir = tempfile::tempdir().unwrap();
+            record(dir.path(), 3);
+            // Reads all input but plays it three times too fast: a valid file of
+            // a third of the length.
+            let fake = dir.path().join("short-ffmpeg.sh");
+            let script = format!(
+            "#!/bin/bash\nargs=(\"$@\")\nout=\"${{args[-1]}}\"\nunset 'args[-1]'\nif [[ \"$out\" == *{target}* ]]; then\nexec \"{real}\" \"${{args[@]}}\" -af asetrate=144000 \"$out\"\nelse\nexec \"{real}\" \"${{args[@]}}\" \"$out\"\nfi\n",
+            real = real.display()
         );
-        std::fs::write(&fake, script).unwrap();
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+            std::fs::write(&fake, script).unwrap();
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
 
-        let outcome = finalize_raw_tracks(dir.path(), Some(&fake));
-        assert_eq!(
-            outcome.status,
-            AudioSaveStatus::Failed,
-            "{}",
-            outcome.message
-        );
-        assert!(
-            outcome.message.contains("der blev optaget"),
-            "{}",
-            outcome.message
-        );
-        assert!(has_raw_tracks(&dir.path().join(RAW_DIR)));
-        assert!(!dir.path().join(MIXED_FILE).exists());
+            let outcome = finalize_raw_tracks(dir.path(), Some(&fake));
+            assert_eq!(
+                outcome.status,
+                AudioSaveStatus::Failed,
+                "{}",
+                outcome.message
+            );
+            assert!(
+                outcome.message.contains("der blev optaget"),
+                "{}",
+                outcome.message
+            );
+            assert!(has_raw_tracks(&dir.path().join(RAW_DIR)));
+            assert!(!dir.path().join(MIXED_FILE).exists());
+        }
     }
 
     /// A stopped meeting whose background encode never ran (app closed) is
@@ -1093,7 +1133,10 @@ mod tests {
         write_manifest(&raw, &manifest).unwrap();
         std::fs::create_dir_all(recordings.path().join("empty")).unwrap();
 
-        assert_eq!(pending_finalize_folders(recordings.path()), vec![stopped.clone()]);
+        assert_eq!(
+            pending_finalize_folders(recordings.path()),
+            vec![stopped.clone()]
+        );
 
         // FFmpeg missing: failed, kept, and retried only MAX_STARTUP_ATTEMPTS times.
         let missing = recordings.path().join("no-such-ffmpeg");
@@ -1113,7 +1156,12 @@ mod tests {
         std::fs::remove_file(stopped.join(RAW_DIR).join(ATTEMPTS_FILE)).unwrap();
         let done = finalize_pending_recordings(recordings.path(), Some(&ffmpeg));
         assert_eq!(done.len(), 1);
-        assert_eq!(done[0].1.status, AudioSaveStatus::Ok, "{}", done[0].1.message);
+        assert_eq!(
+            done[0].1.status,
+            AudioSaveStatus::Ok,
+            "{}",
+            done[0].1.message
+        );
         assert!(stopped.join(MIXED_FILE).exists());
         assert!(!stopped.join(RAW_DIR).exists());
         assert!(pending_finalize_folders(recordings.path()).is_empty());
@@ -1139,6 +1187,55 @@ mod tests {
         assert!(scanned.problems.is_empty(), "{:?}", scanned.problems);
         assert_eq!(scanned.tracks[0].samples(), 1000);
         assert_eq!(inspect_wav(&path).unwrap().header_data_bytes, 2000);
+    }
+
+    #[test]
+    fn decoder_rejects_empty_audio() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("empty.wav");
+        write_segment(&path, &[], 0);
+        assert!(decoded_duration_seconds(&path).is_err());
+    }
+
+    #[test]
+    fn decoder_rejects_truncation_shorter_than_duration_tolerance() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("short.wav");
+        write_segment(&path, &[1; 1000], 2000);
+        assert!(decoded_duration_seconds(&path).is_err());
+    }
+
+    #[test]
+    fn recovery_skips_truncated_last_segment_and_keeps_raw() {
+        let Some(ffmpeg) = ffmpeg() else { return };
+        let folder = tempfile::tempdir().unwrap();
+        let raw = folder.path().join(RAW_DIR);
+        std::fs::create_dir_all(&raw).unwrap();
+        write_segment(
+            &raw.join(segment_file_name(TrackKind::Microphone, 0)),
+            &[1; 48000],
+            48000,
+        );
+        write_segment(
+            &raw.join(segment_file_name(TrackKind::Microphone, 1)),
+            &[2; 48000],
+            480000,
+        );
+        for _ in 0..2 {
+            let outcome = recover_raw_tracks(folder.path(), Some(&ffmpeg));
+            assert_eq!(
+                outcome.status,
+                AudioSaveStatus::Partial,
+                "{}",
+                outcome.message
+            );
+            assert_eq!(outcome.duration_seconds, 1.0);
+            assert!(outcome.raw_kept);
+            assert!(raw.exists());
+            let duration = decoded_duration_seconds(&folder.path().join(MIXED_FILE)).unwrap();
+            assert!((duration - 1.0).abs() < 0.1, "{duration}");
+            assert_eq!(read_verified_status(&raw), Some(AudioSaveStatus::Partial));
+        }
     }
 
     #[test]
@@ -1182,7 +1279,7 @@ mod tests {
             scanned.problems,
             vec!["microphone_002.wav er afkortet".to_string()]
         );
-        assert_eq!(scanned.tracks[0].samples(), 4800 + 4800 + 1000);
+        assert_eq!(scanned.tracks[0].samples(), 4800 + 4800);
         // A repairing scan does not hide the loss from the next run.
         for _ in 0..2 {
             let scanned = scan_raw_tracks(dir.path(), true).unwrap();

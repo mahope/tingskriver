@@ -301,14 +301,12 @@ impl RecordingManager {
     }
 
     /// Stop recording and save
-    pub async fn stop_recording(&mut self, app: &HostHandle) -> Result<()> {
+    pub async fn stop_recording(&mut self, app: &HostHandle) -> std::result::Result<Option<SaveResult>, String> {
         info!("Stopping recording manager");
         self.stop_capture().await;
-        if let Err(e) = self.save_recording_only(app).await {
-            error!("Failed to save recording: {}", e);
-        }
+        let result = self.save_recording_only(app).await;
         info!("Recording manager stopped");
-        Ok(())
+        result
     }
 
     /// Get recording stats from the saver
