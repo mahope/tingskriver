@@ -108,7 +108,7 @@ jobs:
       - name: Install system libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libasound2-dev cmake clang
+          sudo apt-get install -y --no-install-recommends libasound2-dev cmake clang ffmpeg
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
@@ -134,6 +134,9 @@ jobs:
 
       - name: Test tingskriver-core
         run: .github/scripts/annotate-errors.sh cargo test --locked -p tingskriver-core
+
+      - name: Test recording soak verifier
+        run: .github/scripts/annotate-errors.sh cargo test --locked -p tingskriver-core --example recording_soak
 
       # The overlay's state model, layout and renderer are platform independent.
       - name: Test tingskriver-overlay

@@ -21,6 +21,19 @@ use tingskriver_core::audio::{
 const RATE: u32 = 48_000;
 const BLOCK: u64 = 480;
 
+fn recorded_duration(track: &tingskriver_core::audio::finalize::ScannedTrack) -> f64 {
+    let samples: u64 = track
+        .sources
+        .iter()
+        .rev()
+        .skip_while(|source| matches!(source, Source::Silence(_)))
+        .map(|source| match source {
+            Source::File { samples, .. } | Source::Silence(samples) => *samples,
+        })
+        .sum();
+    (track.offset_samples + samples) as f64 / RATE as f64
+}
+
 // Nonzero square tone, with a distinct 10 ms marker each second.
 fn signal(position: u64, kind: TrackKind) -> f32 {
     let amplitude = if position % (RATE as u64) < BLOCK {
@@ -113,7 +126,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         assert!(scanned.problems.is_empty(), "{:?}", scanned.problems);
         assert_eq!(scanned.complete, mode != "recover");
         for track in scanned.tracks {
-            let duration = track.end() as f64 / RATE as f64;
+            let duration = recorded_duration(&track);
             let loss = seconds - duration;
             assert!(
                 loss >= -0.1 && loss < if mode == "recover" { 2.0 } else { 0.5 },
@@ -183,4 +196,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("unknown mode".into());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tingskriver_core::audio::finalize::ScannedTrack;
+
+    #[test]
+    fn loss_uses_each_tracks_unpadded_endpoint_with_offset() {
+        let track = ScannedTrack {
+            kind: TrackKind::Microphone,
+            offset_samples: RATE as u64,
+            sources: vec![
+                Source::File {
+                    path: "unused.wav".into(),
+                    samples: RATE as u64 * 6,
+                },
+                Source::Silence(RATE as u64 * 3),
+            ],
+            segment_count: 1,
+        };
+        assert_eq!(track.end(), RATE as u64 * 10);
+        assert_eq!(recorded_duration(&track), 7.0);
+        assert!(10.0 - recorded_duration(&track) >= 2.0);
+    }
 }

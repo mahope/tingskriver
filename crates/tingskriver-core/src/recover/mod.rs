@@ -34,17 +34,36 @@ pub fn scan(root: &Path) -> anyhow::Result<Vec<Recording>> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => return Err(e.into()),
     };
+    scan_entries(entries)
+}
+
+fn scan_entries(
+    entries: impl Iterator<Item = std::io::Result<std::fs::DirEntry>>,
+) -> anyhow::Result<Vec<Recording>> {
     let mut found = Vec::new();
     for entry in entries {
-        let entry = entry?;
-        if !entry.file_type()?.is_dir()
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(e) => {
+                log::warn!("Recovery scan could not read directory entry: {e}");
+                continue;
+            }
+        };
+        let file_type = match entry.file_type() {
+            Ok(file_type) => file_type,
+            Err(e) => {
+                log::warn!("Recovery scan could not read entry type: {e}");
+                continue;
+            }
+        };
+        if !file_type.is_dir()
             || (entry.path().join(MIXED_FILE).is_file()
                 && !entry.path().join(RAW_DIR).join(PENDING).is_file())
         {
             continue;
         }
         let raw = entry.path().join(RAW_DIR);
-        if !raw.is_dir() {
+        if !raw.is_dir() || crate::audio::recording_writer::has_live_writer(&raw) {
             continue;
         }
         let scanned = match scan_raw_tracks(&raw, false) {
@@ -117,13 +136,13 @@ pub async fn restore(
         matches!(components.next(), Some(Component::Normal(_))) && components.next().is_none(),
         "Invalid recording ID"
     );
+    let folder_string = root.join(id).to_string_lossy().into_owned();
     let root = root.canonicalize()?;
     let folder = root.join(id).canonicalize()?;
     anyhow::ensure!(
         folder.parent() == Some(root.as_path()),
         "Recording outside recordings folder"
     );
-    let folder_string = folder.to_string_lossy().into_owned();
     // A stable ID also makes retries after DB failures and concurrent requests safe.
     let existing: Vec<(String, String)> =
         sqlx::query_as("SELECT id, folder_path FROM meetings WHERE folder_path IS NOT NULL")

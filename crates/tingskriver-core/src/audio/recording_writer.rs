@@ -47,6 +47,39 @@ const QUEUE_RECOVERY: Duration = Duration::from_secs(2);
 
 pub const MANIFEST_FILE: &str = "tracks.json";
 
+static LIVE_WRITERS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
+pub(crate) fn has_live_writer(dir: &Path) -> bool {
+    let dir = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+    LIVE_WRITERS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .any(|live| live.canonicalize().unwrap_or_else(|_| live.clone()) == dir)
+}
+
+struct LiveWriter(PathBuf);
+
+impl LiveWriter {
+    fn register(dir: &Path) -> Self {
+        let dir = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+        LIVE_WRITERS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(dir.clone());
+        Self(dir)
+    }
+}
+
+impl Drop for LiveWriter {
+    fn drop(&mut self) {
+        let mut live = LIVE_WRITERS.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(index) = live.iter().position(|dir| dir == &self.0) {
+            live.remove(index);
+        }
+    }
+}
+
 /// User message when the writer cannot keep up and capture had to drop audio.
 pub const QUEUE_FULL_MESSAGE: &str = "Lyden gemmes ikke: lageret kan ikke følge med";
 /// User message when the writer thread died.
@@ -292,10 +325,12 @@ where
         dropped_samples: dropped.clone(),
         sample_rate,
     };
+    let live_writer = LiveWriter::register(&dir);
     let thread_status = status.clone();
     let thread = std::thread::Builder::new()
         .name("recording-writer".to_string())
         .spawn(move || {
+            let _live_writer = live_writer;
             let crash_observer = observer.clone();
             let crash_status = thread_status.clone();
             let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
@@ -854,8 +889,16 @@ mod tests {
             .unwrap()
             .iter()
             .any(|m| m == QUEUE_FULL_MESSAGE));
-        assert_eq!(*observer.recovered.lock().unwrap(), 1, "recovery is reported");
-        assert_eq!(handle.storage_error(), None, "the live state is clear again");
+        assert_eq!(
+            *observer.recovered.lock().unwrap(),
+            1,
+            "recovery is reported"
+        );
+        assert_eq!(
+            handle.storage_error(),
+            None,
+            "the live state is clear again"
+        );
         // The rest of the meeting is saved; the loss still marks the result.
         tx.send(TrackKind::System, vec![0.1; 1000], None).unwrap();
         drop(tx);
