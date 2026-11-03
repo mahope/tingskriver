@@ -14,6 +14,7 @@ struct Step {
     fail_swap: bool,
     backoff_ms: Option<u64>,
     lost: bool,
+    retry: bool,
 }
 struct Scenario {
     name: &'static str,
@@ -31,6 +32,7 @@ fn step(
         fail_swap: false,
         backoff_ms: None,
         lost: false,
+        retry: false,
     }
 }
 fn devices(default: Option<&str>, present: &[&str]) -> DeviceEvent {
@@ -62,6 +64,27 @@ fn scenarios() -> Vec<Scenario> {
     let mut lost = step(1, vec![devices(None, &[])], None);
     lost.lost = true;
     vec![
+        Scenario {
+            name: "enumeration failure during mute then recovery",
+            steps: vec![
+                Step {
+                    retry: true,
+                    ..step(
+                        1,
+                        vec![
+                            DeviceEvent::SnapshotError(MIC, "temporarily unavailable".into()),
+                            buffer(Buffer::Zeros),
+                        ],
+                        None,
+                    )
+                },
+                step(
+                    2,
+                    vec![devices(Some(A), &[A, B]), buffer(Buffer::Sound)],
+                    None,
+                ),
+            ],
+        },
         Scenario {
             name: "mute for sixty seconds",
             steps: (1..=60)
@@ -235,7 +258,7 @@ fn run(scenario: &Scenario, content_based_mutant: bool) -> Vec<String> {
             .collect();
         if eval.switches != expected
             || !eval.lost.is_empty() != step.lost
-            || eval.retry != step.lost
+            || eval.retry != (step.lost || step.retry)
         {
             mismatches.push(format!(
                 "{} at {}s: expected {expected:?}, lost={}, got {eval:?}",
