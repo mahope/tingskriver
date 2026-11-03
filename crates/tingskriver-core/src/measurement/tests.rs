@@ -12,8 +12,7 @@ fn sample(seconds: usize) -> Sample {
 }
 
 fn config(urls: &[(&str, &str, ProviderKind)]) -> ProvidersConfig {
-    let mut config = ProvidersConfig::default();
-    config.providers = urls
+    let providers = urls
         .iter()
         .map(|(id, url, kind)| Provider {
             id: id.to_string(),
@@ -26,8 +25,11 @@ fn config(urls: &[(&str, &str, ProviderKind)]) -> ProvidersConfig {
             chat_options: ChatOptions::default(),
         })
         .collect();
-    config.functions.clear();
-    config
+    ProvidersConfig {
+        providers,
+        functions: Default::default(),
+        ..ProvidersConfig::default()
+    }
 }
 
 #[tokio::test]

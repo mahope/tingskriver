@@ -50,6 +50,7 @@ pub mod groq;
 pub mod host;
 pub mod install;
 pub mod logging;
+pub mod measurement;
 pub mod notes;
 pub mod ollama;
 pub mod openai;
@@ -65,7 +66,6 @@ pub mod summary;
 pub mod transcript_merge;
 pub mod vad_trim;
 pub mod wer;
-pub mod measurement;
 pub mod whisper_engine;
 
 #[cfg(target_os = "windows")]

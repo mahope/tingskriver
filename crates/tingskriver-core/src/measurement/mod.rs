@@ -276,7 +276,7 @@ pub async fn run(
                 }
                 Ok(engine) => {
                     let start = Instant::now();
-                    let result = match engine {
+                    let result = match &engine {
                         ModelEngine::Parakeet(engine, _) => {
                             engine.transcribe_audio(sample.samples.clone()).await
                         }
