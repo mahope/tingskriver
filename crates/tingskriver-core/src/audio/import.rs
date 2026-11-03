@@ -586,36 +586,37 @@ async fn run_import(
 
         // Transcribe
         let cached = checkpoint.load(i, segment.start_timestamp_ms, segment.end_timestamp_ms)?;
-        let (text, conf) = if let Some(result) = cached {
+        let (text, conf, words) = if let Some(result) = cached {
             result
         } else {
             let result = if use_parakeet {
                 let engine = parakeet_engine
                     .as_ref()
                     .ok_or_else(|| anyhow!("Parakeet engine is not initialized"))?;
-                let text = engine
-                    .transcribe_audio(segment.samples)
+                let words = engine
+                    .transcribe_audio_timed(segment.samples)
                     .await
                     .map_err(|e| anyhow!("Parakeet transcription failed on segment {}: {}", i, e))?;
-                (text, 0.9f32)
+                (words.iter().map(|w| w.text.as_str()).collect::<Vec<_>>().join(" "), 0.9f32, words)
             } else {
                 let engine = whisper_engine
                     .as_ref()
                     .ok_or_else(|| anyhow!("Whisper engine is not initialized"))?;
-                let (text, conf, _) = engine
-                    .transcribe_audio_with_confidence(segment.samples, language.clone())
+                let words = engine
+                    .transcribe_audio_timed(segment.samples, language.clone())
                     .await
                     .map_err(|e| anyhow!("Whisper transcription failed on segment {}: {}", i, e))?;
-                (text, conf)
+                (words.iter().map(|w| w.text.as_str()).collect::<Vec<_>>().join(" "), 0.9f32, words)
             };
-            checkpoint.save(i, segment.start_timestamp_ms, segment.end_timestamp_ms, &result.0, result.1)?;
+            checkpoint.save(i, segment.start_timestamp_ms, segment.end_timestamp_ms, &result.0, result.1, &result.2)?;
             result
         };
 
         let trimmed = text.trim();
         if !trimmed.is_empty() {
-            if append_chunk(&mut all_transcripts, text, segment.start_timestamp_ms, segment.end_timestamp_ms) {
-                total_confidence += conf;
+            let previous_count = all_transcripts.len();
+            if append_chunk(&mut all_transcripts, words, segment.start_timestamp_ms, segment.end_timestamp_ms) {
+                total_confidence += conf * (all_transcripts.len() - previous_count) as f32;
             }
         } else {
             debug!("Segment {}/{}: {:.1}s — empty transcription", i + 1, processable_count, segment_duration_sec);
@@ -630,7 +631,7 @@ async fn run_import(
     };
 
     info!(
-        "Transcription complete: {} segments transcribed out of {}, avg confidence: {:.2}",
+        "Transcription complete: {} timed words from {} chunks, avg confidence: {:.2}",
         transcribed_count, processable_count, avg_confidence
     );
 

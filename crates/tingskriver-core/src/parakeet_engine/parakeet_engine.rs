@@ -578,6 +578,21 @@ impl ParakeetEngine {
         Ok(text)
     }
 
+    pub async fn transcribe_audio_timed(
+        &self,
+        audio_data: Vec<f32>,
+    ) -> Result<Vec<crate::stt::TimedWord>> {
+        let pool = self
+            .current_model
+            .read()
+            .await
+            .clone()
+            .ok_or_else(|| anyhow!("No Parakeet model loaded"))?;
+        tokio::task::spawn_blocking(move || pool.transcribe_timed(audio_data))
+            .await?
+            .map_err(anyhow::Error::msg)
+    }
+
     /// When the loaded model last finished a call, and how many calls run now.
     /// `None` when no model is loaded.
     pub async fn usage(&self) -> Option<(Instant, usize)> {

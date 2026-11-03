@@ -1,3 +1,4 @@
+use crate::stt::TimedWord;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
@@ -25,6 +26,7 @@ struct CompletedChunk {
     end_ms: f64,
     text: String,
     confidence: f32,
+    words: Vec<TimedWord>,
 }
 
 impl ChunkCheckpoint {
@@ -43,7 +45,7 @@ impl ChunkCheckpoint {
         let mut hash = DefaultHasher::new();
         // Bump the schema when splitting, VAD or stitching semantics change.
         (
-            "chunks-v1",
+            "chunks-v2-timed",
             env!("CARGO_PKG_VERSION"),
             provider,
             model,
@@ -72,7 +74,7 @@ impl ChunkCheckpoint {
         index: usize,
         start_ms: f64,
         end_ms: f64,
-    ) -> Result<Option<(String, f32)>> {
+    ) -> Result<Option<(String, f32, Vec<TimedWord>)>> {
         let bytes = match std::fs::read(self.path.join(format!("{index}.json"))) {
             Ok(bytes) => bytes,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -87,7 +89,8 @@ impl ChunkCheckpoint {
         if chunk.start_ms != start_ms || chunk.end_ms != end_ms {
             return Ok(None);
         }
-        Ok(Some((chunk.text, chunk.confidence)))
+        validate_words(&chunk.words, end_ms - start_ms)?;
+        Ok(Some((chunk.text, chunk.confidence, chunk.words)))
     }
 
     pub(crate) fn save(
@@ -97,13 +100,16 @@ impl ChunkCheckpoint {
         end_ms: f64,
         text: &str,
         confidence: f32,
+        words: &[TimedWord],
     ) -> Result<()> {
         anyhow::ensure!(confidence.is_finite(), "Invalid transcription confidence");
+        validate_words(words, end_ms - start_ms)?;
         let chunk = CompletedChunk {
             start_ms,
             end_ms,
             text: text.into(),
             confidence,
+            words: words.to_vec(),
         };
         let mut file = tempfile::NamedTempFile::new_in(&self.path)?;
         file.write_all(&serde_json::to_vec(&chunk)?)?;
@@ -117,51 +123,155 @@ impl ChunkCheckpoint {
     }
 }
 
-/// Text-only engines expose no word times. Match only suffix/prefix words from
-/// overlapping audio; never deduplicate repetitions across a real pause.
+fn validate_words(words: &[TimedWord], duration_ms: f64) -> Result<()> {
+    let mut previous = 0.0;
+    for word in words {
+        anyhow::ensure!(
+            !word.text.trim().is_empty()
+                && word.start_ms.is_finite()
+                && word.end_ms.is_finite()
+                && word.start_ms >= previous
+                && word.end_ms >= word.start_ms
+                && word.end_ms <= duration_ms,
+            "Invalid provider word timestamps"
+        );
+        previous = word.start_ms;
+    }
+    Ok(())
+}
+
+/// Word times are relative to the chunk; output is on the original audio clock.
 pub(crate) fn append_chunk(
     output: &mut Vec<(String, f64, f64)>,
-    text: String,
-    mut start: f64,
-    end: f64,
+    words: Vec<TimedWord>,
+    start: f64,
+    _end: f64,
 ) -> bool {
-    let mut text = text.trim().to_string();
-    if let Some((previous, _, previous_end)) = output.last() {
-        if start < *previous_end {
-            let before: Vec<_> = previous.split_whitespace().rev().take(64).collect();
-            let after: Vec<_> = text.split_whitespace().take(64).collect();
-            let normalize = |s: &str| {
-                s.trim_matches(|c: char| !c.is_alphanumeric())
-                    .to_lowercase()
-            };
-            let shared = (1..=before.len().min(after.len()))
-                .rev()
-                .find(|&n| {
-                    before[..n]
-                        .iter()
-                        .rev()
-                        .zip(&after[..n])
-                        .all(|(a, b)| !normalize(a).is_empty() && normalize(a) == normalize(b))
+    let normalize = |s: &str| {
+        s.trim_matches(|c: char| !c.is_alphanumeric())
+            .to_lowercase()
+    };
+    let first_candidate = output.partition_point(|(_, _, end)| *end < start);
+    let before = &output[first_candidate..];
+    let shared = (1..=before.len().min(words.len()))
+        .rev()
+        .find(|&n| {
+            before[before.len() - n..]
+                .iter()
+                .zip(&words[..n])
+                .all(|((text, a, b), word)| {
+                    let key = normalize(text);
+                    !key.is_empty()
+                        && key == normalize(&word.text)
+                        && ((*a < start + word.end_ms && start + word.start_ms < *b)
+                            || (*a == start + word.start_ms
+                                && (*a == *b || word.start_ms == word.end_ms)))
                 })
-                .unwrap_or(0);
-            if let Some(word) = text.split_whitespace().take(shared).last() {
-                let offset = word.as_ptr() as usize - text.as_ptr() as usize + word.len();
-                text = text[offset..].trim_start().to_string();
-            }
-            start = *previous_end;
-        }
+        })
+        .unwrap_or(0);
+    let initial_len = output.len();
+    for word in words.into_iter().skip(shared) {
+        let start_ms = (start + word.start_ms).max(output.last().map_or(0.0, |s| s.2));
+        let end_ms = (start + word.end_ms).max(start_ms);
+        output.push((word.text, start_ms, end_ms));
     }
-    if !text.is_empty() {
-        output.push((text, start, end.max(start)));
-        true
-    } else {
-        false
-    }
+    output.len() > initial_len
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn word(text: &str, start_ms: f64, end_ms: f64) -> TimedWord {
+        TimedWord {
+            text: text.into(),
+            start_ms,
+            end_ms,
+        }
+    }
+
+    #[test]
+    fn repetition_outside_shared_audio_is_not_removed() {
+        let mut output = Vec::new();
+        append_chunk(
+            &mut output,
+            vec![word("ja", 23000.0, 23500.0)],
+            0.0,
+            25000.0,
+        );
+        append_chunk(
+            &mut output,
+            vec![word("ja", 1500.0, 1800.0), word("næste", 2000.0, 2300.0)],
+            24000.0,
+            49000.0,
+        );
+        assert_eq!(
+            output.iter().map(|s| s.0.as_str()).collect::<Vec<_>>(),
+            ["ja", "ja", "næste"]
+        );
+        assert_eq!(output[1].1, 25500.0);
+    }
+
+    #[test]
+    fn distinct_repetitions_within_overlap_keep_their_times() {
+        let mut output = vec![("ja".into(), 24200.0, 24400.0)];
+        append_chunk(
+            &mut output,
+            vec![word("ja", 600.0, 800.0)],
+            24000.0,
+            49000.0,
+        );
+        assert_eq!(
+            output,
+            vec![
+                ("ja".into(), 24200.0, 24400.0),
+                ("ja".into(), 24600.0, 24800.0)
+            ]
+        );
+        let mut points = vec![("ja".into(), 24200.0, 24200.0)];
+        append_chunk(
+            &mut points,
+            vec![word("ja", 200.0, 200.0)],
+            24000.0,
+            49000.0,
+        );
+        assert_eq!(points.len(), 1);
+    }
+
+    #[test]
+    fn timed_checkpoint_round_trip_preserves_player_positions() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.wav");
+        std::fs::write(&source, b"synthetic").unwrap();
+        let cache = ChunkCheckpoint::open(dir.path(), &source, "whisper", "tiny", None).unwrap();
+        let words = vec![word("ja", 200.0, 500.0), word("næste", 800.0, 950.0)];
+        cache
+            .save(0, 24000.0, 49000.0, "ja næste", 0.9, &words)
+            .unwrap();
+        drop(cache);
+        let cache = ChunkCheckpoint::open(dir.path(), &source, "whisper", "tiny", None).unwrap();
+        let restored = cache.load(0, 24000.0, 49000.0).unwrap().unwrap().2;
+        assert_eq!(restored, words);
+        let mut output = vec![("ja".into(), 24200.0, 24500.0)];
+        append_chunk(&mut output, restored, 24000.0, 49000.0);
+        assert_eq!(
+            output,
+            vec![
+                ("ja".into(), 24200.0, 24500.0),
+                ("næste".into(), 24800.0, 24950.0)
+            ]
+        );
+        let player = crate::audio::common::create_transcript_segments(&output);
+        assert_eq!(player[0].audio_start_time, Some(24.2));
+        assert_eq!(player[1].audio_start_time, Some(24.8));
+        assert_eq!(player[1].audio_end_time, Some(24.95));
+        assert!(cache
+            .save(1, 0.0, 1000.0, "bad", 0.9, &[word("bad", -1.0, 50.0)])
+            .is_err());
+        assert!(cache
+            .save(1, 0.0, 1000.0, "bad", 0.9, &[word("bad", 10.0, 1001.0)])
+            .is_err());
+    }
 
     #[test]
     fn provider_budgets_preserve_audio_coverage_and_original_clock() {
@@ -205,8 +315,10 @@ mod tests {
         std::fs::write(&source, b"synthetic audio").unwrap();
         let first = ChunkCheckpoint::open(dir.path(), &source, "whisper", "tiny", None).unwrap();
         let other = ChunkCheckpoint::open(dir.path(), &source, "parakeet", "v3", None).unwrap();
-        first.save(0, 0.0, 1000.0, "finished words", 0.9).unwrap();
-        other.save(0, 0.0, 1000.0, "other words", 0.9).unwrap();
+        first
+            .save(0, 0.0, 1000.0, "finished words", 0.9, &[])
+            .unwrap();
+        other.save(0, 0.0, 1000.0, "other words", 0.9, &[]).unwrap();
         let path = first.path.clone();
         first.finish().unwrap();
         assert!(!path.exists());
@@ -226,7 +338,18 @@ mod tests {
                 ChunkCheckpoint::open(&root, &root.join("source.wav"), "whisper", "tiny", None)
                     .unwrap();
             cache
-                .save(0, 0.0, 25000.0, "completed before interruption", 0.9)
+                .save(
+                    0,
+                    0.0,
+                    25000.0,
+                    "completed before interruption",
+                    0.9,
+                    &[
+                        word("completed", 200.0, 600.0),
+                        word("before", 700.0, 1000.0),
+                        word("interruption", 1100.0, 1800.0),
+                    ],
+                )
                 .unwrap();
             std::process::exit(47);
         }
@@ -248,11 +371,15 @@ mod tests {
             {
                 calls.push(index);
                 resumed
-                    .save(index, start, start + 25000.0, "remaining words", 0.9)
+                    .save(index, start, start + 25000.0, "remaining words", 0.9, &[])
                     .unwrap();
             }
         }
         assert_eq!(calls, [1, 2]);
+        assert_eq!(
+            resumed.load(0, 0.0, 25000.0).unwrap().unwrap().2[0],
+            word("completed", 200.0, 600.0)
+        );
         assert_eq!(
             resumed.load(0, 0.0, 25000.0).unwrap().unwrap().0,
             "completed before interruption"
@@ -266,7 +393,9 @@ mod tests {
         std::fs::write(&source, b"synthetic audio").unwrap();
         let cache = ChunkCheckpoint::open(dir.path(), &source, "whisper", "tiny", None).unwrap();
         assert!(cache.load(0, 0.0, 25000.0).unwrap().is_none());
-        cache.save(0, 0.0, 25000.0, "synthetic words", 0.9).unwrap();
+        cache
+            .save(0, 0.0, 25000.0, "synthetic words", 0.9, &[])
+            .unwrap();
         drop(cache);
         let resumed = ChunkCheckpoint::open(dir.path(), &source, "whisper", "tiny", None).unwrap();
         assert_eq!(
@@ -289,7 +418,7 @@ mod tests {
         let source = dir.path().join("source.wav");
         std::fs::write(&source, b"synthetic").unwrap();
         let cache = ChunkCheckpoint::open(dir.path(), &source, "parakeet", "v3", None).unwrap();
-        cache.save(0, 0.0, 1000.0, "", 0.9).unwrap();
+        cache.save(0, 0.0, 1000.0, "", 0.9, &[]).unwrap();
         assert_eq!(cache.load(0, 0.0, 1000.0).unwrap().unwrap().0, "");
         std::fs::write(cache.path.join("0.json"), b"{").unwrap();
         assert!(cache.load(0, 0.0, 1000.0).is_err());
@@ -297,17 +426,22 @@ mod tests {
 
     #[test]
     fn overlap_matching_preserves_punctuation_and_nonoverlapping_repetition() {
-        let mut output = vec![("Vi taler om æbler, og pærer.".into(), 0.0, 25000.0)];
+        let mut output = vec![("Pærer.".into(), 24200.0, 24700.0)];
         append_chunk(
             &mut output,
-            "ÆBLER og pærer. Næste punkt.".into(),
+            vec![word("PÆRER", 200.0, 700.0), word("Næste", 1500.0, 2000.0)],
             24000.0,
             49000.0,
         );
-        assert_eq!(output[1].0, "Næste punkt.");
-        assert_eq!(output[1].1, 25000.0);
-        append_chunk(&mut output, "Næste punkt.".into(), 50000.0, 60000.0);
-        assert_eq!(output[2].0, "Næste punkt.");
+        assert_eq!(output[0].0, "Pærer.");
+        assert_eq!(output[1], ("Næste".into(), 25500.0, 26000.0));
+        append_chunk(
+            &mut output,
+            vec![word("Næste", 0.0, 500.0)],
+            50000.0,
+            60000.0,
+        );
+        assert_eq!(output[2].0, "Næste");
     }
 
     #[test]
@@ -316,13 +450,18 @@ mod tests {
         let mut start = 0;
         while start < 7200 {
             let end = (start + 25).min(7200);
-            let text = (start..end)
-                .map(|i| format!("ord{i}"))
-                .collect::<Vec<_>>()
-                .join(" ");
+            let words = (start..end)
+                .map(|i| {
+                    word(
+                        &format!("ord{i}"),
+                        (i - start) as f64 * 1000.0,
+                        (i - start) as f64 * 1000.0 + 800.0,
+                    )
+                })
+                .collect();
             append_chunk(
                 &mut output,
-                text,
+                words,
                 start as f64 * 1000.0,
                 end as f64 * 1000.0,
             );
@@ -331,13 +470,15 @@ mod tests {
             }
             start = end - 1;
         }
-        let actual = output
-            .iter()
-            .flat_map(|s| s.0.split_whitespace())
-            .collect::<Vec<_>>();
         let expected = (0..7200).map(|i| format!("ord{i}")).collect::<Vec<_>>();
-        assert_eq!(actual, expected);
+        assert_eq!(
+            output.iter().map(|s| &s.0).collect::<Vec<_>>(),
+            expected.iter().collect::<Vec<_>>()
+        );
         assert!(output.windows(2).all(|s| s[1].1 >= s[0].2));
-        assert_eq!(output.last().unwrap().2, 7200000.0);
+        for (i, (_, start, end)) in output.iter().enumerate() {
+            assert_eq!(*start, i as f64 * 1000.0);
+            assert_eq!(*end, i as f64 * 1000.0 + 800.0);
+        }
     }
 }

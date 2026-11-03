@@ -47,7 +47,7 @@ pub(crate) async fn unload_engine_after_batch(use_parakeet: bool) {
 }
 
 /// Create transcript segments from transcription results.
-/// Each tuple is (text, start_ms, end_ms) from VAD timestamps.
+/// Each tuple is (text, start_ms, end_ms) on the original audio clock.
 pub(crate) fn create_transcript_segments(transcripts: &[(String, f64, f64)]) -> Vec<TranscriptSegment> {
     transcripts
         .iter()

@@ -20,9 +20,45 @@ pub const MAX_INSTANCES: usize = 2;
 /// One loaded speech model instance.
 pub trait SpeechModel: Send + 'static {
     fn transcribe(&mut self, samples: Vec<f32>) -> Result<String, String>;
+    fn transcribe_timed(
+        &mut self,
+        _samples: Vec<f32>,
+    ) -> Result<Vec<crate::stt::TimedWord>, String> {
+        Err("This model does not provide word timestamps".into())
+    }
 }
 
 impl SpeechModel for ParakeetModel {
+    fn transcribe_timed(
+        &mut self,
+        samples: Vec<f32>,
+    ) -> Result<Vec<crate::stt::TimedWord>, String> {
+        let duration = samples.len() as f64 / 16.0;
+        let result = self
+            .transcribe_samples(samples)
+            .map_err(|e| e.to_string())?;
+        if result.tokens.len() != result.timestamps.len()
+            || result.timestamps.iter().any(|t| !t.is_finite())
+        {
+            return Err("Invalid Parakeet token timestamps".into());
+        }
+        let tokens = result
+            .tokens
+            .iter()
+            .enumerate()
+            .map(|(i, token)| {
+                let start = (result.timestamps[i] as f64 * 1000.0).min(duration);
+                let end = result
+                    .timestamps
+                    .get(i + 1)
+                    .map(|t| (*t as f64 * 1000.0).min(duration))
+                    .unwrap_or((start + 80.0).min(duration));
+                (token.clone(), start, end)
+            })
+            .collect();
+        Ok(crate::stt::words_from_tokens(tokens))
+    }
+
     fn transcribe(&mut self, samples: Vec<f32>) -> Result<String, String> {
         self.transcribe_samples(samples)
             .map(|result| result.text)
@@ -78,6 +114,20 @@ impl ModelPool {
             Some(model) => model.transcribe(samples),
             None => Err("Parakeet instance missing".to_string()),
         };
+        self.mark_used();
+        result
+    }
+
+    pub fn transcribe_timed(
+        &self,
+        samples: Vec<f32>,
+    ) -> Result<Vec<crate::stt::TimedWord>, String> {
+        let mut lease = self.checkout()?;
+        let result = lease
+            .model
+            .as_mut()
+            .ok_or_else(|| "Parakeet instance missing".to_string())?
+            .transcribe_timed(samples);
         self.mark_used();
         result
     }

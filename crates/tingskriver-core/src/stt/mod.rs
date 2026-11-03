@@ -4,9 +4,12 @@ pub mod ipc;
 mod server;
 
 pub use client::Client;
+mod words;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
+pub use words::TimedWord;
+pub(crate) use words::{words_from_token_bytes, words_from_tokens};
 
 static WORKER: AtomicBool = AtomicBool::new(false);
 
@@ -21,6 +24,10 @@ pub enum Request {
         quantized: bool,
     },
     Transcribe,
+    TranscribeTimed,
+    WhisperTimed {
+        language: Option<String>,
+    },
     Echo,
     Vad {
         rate: u32,
@@ -45,6 +52,26 @@ pub struct WhisperClient {
     slots: [std::sync::Mutex<Option<Client>>; 2],
 }
 impl WhisperClient {
+    pub fn transcribe_timed(
+        &self,
+        samples: &[f32],
+        language: Option<String>,
+    ) -> Result<Vec<TimedWord>, String> {
+        let mut slot = if let Ok(slot) = self.slots[0].try_lock() {
+            slot
+        } else {
+            self.slots[1].lock().map_err(|_| client::CRASH_ERROR)?
+        };
+        if slot.is_none() {
+            *slot = Some(Client::new(self.init.clone())?);
+        }
+        let request =
+            serde_json::to_vec(&Request::WhisperTimed { language }).map_err(|e| e.to_string())?;
+        let frame = slot.as_mut().unwrap().call(&request, samples)?;
+        serde_json::from_slice::<Result<Vec<TimedWord>, String>>(&frame.control)
+            .map_err(|_| client::CRASH_ERROR.to_string())?
+    }
+
     pub fn load(directory: PathBuf, name: String) -> Result<Self, String> {
         let init =
             serde_json::to_vec(&Request::Whisper { directory, name }).map_err(|e| e.to_string())?;
@@ -194,6 +221,13 @@ impl RemoteModel {
 }
 
 impl crate::parakeet_engine::pool::SpeechModel for RemoteModel {
+    fn transcribe_timed(&mut self, samples: Vec<f32>) -> Result<Vec<TimedWord>, String> {
+        let control = serde_json::to_vec(&Request::TranscribeTimed).map_err(|e| e.to_string())?;
+        let frame = self.client.call(&control, &samples)?;
+        serde_json::from_slice::<Result<Vec<TimedWord>, String>>(&frame.control)
+            .map_err(|_| client::CRASH_ERROR.to_string())?
+    }
+
     fn transcribe(&mut self, samples: Vec<f32>) -> Result<String, String> {
         let control = serde_json::to_vec(&Request::Transcribe).map_err(|e| e.to_string())?;
         let frame = self.client.call(&control, &samples)?;
