@@ -38,6 +38,8 @@ jobs:
           cache-on-failure: true
       - name: Compare all GPUI screens in light and dark
         run: cargo test --locked -p tingskriver-app --features screenshot-tests --test screenshots
+      - name: Prove the native watchdog kills a stuck process
+        run: python3 scripts/test-gpui-watchdog.py
       - name: Prove a changed production color fails
         run: python3 scripts/test-gpui-color-gate.py
       - name: Upload actual, expected and difference images
@@ -53,6 +55,8 @@ jobs:
     name: GPUI screenshots (Windows D3D)
     runs-on: windows-latest
     timeout-minutes: 30
+    env:
+      TINGSKRIVER_SCREENSHOT_OUTPUT: ${{ runner.temp }}/gpui-screenshots-windows
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -60,15 +64,22 @@ jobs:
         with:
           prefix-key: gpui-screenshots-windows-v1
           cache-on-failure: true
-      - name: Capture native GPUI screens in light and dark
+      - name: Build native screenshot harness
         shell: bash
         timeout-minutes: 20
-        run: cargo test --locked -p tingskriver-app --features screenshot-tests --test screenshots -- --capture
+        run: cargo test --locked -p tingskriver-app --features screenshot-tests --test screenshots --no-run
+      - name: Capture native GPUI screens in light and dark
+        shell: bash
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          mkdir -p "$TINGSKRIVER_SCREENSHOT_OUTPUT"
+          cargo test --locked -p tingskriver-app --features screenshot-tests --test screenshots -- --capture 2>&1 | tee "$TINGSKRIVER_SCREENSHOT_OUTPUT/run.log"
       - name: Upload native PNGs
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
           name: gpui-screenshots-windows
-          path: target/screenshots/windows
+          path: ${{ runner.temp }}/gpui-screenshots-windows
           if-no-files-found: error
           retention-days: 30

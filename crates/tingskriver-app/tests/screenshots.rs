@@ -39,6 +39,9 @@ fn fixtures() -> Vec<(String, Page, DbState)> {
 }
 
 fn main() -> anyhow::Result<()> {
+    if std::env::args().skip(1).collect::<Vec<_>>() == ["--watchdog-self-test"] {
+        native::watchdog_self_test();
+    }
     #[cfg(target_os = "linux")]
     {
         platform::run()

@@ -63,9 +63,16 @@ pub fn run() -> Result<()> {
                 cx.update(|cx| crate::native::draw_frame(window.into(), cx))?;
                 cx.run_until_parked();
             }
-            let actual = cx.capture_screenshot(window.into())?;
+            let (actual, expected) =
+                cx.update(|cx| crate::native::capture_frame(window.into(), cx))?;
             let name = format!("{scenario}-{appearance}.png");
             actual.save(output.join(&name))?;
+            if !pixel_compare::valid_viewport(actual.dimensions(), expected) {
+                bail!(
+                    "{name}: expected full viewport {expected:?}, got {:?}",
+                    actual.dimensions()
+                );
+            }
             if appearance == "light" {
                 light_images.insert(scenario.clone(), actual.clone());
             } else {

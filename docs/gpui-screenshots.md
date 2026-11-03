@@ -11,7 +11,7 @@ The canonical comparison runs headlessly on Ubuntu 24.04 with Mesa Vulkan
 software rendering. `HeadlessAppContext` supplies deterministic scheduling,
 the platform's real text system, bundled fonts/icons and GPUI's WGPU renderer.
 It needs neither Xvfb nor a logged-in desktop. Windows runs the same views
-with the normal GPUI application event loop, hidden native windows and Direct3D texture
+with the normal GPUI application event loop, off-screen native windows and Direct3D texture
 readback (`Window::render_to_image`), and uploads its PNGs. On runners without
 a hardware adapter GPUI chooses Microsoft Basic Render Driver (WARP).
 No desktop screenshot permissions or screen scraping are involved.
@@ -28,6 +28,15 @@ to catch use of unavailable GPUI APIs before the Windows CI job.
 Both adapters draw through the same untyped window context. Drawing inside
 `WindowHandle<Root>::update` recursively borrows Root and panics; the Linux
 golden run exercises this shared path as a regression check.
+Windows compilation is a separate CI step. The native executable exits with
+failure after 180 seconds if rendering or shutdown blocks; `run.log` records
+the last opening/drawing/readback stage and is uploaded even without PNGs.
+`scripts/test-gpui-watchdog.py` proves the real watchdog exits a deliberately
+parked child process with a shortened timeout, without starting GPUI.
+Native capture yields to the event loop after opening/resizing each off-screen
+window. Windows queues these operations; capturing during the launch callback
+otherwise produces 1×1 PNGs. Both adapters require full viewport dimensions
+matching the window's logical size and scale, and reject uninitialized targets.
 
 The Linux harness fixes the logical viewport to 1100×760 (headless GPUI's 2× scale
 produces 2200×1520 PNGs), appearance, frame count and simulated clock. It does
