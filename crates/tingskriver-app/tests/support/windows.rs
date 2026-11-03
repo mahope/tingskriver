@@ -12,10 +12,13 @@ pub fn draw_frame(handle: gpui::AnyWindowHandle, cx: &mut gpui::App) -> Result<(
     cx.update_window(handle, |_, window, cx| window.draw(cx).clear(cx))
 }
 
-pub fn capture_frame(
-    handle: gpui::AnyWindowHandle,
-    cx: &mut gpui::App,
-) -> Result<(image::RgbaImage, (u32, u32))> {
+pub struct CapturedFrame {
+    pub image: image::RgbaImage,
+    pub expected: (u32, u32),
+    pub minimum: (u32, u32),
+}
+
+pub fn capture_frame(handle: gpui::AnyWindowHandle, cx: &mut gpui::App) -> Result<CapturedFrame> {
     cx.update_window(handle, |_, window, _| {
         let viewport = window.viewport_size();
         let scale = window.scale_factor();
@@ -23,7 +26,11 @@ pub fn capture_frame(
             (f32::from(viewport.width) * scale).round() as u32,
             (f32::from(viewport.height) * scale).round() as u32,
         );
-        window.render_to_image().map(|image| (image, expected))
+        window.render_to_image().map(|image| CapturedFrame {
+            image,
+            expected,
+            minimum: crate::minimum_viewport(scale),
+        })
     })?
 }
 
@@ -124,9 +131,13 @@ async fn capture(cx: &mut gpui::AsyncApp) -> Result<()> {
                     .await;
             }
             println!("Reading pixels for {name}");
-            let (actual, expected) = cx.update(|cx| capture_frame(handle.into(), cx))?;
+            let CapturedFrame {
+                image: actual,
+                expected,
+                minimum,
+            } = cx.update(|cx| capture_frame(handle.into(), cx))?;
             actual.save(output.join(&name))?;
-            if !crate::pixel_compare::valid_viewport(actual.dimensions(), expected) {
+            if !crate::pixel_compare::valid_viewport(actual.dimensions(), expected, minimum) {
                 bail!(
                     "{name}: expected full viewport {expected:?}, got {:?}",
                     actual.dimensions()

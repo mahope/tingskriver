@@ -51,3 +51,11 @@ fn main() -> anyhow::Result<()> {
         native::run()
     }
 }
+
+fn minimum_viewport(scale: f32) -> (u32, u32) {
+    use tingskriver_app::theme::layout;
+    (
+        (f32::from(layout::MIN_WINDOW_WIDTH) * scale).round() as u32,
+        (f32::from(layout::MIN_WINDOW_HEIGHT) * scale).round() as u32,
+    )
+}

@@ -1,5 +1,5 @@
-pub fn valid_viewport(actual: (u32, u32), expected: (u32, u32)) -> bool {
-    actual == expected && actual.0 >= 1100 && actual.1 >= 760
+pub fn valid_viewport(actual: (u32, u32), expected: (u32, u32), minimum: (u32, u32)) -> bool {
+    actual == expected && actual.0 >= minimum.0 && actual.1 >= minimum.1
 }
 
 pub fn changed_pixels(expected: &[u8], actual: &[u8], tolerance: u8) -> usize {
@@ -19,12 +19,26 @@ pub fn changed_pixels(expected: &[u8], actual: &[u8], tolerance: u8) -> usize {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn accepts_supported_viewport_clamped_by_native_desktop() {
+        assert!(super::valid_viewport((1028, 749), (1028, 749), (640, 420)));
+    }
+
+    #[test]
     fn rejects_uninitialized_and_wrong_size_render_targets() {
-        assert!(!super::valid_viewport((1, 1), (1, 1)));
-        assert!(!super::valid_viewport((1, 1), (1100, 760)));
-        assert!(!super::valid_viewport((2200, 1520), (1100, 760)));
-        assert!(super::valid_viewport((1100, 760), (1100, 760)));
-        assert!(super::valid_viewport((2200, 1520), (2200, 1520)));
+        assert!(!super::valid_viewport((1, 1), (1, 1), (640, 420)));
+        assert!(!super::valid_viewport((1, 1), (1100, 760), (640, 420)));
+        assert!(!super::valid_viewport(
+            (2200, 1520),
+            (1100, 760),
+            (640, 420)
+        ));
+        assert!(!super::valid_viewport((639, 419), (639, 419), (640, 420)));
+        assert!(super::valid_viewport((1100, 760), (1100, 760), (640, 420)));
+        assert!(super::valid_viewport(
+            (2200, 1520),
+            (2200, 1520),
+            (1280, 840)
+        ));
     }
 
     #[test]

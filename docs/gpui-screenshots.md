@@ -37,6 +37,9 @@ Native capture yields to the event loop after opening/resizing each off-screen
 window. Windows queues these operations; capturing during the launch callback
 otherwise produces 1×1 PNGs. Both adapters require full viewport dimensions
 matching the window's logical size and scale, and reject uninitialized targets.
+The native desktop may clamp the requested dimensions; capture must match the
+actual viewport and exceed the app's minimum window size at that DPI. Linux's
+headless viewport remains fixed for golden comparison.
 
 The Linux harness fixes the logical viewport to 1100×760 (headless GPUI's 2× scale
 produces 2200×1520 PNGs), appearance, frame count and simulated clock. It does

@@ -63,11 +63,14 @@ pub fn run() -> Result<()> {
                 cx.update(|cx| crate::native::draw_frame(window.into(), cx))?;
                 cx.run_until_parked();
             }
-            let (actual, expected) =
-                cx.update(|cx| crate::native::capture_frame(window.into(), cx))?;
+            let crate::native::CapturedFrame {
+                image: actual,
+                expected,
+                minimum,
+            } = cx.update(|cx| crate::native::capture_frame(window.into(), cx))?;
             let name = format!("{scenario}-{appearance}.png");
             actual.save(output.join(&name))?;
-            if !pixel_compare::valid_viewport(actual.dimensions(), expected) {
+            if !pixel_compare::valid_viewport(actual.dimensions(), expected, minimum) {
                 bail!(
                     "{name}: expected full viewport {expected:?}, got {:?}",
                     actual.dimensions()
