@@ -520,6 +520,59 @@ async fn three_hour_meeting_loads_with_50_meetings() {
 }
 
 #[tokio::test]
+async fn transcript_api_continues_after_a_deleted_segment_without_skipping() {
+    use tingskriver_core::api::api::api_get_meeting_transcripts;
+    use tingskriver_core::state::AppState;
+
+    let dir = tempfile::tempdir().unwrap();
+    let db = create_database(dir.path()).await;
+    insert_meeting(db.pool(), "m").await;
+    for i in 0..3 {
+        sqlx::query("INSERT INTO transcripts (id, meeting_id, transcript, timestamp, audio_start_time) VALUES (?, 'm', 'segment', '00:00', ?)")
+            .bind(format!("t{i}"))
+            .bind(i as f64)
+            .execute(db.pool()).await.unwrap();
+    }
+    let state = AppState { db_manager: db };
+    let first = api_get_meeting_transcripts("m".into(), 1, None, None, &state)
+        .await
+        .unwrap();
+    assert_eq!(first.transcripts[0].id, "t0");
+    assert_eq!(first.total_count, 3);
+    assert!(first.has_more);
+    let cursor = first.next_cursor.expect("next page cursor");
+    sqlx::query("DELETE FROM transcripts WHERE id = 't0'")
+        .execute(state.db_manager.pool())
+        .await
+        .unwrap();
+    let next = api_get_meeting_transcripts("m".into(), 5, None, Some(cursor), &state)
+        .await
+        .unwrap();
+    assert_eq!(
+        next.transcripts
+            .iter()
+            .map(|t| t.id.as_str())
+            .collect::<Vec<_>>(),
+        ["t1", "t2"]
+    );
+    assert!(!next.has_more);
+    assert!(next.next_cursor.is_none());
+    // Full-export callers can still request all rows from offset zero.
+    let all = api_get_meeting_transcripts("m".into(), 5, Some(0), None, &state)
+        .await
+        .unwrap();
+    assert_eq!(all.transcripts.len(), 2);
+    assert_eq!(all.total_count, 2);
+    for (limit, offset) in [(0, None), (-1, None), (1, Some(-1))] {
+        assert!(
+            api_get_meeting_transcripts("m".into(), limit, offset, None, &state)
+                .await
+                .is_err()
+        );
+    }
+}
+
+#[tokio::test]
 #[ignore = "performance benchmark; run separately in release mode"]
 async fn three_hour_meeting_loads_in_under_200_ms_with_50_meetings() {
     let (keyset, single) = load_three_hour_meeting_with_50_meetings().await;
@@ -574,17 +627,21 @@ async fn load_three_hour_meeting_with_50_meetings() -> (Duration, Duration) {
     let started = Instant::now();
     let mut cursor = None;
     let mut loaded = 0;
+    let state = tingskriver_core::state::AppState {
+        db_manager: db.clone(),
+    };
     loop {
-        let (page, next) = MeetingsRepository::get_meeting_transcripts_page(
-            pool,
-            "meeting-7",
-            cursor.as_ref(),
+        let page = tingskriver_core::api::api::api_get_meeting_transcripts(
+            "meeting-7".into(),
             500,
+            None,
+            cursor,
+            &state,
         )
         .await
         .unwrap();
-        loaded += page.len();
-        match next {
+        loaded += page.transcripts.len();
+        match page.next_cursor {
             Some(next) => cursor = Some(next),
             None => break,
         }

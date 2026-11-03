@@ -128,10 +128,16 @@ export interface MeetingMetadata {
   folder_path?: string;
 }
 
+export interface TranscriptCursor {
+  audio_start_time: number | null;
+  row: number;
+}
+
 export interface PaginatedTranscriptsResponse {
   transcripts: Transcript[];
   total_count: number;
   has_more: boolean;
+  next_cursor: TranscriptCursor | null;
 }
 
 // Transcript segment data for virtualized display
