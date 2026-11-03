@@ -1,0 +1,46 @@
+name: Three-hour recording soak
+
+on:
+  schedule:
+    - cron: '20 22 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recording-soak-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  synthetic-recording:
+    runs-on: ubuntu-latest
+    timeout-minutes: 345
+    env:
+      CARGO_INCREMENTAL: 0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install system libraries
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev cmake clang
+      - uses: swatinem/rust-cache@v2
+      - name: Test measurement guard
+        run: python3 -m unittest discover -s scripts/tests -p test_recording_soak.py
+      - name: Build synthetic recorder
+        run: cargo build --release --locked -p tingskriver-core --example recording_soak
+      - name: Exercise verifier against injected corruption
+        env:
+          RECORDING_SOAK_BINARY: target/release/examples/recording_soak
+        run: python3 -m unittest discover -s scripts/tests -p test_recording_soak_binary.py
+      - name: Record three hours and crash halfway through a second run
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/recording-soak.py --binary target/release/examples/recording_soak --output soak-output | tee soak-metrics.jsonl
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: recording-soak-metrics
+          path: soak-metrics.jsonl
+          if-no-files-found: warn
+          retention-days: 14
