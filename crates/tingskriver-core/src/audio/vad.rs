@@ -467,6 +467,48 @@ where
     Ok(all_segments)
 }
 
+/// A VAD session whose ONNX state lives in a disposable process.
+pub struct ContinuousVadProcessor {
+    client: crate::stt::VadClient,
+}
+
+impl ContinuousVadProcessor {
+    pub fn new(input_sample_rate: u32, redemption_time_ms: u32) -> Result<Self> {
+        let config = VadConfig {
+            sample_rate: 16000,
+            positive_speech_threshold: 0.50,
+            negative_speech_threshold: 0.35,
+            redemption_time: Duration::from_millis(redemption_time_ms.into()),
+            pre_speech_pad: Duration::from_millis(300),
+            post_speech_pad: Duration::from_millis(400),
+            min_speech_time: Duration::from_millis(250),
+        };
+        Self::with_config(input_sample_rate, config)
+    }
+
+    pub fn with_config(input_sample_rate: u32, config: VadConfig) -> Result<Self> {
+        Ok(Self {
+            client: crate::stt::VadClient::new(input_sample_rate, config)
+                .map_err(anyhow::Error::msg)?,
+        })
+    }
+
+    pub fn process_audio(&mut self, samples: &[f32]) -> Result<Vec<SpeechSegment>> {
+        self.client
+            .process(samples, false)
+            .map_err(anyhow::Error::msg)
+    }
+
+    pub fn flush(&mut self) -> Result<Vec<SpeechSegment>> {
+        self.client.process(&[], true).map_err(anyhow::Error::msg)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn buffered_session_samples(&mut self) -> usize {
+        self.client.buffered().unwrap()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -798,47 +840,5 @@ mod tests {
             processor.flush().expect("second flush failed").is_empty(),
             "flush() must not emit the same forced segment twice"
         );
-    }
-}
-
-/// A VAD session whose ONNX state lives in a disposable process.
-pub struct ContinuousVadProcessor {
-    client: crate::stt::VadClient,
-}
-
-impl ContinuousVadProcessor {
-    pub fn new(input_sample_rate: u32, redemption_time_ms: u32) -> Result<Self> {
-        let config = VadConfig {
-            sample_rate: 16000,
-            positive_speech_threshold: 0.50,
-            negative_speech_threshold: 0.35,
-            redemption_time: Duration::from_millis(redemption_time_ms.into()),
-            pre_speech_pad: Duration::from_millis(300),
-            post_speech_pad: Duration::from_millis(400),
-            min_speech_time: Duration::from_millis(250),
-        };
-        Self::with_config(input_sample_rate, config)
-    }
-
-    pub fn with_config(input_sample_rate: u32, config: VadConfig) -> Result<Self> {
-        Ok(Self {
-            client: crate::stt::VadClient::new(input_sample_rate, config)
-                .map_err(anyhow::Error::msg)?,
-        })
-    }
-
-    pub fn process_audio(&mut self, samples: &[f32]) -> Result<Vec<SpeechSegment>> {
-        self.client
-            .process(samples, false)
-            .map_err(anyhow::Error::msg)
-    }
-
-    pub fn flush(&mut self) -> Result<Vec<SpeechSegment>> {
-        self.client.process(&[], true).map_err(anyhow::Error::msg)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn buffered_session_samples(&mut self) -> usize {
-        self.client.buffered().unwrap()
     }
 }
