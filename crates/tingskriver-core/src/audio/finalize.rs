@@ -862,7 +862,9 @@ pub async fn finalize_pending_at_startup() {
     let recordings = super::recording_preferences::get_default_recordings_folder();
     let result = tokio::task::spawn_blocking(move || {
         let ffmpeg = super::ffmpeg::find_ffmpeg_path();
-        finalize_pending_recordings(&recordings, ffmpeg.as_deref())
+        let done = finalize_pending_recordings(&recordings, ffmpeg.as_deref());
+        crate::recover::scan_at_startup(&recordings);
+        done
     })
     .await;
     match result {
