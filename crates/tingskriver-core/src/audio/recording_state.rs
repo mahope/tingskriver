@@ -14,6 +14,11 @@ fn clock_ms() -> u64 {
     EPOCH.get_or_init(Instant::now).elapsed().as_millis() as u64
 }
 
+fn clock_ns() -> u64 {
+    static EPOCH: OnceLock<Instant> = OnceLock::new();
+    EPOCH.get_or_init(Instant::now).elapsed().as_nanos() as u64
+}
+
 /// Time since a `clock_ms() + 1` stamp (0: never).
 fn since(stamp: u64) -> Option<Duration> {
     match stamp {
@@ -111,6 +116,8 @@ pub struct RecordingState {
     // Core recording state
     is_recording: AtomicBool,
     is_paused: AtomicBool,
+    active_origin_ns: AtomicU64,
+    pause_clock_ns: AtomicU64,
 
     // Audio devices
     microphone_device: Mutex<Option<Arc<AudioDevice>>>,
@@ -155,6 +162,8 @@ impl RecordingState {
         Arc::new(Self {
             is_recording: AtomicBool::new(false),
             is_paused: AtomicBool::new(false),
+            active_origin_ns: AtomicU64::new(0),
+            pause_clock_ns: AtomicU64::new(0),
             microphone_device: Mutex::new(None),
             system_device: Mutex::new(None),
             audio_sender: Mutex::new(None),
@@ -241,6 +250,7 @@ impl RecordingState {
 
     // Recording control
     pub fn start_recording(&self) -> Result<()> {
+        self.active_origin_ns.store(clock_ns(), Ordering::Release);
         self.is_recording.store(true, Ordering::SeqCst);
         *self
             .recording_start
@@ -291,6 +301,7 @@ impl RecordingState {
             return Err(anyhow::anyhow!("Recording is already paused"));
         }
 
+        self.pause_clock_ns.store(clock_ns(), Ordering::Release);
         self.is_paused.store(true, Ordering::SeqCst);
         *self
             .pause_start
@@ -320,6 +331,7 @@ impl RecordingState {
             log::info!("Recording resumed after pause of {:.2}s", pause_duration.as_secs_f64());
         }
 
+        self.active_origin_ns.fetch_add(clock_ns().saturating_sub(self.pause_clock_ns.load(Ordering::Acquire)), Ordering::AcqRel);
         self.is_paused.store(false, Ordering::SeqCst);
         Ok(())
     }
@@ -330,6 +342,11 @@ impl RecordingState {
 
     pub fn is_paused(&self) -> bool {
         self.is_paused.load(Ordering::SeqCst)
+    }
+
+    pub(super) fn callback_position(&self) -> Option<Duration> {
+        if !self.is_active() { return None; }
+        Some(Duration::from_nanos(clock_ns().saturating_sub(self.active_origin_ns.load(Ordering::Acquire))))
     }
 
     pub fn is_active(&self) -> bool {
@@ -384,9 +401,10 @@ impl RecordingState {
             return Ok(()); // Silently discard chunks while paused
         }
 
-        // Position on the recording clock without pauses, so a pause leaves
-        // no gap in the tracks.
-        let position = self.get_active_recording_duration();
+        self.send_audio_chunk_at(chunk, self.get_active_recording_duration())
+    }
+
+    pub(super) fn send_audio_chunk_at(&self, chunk: AudioChunk, position: Option<f64>) -> Result<()> {
         let kind = match chunk.device_type {
             DeviceType::Microphone => TrackKind::Microphone,
             DeviceType::System => TrackKind::System,
@@ -488,7 +506,7 @@ impl RecordingState {
         if last_is_recoverable {
             self.recoverable_error_count.store(0, Ordering::SeqCst);
             self.error_window.lock().unwrap_or_else(|e| e.into_inner()).clear();
-        self.error_count.store(0, Ordering::SeqCst);
+            self.error_count.store(0, Ordering::SeqCst);
         }
     }
 
@@ -626,6 +644,8 @@ impl Default for RecordingState {
         Self {
             is_recording: AtomicBool::new(false),
             is_paused: AtomicBool::new(false),
+            active_origin_ns: AtomicU64::new(0),
+            pause_clock_ns: AtomicU64::new(0),
             microphone_device: Mutex::new(None),
             system_device: Mutex::new(None),
             audio_sender: Mutex::new(None),

@@ -35,6 +35,7 @@ pub struct AudioCapture {
     high_pass_filter: Arc<std::sync::Mutex<Option<HighPassFilter>>>,
     // EBU R128 normalizer for microphone audio (per-device, stateful)
     normalizer: Arc<std::sync::Mutex<Option<LoudnessNormalizer>>>,
+    last_capture_stamp: Arc<std::sync::Mutex<Option<super::callback_queue::CaptureStamp>>>,
     // Note: Using global recording timestamp for synchronization
 }
 
@@ -203,12 +204,37 @@ impl AudioCapture {
             noise_suppressor: Arc::new(std::sync::Mutex::new(noise_suppressor)),
             high_pass_filter: Arc::new(std::sync::Mutex::new(high_pass_filter)),
             normalizer: Arc::new(std::sync::Mutex::new(normalizer)),
+            last_capture_stamp: Arc::new(std::sync::Mutex::new(None)),
             // Using global recording time for sync
         }
     }
 
-    /// Process audio data directly from callback
+    pub(super) fn note_callback_frames(&self, has_frames: bool) {
+        self.state.note_callback_frames(&self.device_type, has_frames);
+    }
+
+    pub(super) fn callback_stamp(&self) -> Option<super::callback_queue::CaptureStamp> {
+        Some(super::callback_queue::CaptureStamp {
+            position: self.state.callback_position()?,
+            muted: matches!(self.device_type, DeviceType::Microphone) && crate::dictation::is_dictating(),
+        })
+    }
+
+    pub(super) fn worker_failed(&self) {
+        self.state.report_error(AudioError::ChannelClosed);
+    }
+
+    pub(super) fn device_name(&self) -> &str {
+        &self.device.name
+    }
+
+    /// Process audio data on the capture worker
     pub fn process_audio_data(&self, data: &[f32]) {
+        self.process_audio_data_at(data, None);
+    }
+
+    pub(super) fn process_audio_data_at(&self, data: &[f32], stamp: Option<super::callback_queue::CaptureStamp>) {
+        *self.last_capture_stamp.lock().unwrap_or_else(|e| e.into_inner()) = stamp;
         // Check if still recording
         if !self.state.is_recording() {
             return;
@@ -342,7 +368,12 @@ impl AudioCapture {
             }
         }
 
-        self.finish_chunk(mono_data);
+        let stamp = stamp.map(|mut stamp| {
+            let pending = self.resampler_input_buffer.lock().unwrap_or_else(|e| e.into_inner()).len();
+            stamp.position = stamp.position.saturating_sub(std::time::Duration::from_secs_f64(pending as f64 / self.sample_rate as f64));
+            stamp
+        });
+        self.finish_chunk(mono_data, stamp);
     }
 
     /// Push the samples still waiting in the resampler (less than one
@@ -378,12 +409,12 @@ impl AudioCapture {
         tail.truncate(keep);
         if !tail.is_empty() {
             info!("[{:?}] Flushed {} resampler tail samples to the track", self.device_type, tail.len());
-            self.finish_chunk(tail);
+            self.finish_chunk(tail, *self.last_capture_stamp.lock().unwrap_or_else(|e| e.into_inner()));
         }
     }
 
     /// Microphone filters, dictation mute, and hand-off to the disk writer.
-    fn finish_chunk(&self, mut mono_data: Vec<f32>) {
+    fn finish_chunk(&self, mut mono_data: Vec<f32>, stamp: Option<super::callback_queue::CaptureStamp>) {
         // AUDIO ENHANCEMENT PIPELINE (Microphone Only)
         // Processing order is critical: high-pass → noise suppression → normalization
         // This ensures noise is removed before being amplified by the normalizer
@@ -480,7 +511,7 @@ impl AudioCapture {
 
         // Keep dictation speech out of the meeting: silence the microphone
         // track (same length, so timing is preserved) while dictating.
-        if matches!(self.device_type, DeviceType::Microphone) && crate::dictation::is_dictating() {
+        if stamp.map_or_else(|| matches!(self.device_type, DeviceType::Microphone) && crate::dictation::is_dictating(), |s| s.muted) {
             mono_data.fill(0.0);
         }
 
@@ -499,7 +530,11 @@ impl AudioCapture {
 
         // Hand the chunk to the disk writer (its own track per device).
         let sent_len = audio_chunk.data.len();
-        if let Err(e) = self.state.send_audio_chunk(audio_chunk) {
+        let result = match stamp {
+            Some(stamp) => self.state.send_audio_chunk_at(audio_chunk, Some(stamp.position.as_secs_f64())),
+            None => self.state.send_audio_chunk(audio_chunk),
+        };
+        if let Err(e) = result {
             // Check if this is the "pipeline not ready" error
             if e.to_string().contains("Audio pipeline not ready") {
                 // This is expected during initialization, just log it as debug

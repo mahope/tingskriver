@@ -91,6 +91,7 @@ Se [målemetoden](docs/ydeevne.md) og [release-checklisten](docs/release-checkli
 - Byggevejledning: [docs/BUILDING.md](docs/BUILDING.md). Frontenden ligger i `frontend/` (Tauri 2, Next.js, Rust).
 - Logfiler: `%LOCALAPPDATA%\dk.mahoje.tingskriver\logs\` (`tingskriver.log`, roterer ved 5 MB, de to seneste filer gemmes også). Åbn mappen fra Indstillinger under "Logfiler". Enhedsskift står som `[DEVICE_FOLLOW]`-linjer med tidsstempel.
 - Test af diktering: `cargo test -p tingskriver-core dictation` (renskrivning, genvej, dobbelttryk, reservevalg, SQLite-lager og Syv.ai-kaldet mod en falsk server; kører på Linux og i CI).
+- Lyd-callbacken bruger en låsefri kø til en DSP-arbejdstråd. Se [test og måling af callbacken](docs/audio-callback.md), herunder Windows-målingen af p99 og fejlgrænserne pr. minut.
 - Ingen brugsstatistik eller telemetri indsamles.
 - Afbrudte referater: ved opstart markeres ventende referater ældre end generationstimeout (15 minutter) som fejlede og kan prøves igen. Et tidligere referat bevares.
 - Database: mødesiden henter transskripter med en cursor frem for OFFSET. Kør `cargo test --locked -p tingskriver-core --test database_startup` for indeks, WAL, sikkerhedskopiering og paginering. Benchmarken køres med `cargo test --locked --release -p tingskriver-core --test database_startup three_hour_meeting_loads_in_under_200_ms -- --ignored --nocapture`.
