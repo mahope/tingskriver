@@ -45,8 +45,14 @@ JVM tests cover stub behavior, input-field policy and recording ownership:
 permission denial/open failure, duplicate start, stale worker generations,
 cancel/restart, stop, read failure/revocation, partial chunks, sample capacity
 and elapsed-time cutoff even when no samples arrive. They use synthetic sample
-values, never voices. Android lifecycle wiring and physical microphone release
-still require the device checks below.
+values, never voices. Service lifecycle tests call the actual IME overrides for
+same-app field changes, app changes, input restart, finish, hide, destruction and
+cancel/new session, then deliver stale synthetic results to the service-owned
+insertion controller. They use the Android Gradle plugin's default-returning
+framework stubs and reflection to access the controller without a production
+test hook. They check cancellation wiring, not Android framework or OEM behavior;
+physical microphone release and actual InputConnection behavior still require
+the device checks below.
 
 ## Release
 

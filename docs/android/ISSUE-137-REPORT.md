@@ -46,3 +46,30 @@ EditText/webformular er endnu ikke prøvet. Fixes #137.
 
 Ingen PR oprettet. Ikke klar til at erklære alle acceptkriterier opfyldt før
 Gradle-gaten og den fysiske prøve er gennemført.
+
+## Opfølgning på review 2026-11-03
+
+Begge fund er vurderet som korrekte. Ingen P3-fund var angivet.
+
+- P2: Tilføjet otte tests i InputMethodLifecycleTest, der kalder den faktiske
+  services onStartInput (samme app, anden app og restarting), onFinishInput,
+  onFinishInputView, onWindowHidden og onDestroy. Et gammelt syntetisk resultat
+  afleveres derefter til servicens egen InsertionSession. En særskilt test
+  kontrollerer gammel callback og vellykket ny session efter annullering.
+  Testene supplerer de eksisterende controller-tests; produktionskode er uændret.
+  Android-framework-metoder bruger Gradles default-returnerende JVM-stubs.
+  Det er tests af servicekoblingen, ikke af platformens InputConnection.
+- Målrettet Gradle-kørsel af InputMethodLifecycleTest blev forsøgt først, men
+  stoppede før kompilering: "Gradle requires JVM 17 or later" (installeret: 11).
+  Derfor er hverken rød/grøn-kørsel eller mutation af servicekoblingen udført;
+  de otte nye tests er endnu ikke verificeret.
+- Fuld Android-gate forsøgt til sidst med assembleDebug, testDebugUnitTest og
+  lintDebug; samme JVM-blokering før build. Alle 23 eksisterende rene Kotlin/
+  JUnit-tests kørt separat med kotlinc: OK (23 tests). Dette inkluderer ikke
+  de nye service-tests. Ingen nye pakker installeret.
+- P1 er ikke løst: adb devices viser fortsat ingen enheder. Fysisk EditText,
+  webformular og service-stop kan ikke verificeres her. Den eksisterende
+  fysiske prøveplan gælder fortsat, og grenen er ikke klar til merge på dette
+  grundlag. Der påstås ingen fysisk eller fuld Gradle-verifikation.
+
+Ingen PR oprettet. Commit og push omfatter kun testdækning og dokumentation.
