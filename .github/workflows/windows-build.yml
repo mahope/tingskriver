@@ -121,6 +121,14 @@ jobs:
         working-directory: frontend
         run: pnpm install --frozen-lockfile
 
+      - name: Build isolated speech worker
+        shell: pwsh
+        run: |
+          cargo build --release --locked -p tingskriver-core --bin tingskriver-stt --features vulkan
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Force -Path "frontend/src-tauri/binaries" | Out-Null
+          Copy-Item "target/release/tingskriver-stt.exe" -Destination "frontend/src-tauri/binaries/tingskriver-stt-x86_64-pc-windows-msvc.exe"
+
       - name: Build llama-helper sidecar (CPU)
         shell: pwsh
         run: |

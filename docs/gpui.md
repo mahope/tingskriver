@@ -118,7 +118,10 @@ is a software-GL effect and says nothing about Windows.
 
 Download `tingskriver-app-windows-x64` from the "GPUI app artifact (Windows
 release)" job of the newest CI run on the branch (Actions, run, Artifacts),
-unpack `tingskriver-app.exe` anywhere and start it. The Tauri app may run at
+unpack all files into the same folder and start `tingskriver-app.exe`. Keep
+`tingskriver-stt.exe`, `onnxruntime.dll`, `onnxruntime_providers_shared.dll`
+and `onnxruntime-LICENSE.txt` beside the app for local transcription.
+The Tauri app may run at
 the same time; both use the same database with the same migrations.
 
 1. **Start time.** Close the app, wait 10 s, start it five times. After each

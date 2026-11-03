@@ -140,9 +140,13 @@ webview window, so it can stay on top, be click-through and never take focus.
 
 Meetings and dictation share the Parakeet and Whisper engines in core.
 
-- Inference never runs on a tokio worker or under an engine lock. Whisper
-  clones its context (`Arc`) and runs in `spawn_blocking` with its own state.
-  An ONNX session needs `&mut`, so Parakeet keeps a pool of up to two loaded
+- Native inference and ONNX startup run in `tingskriver-stt`, reached over
+  private stdin/stdout pipes with request IDs and raw f32 PCM. A worker crash
+  fails the current call in Danish; the next call restarts and reloads it.
+  Silero also runs there; failed startup selects energy VAD in core.
+- Inference never runs on an app tokio worker or under an engine lock.
+  Whisper keeps one warm process and lazily starts a second for overlapping
+  calls. An ONNX session needs `&mut`, so Parakeet keeps a pool of up to two loaded
   instances (`parakeet_engine::pool`): a short dictation during a long meeting
   segment borrows the second instance instead of waiting. The second instance
   is loaded the first time two calls overlap and then stays.

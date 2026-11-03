@@ -95,6 +95,11 @@ Se [målemetoden](docs/ydeevne.md) og [release-checklisten](docs/release-checkli
 
 - Test af enhedsskift: `rustc --edition 2021 --test crates/tingskriver-core/src/audio/device_follow.rs -o /tmp/df && /tmp/df` (ren std, kører på Linux; det samme gør CI på hver gren). Manuel test på Windows: optag, tag headsettet af og på igen, og tjek at `audio.mp4` ikke har huller og at `[DEVICE_FOLLOW]`-linjerne i loggen viser skiftet inden for ca. 1 sekund. Tryk også på mute på headsettet i mindst 30 sekunder under optagelsen og tjek, at der ikke kommer noget skift.
 
+Lokal Parakeet, Whisper og Silero-VAD kører i `tingskriver-stt`, så et native
+modelnedbrud ikke lukker optagelse, genvej eller tray. Det berørte kald fejler;
+næste kald genstarter processen. Kan ONNX Runtime ikke starte, bruger automatisk
+VAD energidetektion. Se [bygning og test af sidecaren](docs/BUILDING.md#isolated-local-speech-inference).
+
 ## English
 
 Tingskriver is a privacy-first meeting recorder and transcriber for Windows that runs locally. Audio, transcripts and summaries stay on your machine unless you choose an external AI service yourself. It is made for Danish users, is free and open source, and has no Pro version or paywall.

@@ -81,6 +81,7 @@ impl Drop for InFlightCall {
 
 pub struct WhisperEngine {
     models_dir: PathBuf,
+    remote: RwLock<Option<Arc<crate::stt::WhisperClient>>>,
     /// The read lock is only held to clone the `Arc`, never during inference.
     current_context: Arc<RwLock<Option<Arc<WhisperContext>>>>,
     /// When the last call finished, and how many calls run now.
@@ -201,6 +202,7 @@ impl WhisperEngine {
         
         let engine = Self {
             models_dir,
+            remote: RwLock::new(None),
             current_context: Arc::new(RwLock::new(None)),
             last_used: Arc::new(std::sync::Mutex::new(Instant::now())),
             in_flight: Arc::new(AtomicUsize::new(0)),
@@ -334,6 +336,17 @@ impl WhisperEngine {
 
                 log::info!("Loading model: {}", model_name);
 
+                if !crate::stt::is_worker() {
+                    let directory = self.models_dir.clone();
+                    let name = model_name.to_string();
+                    let remote = tokio::task::spawn_blocking(move || crate::stt::WhisperClient::load(directory, name))
+                        .await?.map_err(anyhow::Error::msg)?;
+                    *self.remote.write().await = Some(Arc::new(remote));
+                    self.mark_used();
+                    *self.current_model.write().await = Some(model_name.to_string());
+                    return Ok(());
+                }
+
                 // PERFORMANCE OPTIMIZATION: Use comprehensive hardware profile for optimal GPU configuration
                 let hardware_profile = crate::audio::HardwareProfile::detect();
                 let adaptive_config = hardware_profile.get_whisper_config();
@@ -401,7 +414,7 @@ impl WhisperEngine {
 
     pub async fn unload_model(&self) -> bool  {
         let mut ctx_guard = self.current_context.write().await;
-        let unloaded = ctx_guard.take().is_some();
+        let unloaded = ctx_guard.take().is_some() | self.remote.write().await.take().is_some();
         if unloaded {
             log::info!("📉Whisper model unloaded");
         }
@@ -417,13 +430,13 @@ impl WhisperEngine {
     }
     
     pub async fn is_model_loaded(&self) -> bool {
-        self.current_context.read().await.is_some()
+        self.current_context.read().await.is_some() || self.remote.read().await.is_some()
     }
 
     /// When the loaded model last finished a call, and how many calls run now.
     /// `None` when no model is loaded.
     pub async fn usage(&self) -> Option<(Instant, usize)> {
-        self.current_context.read().await.as_ref()?;
+        if !self.is_model_loaded().await { return None; }
         let last_used = *self.last_used.lock().unwrap_or_else(|p| p.into_inner());
         Some((last_used, self.in_flight.load(Ordering::SeqCst)))
     }
@@ -619,6 +632,15 @@ impl WhisperEngine {
     
     /// Transcribe audio with streaming support for partial results and adaptive quality
     pub async fn transcribe_audio_with_confidence(&self, audio_data: Vec<f32>, language: Option<String>) -> Result<(String, f32, bool)> {
+        let remote = self.remote.read().await.clone();
+        if let Some(remote) = remote {
+            let call = self.start_call();
+            let result = tokio::task::spawn_blocking(move || {
+                let _call = call;
+                remote.transcribe(&audio_data, language, true)
+            }).await?.map_err(anyhow::Error::msg);
+            return result;
+        }
         self.run_blocking(move |ctx| {
             // Get adaptive configuration based on hardware
             let hardware_profile = crate::audio::HardwareProfile::detect();
@@ -735,6 +757,15 @@ impl WhisperEngine {
     }
 
     pub async fn transcribe_audio(&self, audio_data: Vec<f32>, language: Option<String>) -> Result<String> {
+        let remote = self.remote.read().await.clone();
+        if let Some(remote) = remote {
+            let call = self.start_call();
+            let result = tokio::task::spawn_blocking(move || {
+                let _call = call;
+                remote.transcribe(&audio_data, language, false)
+            }).await?.map_err(anyhow::Error::msg);
+            return result.map(|result| result.0);
+        }
         // Duration-based optimization is handled by beam search parameters
         let duration_seconds = audio_data.len() as f64 / 16000.0; // Assuming 16kHz
         let is_short_audio = duration_seconds < 1.0;
