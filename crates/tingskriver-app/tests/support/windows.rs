@@ -42,6 +42,9 @@ pub fn run() -> Result<()> {
     // rather than leaving agents waiting for the outer CI job timeout.
     let _watchdog = watchdog(std::time::Duration::from_secs(180));
     println!("Launching native GPUI application");
+    // Keep the runtime alive until GPUI has released the model's handles.
+    let runtime = tokio::runtime::Runtime::new()?;
+    let runtime_handle = runtime.handle().clone();
     let result = Rc::new(RefCell::new(None));
     let captured = result.clone();
     gpui_platform::application()
@@ -52,12 +55,22 @@ pub fn run() -> Result<()> {
             // Launching capture synchronously leaves 1×1 render targets and
             // prevents shutdown messages from being serviced.
             cx.spawn(async move |cx| {
-                let outcome = capture(cx).await;
+                let outcome = capture(cx, runtime_handle).await;
                 *captured.borrow_mut() = Some(outcome);
+                println!("Capture completed; stopping native message loop");
+                // Platform::quit queues another foreground task. Post the
+                // quit message directly on this UI thread after capture.
+                #[cfg(target_os = "windows")]
+                unsafe {
+                    windows::Win32::UI::WindowsAndMessaging::PostQuitMessage(0);
+                }
+                #[cfg(not(target_os = "windows"))]
                 cx.update(|cx| cx.quit());
             })
             .detach();
         });
+    println!("Native message loop stopped");
+    runtime.shutdown_timeout(std::time::Duration::from_secs(1));
     let result = result
         .borrow_mut()
         .take()
@@ -80,14 +93,13 @@ pub fn watchdog_self_test() -> ! {
     }
 }
 
-async fn capture(cx: &mut gpui::AsyncApp) -> Result<()> {
+async fn capture(cx: &mut gpui::AsyncApp, runtime: tokio::runtime::Handle) -> Result<()> {
     let output = std::env::var_os("TINGSKRIVER_SCREENSHOT_OUTPUT")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/screenshots/windows")
         });
     std::fs::create_dir_all(&output)?;
-    let runtime = tokio::runtime::Runtime::new()?;
     cx.update(|cx| {
         gpui_component::init(cx);
         assets::register_fonts(cx);
@@ -109,7 +121,7 @@ async fn capture(cx: &mut gpui::AsyncApp) -> Result<()> {
                         ..Default::default()
                     },
                     |window, cx| {
-                        let shell = Shell::fixture(page, db, runtime.handle().clone(), window, cx);
+                        let shell = Shell::fixture(page, db, runtime.clone(), window, cx);
                         cx.new(|cx| Root::new(shell, window, cx))
                     },
                 )
