@@ -65,6 +65,7 @@ pub mod summary;
 pub mod transcript_merge;
 pub mod vad_trim;
 pub mod wer;
+pub mod measurement;
 pub mod whisper_engine;
 
 #[cfg(target_os = "windows")]
