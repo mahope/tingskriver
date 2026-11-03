@@ -863,13 +863,7 @@ impl Service {
         if let Ok(mut slot) = self.active_mode.lock() {
             *slot = mode.as_ref().map(|m| m.name.clone());
         }
-        let cleaned = cleanup::clean_with(&input, &Options {
-            style,
-            rules: &rules,
-            format_numbers: settings.format_numbers && mode.as_ref().and_then(|m| m.formatting.number_format.as_deref()) != Some("ordret"),
-            format_addresses: settings.format_addresses,
-            enter_triggers: &[],
-        });
+        let cleaned = cleanup::clean_with(&input, &cleanup_options(style, &rules, &settings, mode.as_ref()));
         if let Some(command @ (VoiceCommand::DeleteThat | VoiceCommand::SelectThat)) = cleaned.command {
             self.overlay.set(OverlayState::Hidden);
             turn.wait().await;
@@ -1084,3 +1078,56 @@ async fn apply_edit(_plan: spoken::EditPlan) -> Result<(), String> {
 fn focused_field() -> Option<FieldId> { super::target_win::focused_field() }
 #[cfg(not(windows))]
 fn focused_field() -> Option<FieldId> { None }
+
+fn cleanup_options<'a>(
+    style: Style,
+    rules: &'a Rules,
+    settings: &DictationSettings,
+    mode: Option<&Mode>,
+) -> Options<'a> {
+    Options {
+        style,
+        rules,
+        format_numbers: style == Style::Normal && settings.format_numbers
+            && mode.and_then(|m| m.formatting.number_format.as_deref()) != Some("ordret"),
+        format_addresses: style == Style::Normal && settings.format_addresses,
+        enter_triggers: &[],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn service_raw_cleanup_preserves_numbers_and_addresses() {
+        let settings = DictationSettings::default();
+        let rules = Rules::default();
+        let options = cleanup_options(Style::Raw, &rules, &settings, None);
+        assert!(!options.format_numbers);
+        assert!(!options.format_addresses);
+        assert_eq!(cleanup::clean_with("git checkout tretten", &options).text, "git checkout tretten");
+        assert_eq!(cleanup::clean_with("anna snabel-a eksempel punktum dk", &options).text,
+            cleanup::clean_with("anna snabel-a eksempel punktum dk", &Options::new(Style::Raw, &rules)).text);
+    }
+
+    #[test]
+    fn service_normal_cleanup_respects_formatting_settings() {
+        let mut settings = DictationSettings::default();
+        let rules = Rules::default();
+        let options = cleanup_options(Style::Normal, &rules, &settings, None);
+        assert!(options.format_numbers);
+        assert!(options.format_addresses);
+        assert_eq!(cleanup::clean_with("tretten", &options).text, "13");
+        let mut mode = settings.modes.modes[0].clone();
+        mode.formatting.number_format = Some("ordret".into());
+        let options = cleanup_options(Style::Normal, &rules, &settings, Some(&mode));
+        assert!(!options.format_numbers);
+        assert!(options.format_addresses);
+        settings.format_numbers = false;
+        settings.format_addresses = false;
+        let options = cleanup_options(Style::Normal, &rules, &settings, None);
+        assert!(!options.format_numbers);
+        assert!(!options.format_addresses);
+    }
+}
