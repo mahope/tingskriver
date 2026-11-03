@@ -93,9 +93,14 @@ impl Engine for ModelEngine {
 }
 
 /// Strict RIFF/WAVE PCM16, mono 16 kHz, 0 < duration <= 8 s. No resampling.
-#[allow(clippy::disallowed_methods)]
 pub fn read_pcm16(path: &Path) -> Result<Vec<f32>> {
-    if std::fs::metadata(path).context("Cannot inspect WAV")?.len() > 300_000 {
+    read_pcm16_with_limit(path, 8)
+}
+
+#[allow(clippy::disallowed_methods)] // Synchronous WAV reader used by disk workers.
+pub(crate) fn read_pcm16_with_limit(path: &Path, seconds: u64) -> Result<Vec<f32>> {
+    let max_data = seconds * 32_000;
+    if std::fs::metadata(path).context("Cannot inspect WAV")?.len() > max_data + 44_000 {
         bail!("WAV exceeds short-clip size limit");
     }
     let bytes = std::fs::read(path).context("Cannot read WAV")?;
@@ -147,9 +152,9 @@ pub fn read_pcm16(path: &Path) -> Result<Vec<f32>> {
         || position != bytes.len()
         || data.is_empty()
         || data.len() % 2 != 0
-        || data.len() > 256_000
+        || data.len() as u64 > max_data
     {
-        bail!("Invalid WAV or clip longer than 8 seconds");
+        bail!("Invalid WAV or clip exceeds duration limit");
     }
     Ok(data
         .chunks_exact(2)

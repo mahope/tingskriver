@@ -64,6 +64,21 @@ pub fn is_code_editor(process: Option<&str>) -> bool {
     })
 }
 
+/// The style the user's list sets for `process`, if it names it. A program
+/// from [`default_rules`] that the user removed from the list counts as
+/// normal, so removing VS Code still turns raw text off.
+pub fn chosen_style(process: &str, rules: &[AppStyleRule]) -> Option<Style> {
+    let name = base_name(process);
+    let named = |rules: &[AppStyleRule]| rules.iter().any(|r| same_name(base_name(&r.process), name));
+    if named(rules) {
+        Some(style_for(Some(process), rules))
+    } else if named(&default_rules()) {
+        Some(Style::Normal)
+    } else {
+        None
+    }
+}
+
 pub fn style_for(process: Option<&str>, rules: &[AppStyleRule]) -> Style {
     let Some(process) = process else {
         return Style::Normal;

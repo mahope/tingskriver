@@ -15,16 +15,17 @@ use crate::host::{HostExt, HostHandle};
 use super::capture::Recorder;
 use super::logic::app_style;
 use super::logic::audio;
-use super::logic::cleanup::{self, Rules, Style};
+use super::logic::cleanup::{self, Options, Rules, Style};
 use super::logic::engine::{self, Attempt, Engine, EnginePreference, Next};
 use super::logic::gesture::{Gesture, GestureAction, GestureConfig, GestureEvent};
 use super::logic::hotkey::ChordSignal;
 use super::logic::order::Order;
+use super::logic::spoken::{self, FieldId, LastInsertion, VoiceCommand};
 use super::logic::timing::{self, Steps};
 use super::overlay::{Overlay, OverlayState};
 use super::modes::{Context, Mode};
 use super::secrets;
-use super::settings::DictationSettings;
+use super::settings::{self, DictationSettings};
 use super::store::{NewHistoryEntry, Store};
 use super::syv;
 use super::timings::{LatencyReport, LatencyWarning, NewTiming, Timings, LATENCY_WARNING_EVENT};
@@ -68,6 +69,8 @@ pub struct Service {
     /// The lowest unfinished ticket, for waiting dictations.
     insert_turn: tokio::sync::watch::Sender<u64>,
     last_error: Mutex<Option<String>>,
+    last_insertion: Mutex<Option<LastInsertion>>,
+    active_mode: Mutex<Option<String>>,
     #[cfg(windows)]
     hook: Mutex<Option<super::win::KeyboardHook>>,
     /// Feeds the control loop like the hook does (tray menu "Diktér").
@@ -95,7 +98,9 @@ async fn init_inner(app: HostHandle, overlay: Arc<dyn Overlay>) -> Result<(), St
     let app_data_dir = app.app_data_dir()?;
     let store = Store::open(&app_data_dir.join("dictation.sqlite")).await?;
     let settings = store.settings().await?;
-    let rules = store.rules().await?;
+    let mut rules = store.rules().await?;
+    let (spoken, spoken_error) = settings::load_spoken_table(&app_data_dir);
+    rules.spoken = spoken;
     let timings = Timings::open(store.pool()).await?;
     super::warm::set_policy(settings.residency_policy());
     let service = Arc::new(Service {
@@ -114,6 +119,8 @@ async fn init_inner(app: HostHandle, overlay: Arc<dyn Overlay>) -> Result<(), St
         order: Mutex::new(Order::default()),
         insert_turn: tokio::sync::watch::channel(0).0,
         last_error: Mutex::new(None),
+        last_insertion: Mutex::new(None),
+        active_mode: Mutex::new(None),
         #[cfg(windows)]
         hook: Mutex::new(None),
         #[cfg(windows)]
@@ -124,6 +131,7 @@ async fn init_inner(app: HostHandle, overlay: Arc<dyn Overlay>) -> Result<(), St
         .map_err(|_| "dictation already initialised".to_string())?;
 
     service.apply_shortcut();
+    if let Some(e) = spoken_error { service.set_error(Some(e)); }
     // Recordings must be gone 24 h after they were made, also when no new
     // dictation happens in between, so check every ten minutes.
     let mut interval = tokio::time::interval(Duration::from_secs(10 * 60));
@@ -184,7 +192,13 @@ impl Service {
     }
 
     pub async fn reload_rules(&self) -> Result<(), String> {
-        let rules = self.store.rules().await?;
+        let mut rules = self.store.rules().await?;
+        let (spoken, spoken_error) = settings::load_spoken_table(&self.app_data_dir);
+        rules.spoken = spoken;
+        if let Some(e) = spoken_error {
+            log::warn!("Dictation: {e}");
+            self.set_error(Some(e));
+        }
         if let Ok(mut slot) = self.rules.write() {
             *slot = rules;
         }
@@ -229,6 +243,17 @@ impl Service {
 
     pub fn preview(&self, text: &str, style: Style) -> String {
         cleanup::clean(text, style, &self.rules())
+    }
+
+    /// Name of the mode the latest dictation used.
+    pub fn active_mode(&self) -> Option<String> {
+        self.active_mode.lock().ok().and_then(|m| m.clone())
+    }
+
+    /// Mark a dictionary word as English ("behold engelsk stavning").
+    pub async fn set_word_english(&self, id: i64, english: bool) -> Result<(), String> {
+        self.store.set_word_english(id, english).await?;
+        self.reload_rules().await
     }
 
     #[allow(clippy::disallowed_methods)] // Synchronous disk worker.
@@ -618,7 +643,7 @@ impl Service {
         };
 
         let prompt = format!("{} {}", mode.map(Mode::prompt).unwrap_or_default(), cleanup::prompt_words(rules).join(", "));
-        let language = mode.and_then(|m| m.language.clone()).unwrap_or_else(|| "da".into());
+        let language = mode.and_then(|m| m.language.clone()).unwrap_or_else(|| settings.language.clone());
         let mut syv_task = tokio::spawn({
             let client = self.http.clone();
             let endpoint = settings.syv_endpoint.clone();
@@ -722,6 +747,7 @@ impl Service {
         let prompt = if let Some(language) = mode.and_then(|m| m.language.as_deref()) {
             format!("{prompt} Tekstens sprog er {language}; bevar dette sprog.")
         } else { prompt };
+        let prompt = super::logic::modes::polish_prompt(&prompt, &cleanup::english_terms(&self.rules()));
         let request = generate_summary(
             &self.http,
             &provider,
@@ -835,7 +861,23 @@ impl Service {
 
         let (input, enter) = mode.as_ref().map(|m| m.output.prepare(&transcript.text, code_editor || style == Style::Raw))
             .unwrap_or_else(|| (transcript.text.clone(), false));
-        let mut text = cleanup::clean(&input, style, &rules);
+        if let Ok(mut slot) = self.active_mode.lock() {
+            *slot = mode.as_ref().map(|m| m.name.clone());
+        }
+        let cleaned = cleanup::clean_with(&input, &Options {
+            style,
+            rules: &rules,
+            format_numbers: settings.format_numbers && mode.as_ref().and_then(|m| m.formatting.number_format.as_deref()) != Some("ordret"),
+            format_addresses: settings.format_addresses,
+            enter_triggers: &[],
+        });
+        if let Some(command @ (VoiceCommand::DeleteThat | VoiceCommand::SelectThat)) = cleaned.command {
+            self.overlay.set(OverlayState::Hidden);
+            turn.wait().await;
+            self.run_edit_command(command).await;
+            return;
+        }
+        let mut text = cleaned.text;
         let mut polish_ms = None;
         if settings.polish_enabled && style == Style::Normal && !text.is_empty() {
             let polish_started = Instant::now();
@@ -857,8 +899,9 @@ impl Service {
         };
         let inserted = insert(text.clone(), options, enter, target_window).await;
         let (insert_method, inserted_at) = match inserted {
-            Ok((method, at)) => {
+            Ok((method, at, field)) => {
                 self.set_error(None);
+                if enter { self.forget_insertion(); } else { self.remember_insertion(&text, field, at); }
                 (Some(method), at)
             }
             Err(e) => {
@@ -901,6 +944,52 @@ impl Service {
         if settings.history_enabled {
             self.save_history(&settings, &samples, text, target_app, style, transcript, latency_ms, audio_ms, insert_method)
                 .await;
+        }
+    }
+
+    fn remember_insertion(&self, text: &str, field: Option<FieldId>, at: Instant) {
+        if let Ok(mut slot) = self.last_insertion.lock() {
+            *slot = field.map(|field| LastInsertion {
+                text: text.to_string(),
+                field,
+                at,
+                selected: false,
+            });
+        }
+    }
+
+    fn forget_insertion(&self) {
+        if let Ok(mut slot) = self.last_insertion.lock() {
+            *slot = None;
+        }
+    }
+
+    /// "slet det" / "vælg det": only while the field of the previous
+    /// insertion still has focus.
+    async fn run_edit_command(&self, command: VoiceCommand) {
+        let current = tokio::task::spawn_blocking(focused_field)
+            .await
+            .ok()
+            .flatten();
+        let last = self.last_insertion.lock().ok().and_then(|l| l.clone());
+        let Some(plan) = spoken::plan_edit(command, last.as_ref(), current.as_ref(), Instant::now()) else {
+            log::info!("Dictation: {command:?} ignored, the field changed, too old or nothing was inserted");
+            return;
+        };
+        match apply_edit(plan).await {
+            Ok(()) => {
+                if command == VoiceCommand::DeleteThat {
+                    self.forget_insertion();
+                } else if let Ok(mut slot) = self.last_insertion.lock() {
+                    if let Some(last) = slot.as_mut() {
+                        last.selected = true;
+                    }
+                }
+            }
+            Err(e) => {
+                log::warn!("Dictation: {command:?} failed: {e}");
+                self.set_error(Some(e));
+            }
         }
     }
 
@@ -977,15 +1066,33 @@ struct InsertOptions {
 }
 
 #[cfg(windows)]
-async fn insert(text: String, options: InsertOptions, enter: bool, target_window: usize) -> Result<(&'static str, Instant), String> {
+async fn insert(text: String, options: InsertOptions, enter: bool, target_window: usize) -> Result<(&'static str, Instant, Option<FieldId>), String> {
     tokio::task::spawn_blocking(move || super::win::insert_output_at(&text, &options, enter, target_window))
         .await
         .map_err(|e| e.to_string())?
-        .map(|(method, at)| (method.as_str(), at))
+        .map(|(method, at, field)| (method.as_str(), at, field))
 }
 
 #[cfg(not(windows))]
-async fn insert(_text: String, options: InsertOptions, _enter: bool, _target_window: usize) -> Result<(&'static str, Instant), String> {
+async fn insert(_text: String, options: InsertOptions, _enter: bool, _target_window: usize) -> Result<(&'static str, Instant, Option<FieldId>), String> {
     let _ = (options.restore_after, options.paste_timeout, options.app);
     Err("Indsættelse understøttes kun på Windows".to_string())
 }
+
+#[cfg(windows)]
+async fn apply_edit(plan: spoken::EditPlan) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || super::target_win::apply_edit(plan))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[cfg(not(windows))]
+async fn apply_edit(_plan: spoken::EditPlan) -> Result<(), String> {
+    Err("Stemmekommandoer understøttes kun på Windows".to_string())
+}
+
+
+#[cfg(windows)]
+fn focused_field() -> Option<FieldId> { super::target_win::focused_field() }
+#[cfg(not(windows))]
+fn focused_field() -> Option<FieldId> { None }

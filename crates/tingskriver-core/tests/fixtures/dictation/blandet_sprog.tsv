@@ -1,0 +1,37 @@
+# Danske sætninger med engelske fagudtryk, som Syv.ai typisk skriver dem.
+# Sætning<TAB>engelske udtryk, der skal stå uændret (kommasepareret).
+vi skal deploye til produktion i morgen	deploye
+kan du lave et pull request på det	pull request
+jeg har pushet til main branch	pushet, main branch
+vores backend kører på kubernetes	backend, kubernetes
+send mig lige et link til dashboardet	link, dashboard
+vi har et meeting med kunden om roadmap	meeting, roadmap
+husk at opdatere vores readme fil	readme
+det er en breaking change i api'et	breaking change, api
+vi bruger feature flags til det	feature flags
+kan du reviewe min kode før lunch	reviewe, lunch
+jeg sidder fast i en merge conflict	merge conflict
+lad os tage et quick call klokken to	quick call
+vores conversion rate er faldet til fire procent	conversion rate
+jeg har lavet en mockup i figma	mockup, figma
+det er bare et hotfix til login siden	hotfix, login
+vi skal have styr på vores onboarding flow	onboarding flow
+teamet holder stand up hver morgen	stand up
+vi kører en split test på landing page	split test, landing page
+har du læst de nye release notes	release notes
+fire and forget er fint her	fire and forget
+det er en nice to have feature	nice to have, feature
+jeg sender en invite til workshoppen	invite, workshop
+vores cloud setup ligger i azure	cloud setup, azure
+kan vi lave et deep dive på data pipeline	deep dive, data pipeline
+jeg har booket et one on one med anna	one on one
+husk at committe inden deadline	committe, deadline
+vi har brug for en product owner	product owner
+det er out of scope for nu	out of scope
+kør npm install og så build	npm install, build
+lav en slash command i slack	slash command, slack
+vi har købt disney plus til kontoret	disney plus
+det er en win win situation	win win
+kan du sende en follow up mail	follow up
+vores sprint review er på fredag	sprint review
+jeg har en hard deadline på fredag. Sorry	hard deadline, sorry

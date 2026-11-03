@@ -54,6 +54,7 @@ pub mod host;
 pub(crate) mod http;
 pub mod install;
 pub mod logging;
+pub mod measurement;
 pub mod notes;
 pub mod ollama;
 pub mod openai;

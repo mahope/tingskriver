@@ -855,15 +855,15 @@ fn foreground_integrity_level() -> Option<u32> {
 /// target does not read it within `paste_timeout`, the field blocks paste:
 /// the text is typed with `SendInput`, and the original is restored after
 /// `paste::LATE_READ_GRACE` (a late read in between gets an empty string).
-pub fn insert_text(text: &str, options: &InsertOptions) -> Result<(InsertMethod, Instant), String> {
+pub fn insert_text(text: &str, options: &InsertOptions) -> Result<(InsertMethod, Instant, Option<super::logic::spoken::FieldId>), String> {
     insert_output(text, options, false)
 }
 
-pub fn insert_output(text: &str, options: &InsertOptions, enter: bool) -> Result<(InsertMethod, Instant), String> {
+pub fn insert_output(text: &str, options: &InsertOptions, enter: bool) -> Result<(InsertMethod, Instant, Option<super::logic::spoken::FieldId>), String> {
     insert_output_at(text, options, enter, foreground_window())
 }
 
-pub fn insert_output_at(text: &str, options: &InsertOptions, enter: bool, target: usize) -> Result<(InsertMethod, Instant), String> {
+pub fn insert_output_at(text: &str, options: &InsertOptions, enter: bool, target: usize) -> Result<(InsertMethod, Instant, Option<super::logic::spoken::FieldId>), String> {
     let _one_at_a_time = INSERT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     check_target(target)?;
     let result = insert_text_inner(text, options, enter, target)?;
@@ -874,6 +874,7 @@ pub fn insert_output_at(text: &str, options: &InsertOptions, enter: bool, target
         if !paste::same_target(target, foreground_window()) || super::logic::app_style::is_code_editor(foreground_process().as_deref()) {
             return Err("Programmet skiftede før Enter; teksten er indsat".into());
         }
+        super::logic::spoken::require_field(result.2.as_ref(), super::target_win::focused_field().as_ref())?;
         if !send_inputs(&[
             key_input(VK_RETURN.0, 0, KEYBD_EVENT_FLAGS(0)),
             key_input(VK_RETURN.0, 0, KEYEVENTF_KEYUP),
@@ -892,8 +893,16 @@ fn check_target(target: usize) -> Result<(), String> {
     }
 }
 
-fn insert_text_inner(text: &str, options: &InsertOptions, enter: bool, target: usize) -> Result<(InsertMethod, Instant), String> {
+fn insert_text_inner(text: &str, options: &InsertOptions, enter: bool, target: usize) -> Result<(InsertMethod, Instant, Option<super::logic::spoken::FieldId>), String> {
     wait_for_modifiers_released(Duration::from_millis(1500));
+    let field = super::target_win::focused_field();
+    let typed = |text: &str| {
+        super::logic::spoken::require_field(
+            field.as_ref(),
+            super::target_win::focused_field().as_ref(),
+        )?;
+        self::typed(text).map(|(method, at)| (method, at, field.clone()))
+    };
 
     check_target(target)?;
     let own = integrity_level(unsafe { GetCurrentProcess() });
@@ -932,6 +941,13 @@ fn insert_text_inner(text: &str, options: &InsertOptions, enter: bool, target: u
         std::thread::sleep(Duration::from_millis(2));
     }
     owner.set_paste_sent();
+    if let Err(e) = super::logic::spoken::require_field(
+        field.as_ref(),
+        super::target_win::focused_field().as_ref(),
+    ) {
+        let _ = restore_clipboard(&owner, &saved);
+        return Err(e);
+    }
     let sent_at = Instant::now();
     if let Err(e) = check_target(target) {
         owner.withdraw();
@@ -969,8 +985,8 @@ fn insert_text_inner(text: &str, options: &InsertOptions, enter: bool, target: u
     let result = match outcome {
         Outcome::PastedUnconfirmed | Outcome::Replaced { typed: false } if enter =>
             Err("Indsættelsen kunne ikke bekræftes; Enter blev ikke sendt".into()),
-        Outcome::Pasted => Ok((InsertMethod::Paste, read_after_paste.unwrap_or(sent_at))),
-        Outcome::PastedUnconfirmed | Outcome::Replaced { typed: false } => Ok((InsertMethod::Paste, sent_at)),
+        Outcome::Pasted => Ok((InsertMethod::Paste, read_after_paste.unwrap_or(sent_at), field.clone())),
+        Outcome::PastedUnconfirmed | Outcome::Replaced { typed: false } => Ok((InsertMethod::Paste, sent_at, field.clone())),
         Outcome::Blocked | Outcome::Replaced { typed: true } => match paste::when_blocked(access) {
             WhenBlocked::Type => {
                 log::info!("Dictation: the field did not take Ctrl+V; typing instead");
@@ -1265,7 +1281,7 @@ mod insertion_window {
         for i in 0..50 {
             clear(handles);
             let text = format!("Diktat nummer {i}: æøå, ÆØÅ og «citat».");
-            let (method, _) = insert_text(&text, &options()).expect("insert");
+            let (method, _, _) = insert_text(&text, &options()).expect("insert");
             std::thread::sleep(Duration::from_millis(50));
             assert_eq!(edit_text(handles), text, "dictation {i} gave wrong or stale text");
             assert_eq!(method, InsertMethod::Paste, "dictation {i} was not pasted");
@@ -1286,7 +1302,7 @@ mod insertion_window {
         put_original(&setup);
         clear(handles);
         let text = "Skrevet med SendInput: æøå";
-        let (method, _) = insert_text(text, &options()).expect("insert");
+        let (method, _, _) = insert_text(text, &options()).expect("insert");
         std::thread::sleep(Duration::from_millis(100));
         assert_eq!(method, InsertMethod::Typed);
         assert_eq!(edit_text(handles), text);

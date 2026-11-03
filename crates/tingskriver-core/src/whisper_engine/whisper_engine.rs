@@ -477,7 +477,7 @@ impl WhisperEngine {
         // Check for obviously meaningless patterns first
         if Self::is_meaningless_output(text) {
             // Performance optimization: reduce meaningless output logging to debug level
-            perf_debug!("Detected meaningless output, returning empty: '{}'", text);
+            perf_debug!("Detected meaningless output, returning empty");
             return String::new();
         }
 
@@ -496,7 +496,7 @@ impl WhisperEngine {
         let final_text = cleaned_words.join(" ");
         if Self::calculate_repetition_ratio(&final_text) > 0.7 {
             // Performance optimization: reduce repetition ratio logging to debug level
-            perf_debug!("High repetition ratio detected, filtering out: '{}'", final_text);
+            perf_debug!("High repetition ratio detected, filtering out");
             return String::new();
         }
 
@@ -895,14 +895,14 @@ impl WhisperEngine {
             }
         } else {
             if cleaned_result != final_result {
-                log::debug!("Cleaned repetitive transcription #{}: '{}' -> '{}'", transcription_count, final_result, cleaned_result);
+                log::debug!("Cleaned repetitive transcription #{}: {} -> {} bytes", transcription_count, final_result.len(), cleaned_result.len());
             }
             // Reduce successful transcription logging frequency
             // Only log every 5th result or significant results (>50 chars) to reduce I/O overhead
             if transcription_count % 5 == 0 || cleaned_result.len() > 50 || duration_seconds > 10.0 {
-                log::debug!("Transcription #{} result: '{}'", transcription_count, cleaned_result);
+                log::debug!("Transcription #{} result: {} bytes", transcription_count, cleaned_result.len());
             } else {
-                perf_debug!("Transcription #{} result: '{}'", transcription_count, cleaned_result);
+                perf_debug!("Transcription #{} result: {} bytes", transcription_count, cleaned_result.len());
             }
         }
 
