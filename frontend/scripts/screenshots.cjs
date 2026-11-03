@@ -125,7 +125,7 @@ function mockScript(scene) {
     is_recording: () => !!recording,
     get_recording_state: () => ({ is_recording: !!recording, is_paused: !!scene.paused, is_active: !!recording && !scene.paused, recording_duration: recording ? 754 : null, active_duration: recording ? 754 : null }),
     get_recording_meeting_name: () => recording ? 'Møde 29. okt. 2026 20.31' : null,
-    'plugin:app|version': () => '0.5.0-dev.2',
+    'plugin:app|version': () => '0.5.0-dev.3',
     'plugin:event|listen': (a) => { const id = nextId++; (listeners[a.event] = listeners[a.event] || []).push({ id, handler: a.handler }); return id; },
     'plugin:event|unlisten': () => null,
     'plugin:path|resolve_directory': () => 'C:/Users/Mads/AppData/Roaming/dk.mahoje.tingskriver',
