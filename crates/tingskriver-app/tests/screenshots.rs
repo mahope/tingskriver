@@ -127,7 +127,12 @@ fn main() -> Result<()> {
                         .with_context(|| format!("Missing golden {name}; update explicitly"))?
                         .to_rgba8();
                     if expected.dimensions() != actual.dimensions() {
-                        bail!("Image dimensions differ");
+                        expected.save(output.join(format!("expected-{name}")))?;
+                        bail!(
+                            "Image dimensions differ: {:?} versus {:?}",
+                            expected.dimensions(),
+                            actual.dimensions()
+                        );
                     }
                     let changed =
                         pixel_compare::changed_pixels(expected.as_raw(), actual.as_raw(), 2);

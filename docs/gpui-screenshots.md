@@ -81,7 +81,36 @@ gh run download <run-id> --repo mahope/tingskriver --name gpui-screenshots-windo
 ```
 
 Alternatively open the PR's Rust check, then the run's Artifacts section.
-Artifact download requires an authenticated GitHub account; the repo deploy
-SSH key alone cannot download Actions artifacts. Use `view_image` on a PNG
+Agents with the GitHub connector can call `fetch_workflow_run_artifacts` for
+the run, then `download_workflow_artifact` with `repo_full_name` and the
+returned artifact ID. This path was exercised against the branch's Linux
+artifact, including its actual/expected/difference PNGs and result files.
+Artifact download requires GitHub authentication (CLI or connector); the repo
+deploy SSH key alone cannot download Actions artifacts. Use `view_image` on a PNG
 after downloading it. `TINGSKRIVER_SCREENSHOT_OUTPUT` overrides the output
 directory for isolated verification runs; it does not change reference paths.
+
+## Dependency review
+
+`image 0.25.10` was already locked through GPUI; the harness uses its PNG
+codec directly without another image version. Enabling the pinned GPUI
+`test-support` features adds seven packages to the lockfile:
+
+| Package | Maintainer/repository | Selected release date |
+| --- | --- | --- |
+| atomic 0.5.3 | Amanieu, atomic-rs | 2023-05-15 |
+| convert_case 0.6.0 | rutrum, convert-case | 2022-09-08 |
+| fixedbitset 0.5.7 | bluss/petgraph | 2024-04-14 |
+| futures-concurrency 7.7.1 | Yoshua Wuyts | 2026-01-18 |
+| pollster 0.2.5 | zesterer | 2022-01-18 |
+| postage 0.5.0 | Austin Jones | 2022-04-14 |
+| proptest-macro 0.4.0 | proptest-rs | 2025-10-26 |
+
+Reviewed Cargo manifests, normal dependency trees and Rust sources before
+compilation. These are established repositories, with selected versions older
+than three days; no suspicious new-release burst was found. The seven packages
+have no build/install scripts or environment/network access at library load.
+The network example in futures-concurrency is not built. proptest-macro is a
+compiler procedural macro. Their other dependencies were already locked.
+Conclusion: **install** through Cargo's existing checksum-verified registry
+mechanism; no JavaScript or Python package installation is needed.

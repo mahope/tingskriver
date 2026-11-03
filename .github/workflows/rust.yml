@@ -105,6 +105,7 @@ jobs:
       # Linux owns deterministic goldens; DirectWrite and FreeType must not
       # share references. Windows still exercises the native D3D readback.
       - name: Capture GPUI screens on Windows
+        if: ${{ !cancelled() }}
         shell: bash
         timeout-minutes: 15
         run: cargo test --locked -p tingskriver-app --features screenshot-tests --test screenshots -- --capture
