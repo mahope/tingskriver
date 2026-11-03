@@ -79,3 +79,46 @@ Velopack installation rather than assuming the old installer path.
 
 No PR was created. This branch contains a blocker report only and must not
 be presented as implementing or closing #105.
+
+## Review follow-up (2026-11-03)
+
+**P1 accepted and unresolved.** The reviewer correctly identifies that the
+implementation is absent. Reproduced with
+`cargo test --locked --offline -p tingskriver-mcp`, which fails with
+`package ID specification 'tingskriver-mcp' did not match any packages`.
+The entire branch diff against `origin/main` contains only this report.
+There are no P2 or P3 findings in the supplied review.
+
+Rechecked #70 using the public GitHub issue API: it remains open. A search
+of the core, host and app Rust sources finds no `handoff`, `DeliveryTarget`
+or `delivery_target` implementation. The issue explicitly requires configured
+targets, retries, and private/local-mode enforcement; #105 explicitly lists
+it as a blocking dependency. This follow-up does not implement #70 or invent
+an alternative delivery contract. That leaves #105 blocked and the P1 open,
+rather than treating a documentation change as a feature fix. Independent
+read-only MCP work remains possible, but would not resolve this finding about
+the missing complete implementation.
+
+No application code or dependencies were changed, and no regression test for
+implemented behavior is claimed. Do not merge this branch as a solution to
+#105 or close the issue on the strength of the baseline checks below.
+
+Fresh validation for this follow-up (all Cargo commands used `--locked
+--offline`):
+
+- Build of `tingskriver-core`, `tingskriver-overlay`, and `tingskriver-host`:
+  passed, with the existing core warnings.
+- Full Linux CI crate suite (`cargo test -p tingskriver-core
+  -p tingskriver-overlay -p tingskriver-host`): passed, exit 0. Existing
+  ignored tests were not enabled.
+- Full workspace suite (`cargo test --workspace`): failed before tests,
+  exit 101. The archived Tauri app's build script requires the missing
+  `binaries/llama-helper-x86_64-unknown-linux-gnu` resource. This is not a
+  passing full workspace run or Windows validation.
+- Strict Clippy for the three Linux crates: failed, exit 101, with 127
+  existing core errors including `unused_mut`, doc-comment formatting, and
+  `incompatible_msrv`. No Rust source was changed in this branch.
+- `python3 scripts/check-gpui-lock.py`: passed, 16 matching packages.
+- `git diff --check`: passed.
+
+No package was installed or added. The follow-up changes documentation only.
