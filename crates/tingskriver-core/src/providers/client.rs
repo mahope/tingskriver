@@ -1,3 +1,5 @@
+#![deny(clippy::disallowed_methods)]
+
 //! OpenAI-compatible client for Syv.ai, OpenAI, OdinCore, Ollama and custom
 //! endpoints: `/audio/transcriptions`, `/chat/completions` and `/models`.
 //!
@@ -7,7 +9,6 @@
 
 use std::time::{Duration, Instant};
 
-use once_cell::sync::Lazy;
 use reqwest::multipart::{Form, Part};
 use reqwest::{RequestBuilder, Response, StatusCode};
 use serde::{Deserialize, Serialize};
@@ -39,6 +40,7 @@ impl ResolvedLink {
     pub fn remote_timeout(&self) -> Duration {
         self.timeout
             .unwrap_or_else(|| self.function.default_remote_timeout())
+            .min(crate::http::TIMEOUT)
     }
 
     /// The limit the chain enforces around the whole attempt.
@@ -67,18 +69,7 @@ impl ResolvedLink {
 
 /// Shared HTTP client (connection pool) for all providers.
 pub fn http_client() -> reqwest::Client {
-    static CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
-        reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(10))
-            .build()
-            .unwrap_or_else(|e| {
-                log::warn!(
-                    "Provider HTTP client with connect timeout failed ({e}); using defaults"
-                );
-                reqwest::Client::new()
-            })
-    });
-    CLIENT.clone()
+    crate::http::client()
 }
 
 #[derive(Clone, Debug, Default)]

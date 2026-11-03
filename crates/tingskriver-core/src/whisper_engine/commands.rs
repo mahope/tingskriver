@@ -38,16 +38,20 @@ fn get_models_directory() -> Option<PathBuf> {
 }
 
 pub async fn whisper_init() -> Result<(), String> {
-    let mut guard = WHISPER_ENGINE.lock().unwrap();
-    if guard.is_some() {
-        return Ok(());
-    }
+    tokio::task::spawn_blocking(|| {
+        let mut guard = WHISPER_ENGINE.lock().unwrap();
+        if guard.is_some() {
+            return Ok(());
+        }
 
-    let models_dir = get_models_directory();
-    let engine = WhisperEngine::new_with_models_dir(models_dir)
-        .map_err(|e| format!("Failed to initialize whisper engine: {}", e))?;
-    *guard = Some(Arc::new(engine));
-    Ok(())
+        let models_dir = get_models_directory();
+        let engine = WhisperEngine::new_with_models_dir(models_dir)
+            .map_err(|e| format!("Failed to initialize whisper engine: {}", e))?;
+        *guard = Some(Arc::new(engine));
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("Model initialization task failed: {e}"))?
 }
 
 pub async fn whisper_get_available_models() -> Result<Vec<ModelInfo>, String> {
@@ -64,7 +68,9 @@ pub async fn whisper_get_available_models() -> Result<Vec<ModelInfo>, String> {
     } else {
         // Fallback: scan models directory directly without initialized engine
         log::info!("Whisper engine not initialized, scanning models directory directly");
-        discover_models_standalone()
+        tokio::task::spawn_blocking(discover_models_standalone)
+            .await
+            .map_err(|e| format!("Model discovery task failed: {e}"))?
     }
 }
 
@@ -516,7 +522,8 @@ pub async fn open_models_folder() -> Result<(), String> {
 
     // Ensure directory exists before trying to open it
     if !models_dir.exists() {
-        std::fs::create_dir_all(&models_dir)
+        tokio::fs::create_dir_all(&models_dir)
+            .await
             .map_err(|e| format!("Failed to create directory: {}", e))?;
     }
 

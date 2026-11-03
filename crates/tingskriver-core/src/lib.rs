@@ -1,3 +1,7 @@
+#![deny(clippy::disallowed_types)]
+// Synchronous disk workers are allowed; async I/O modules opt into the method guard.
+#![allow(clippy::disallowed_methods)]
+
 //! UI-free core of Tingskriver: audio, transcription, database, AI providers,
 //! dictation and summaries. The UI layer (the Tauri app today, the GPUI app
 //! later) calls into this crate and receives events through
@@ -48,6 +52,7 @@ pub mod diagnose;
 pub mod fake_device;
 pub mod groq;
 pub mod host;
+pub(crate) mod http;
 pub mod install;
 pub mod logging;
 pub mod notes;

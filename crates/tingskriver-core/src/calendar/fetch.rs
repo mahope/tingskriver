@@ -1,3 +1,5 @@
+#![deny(clippy::disallowed_methods)]
+
 use super::{cache::Cache, parse, CalendarConfig, CalendarError, Event, IcsAddress};
 use chrono::{DateTime, Duration, Utc};
 use std::{path::PathBuf, time::Duration as Timeout};

@@ -85,7 +85,12 @@ pub struct AnalyticsClient {
 impl AnalyticsClient {
     pub async fn new(config: AnalyticsConfig) -> Self {
         let client = if config.enabled && !config.api_key.is_empty() {
-            Some(Arc::new(posthog_rs::client(config.api_key.as_str()).await))
+            let options = posthog_rs::ClientOptionsBuilder::default()
+                .api_key(config.api_key.clone())
+                .request_timeout_seconds(crate::http::TIMEOUT.as_secs())
+                .build()
+                .expect("analytics client options are complete");
+            Some(Arc::new(posthog_rs::client(options).await))
         } else {
             None
         };

@@ -473,7 +473,7 @@ impl ModelManager {
         let client = Client::builder()
             .tcp_nodelay(true) // Disable Nagle's algorithm for faster streaming
             .pool_max_idle_per_host(1) // Keep connection alive
-            .timeout(Duration::from_secs(3600)) // 1 hour timeout for large files
+            .timeout(crate::http::TIMEOUT)
             .connect_timeout(Duration::from_secs(30))
             .build()
             .map_err(|e| anyhow!("Failed to create HTTP client: {}", e))?;

@@ -1212,6 +1212,7 @@ impl WhisperEngine {
         }
 
         let client = Client::builder()
+            .timeout(crate::http::TIMEOUT)
             .user_agent(concat!("Tingskriver/", env!("CARGO_PKG_VERSION")))
             .build()
             .map_err(|e| anyhow!("Failed to create download client: {}", e))?;

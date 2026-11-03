@@ -6,7 +6,7 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-const REQUEST_TIMEOUT_DURATION: Duration = Duration::from_secs(300);
+const REQUEST_TIMEOUT_DURATION: Duration = crate::http::TIMEOUT;
 
 async fn await_or_cancel<T>(
     operation: impl Future<Output = T>,
@@ -695,7 +695,7 @@ mod tests {
             let _ = stream.write_all(b"fail").await;
         });
 
-        let client = Client::new();
+        let client = crate::http::client();
         let cancellation_token = CancellationToken::new();
         let endpoint = format!("http://{address}");
         let generation = generate_summary(
@@ -781,7 +781,7 @@ mod tests {
             let _ = stream.write_all(completion_body).await;
         });
 
-        let client = Client::new();
+        let client = crate::http::client();
         let cancellation_token = CancellationToken::new();
         let endpoint = format!("http://{address}");
         let generation = generate_summary(
@@ -857,7 +857,7 @@ mod tests {
             stream.flush().await.unwrap();
         });
 
-        let client = Client::new();
+        let client = crate::http::client();
         let cancellation_token = CancellationToken::new();
         let endpoint = format!("http://{address}");
         let completion = timeout(

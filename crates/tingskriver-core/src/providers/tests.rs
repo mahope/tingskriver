@@ -1149,3 +1149,16 @@ async fn public_api_falls_back_to_the_local_model_without_a_syv_key() {
     assert!(off.to_string().contains("slået fra"));
     assert!(!dir.path().join(super::service::CONFIG_FILE).exists());
 }
+
+#[test]
+fn http_deadline_caps_defaults_and_overrides_but_preserves_shorter_limits() {
+    let mut link = link("deadline", "http://127.0.0.1:1", None);
+    link.function = Function::Summary;
+    link.timeout = None;
+    assert_eq!(link.remote_timeout(), Duration::from_secs(10));
+    link.timeout = Some(Duration::from_secs(300));
+    assert_eq!(link.remote_timeout(), Duration::from_secs(10));
+    assert_eq!(link.attempt_timeout(), Some(Duration::from_secs(10)));
+    link.timeout = Some(Duration::from_millis(25));
+    assert_eq!(link.remote_timeout(), Duration::from_millis(25));
+}

@@ -1,3 +1,5 @@
+#![deny(clippy::disallowed_methods)]
+
 //! Types shared between the UI and core, and the meeting and settings
 //! operations behind the Tauri commands of the same name.
 
@@ -942,7 +944,7 @@ pub async fn api_test_custom_openai_connection(
     });
 
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
+        .timeout(crate::http::TIMEOUT)
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 
