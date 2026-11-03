@@ -58,7 +58,6 @@ pub mod parakeet_engine;
 pub mod paths;
 pub mod playback;
 pub mod providers;
-pub mod recover;
 pub mod runtime;
 pub mod shortcuts;
 pub mod state;
