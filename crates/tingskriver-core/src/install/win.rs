@@ -40,6 +40,11 @@ fn wide_to_string(buffer: &[u16]) -> String {
     String::from_utf16_lossy(&buffer[..end])
 }
 
+/// Does the key exist?
+pub fn key_exists(subkey: &str) -> bool {
+    matches!(open(subkey, KEY_READ), Ok(Some(_)))
+}
+
 /// A string value (`REG_SZ` or `REG_EXPAND_SZ`, not expanded).
 pub fn get_string(subkey: &str, name: &str) -> Option<String> {
     let (subkey, name) = (HSTRING::from(subkey), HSTRING::from(name));
