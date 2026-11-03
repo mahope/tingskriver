@@ -79,9 +79,11 @@ pub(super) fn session_live(s: &Arc<super::RecordingState>) -> bool {
 /// and the stuck-flag failure mode returns — add a start-time reset then.
 struct StoppingGuard;
 impl StoppingGuard {
-    fn new() -> Self {
-        IS_RECORDING_STOPPING.store(true, Ordering::SeqCst);
-        StoppingGuard
+    fn try_new() -> Option<Self> {
+        IS_RECORDING_STOPPING
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .ok()
+            .map(|_| StoppingGuard)
     }
 }
 impl Drop for StoppingGuard {
@@ -121,6 +123,34 @@ pub struct TranscriptionStatus {
     pub chunks_in_queue: usize,
     pub is_processing: bool,
     pub last_activity_ms: u64,
+}
+
+fn install_recording_error_callback(manager: &RecordingManager, app: &HostHandle) {
+    let app = app.clone();
+    let state = Arc::downgrade(manager.get_state());
+    let runtime = tokio::runtime::Handle::current();
+    let notified = AtomicBool::new(false);
+    manager.set_error_callback(move |error| {
+        let _ = app.emit("recording-error", error.user_message());
+        let Some(session) = state.upgrade() else {
+            return;
+        };
+        if !session.is_recording() && !notified.swap(true, Ordering::SeqCst) {
+            let app = app.clone();
+            let reason = error.user_message().to_string();
+            // Run teardown outside the DSP worker: stop joins that worker.
+            runtime.spawn(async move {
+                // Startup publishes the manager and emits recording-started under this lock.
+                let _startup_guard = super::common::acquire_engine_lifecycle_lock().await;
+                if !session_live(&session) {
+                    return;
+                }
+                if let Err(error) = stop_recording_with_reason(app, Some(reason)).await {
+                    error!("Internal recording stop failed: {}", error);
+                }
+            });
+        }
+    });
 }
 
 fn map_recording_start_error(app: &HostHandle, error: anyhow::Error) -> String {
@@ -356,10 +386,7 @@ pub async fn start_recording_with_meeting_name(
     manager.set_meeting_name(Some(effective_meeting_name));
 
     // Set up error callback
-    let app_for_error = app.clone();
-    manager.set_error_callback(move |error| {
-        let _ = app_for_error.emit("recording-error", error.user_message());
-    });
+    install_recording_error_callback(&manager, &app);
 
     // Start recording with resolved devices
     manager
@@ -392,8 +419,6 @@ pub async fn start_recording_with_meeting_name(
     // Flip recording live + reset per-session flags (speech-detected latch,
     // mic-recovery budget). Shared with the other start path — see helper.
     finalize_recording_start();
-    drop(engine_lifecycle_guard);
-
 
     // Emit success event
     app.emit("recording-started", serde_json::json!({
@@ -401,6 +426,8 @@ pub async fn start_recording_with_meeting_name(
         "devices": ["Default Microphone", "Default System Audio"],
         "workers": 3
     })).map_err(|e| e.to_string())?;
+
+    drop(engine_lifecycle_guard);
 
     // Update tray menu to reflect recording state
     app.refresh_status_ui();
@@ -479,10 +506,7 @@ pub async fn start_recording_with_devices_and_meeting(
     manager.set_meeting_name(Some(effective_meeting_name));
 
     // Set up error callback
-    let app_for_error = app.clone();
-    manager.set_error_callback(move |error| {
-        let _ = app_for_error.emit("recording-error", error.user_message());
-    });
+    install_recording_error_callback(&manager, &app);
 
     // Start recording with specified devices
     manager
@@ -515,8 +539,6 @@ pub async fn start_recording_with_devices_and_meeting(
     // Flip recording live + reset per-session flags (speech-detected latch,
     // mic-recovery budget). Shared with the other start path — see helper.
     finalize_recording_start();
-    drop(engine_lifecycle_guard);
-
 
     // Emit success event
     app.emit("recording-started", serde_json::json!({
@@ -527,6 +549,8 @@ pub async fn start_recording_with_devices_and_meeting(
         ],
         "workers": 3
     })).map_err(|e| e.to_string())?;
+
+    drop(engine_lifecycle_guard);
 
     // Update tray menu to reflect recording state
     app.refresh_status_ui();
@@ -544,6 +568,13 @@ pub async fn stop_recording(
     app: HostHandle,
     _args: RecordingArgs,
 ) -> Result<Option<SaveResult>, String> {
+    stop_recording_with_reason(app, None).await
+}
+
+async fn stop_recording_with_reason(
+    app: HostHandle,
+    reason: Option<String>,
+) -> Result<Option<SaveResult>, String> {
     info!("🛑 Stopping recording");
     let stop_started = std::time::Instant::now();
 
@@ -552,6 +583,12 @@ pub async fn stop_recording(
         info!("Recording was not active");
         return Ok(None);
     }
+
+    // User Stop and an internal error can race. Only the guard's owner may
+    // take the manager, drain the worker and emit the final stop event.
+    let Some(_stopping_guard) = StoppingGuard::try_new() else {
+        return Ok(None);
+    };
 
     // Emit shutdown progress to frontend
     let _ = app.emit(
@@ -568,13 +605,6 @@ pub async fn stop_recording(
         let mut global_manager = RECORDING_MANAGER.lock().unwrap_or_else(|e| e.into_inner());
         global_manager.take()
     };
-
-    // Mark the stop tail as in progress so a mic-disconnect fallback that was
-    // queued before Stop short-circuits instead of retrying against the taken
-    // manager. IS_RECORDING itself stays true until the tail completes — the
-    // frontend polls it to keep the stop UI up. RAII so a panic in the tail
-    // below can't leave the flag stuck true.
-    let _stopping_guard = StoppingGuard::new();
 
     let mut manager_for_cleanup = manager_for_cleanup;
     if let Some(manager) = manager_for_cleanup.as_mut() {
@@ -685,6 +715,7 @@ pub async fn stop_recording(
         "recording-stopped",
         serde_json::json!({
             "message": "Recording stopped - audio saved",
+            "reason": reason,
             "folder_path": folder_path_str,
             "meeting_name": meeting_name_str,
             "audio_status": save_status.as_ref().map(|s| s.status),
@@ -1341,10 +1372,98 @@ async fn trigger_mic_fallback_to_default(
 
 #[cfg(test)]
 mod tests {
+    use super::super::recording_state::AudioError;
     use super::*;
+    use crate::{database::manager::DatabaseManager, host::AppHost};
+    use std::path::PathBuf;
+
+    static TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    #[derive(Default)]
+    struct EventHost {
+        stopped: tokio::sync::Notify,
+        events: Mutex<Vec<serde_json::Value>>,
+    }
+
+    impl AppHost for EventHost {
+        fn emit_json(&self, event: &str, json: &str) -> Result<(), String> {
+            if event == "recording-stopped" {
+                self.events
+                    .lock()
+                    .unwrap()
+                    .push(serde_json::from_str(json).unwrap());
+                self.stopped.notify_one();
+            }
+            Ok(())
+        }
+        fn database(&self) -> Option<DatabaseManager> {
+            None
+        }
+        fn app_data_dir(&self) -> Result<PathBuf, String> {
+            Err("fake host".into())
+        }
+        fn listen(&self, _: &str, _: Box<dyn Fn(&str) + Send + Sync>) -> ListenerId {
+            0
+        }
+        fn unlisten(&self, _: ListenerId) {}
+        fn read_setting(&self, _: &str, _: &str) -> Result<Option<serde_json::Value>, String> {
+            Ok(None)
+        }
+        fn write_setting(&self, _: &str, _: &str, _: serde_json::Value) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn internal_error_stops_emit_reason_and_finish_teardown() {
+        let _test_guard = TEST_LOCK.lock().await;
+        let first_stop = StoppingGuard::try_new().unwrap();
+        assert!(StoppingGuard::try_new().is_none(), "only one teardown may run at once");
+        drop(first_stop);
+        for (recoverable, during_startup) in [(true, false), (false, false), (false, true)] {
+            let startup_guard = super::super::common::acquire_engine_lifecycle_lock().await;
+            let host = Arc::new(EventHost::default());
+            let app: HostHandle = host.clone();
+            let manager = RecordingManager::new();
+            let state = manager.get_state().clone();
+            state.start_recording().unwrap();
+            install_recording_error_callback(&manager, &app);
+            let mut manager = Some(manager);
+            if !during_startup {
+                *RECORDING_MANAGER.lock().unwrap() = manager.take();
+                finalize_recording_start();
+            }
+            let error = if recoverable {
+                AudioError::StreamFailed
+            } else {
+                AudioError::PermissionDenied
+            };
+            let count = if recoverable { 10 } else { 1 };
+            for _ in 0..count {
+                state.report_error(error.clone());
+            }
+            if during_startup {
+                // Let the stop task run before the session becomes globally visible.
+                tokio::task::yield_now().await;
+                assert!(host.events.lock().unwrap().is_empty());
+                *RECORDING_MANAGER.lock().unwrap() = manager.take();
+                finalize_recording_start();
+            }
+            drop(startup_guard);
+            tokio::time::timeout(std::time::Duration::from_secs(2), host.stopped.notified())
+                .await
+                .unwrap();
+            assert!(!IS_RECORDING.load(Ordering::SeqCst));
+            assert!(RECORDING_MANAGER.lock().unwrap().is_none());
+            let events = host.events.lock().unwrap();
+            assert_eq!(events.len(), 1);
+            assert_eq!(events[0]["reason"], error.user_message());
+        }
+    }
 
     #[tokio::test]
     async fn blocking_recordings_waits_for_a_running_one() {
+        let _test_guard = TEST_LOCK.lock().await;
         IS_RECORDING.store(true, Ordering::SeqCst);
         assert!(!block_recordings_if_idle().await);
         assert!(!RECORDINGS_BLOCKED.load(Ordering::SeqCst));

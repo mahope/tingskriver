@@ -14,6 +14,11 @@ fn clock_ms() -> u64 {
     EPOCH.get_or_init(Instant::now).elapsed().as_millis() as u64
 }
 
+fn clock_ns() -> u64 {
+    static EPOCH: OnceLock<Instant> = OnceLock::new();
+    EPOCH.get_or_init(Instant::now).elapsed().as_nanos() as u64
+}
+
 /// Time since a `clock_ms() + 1` stamp (0: never).
 fn since(stamp: u64) -> Option<Duration> {
     match stamp {
@@ -111,6 +116,8 @@ pub struct RecordingState {
     // Core recording state
     is_recording: AtomicBool,
     is_paused: AtomicBool,
+    active_origin_ns: AtomicU64,
+    pause_clock_ns: AtomicU64,
 
     // Audio devices
     microphone_device: Mutex<Option<Arc<AudioDevice>>>,
@@ -123,6 +130,7 @@ pub struct RecordingState {
     buffer_pool: AudioBufferPool,
 
     // Error handling
+    error_window: Mutex<std::collections::VecDeque<(Instant, bool)>>,
     error_count: AtomicU32,
     recoverable_error_count: AtomicU32,
     last_error: Mutex<Option<AudioError>>,
@@ -154,10 +162,13 @@ impl RecordingState {
         Arc::new(Self {
             is_recording: AtomicBool::new(false),
             is_paused: AtomicBool::new(false),
+            active_origin_ns: AtomicU64::new(0),
+            pause_clock_ns: AtomicU64::new(0),
             microphone_device: Mutex::new(None),
             system_device: Mutex::new(None),
             audio_sender: Mutex::new(None),
             buffer_pool: AudioBufferPool::new(16, 48000), // Pool of 16 buffers with 48kHz samples capacity
+            error_window: Mutex::new(std::collections::VecDeque::new()),
             error_count: AtomicU32::new(0),
             recoverable_error_count: AtomicU32::new(0),
             last_error: Mutex::new(None),
@@ -173,7 +184,14 @@ impl RecordingState {
         })
     }
 
-    /// Called from the capture callback for every non-empty buffer, with its
+    pub(super) fn note_callback_frames(&self, device_type: &DeviceType, has_frames: bool) {
+        let now = clock_ms() + 1;
+        if has_frames && *device_type == DeviceType::Microphone {
+            self.mic_last_frame_ms.store(now, Ordering::Relaxed);
+        }
+    }
+
+    /// Called from the capture worker for every non-empty buffer, with its
     /// peak level.
     pub fn note_input_buffer(&self, device_type: &DeviceType, peak: f32) {
         if *device_type != DeviceType::Microphone {
@@ -232,11 +250,13 @@ impl RecordingState {
 
     // Recording control
     pub fn start_recording(&self) -> Result<()> {
+        self.active_origin_ns.store(clock_ns(), Ordering::Release);
         self.is_recording.store(true, Ordering::SeqCst);
         *self
             .recording_start
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Instant::now());
+        self.error_window.lock().unwrap_or_else(|e| e.into_inner()).clear();
         self.error_count.store(0, Ordering::SeqCst);
         self.recoverable_error_count.store(0, Ordering::SeqCst);
         *self
@@ -281,6 +301,7 @@ impl RecordingState {
             return Err(anyhow::anyhow!("Recording is already paused"));
         }
 
+        self.pause_clock_ns.store(clock_ns(), Ordering::Release);
         self.is_paused.store(true, Ordering::SeqCst);
         *self
             .pause_start
@@ -310,6 +331,7 @@ impl RecordingState {
             log::info!("Recording resumed after pause of {:.2}s", pause_duration.as_secs_f64());
         }
 
+        self.active_origin_ns.fetch_add(clock_ns().saturating_sub(self.pause_clock_ns.load(Ordering::Acquire)), Ordering::AcqRel);
         self.is_paused.store(false, Ordering::SeqCst);
         Ok(())
     }
@@ -320,6 +342,11 @@ impl RecordingState {
 
     pub fn is_paused(&self) -> bool {
         self.is_paused.load(Ordering::SeqCst)
+    }
+
+    pub(super) fn callback_position(&self) -> Option<Duration> {
+        if !self.is_active() { return None; }
+        Some(Duration::from_nanos(clock_ns().saturating_sub(self.active_origin_ns.load(Ordering::Acquire))))
     }
 
     pub fn is_active(&self) -> bool {
@@ -374,9 +401,10 @@ impl RecordingState {
             return Ok(()); // Silently discard chunks while paused
         }
 
-        // Position on the recording clock without pauses, so a pause leaves
-        // no gap in the tracks.
-        let position = self.get_active_recording_duration();
+        self.send_audio_chunk_at(chunk, self.get_active_recording_duration())
+    }
+
+    pub(super) fn send_audio_chunk_at(&self, chunk: AudioChunk, position: Option<f64>) -> Result<()> {
         let kind = match chunk.device_type {
             DeviceType::Microphone => TrackKind::Microphone,
             DeviceType::System => TrackKind::System,
@@ -412,21 +440,24 @@ impl RecordingState {
     }
 
     pub fn report_error(&self, error: AudioError) {
-        let count = self.error_count.fetch_add(1, Ordering::SeqCst) + 1;
+        self.report_error_at(error, Instant::now());
+    }
 
-        // Track recoverable vs non-recoverable errors separately
-        if error.is_recoverable() {
-            let recoverable_count = self.recoverable_error_count.fetch_add(1, Ordering::SeqCst) + 1;
-            log::warn!("Recoverable audio error ({}): {:?}", recoverable_count, error);
-
-            // Allow more recoverable errors before stopping
-            if recoverable_count >= 10 {
-                log::error!("Too many recoverable errors ({}), stopping recording", recoverable_count);
-                self.stop_recording();
+    fn report_error_at(&self, error: AudioError, now: Instant) {
+        let should_stop = {
+            let mut window = self.error_window.lock().unwrap_or_else(|e| e.into_inner());
+            while window.front().is_some_and(|(at, _)| now.saturating_duration_since(*at) >= Duration::from_secs(60)) {
+                window.pop_front();
             }
-        } else {
-            log::error!("Non-recoverable audio error: {:?}", error);
-            // Stop immediately for non-recoverable errors
+            window.push_back((now, error.is_recoverable()));
+            let count = window.len() as u32;
+            let recoverable = window.iter().filter(|(_, recoverable)| *recoverable).count() as u32;
+            self.error_count.store(count, Ordering::SeqCst);
+            self.recoverable_error_count.store(recoverable, Ordering::SeqCst);
+            !error.is_recoverable() || recoverable >= 10 || count >= 15
+        };
+        if should_stop && self.is_recording() {
+            log::error!("Stopping recording: {} (error limit within 60 seconds)", error.user_message());
             self.stop_recording();
         }
 
@@ -445,11 +476,6 @@ impl RecordingState {
             callback(&error);
         }
 
-        // Fallback: stop recording after too many total errors
-        if count >= 15 {
-            log::error!("Too many total audio errors ({}), stopping recording", count);
-            self.stop_recording();
-        }
     }
 
     pub fn get_error_count(&self) -> u32 {
@@ -479,6 +505,7 @@ impl RecordingState {
             .map_or(true, |e| e.is_recoverable());
         if last_is_recoverable {
             self.recoverable_error_count.store(0, Ordering::SeqCst);
+            self.error_window.lock().unwrap_or_else(|e| e.into_inner()).clear();
             self.error_count.store(0, Ordering::SeqCst);
         }
     }
@@ -589,6 +616,7 @@ impl RecordingState {
             .total_pause_duration
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = std::time::Duration::ZERO;
+        self.error_window.lock().unwrap_or_else(|e| e.into_inner()).clear();
         self.error_count.store(0, Ordering::SeqCst);
         self.recoverable_error_count.store(0, Ordering::SeqCst);
 
@@ -616,10 +644,13 @@ impl Default for RecordingState {
         Self {
             is_recording: AtomicBool::new(false),
             is_paused: AtomicBool::new(false),
+            active_origin_ns: AtomicU64::new(0),
+            pause_clock_ns: AtomicU64::new(0),
             microphone_device: Mutex::new(None),
             system_device: Mutex::new(None),
             audio_sender: Mutex::new(None),
             buffer_pool: AudioBufferPool::new(16, 48000), // Pool of 16 buffers with 48kHz samples capacity
+            error_window: Mutex::new(std::collections::VecDeque::new()),
             error_count: AtomicU32::new(0),
             recoverable_error_count: AtomicU32::new(0),
             last_error: Mutex::new(None),
@@ -650,6 +681,35 @@ impl Clone for RecordingStats {
 #[cfg(test)]
 mod poisoning_tests {
     use super::*;
+
+    #[test]
+    fn recoverable_errors_spread_over_an_hour_do_not_stop_recording() {
+        let state = RecordingState::default();
+        state.start_recording().unwrap();
+        let start = Instant::now();
+        for n in 0..20 {
+            state.report_error_at(AudioError::StreamFailed, start + Duration::from_secs(n * 180));
+            assert!(state.is_recording(), "stopped after error {}", n + 1);
+        }
+    }
+
+    #[test]
+    fn error_burst_stops_but_expired_errors_do_not_count() {
+        let state = RecordingState::default();
+        state.start_recording().unwrap();
+        let start = Instant::now();
+        for n in 0..9 {
+            state.report_error_at(AudioError::StreamFailed, start + Duration::from_secs(n));
+        }
+        state.report_error_at(AudioError::StreamFailed, start + Duration::from_secs(60));
+        assert!(state.is_recording());
+        state.report_error_at(AudioError::StreamFailed, start + Duration::from_secs(61));
+        assert!(state.is_recording());
+        for _ in 0..8 {
+            state.report_error_at(AudioError::StreamFailed, start + Duration::from_secs(62));
+        }
+        assert!(!state.is_recording());
+    }
 
     #[test]
     fn recording_can_restart_after_a_thread_panics_with_state_locked() {
