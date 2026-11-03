@@ -4,6 +4,7 @@ use crate::audio::decoder::decode_audio_file;
 use crate::vad_trim::meeting::get_speech_chunks_with_progress;
 use super::common::{create_transcript_segments, split_segment_at_silence, write_transcripts_json};
 use super::constants::AUDIO_EXTENSIONS;
+use super::chunk_checkpoint::{append_chunk, chunk_limit, ChunkCheckpoint};
 use crate::config::{DEFAULT_WHISPER_MODEL, DEFAULT_PARAKEET_MODEL};
 use crate::parakeet_engine::ParakeetEngine;
 use crate::whisper_engine::WhisperEngine;
@@ -310,25 +311,31 @@ async fn run_retranscription(
         None
     };
 
-    // Split very long segments at silence boundaries for better transcription quality.
-    // Hard cuts at arbitrary sample positions lose words at boundaries. Instead, scan
-    // for the lowest-energy window near the target split point and cut there.
-    const MAX_SEGMENT_SAMPLES: usize = 25 * 16000; // 25 seconds at 16kHz
+    let resolved_model = if let Some(engine) = &parakeet_engine {
+        engine.get_current_model().await
+    } else if let Some(engine) = &whisper_engine {
+        engine.get_current_model().await
+    } else {
+        None
+    };
+    let checkpoint_root = folder_path.clone();
+    let checkpoint_source = audio_path.clone();
+    let checkpoint_language = language.clone();
+    let checkpoint = tokio::task::spawn_blocking(move || {
+        ChunkCheckpoint::open(
+            &checkpoint_root, &checkpoint_source,
+            if use_parakeet { "parakeet" } else { "whisper" },
+            resolved_model.as_deref().unwrap_or("none"), checkpoint_language.as_deref(),
+        )
+    }).await.map_err(|e| anyhow!("Checkpoint task panicked: {e}"))??;
 
-    let mut processable_segments: Vec<crate::audio::vad::SpeechSegment> = Vec::new();
-    for segment in &speech_segments {
-        if segment.samples.len() > MAX_SEGMENT_SAMPLES {
-            debug!(
-                "Splitting large segment ({:.0}ms, {} samples) at silence boundaries",
-                segment.end_timestamp_ms - segment.start_timestamp_ms,
-                segment.samples.len()
-            );
-
-            let sub_segments = split_segment_at_silence(segment, MAX_SEGMENT_SAMPLES);
-            debug!("Split into {} sub-segments", sub_segments.len());
-            processable_segments.extend(sub_segments);
+    let max_samples = chunk_limit(use_parakeet);
+    let mut processable_segments = Vec::new();
+    for segment in speech_segments {
+        if segment.samples.len() > max_samples {
+            processable_segments.extend(split_segment_at_silence(&segment, max_samples));
         } else {
-            processable_segments.push(segment.clone());
+            processable_segments.push(segment);
         }
     }
 
@@ -368,36 +375,39 @@ async fn run_retranscription(
         }
 
         // Transcribe this segment
-        let (text, conf) = if use_parakeet {
-            let engine = parakeet_engine
-                .as_ref()
-                .ok_or_else(|| anyhow!("Parakeet engine is not initialized"))?;
-            let text = engine
-                .transcribe_audio(segment.samples.clone())
-                .await
-                .map_err(|e| anyhow!("Parakeet transcription failed on segment {}: {}", i, e))?;
-            (text, 0.9f32)
+        let cached = checkpoint.load(i, segment.start_timestamp_ms, segment.end_timestamp_ms)?;
+        let (text, conf) = if let Some(result) = cached {
+            result
         } else {
-            let engine = whisper_engine
-                .as_ref()
-                .ok_or_else(|| anyhow!("Whisper engine is not initialized"))?;
-            let (text, conf, _) = engine
-                .transcribe_audio_with_confidence(segment.samples.clone(), language.clone())
-                .await
-                .map_err(|e| anyhow!("Whisper transcription failed on segment {}: {}", i, e))?;
-            (text, conf)
+            let result = if use_parakeet {
+                let engine = parakeet_engine
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("Parakeet engine is not initialized"))?;
+                let text = engine
+                    .transcribe_audio(segment.samples.clone())
+                    .await
+                    .map_err(|e| anyhow!("Parakeet transcription failed on segment {}: {}", i, e))?;
+                (text, 0.9f32)
+            } else {
+                let engine = whisper_engine
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("Whisper engine is not initialized"))?;
+                let (text, conf, _) = engine
+                    .transcribe_audio_with_confidence(segment.samples.clone(), language.clone())
+                    .await
+                    .map_err(|e| anyhow!("Whisper transcription failed on segment {}: {}", i, e))?;
+                (text, conf)
+            };
+            checkpoint.save(i, segment.start_timestamp_ms, segment.end_timestamp_ms, &result.0, result.1)?;
+            result
         };
 
         // Skip empty transcripts
         let trimmed = text.trim();
         if !trimmed.is_empty() {
-            debug!(
-                "Segment {}/{}: {:.1}s, conf={:.2}, text='{}'",
-                i + 1, processable_count, segment_duration_sec, conf,
-                if trimmed.len() > 80 { let mut end = 80; while !trimmed.is_char_boundary(end) { end -= 1; } &trimmed[..end] } else { trimmed }
-            );
-            all_transcripts.push((text, segment.start_timestamp_ms, segment.end_timestamp_ms));
-            total_confidence += conf;
+            if append_chunk(&mut all_transcripts, text, segment.start_timestamp_ms, segment.end_timestamp_ms) {
+                total_confidence += conf;
+            }
         } else {
             debug!("Segment {}/{}: {:.1}s — empty transcription", i + 1, processable_count, segment_duration_sec);
         }
@@ -490,6 +500,10 @@ async fn run_retranscription(
         &audio_filename,
     ) {
         warn!("Failed to update metadata.json: {}", e);
+    }
+
+    if checkpoint.finish().is_err() {
+        warn!("Could not clean up completed transcription checkpoints");
     }
 
     emit_progress(&app, &meeting_id, "complete", 100, "Retranscription complete");

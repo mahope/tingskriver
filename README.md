@@ -90,6 +90,7 @@ Se [målemetoden](docs/ydeevne.md) og [release-checklisten](docs/release-checkli
 - Pushes til andre grene end `main` bygger uden at lave en udgivelse.
 - Byggevejledning: [docs/BUILDING.md](docs/BUILDING.md). Frontenden ligger i `frontend/` (Tauri 2, Next.js, Rust).
 - Logfiler: `%LOCALAPPDATA%\dk.mahoje.tingskriver\logs\` (`tingskriver.log`, roterer ved 5 MB, de to seneste filer gemmes også). Åbn mappen fra Indstillinger under "Logfiler". Enhedsskift står som `[DEVICE_FOLLOW]`-linjer med tidsstempel.
+- Lange optagelser: import og gen-transskription deler ved pauser med overlap og gemmer hvert færdigt svar, så en afbrudt kørsel kan genoptages. Se [profiler, checkpoints og testbegrænsninger](docs/transcription-chunks.md).
 - Test af diktering: `cargo test -p tingskriver-core dictation` (renskrivning, genvej, dobbelttryk, reservevalg, SQLite-lager og Syv.ai-kaldet mod en falsk server; kører på Linux og i CI).
 - Database: mødesiden henter transskripter med en cursor frem for OFFSET. Kør `cargo test --locked -p tingskriver-core --test database_startup` for indeks, WAL, sikkerhedskopiering og paginering. Benchmarken køres med `cargo test --locked --release -p tingskriver-core --test database_startup three_hour_meeting_loads_in_under_200_ms -- --ignored --nocapture`.
 
