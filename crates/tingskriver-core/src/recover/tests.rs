@@ -51,6 +51,8 @@ fn scan_finds_audio_without_ui_state_and_ignores_empty_and_finished() {
 async fn restore_verifies_audio_and_registers_meeting_idempotently() {
     let root = tempfile::tempdir().unwrap();
     let folder = fixture(root.path(), "crashed", true);
+    let raw_file = folder.join(RAW_DIR).join("microphone_000.wav");
+    let original = std::fs::read(&raw_file).unwrap();
     let db_dir = tempfile::tempdir().unwrap();
     let db = crate::database::manager::DatabaseManager::open(db_dir.path())
         .await
@@ -79,6 +81,7 @@ async fn restore_verifies_audio_and_registers_meeting_idempotently() {
         .unwrap();
     assert_eq!(result.meeting_id, again.meeting_id);
     assert_eq!(again.audio.status, AudioSaveStatus::Partial);
+    assert_eq!(std::fs::read(raw_file).unwrap(), original);
     let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM meetings")
         .fetch_one(db.pool())
         .await
