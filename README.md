@@ -145,6 +145,7 @@ Tingskriver is a fork of [Meetily](https://github.com/Zackriya-Solutions/meetily
 - Log files: `%LOCALAPPDATA%\dk.mahoje.tingskriver\logs\` (`tingskriver.log`, rotates at 5 MB, the two previous files are kept). Open the folder from Settings under "Logfiler". Device switches appear as `[DEVICE_FOLLOW]` lines with timestamps.
 - Testing dictation: `cargo test -p tingskriver-core dictation` (cleanup, shortcut, double tap, fallback decisions, the SQLite store and the Syv.ai request against a fake server; runs on Linux and in CI).
 - [Dictation modes](docs/dictation-modes.md) collect per-program provider, language, style and output rules, with versioned JSON import/export.
+- [Transcription queue](docs/transcription-queue.md) documents the persistent core queue, retry policy, result versions and remaining host integration.
 
 - Testing device switching: `rustc --edition 2021 --test crates/tingskriver-core/src/audio/device_follow.rs -o /tmp/df && /tmp/df` (plain std, runs on Linux; CI runs it on every branch). Manual test on Windows: record, take the headset off and put it on again, and check that `audio.mp4` has no gaps and the `[DEVICE_FOLLOW]` lines in the log show the switch within about a second. Also press mute on the headset for at least 30 seconds while recording and check that no switch happens.
 

@@ -354,7 +354,10 @@ pub fn classify_status(status: StatusCode, retry_after: Option<&str>) -> Provide
         429 => ProviderError::RateLimited {
             retry_after_secs: retry_after.and_then(|v| parse_retry_after(v, chrono::Utc::now())),
         },
-        code => ProviderError::Http { status: code },
+        code => ProviderError::Http {
+            status: code,
+            retry_after_secs: retry_after.and_then(|v| parse_retry_after(v, chrono::Utc::now())),
+        },
     }
 }
 

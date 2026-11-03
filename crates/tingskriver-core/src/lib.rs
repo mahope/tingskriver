@@ -63,6 +63,7 @@ pub mod shortcuts;
 pub mod state;
 pub mod summary;
 pub mod transcript_merge;
+pub mod transcription_queue;
 pub mod vad_trim;
 pub mod wer;
 pub mod whisper_engine;

@@ -183,7 +183,10 @@ async fn http_401_404_429_are_classified_without_the_key() {
         ),
         (
             Reply::json("503 Service Unavailable", "{}"),
-            ProviderError::Http { status: 503 },
+            ProviderError::Http {
+                status: 503,
+                retry_after_secs: None,
+            },
         ),
     ];
     for (reply, expected) in cases {
@@ -403,7 +406,10 @@ async fn first_link_fails_second_delivers_and_the_source_is_logged() {
     assert_eq!(delivered.attempts.len(), 1);
     assert_eq!(
         delivered.attempts[0].error,
-        ProviderError::Http { status: 500 }
+        ProviderError::Http {
+            status: 500,
+            retry_after_secs: None,
+        }
     );
     assert_eq!(first.requests().len(), 1);
     assert_eq!(second.requests().len(), 1);
