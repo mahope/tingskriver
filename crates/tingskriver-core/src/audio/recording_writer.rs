@@ -178,11 +178,13 @@ impl TrackManifest {
     }
 }
 
+#[allow(clippy::disallowed_methods)] // Synchronous disk worker.
 pub fn read_manifest(dir: &Path) -> io::Result<TrackManifest> {
     let text = std::fs::read_to_string(dir.join(MANIFEST_FILE))?;
     serde_json::from_str(&text).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
 }
 
+#[allow(clippy::disallowed_methods)] // Synchronous disk worker.
 pub fn write_manifest(dir: &Path, manifest: &TrackManifest) -> io::Result<()> {
     let json = serde_json::to_string_pretty(manifest).map_err(io::Error::other)?;
     let tmp = dir.join(".tracks.json.tmp");

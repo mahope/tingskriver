@@ -117,6 +117,7 @@ pub fn cancel_import() {
 
 /// Validate an audio file and return its info using metadata-only approach
 /// Falls back to full decode if metadata is unavailable
+#[allow(clippy::disallowed_methods)] // Synchronous disk worker.
 pub fn validate_audio_file(path: &Path) -> Result<AudioFileInfo> {
     // Check file exists
     if !path.exists() {
@@ -190,6 +191,7 @@ pub fn validate_audio_file(path: &Path) -> Result<AudioFileInfo> {
 
 /// Extract duration from audio file metadata without full decode
 /// Returns error if metadata is unavailable, triggering fallback to full decode
+#[allow(clippy::disallowed_methods)] // Synchronous disk worker.
 fn extract_duration_from_metadata(path: &Path) -> Result<f64> {
     use symphonia::core::formats::FormatOptions;
     use symphonia::core::io::MediaSourceStream;
@@ -355,9 +357,8 @@ async fn run_import(
 
     let src = source.clone();
     let dst = dest_path.clone();
-    tokio::task::spawn_blocking(move || std::fs::copy(&src, &dst))
+    tokio::fs::copy(&src, &dst)
         .await
-        .map_err(|e| anyhow!("Copy task join error: {}", e))?
         .map_err(|e| anyhow!("Failed to copy audio file: {}", e))?;
 
     info!("Copied audio to: {}", dest_path.display());
@@ -875,6 +876,7 @@ async fn get_configured_model(app: &HostHandle, provider_type: &str) -> Result<S
 }
 
 /// Write metadata.json to a meeting folder (atomic write with temp file)
+#[allow(clippy::disallowed_methods)] // Synchronous disk worker.
 fn write_import_metadata(
     folder: &Path,
     meeting_id: &str,
@@ -961,6 +963,7 @@ pub async fn is_import_in_progress_command() -> bool {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
 

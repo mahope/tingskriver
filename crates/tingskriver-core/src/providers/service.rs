@@ -61,6 +61,7 @@ impl ProviderService {
 
     /// `Ok(None)` when there is no file yet. A file that cannot be read is an
     /// error, never silently replaced by defaults.
+    #[allow(clippy::disallowed_methods)] // Synchronous disk worker.
     pub fn load(&self) -> Result<Option<ProvidersConfig>, String> {
         let path = self.path();
         let text = match std::fs::read_to_string(&path) {
@@ -84,6 +85,7 @@ impl ProviderService {
     }
 
     /// Validate and write atomically.
+    #[allow(clippy::disallowed_methods)] // Synchronous disk worker.
     pub fn save(&self, config: &ProvidersConfig) -> Result<(), String> {
         config.validate()?;
         let json = serde_json::to_string_pretty(config).map_err(|e| e.to_string())?;

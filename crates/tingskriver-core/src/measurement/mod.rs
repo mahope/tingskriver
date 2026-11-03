@@ -169,6 +169,7 @@ pub struct Report {
 }
 impl Report {
     /// Persist metrics only: no audio, reference, hypothesis, URLs or keys.
+    #[allow(clippy::disallowed_methods)] // Synchronous metrics persistence.
     pub fn save(&self, app_data: &Path) -> Result<PathBuf, String> {
         uuid::Uuid::parse_str(&self.id).map_err(|_| "Ugyldigt resultat-id.".to_string())?;
         let dir = app_data.join("measurements");
@@ -324,4 +325,5 @@ fn finish(row: &mut Row, reference: &str, result: Result<String, ()>, start: Ins
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)] // Synchronous filesystem fixtures.
 mod tests;

@@ -16,6 +16,7 @@ pub const REMOVE_ON_UNINSTALL_MARKER: &str = "slet-data-ved-afinstallation";
 pub const CREDENTIAL_PREFIX: &str = "Tingskriver/";
 
 /// Remember whether uninstalling should delete the user's data.
+#[allow(clippy::disallowed_methods)] // Synchronous disk worker.
 pub fn set_remove_on_uninstall(app_data_dir: &Path, remove: bool) -> std::io::Result<()> {
     let marker = app_data_dir.join(REMOVE_ON_UNINSTALL_MARKER);
     if remove {

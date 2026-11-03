@@ -44,7 +44,26 @@ cargo test -p tingskriver-core --lib insertion_window -- --ignored --test-thread
 
 It inserts 50 dictations in a row with a 24 MB image and text on the clipboard and checks the text and the clipboard after each one, and checks that a field which ignores paste gets the text typed.
 
-The Tauri crate's build script checks that its sidecars exist. For a local `cargo check`/`cargo test` outside a full build, create an empty placeholder: `touch frontend/src-tauri/binaries/llama-helper-$(rustc -vV | sed -n 's/host: //p')`.
+On Debian/Ubuntu, workspace test linking also needs `libxkbcommon-x11-dev`
+for the GPUI app, in addition to the Linux Tauri development libraries.
+
+The Tauri crate's build script checks that its sidecars exist. Before running
+workspace `cargo check --locked` or `cargo test --workspace --locked` on Linux,
+build and stage the native sidecar from the repository root:
+
+```bash
+cargo build --locked -p llama-helper
+mkdir -p frontend/src-tauri/binaries
+cp target/debug/llama-helper "frontend/src-tauri/binaries/llama-helper-$(rustc -vV | sed -n 's/host: //p')"
+```
+
+The staged binary is ignored by Git and must be prepared in each clean checkout.
+For compile-only checks that never execute the sidecar, an empty placeholder also
+satisfies Tauri's resource check. It is not a runnable helper.
+
+On runners with little free disk space, use
+`cargo test --workspace --locked -- --test-threads=1` to avoid linking the large
+core documentation test executables concurrently.
 
 ### Checking Windows code from Linux (cargo xwin)
 

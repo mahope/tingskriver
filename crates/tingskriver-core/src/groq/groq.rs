@@ -1,3 +1,5 @@
+#![deny(clippy::disallowed_methods)]
+
 use serde::{Deserialize, Serialize};
 use std::sync::RwLock;
 use std::time::{Duration, Instant};
@@ -90,7 +92,7 @@ pub async fn get_groq_models(api_key: Option<String>) -> Result<Vec<GroqModel>, 
 
     // Fetch from API
     log::info!("Fetching Groq models from API...");
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
 
     let response = match client
         .get("https://api.groq.com/openai/v1/models")

@@ -1,3 +1,5 @@
+#![deny(clippy::disallowed_methods)]
+
 use serde::{Deserialize, Serialize};
 use std::sync::RwLock;
 use std::time::{Duration, Instant};
@@ -122,7 +124,7 @@ pub async fn get_openai_models(api_key: Option<String>) -> Result<Vec<OpenAIMode
 
     // Fetch from API
     log::info!("Fetching OpenAI models from API...");
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
 
     let response = match client
         .get("https://api.openai.com/v1/models")

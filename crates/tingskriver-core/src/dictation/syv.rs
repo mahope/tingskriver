@@ -1,6 +1,8 @@
+#![deny(clippy::disallowed_methods)]
+
 //! Syv.ai client (OpenAI-compatible `/audio/transcriptions`).
 
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use reqwest::multipart::{Form, Part};
 use serde::Deserialize;
@@ -66,7 +68,7 @@ pub async fn transcribe_in(
         .post(format!("{}/audio/transcriptions", endpoint.trim_end_matches('/')))
         .bearer_auth(api_key)
         .multipart(form)
-        .timeout(Duration::from_secs(60))
+        .timeout(crate::http::TIMEOUT)
         .send()
         .await
         .map_err(|e| format!("Syv.ai kunne ikke nås: {}", e.without_url()))?;
@@ -88,7 +90,7 @@ pub async fn test_key(client: &reqwest::Client, endpoint: &str, api_key: &str) -
     let response = client
         .get(format!("{}/models", endpoint.trim_end_matches('/')))
         .bearer_auth(api_key)
-        .timeout(Duration::from_secs(15))
+        .timeout(crate::http::TIMEOUT)
         .send()
         .await
         .map_err(|e| format!("Syv.ai kunne ikke nås: {}", e.without_url()))?;
@@ -157,7 +159,7 @@ mod tests {
     #[tokio::test]
     async fn sends_openai_compatible_request() {
         let (endpoint, server) = fake_server("200 OK", r#"{"text":"Hej Mads."}"#).await;
-        let client = reqwest::Client::new();
+        let client = crate::http::client();
         let text = transcribe(&client, &endpoint, "hv_test", "syv-transcribe", vec![1, 2, 3], Some("Mahoje, Syv.ai".into()))
             .await
             .unwrap();
@@ -176,9 +178,19 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn mode_can_override_language_and_prompt() {
+        let (endpoint, server) = fake_server("200 OK", r#"{"text":"Hello"}"#).await;
+        transcribe_language(&crate::http::client(), &endpoint, "test", "chosen-model", vec![1], Some("Keep English words".into()), "en").await.unwrap();
+        let request = server.await.unwrap();
+        for (name, value) in [("model", "chosen-model"), ("language", "en"), ("prompt", "Keep English words")] {
+            assert!(request.contains(&format!("name=\"{name}\"\r\n\r\n{value}\r\n")));
+        }
+    }
+
+    #[tokio::test]
     async fn reports_http_errors_without_key() {
         let (endpoint, _server) = fake_server("500 Internal Server Error", r#"{"error":"boom"}"#).await;
-        let error = transcribe(&reqwest::Client::new(), &endpoint, "hv_secret", "m", vec![0], None)
+        let error = transcribe(&crate::http::client(), &endpoint, "hv_secret", "m", vec![0], None)
             .await
             .unwrap_err();
         assert!(error.contains("500"));
@@ -188,7 +200,7 @@ mod tests {
     #[tokio::test]
     async fn key_test_maps_rejection() {
         let (endpoint, _server) = fake_server("401 Unauthorized", "{}").await;
-        let error = test_key(&reqwest::Client::new(), &endpoint, "bad").await.unwrap_err();
+        let error = test_key(&crate::http::client(), &endpoint, "bad").await.unwrap_err();
         assert_eq!(error, "Nøglen blev afvist af Syv.ai");
     }
 }

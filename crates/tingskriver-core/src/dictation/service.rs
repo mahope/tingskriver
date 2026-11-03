@@ -111,7 +111,7 @@ async fn init_inner(app: HostHandle, overlay: Arc<dyn Overlay>) -> Result<(), St
         latency_warned: Mutex::new(BTreeSet::new()),
         settings: RwLock::new(settings),
         rules: RwLock::new(rules),
-        http: reqwest::Client::new(),
+        http: crate::http::client(),
         audio_dir: app_data_dir.join("dictation_audio"),
         app_data_dir,
         shortcut_active: AtomicBool::new(false),
@@ -256,6 +256,7 @@ impl Service {
         self.reload_rules().await
     }
 
+    #[allow(clippy::disallowed_methods)] // Synchronous disk worker.
     pub fn delete_files(&self, paths: Vec<String>) {
         for path in paths {
             let path = PathBuf::from(path);
@@ -1008,8 +1009,19 @@ impl Service {
         let created_at = now_ms();
         let audio_path = if settings.keep_audio {
             let path = self.audio_dir.join(format!("{created_at}.wav"));
-            let written = std::fs::create_dir_all(&self.audio_dir)
-                .and_then(|_| std::fs::write(&path, audio::wav_bytes(samples, audio::TARGET_RATE)));
+            let audio_dir = self.audio_dir.clone();
+            let output = path.clone();
+            let samples = samples.to_vec();
+            let written = tokio::task::spawn_blocking(
+                #[allow(clippy::disallowed_methods)]
+                move || {
+                    std::fs::create_dir_all(audio_dir)?;
+                    std::fs::write(output, audio::wav_bytes(&samples, audio::TARGET_RATE))
+                },
+            )
+            .await
+            .map_err(std::io::Error::other)
+            .and_then(|result| result);
             match written {
                 Ok(()) => Some(path.to_string_lossy().into_owned()),
                 Err(e) => {

@@ -138,6 +138,7 @@ pub async fn start_retranscription(
 
 /// Find audio file in meeting folder
 /// Tries common names first, then scans for any file with an audio extension
+#[allow(clippy::disallowed_methods)] // Synchronous disk worker.
 fn find_audio_file(folder: &Path) -> Result<PathBuf> {
     let candidates = [
         "audio.mp4", "audio.m4a", "audio.wav", "audio.mp3",
@@ -721,6 +722,7 @@ async fn get_configured_parakeet_model(app: &HostHandle) -> Result<String> {
 }
 
 /// Write or update metadata.json for retranscription (preserves existing fields, adds retranscribed_at)
+#[allow(clippy::disallowed_methods)] // Synchronous disk worker.
 fn write_retranscription_metadata(
     folder: &Path,
     meeting_id: &str,
@@ -831,6 +833,7 @@ pub async fn is_retranscription_in_progress_command() -> bool {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
 

@@ -31,6 +31,7 @@ struct AudioSamples {
     done: bool,
 }
 impl AudioSamples {
+    #[allow(clippy::disallowed_methods)] // Synchronous disk worker.
     fn open(path: &Path) -> Result<Self> {
         let file = File::open(path).context("Cannot open VAD audio input")?;
         let stream = MediaSourceStream::new(Box::new(file), Default::default());

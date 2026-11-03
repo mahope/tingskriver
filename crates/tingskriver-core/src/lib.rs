@@ -1,3 +1,6 @@
+#![deny(clippy::disallowed_types)]
+#![deny(clippy::disallowed_methods)]
+
 //! UI-free core of Tingskriver: audio, transcription, database, AI providers,
 //! dictation and summaries. The UI layer (the Tauri app today, the GPUI app
 //! later) calls into this crate and receives events through
@@ -48,6 +51,7 @@ pub mod diagnose;
 pub mod fake_device;
 pub mod groq;
 pub mod host;
+pub(crate) mod http;
 pub mod install;
 pub mod logging;
 pub mod measurement;

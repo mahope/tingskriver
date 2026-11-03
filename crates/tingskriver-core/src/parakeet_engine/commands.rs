@@ -12,6 +12,7 @@ static MODELS_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
 
 /// Initialize the models directory path using app_data_dir
 /// This should be called during app setup before parakeet_init
+#[allow(clippy::disallowed_methods)] // Synchronous disk worker.
 pub fn set_models_directory(app: &HostHandle) {
     let app_data_dir = app.app_data_dir()
         .expect("Failed to get app data dir");
@@ -38,16 +39,15 @@ fn get_models_directory() -> Option<PathBuf> {
 }
 
 pub async fn parakeet_init() -> Result<(), String> {
-    let mut guard = PARAKEET_ENGINE.lock().unwrap();
-    if guard.is_some() {
-        return Ok(());
-    }
-
-    let models_dir = get_models_directory();
-    let engine = ParakeetEngine::new_with_models_dir(models_dir)
-        .map_err(|e| format!("Failed to initialize Parakeet engine: {}", e))?;
-    *guard = Some(Arc::new(engine));
-    Ok(())
+    tokio::task::spawn_blocking(|| {
+        crate::runtime::initialize_engine(&PARAKEET_ENGINE, || {
+            let models_dir = get_models_directory();
+            ParakeetEngine::new_with_models_dir(models_dir)
+                .map_err(|e| format!("Failed to initialize Parakeet engine: {}", e))
+        })
+    })
+    .await
+    .map_err(|e| format!("Model initialization task failed: {e}"))?
 }
 
 pub async fn parakeet_get_available_models() -> Result<Vec<ModelInfo>, String> {
@@ -524,7 +524,8 @@ pub async fn open_parakeet_models_folder() -> Result<(), String> {
 
     // Ensure directory exists before trying to open it
     if !models_dir.exists() {
-        std::fs::create_dir_all(&models_dir)
+        tokio::fs::create_dir_all(&models_dir)
+            .await
             .map_err(|e| format!("Failed to create directory: {}", e))?;
     }
 

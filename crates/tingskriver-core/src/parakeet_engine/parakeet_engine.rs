@@ -277,6 +277,7 @@ pub struct ParakeetEngine {
 
 impl ParakeetEngine {
     /// Create a new Parakeet engine with optional custom models directory
+    #[allow(clippy::disallowed_methods)] // Synchronous disk worker.
     pub fn new_with_models_dir(models_dir: Option<PathBuf>) -> Result<Self> {
         let models_dir = if let Some(dir) = models_dir {
             dir.join("parakeet") // Parakeet models in subdirectory
@@ -347,14 +348,14 @@ impl ParakeetEngine {
                     match Self::validate_model_directory(&model_path, spec.artifacts) {
                         Ok(()) => ModelStatus::Available,
                         Err(error) => {
-                            let file_size = spec
-                                .artifacts
-                                .iter()
-                                .filter_map(|artifact| {
-                                    std::fs::metadata(model_path.join(artifact.filename)).ok()
-                                })
-                                .map(|metadata| metadata.len())
-                                .sum();
+                            let mut file_size = 0;
+                            for artifact in spec.artifacts {
+                                if let Ok(metadata) =
+                                    tokio::fs::metadata(model_path.join(artifact.filename)).await
+                                {
+                                    file_size += metadata.len();
+                                }
+                            }
                             validation_errors.push((spec.name, error));
                             ModelStatus::Corrupted {
                                 file_size,
@@ -412,6 +413,7 @@ impl ParakeetEngine {
         }
     }
 
+    #[allow(clippy::disallowed_methods)] // Synchronous disk worker.
     fn validate_model_directory(model_dir: &Path, artifacts: &[ArtifactSpec]) -> Result<()> {
         for artifact in artifacts {
             let path = model_dir.join(artifact.filename);
@@ -901,7 +903,7 @@ impl ParakeetEngine {
         let client = reqwest::Client::builder()
             .tcp_nodelay(true)
             .pool_max_idle_per_host(1)
-            .timeout(Duration::from_secs(3600))
+            .timeout(crate::http::TIMEOUT)
             .connect_timeout(Duration::from_secs(30))
             .build()
             .map_err(|error| anyhow!("Failed to create HTTP client: {}", error))?;

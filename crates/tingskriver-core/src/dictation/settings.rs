@@ -222,6 +222,7 @@ mod mode_tests {
 
 /// The spoken signs table: built-in plus `dictation_spoken.json` in `dir`.
 /// A broken file gives the built-in table and the error to show.
+#[allow(clippy::disallowed_methods)] // Synchronous settings file loader.
 pub fn load_spoken_table(dir: &Path) -> (SpokenTable, Option<String>) {
     let path = dir.join(SPOKEN_FILE);
     match std::fs::read_to_string(&path) {
@@ -242,6 +243,7 @@ pub fn load_spoken_table(dir: &Path) -> (SpokenTable, Option<String>) {
 
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)] // Synchronous filesystem fixtures.
 mod spoken_tests {
     use super::*;
     #[test]
