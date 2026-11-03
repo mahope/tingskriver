@@ -101,6 +101,7 @@
         },
         "externalBin": [
             "binaries/llama-helper",
+            "binaries/tingskriver-stt",
             "binaries/ffmpeg"
         ],
         "macOS": {

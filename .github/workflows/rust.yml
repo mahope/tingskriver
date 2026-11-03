@@ -65,6 +65,14 @@ jobs:
           mkdir -p frontend/src-tauri/binaries
           touch frontend/src-tauri/binaries/llama-helper-x86_64-pc-windows-msvc.exe
 
+      # tauri-build copies staged sidecars into target/debug. An empty STT
+      # placeholder would overwrite the real worker used by integration tests.
+      - name: Stage real STT worker
+        shell: bash
+        run: |
+          cargo build --locked -p tingskriver-core --bin tingskriver-stt
+          cp target/debug/tingskriver-stt.exe frontend/src-tauri/binaries/tingskriver-stt-x86_64-pc-windows-msvc.exe
+
       - name: Build workspace
         shell: bash
         run: .github/scripts/annotate-errors.sh cargo build --workspace --locked

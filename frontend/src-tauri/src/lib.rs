@@ -37,45 +37,6 @@ use tokio::sync::RwLock;
 
 static RECORDING_FLAG: AtomicBool = AtomicBool::new(false);
 
-#[cfg(target_os = "windows")]
-fn catch_onnx_runtime_init<F, E>(init: F) -> Result<(), String>
-where
-    F: FnOnce() -> Result<(), E>,
-    E: std::fmt::Display,
-{
-    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(init)) {
-        Ok(result) => result.map_err(|error| error.to_string()),
-        Err(payload) => {
-            let message = payload
-                .downcast_ref::<&str>()
-                .copied()
-                .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
-                .unwrap_or("unknown panic");
-            Err(format!("ONNX Runtime initialization panicked: {message}"))
-        }
-    }
-}
-
-#[cfg(all(test, target_os = "windows"))]
-mod onnx_runtime_tests {
-    use super::catch_onnx_runtime_init;
-
-    #[test]
-    fn catch_onnx_runtime_init_converts_errors_and_panics() {
-        assert!(catch_onnx_runtime_init(|| Ok::<(), &str>(())).is_ok());
-        assert_eq!(
-            catch_onnx_runtime_init(|| Err::<(), _>("initializer error")),
-            Err("initializer error".to_string())
-        );
-
-        let error = catch_onnx_runtime_init(|| -> Result<(), &str> {
-            panic!("synthetic loader panic");
-        })
-        .unwrap_err();
-        assert!(error.contains("synthetic loader panic"));
-    }
-}
-
 #[derive(Debug, Deserialize)]
 struct RecordingArgs {
     save_path: String,
@@ -448,35 +409,6 @@ pub fn run() {
 
             // Windows Error Reporting writes a minidump on a native crash.
             tingskriver_core::crash_dumps::apply_in_background();
-
-            #[cfg(target_os = "windows")]
-            match _app.path().resolve(
-                "onnxruntime.dll",
-                tauri::path::BaseDirectory::Resource,
-            ) {
-                Ok(runtime_path) => {
-                    match catch_onnx_runtime_init(|| {
-                        ort::init_from(runtime_path.to_string_lossy().into_owned())
-                            .with_telemetry(false)
-                            .commit()
-                            .map(|_| ())
-                    }) {
-                        Ok(()) => log::info!(
-                            "Initialized bundled ONNX Runtime from {}",
-                            runtime_path.display()
-                        ),
-                        Err(error) => tingskriver_core::record_onnx_runtime_failure(format!(
-                            "Failed to initialize bundled ONNX Runtime from {}: {}",
-                            runtime_path.display(),
-                            error
-                        )),
-                    }
-                }
-                Err(error) => tingskriver_core::record_onnx_runtime_failure(format!(
-                    "Failed to resolve bundled ONNX Runtime resource: {}",
-                    error
-                )),
-            };
 
             // Initialize system tray
             if let Err(e) = tray::create_tray(_app.handle()) {

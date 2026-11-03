@@ -44,7 +44,13 @@ cargo test -p tingskriver-core --lib insertion_window -- --ignored --test-thread
 
 It inserts 50 dictations in a row with a 24 MB image and text on the clipboard and checks the text and the clipboard after each one, and checks that a field which ignores paste gets the text typed.
 
-The Tauri crate's build script checks that its sidecars exist. For a local `cargo check`/`cargo test` outside a full build, create an empty placeholder: `touch frontend/src-tauri/binaries/llama-helper-$(rustc -vV | sed -n 's/host: //p')`.
+The Tauri crate's build script copies staged sidecars into `target/debug`.
+For a local workspace build, build the real speech worker first and copy it
+into `frontend/src-tauri/binaries/tingskriver-stt-<target-triple>` (add `.exe`
+on Windows). Do not symlink it to `target/debug/tingskriver-stt`, since the
+copy destination is the same file. The unrelated `llama-helper-<target-triple>`
+may be an empty placeholder for tests, as in CI. Installer builds stage both
+real sidecars in `windows-build.yml`.
 
 ### Checking Windows code from Linux (cargo xwin)
 
@@ -417,3 +423,47 @@ The commands above create a local source build. Use the production Windows build
 The distribution workflows (`build.yml`, `build-windows.yml`, and `build-devtest.yml`) set `CMAKE_PROJECT_INCLUDE` to `.github/force-portable-ggml.cmake`, which forces `GGML_NATIVE=OFF`, and use `RUSTFLAGS=-C target-cpu=x86-64-v2`. The hook configures Whisper's native C/C++ build; Rust flags do not. `WHISPER_NATIVE=OFF` and plain `GGML_*` variables are not replacements.
 
 </details>
+
+### Isolated local speech inference
+
+Build the speech worker next to the app executable before running from source:
+
+```bash
+cargo build --locked -p tingskriver-core --bin tingskriver-stt
+cargo test --locked -p tingskriver-core --test stt_process
+```
+
+`tingskriver-stt` owns Parakeet, Whisper and Silero sessions. Private stdin/stdout
+pipes carry bounded, length-prefixed frames with request IDs and little-endian
+f32 PCM (16 kHz mono for transcription). Model instances remain warm in the
+worker; a broken pipe discards that worker, fails the current call in Danish,
+and reloads the model on the next call. Parakeet retains its two-instance pool;
+Whisper starts a second worker only when the first is busy. Dropping a client
+kills and reaps its worker; Windows also uses a kill-on-close Job Object.
+
+ONNX Runtime starts in the worker, never during app startup. Set
+`TINGSKRIVER_STT_FORCE_ORT_FAILURE=1` for a failure test: automatic VAD selection
+falls back to the existing energy detector, and Syv.ai remains available. Local
+Parakeet cannot run without ONNX Runtime and returns an error in that case.
+Windows packages include the worker and the pinned ONNX Runtime DLLs next to
+the app. `ORT_DYLIB_PATH` can select the verified runtime in development/CI.
+
+The transport benchmark uses a synthetic echo worker (no model or speech data):
+
+```bash
+cargo test --release --locked -p tingskriver-core fifteen_seconds_pcm_roundtrip -- --nocapture
+```
+
+It checks a warmed 15-second PCM roundtrip against 50 ms in release mode;
+debug builds check the same data integrity without a timing assertion.
+
+To measure the production pipe codec against an already built worker without
+rebuilding the native model libraries in release mode:
+
+```bash
+rustc -O --edition 2021 scripts/bench-stt-ipc.rs -o /tmp/bench-stt-ipc
+/tmp/bench-stt-ipc target/debug/tingskriver-stt
+```
+
+This reports the actual worker/client build combination in use; a debug worker
+still includes its unoptimized PCM decoding time in the roundtrip.

@@ -18,7 +18,7 @@ pub struct SpeechSegment {
 }
 
 /// Processes audio in 30ms chunks but returns complete speech segments
-pub struct ContinuousVadProcessor {
+pub(crate) struct LocalVadProcessor {
     session: VadSession,
     chunk_size: usize,
     sample_rate: u32,
@@ -32,12 +32,12 @@ pub struct ContinuousVadProcessor {
     last_logged_state: bool,
 }
 
-impl ContinuousVadProcessor {
-    #[cfg(test)]
+impl LocalVadProcessor {
     pub(crate) fn buffered_session_samples(&self) -> usize {
         self.session.session_audio_samples()
     }
 
+    #[cfg(test)]
     pub fn new(input_sample_rate: u32, redemption_time_ms: u32) -> Result<Self> {
         crate::ensure_onnx_runtime_available()?;
 
@@ -592,7 +592,7 @@ mod tests {
     #[test]
     fn test_vad_continuous_processor_state_across_chunks() {
         // Test that VAD state is correctly maintained across chunk boundaries
-        let mut processor = ContinuousVadProcessor::new(16000, 2000).expect("Failed to create processor");
+        let mut processor = LocalVadProcessor::new(16000, 2000).expect("Failed to create processor");
 
         // Generate audio with a speech segment that spans a chunk boundary
         let chunk_size = 160_000; // 10 seconds
@@ -683,7 +683,7 @@ mod tests {
         let audio = generate_late_speech_audio(20.0, 3.0, 16000);
 
         let mut processor =
-            ContinuousVadProcessor::new(16000, 2000).expect("Failed to create processor");
+            LocalVadProcessor::new(16000, 2000).expect("Failed to create processor");
         processor
             .process_audio(&audio)
             .expect("process_audio failed");
@@ -720,7 +720,7 @@ mod tests {
         );
 
         let mut processor =
-            ContinuousVadProcessor::new(16000, 2000).expect("Failed to create processor");
+            LocalVadProcessor::new(16000, 2000).expect("Failed to create processor");
 
         let segments = processor
             .process_audio(&audio)
@@ -798,5 +798,46 @@ mod tests {
             processor.flush().expect("second flush failed").is_empty(),
             "flush() must not emit the same forced segment twice"
         );
+    }
+}
+
+/// A VAD session whose ONNX state lives in a disposable process.
+pub struct ContinuousVadProcessor {
+    client: crate::stt::VadClient,
+}
+
+impl ContinuousVadProcessor {
+    pub fn new(input_sample_rate: u32, redemption_time_ms: u32) -> Result<Self> {
+        let mut config = VadConfig::default();
+        config.sample_rate = 16000;
+        config.positive_speech_threshold = 0.50;
+        config.negative_speech_threshold = 0.35;
+        config.redemption_time = Duration::from_millis(redemption_time_ms.into());
+        config.pre_speech_pad = Duration::from_millis(300);
+        config.post_speech_pad = Duration::from_millis(400);
+        config.min_speech_time = Duration::from_millis(250);
+        Self::with_config(input_sample_rate, config)
+    }
+
+    pub fn with_config(input_sample_rate: u32, config: VadConfig) -> Result<Self> {
+        Ok(Self {
+            client: crate::stt::VadClient::new(input_sample_rate, config)
+                .map_err(anyhow::Error::msg)?,
+        })
+    }
+
+    pub fn process_audio(&mut self, samples: &[f32]) -> Result<Vec<SpeechSegment>> {
+        self.client
+            .process(samples, false)
+            .map_err(anyhow::Error::msg)
+    }
+
+    pub fn flush(&mut self) -> Result<Vec<SpeechSegment>> {
+        self.client.process(&[], true).map_err(anyhow::Error::msg)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn buffered_session_samples(&mut self) -> usize {
+        self.client.buffered().unwrap()
     }
 }

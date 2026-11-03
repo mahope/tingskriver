@@ -27,9 +27,23 @@ pub fn write_frame(
     out.write_all(&(control.len() as u32).to_le_bytes())?;
     out.write_all(&(samples.len() as u32).to_le_bytes())?;
     out.write_all(control)?;
-    // One buffer avoids a pipe syscall per sample.
-    let pcm: Vec<u8> = samples.iter().flat_map(|s| s.to_le_bytes()).collect();
-    out.write_all(&pcm)?;
+    #[cfg(target_endian = "little")]
+    {
+        // f32 has no padding and every byte is initialized. The immutable
+        // view cannot outlive or mutate the borrowed samples.
+        let pcm = unsafe {
+            std::slice::from_raw_parts(
+                samples.as_ptr().cast::<u8>(),
+                std::mem::size_of_val(samples),
+            )
+        };
+        out.write_all(pcm)?;
+    }
+    #[cfg(target_endian = "big")]
+    {
+        let pcm: Vec<u8> = samples.iter().flat_map(|s| s.to_le_bytes()).collect();
+        out.write_all(&pcm)?;
+    }
     out.flush()
 }
 
@@ -50,12 +64,17 @@ pub fn read_frame(input: &mut impl Read) -> io::Result<Option<Frame>> {
     }
     let mut control = vec![0; control_len];
     input.read_exact(&mut control)?;
-    let mut pcm = vec![0; samples_len * 4];
-    input.read_exact(&mut pcm)?;
-    let samples = pcm
-        .chunks_exact(4)
-        .map(|s| f32::from_le_bytes(s.try_into().unwrap()))
-        .collect();
+    let mut samples = vec![0.0f32; samples_len];
+    // Every f32 bit pattern is valid; the exclusive byte view ends before
+    // any sample is read, and read_exact initializes the complete frame.
+    let pcm = unsafe {
+        std::slice::from_raw_parts_mut(samples.as_mut_ptr().cast::<u8>(), samples_len * 4)
+    };
+    input.read_exact(pcm)?;
+    #[cfg(target_endian = "big")]
+    for sample in &mut samples {
+        *sample = f32::from_bits(sample.to_bits().swap_bytes());
+    }
     Ok(Some(Frame {
         id,
         control,
@@ -86,5 +105,25 @@ mod tests {
         header.extend_from_slice(&u32::MAX.to_le_bytes());
         header.extend_from_slice(&0u32.to_le_bytes());
         assert!(read_frame(&mut header.as_slice()).is_err());
+    }
+
+    #[test]
+    fn pcm_preserves_ieee_bits_and_rejects_a_truncated_sample() {
+        let bits = [0x8000_0000, 1, 0x3f80_0000, 0x7f80_0000, 0x7fc0_0071];
+        let samples: Vec<f32> = bits.iter().copied().map(f32::from_bits).collect();
+        let mut pipe = Vec::new();
+        write_frame(&mut pipe, 1, &[], &samples).unwrap();
+        assert_eq!(&pipe[16..20], &bits[0].to_le_bytes());
+        let frame = read_frame(&mut pipe.as_slice()).unwrap().unwrap();
+        assert_eq!(
+            frame
+                .samples
+                .iter()
+                .map(|s| s.to_bits())
+                .collect::<Vec<_>>(),
+            bits
+        );
+        pipe.pop();
+        assert!(read_frame(&mut pipe.as_slice()).is_err());
     }
 }
