@@ -557,6 +557,15 @@ async fn transcript_api_continues_after_a_deleted_segment_without_skipping() {
     );
     assert!(!next.has_more);
     assert!(next.next_cursor.is_none());
+    let exact = api_get_meeting_transcripts("m".into(), 2, None, None, &state)
+        .await
+        .unwrap();
+    assert_eq!(exact.transcripts.len(), 2);
+    assert!(
+        !exact.has_more,
+        "a full final page must not advertise another page"
+    );
+    assert!(exact.next_cursor.is_none());
     // Full-export callers can still request all rows from offset zero.
     let all = api_get_meeting_transcripts("m".into(), 5, Some(0), None, &state)
         .await
