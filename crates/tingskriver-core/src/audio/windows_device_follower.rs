@@ -148,7 +148,9 @@ impl SilenceKeeper {
 /// current) and stop it outside the lock.
 async fn tear_down(kind: StreamKind, session: &Arc<RecordingState>) -> Result<(), String> {
     let old = {
-        let mut guard = RECORDING_MANAGER.lock().unwrap();
+        let mut guard = RECORDING_MANAGER
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let manager = guard.as_mut().ok_or("Recording manager not available")?;
         if !Arc::ptr_eq(manager.get_state(), session) {
             return Err("Session changed".to_string());
@@ -219,7 +221,9 @@ async fn open_on(
         .map_err(|e| format!("failed to open stream: {}", e))?;
 
     let rejected = {
-        let mut guard = RECORDING_MANAGER.lock().unwrap();
+        let mut guard = RECORDING_MANAGER
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         match guard.as_mut() {
             Some(manager) if Arc::ptr_eq(manager.get_state(), session) => {
                 match kind {
@@ -658,7 +662,12 @@ pub fn spawn(
                         }
                     }
                 }
-                event = async { monitor_events.as_mut().unwrap().recv().await }, if monitor_events.is_some() => {
+                event = async {
+                    match monitor_events.as_mut() {
+                        Some(events) => events.recv().await,
+                        None => std::future::pending().await,
+                    }
+                }, if monitor_events.is_some() => {
                     match event {
                         Some(event) => {
                             debug!("[DEVICE_FOLLOW] Device monitor event: {:?}", event);

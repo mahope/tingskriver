@@ -226,7 +226,7 @@ impl AudioDeviceMonitor {
                 DeviceMonitorType::Microphone,
             ));
             info!("🔍 Monitoring microphone: '{}' (Bluetooth: {})",
-                  mic.name, monitored_devices.last().unwrap().is_bluetooth);
+                  mic.name, monitored_devices.last().is_some_and(|device| device.is_bluetooth));
         }
 
         if let Some(sys) = system_audio {
@@ -235,7 +235,7 @@ impl AudioDeviceMonitor {
                 DeviceMonitorType::SystemAudio,
             ));
             info!("🔍 Monitoring system audio: '{}' (Bluetooth: {})",
-                  sys.name, monitored_devices.last().unwrap().is_bluetooth);
+                  sys.name, monitored_devices.last().is_some_and(|device| device.is_bluetooth));
         }
 
         if monitored_devices.is_empty() {
