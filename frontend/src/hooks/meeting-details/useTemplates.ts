@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { invoke as invokeTauri } from '@tauri-apps/api/core';
 import { toast } from 'sonner';
-import Analytics from '@/lib/analytics';
 
 export function useTemplates() {
   const [availableTemplates, setAvailableTemplates] = useState<Array<{
@@ -35,7 +34,6 @@ export function useTemplates() {
     toast.success('Skabelon valgt', {
       description: `Bruger skabelonen "${templateName}" til opsummeringen`,
     });
-    Analytics.trackFeatureUsed('template_selected');
   }, []);
 
   return {

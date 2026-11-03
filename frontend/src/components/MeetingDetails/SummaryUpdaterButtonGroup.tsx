@@ -3,7 +3,6 @@
 import { Button } from '@/components/ui/button';
 import { ButtonGroup } from '@/components/ui/button-group';
 import { Copy, Save, Loader2 } from 'lucide-react';
-import Analytics from '@/lib/analytics';
 
 interface SummaryUpdaterButtonGroupProps {
   isSaving: boolean;
@@ -27,7 +26,6 @@ export function SummaryUpdaterButtonGroup({
         className={isDirty ? 'border-primary text-primary' : ''}
         title={isSaving ? "Gemmer" : "Gem ændringerne"}
         onClick={() => {
-          Analytics.trackButtonClick('save_changes', 'meeting_details');
           onSave();
         }}
         disabled={isSaving}
@@ -51,7 +49,6 @@ export function SummaryUpdaterButtonGroup({
         size="sm"
         title="Kopiér opsummeringen"
         onClick={() => {
-          Analytics.trackButtonClick('copy_summary', 'meeting_details');
           onCopy();
         }}
         className="cursor-pointer"

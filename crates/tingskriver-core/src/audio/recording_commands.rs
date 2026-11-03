@@ -647,62 +647,12 @@ pub async fn stop_recording(
         (None, None)
     };
 
-    // Step 3: Track meeting ended analytics with privacy-safe metadata (after
-    // the save, so it never delays it).
-    let analytics_data = if let Some(ref manager) = manager_for_cleanup {
-        let state = manager.get_state();
-        let stats = state.get_stats();
-
-        Some((
-            save_status.as_ref().map(|s| s.duration_seconds),
-            save_status.as_ref().map_or(0.0, |s| s.duration_seconds),
-            manager.get_total_pause_duration(),
-            manager.get_transcript_segments().len() as u64,
-            state.has_fatal_error(),
-            stats.chunks_processed,
-        ))
-    } else {
-        None
-    };
-
-    if let Some((total_duration, active_duration, pause_duration, transcript_segments_count, had_fatal_error, chunks_processed)) = analytics_data {
-        if let Some(db) = app.database() {
-            let (transcription_provider, transcription_model) = match crate::api::api::get_transcript_config(&db).await {
-                Ok(Some(config)) => (config.provider, config.model),
-                _ => ("unknown".to_string(), "unknown".to_string()),
-            };
-            let (summary_provider, summary_model) = match crate::api::api::get_model_config(&db).await {
-                Ok(Some(config)) => (config.provider, config.model),
-                _ => ("unknown".to_string(), "unknown".to_string()),
-            };
-            match crate::analytics::commands::track_meeting_ended(
-                transcription_provider,
-                transcription_model,
-                summary_provider,
-                summary_model,
-                total_duration,
-                active_duration,
-                pause_duration,
-                "Unknown".to_string(),
-                "Unknown".to_string(),
-                chunks_processed,
-                transcript_segments_count,
-                had_fatal_error,
-            )
-            .await
-            {
-                Ok(_) => info!("✅ Analytics tracked successfully for meeting end"),
-                Err(e) => warn!("⚠️ Failed to track analytics: {}", e),
-            }
-        }
-    }
-
     // Set recording flag to false
     info!("🔍 Setting IS_RECORDING to false");
     IS_RECORDING.store(false, Ordering::SeqCst);
     // IS_RECORDING_STOPPING is cleared by _stopping_guard on scope exit.
 
-    // Step 4: Metadata for the frontend, which saves the meeting to the database.
+    // Step 3: Metadata for the frontend, which saves the meeting to the database.
     let (folder_path_str, meeting_name_str) = match (&meeting_folder, &meeting_name) {
         (Some(path), Some(name)) => (
             Some(path.to_string_lossy().to_string()),
