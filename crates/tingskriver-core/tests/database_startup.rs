@@ -17,6 +17,54 @@ use tingskriver_core::paths::DATABASE_FILE;
 const SHORT_BUSY: Duration = Duration::from_millis(200);
 const LOCK_HELPER_ENV: &str = "TINGSKRIVER_TEST_LOCK_DB";
 
+#[tokio::test]
+async fn startup_fails_only_expired_pending_summaries() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = create_database(dir.path()).await;
+    let now = chrono::Utc::now();
+    for (id, status, age) in [
+        ("expired", "PENDING", 901),
+        ("recent", "PENDING", 30),
+        ("lowercase", "pending", 901),
+        ("completed", "completed", 901),
+        ("cancelled", "cancelled", 901),
+    ] {
+        insert_meeting(db.pool(), id).await;
+        sqlx::query("INSERT INTO summary_processes (meeting_id, status, created_at, updated_at, start_time, result, result_backup) VALUES (?, ?, ?, ?, ?, ?, ?)")
+            .bind(id).bind(status)
+            .bind(now - chrono::Duration::seconds(age))
+            .bind(now).bind(now - chrono::Duration::seconds(age))
+            .bind("{\"markdown\":\"current\"}")
+            .bind("{\"markdown\":\"previous\"}")
+            .execute(db.pool()).await.unwrap();
+    }
+    db.pool().close().await;
+    let reopened = DatabaseManager::open(dir.path()).await.unwrap();
+    for id in ["expired", "lowercase"] {
+        let row: (String, String, Option<String>, Option<String>, Option<String>) = sqlx::query_as(
+            "SELECT status, result, result_backup, error, end_time FROM summary_processes WHERE meeting_id = ?")
+            .bind(id).fetch_one(reopened.pool()).await.unwrap();
+        assert_eq!(row.0, "failed");
+        assert_eq!(row.1, "{\"markdown\":\"previous\"}");
+        assert!(row.2.is_none());
+        assert!(row.3.unwrap().contains("try again"));
+        assert!(row.4.is_some());
+    }
+    for (id, expected) in [
+        ("recent", "PENDING"),
+        ("completed", "completed"),
+        ("cancelled", "cancelled"),
+    ] {
+        let status: String =
+            sqlx::query_scalar("SELECT status FROM summary_processes WHERE meeting_id = ?")
+                .bind(id)
+                .fetch_one(reopened.pool())
+                .await
+                .unwrap();
+        assert_eq!(status, expected);
+    }
+}
+
 /// The log file shared by all tests in this binary.
 fn log_file() -> &'static Path {
     static LOG: OnceLock<PathBuf> = OnceLock::new();
