@@ -152,6 +152,13 @@ Meetings and dictation share the Parakeet and Whisper engines in core.
 
 ## Recording: the audio is saved first
 
+On Windows, device changes are handled by `IMMNotificationClient` and the
+stream-health checks in `windows_device_follower`, without the additional
+two-second `AudioDeviceMonitor` polling loop. Other platforms retain that
+monitor. Device enumeration runs on Tokio's blocking pool; stopping the
+monitor waits at most two seconds before aborting its async task. An already
+running driver call cannot be cancelled, but no longer holds up that stop.
+
 A recording captures and saves, nothing else. Transcription, VAD and the
 summary run after the meeting from the saved files, so a crash in a model
 (a native abort in ggml or ONNX Runtime) cannot stop the audio.
