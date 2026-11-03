@@ -36,6 +36,7 @@ pub struct AppModel {
     /// Whether the first-frame time is still to be reported. Off for
     /// `--hidden`, where the window opens long after process start.
     pub report_first_frame: bool,
+    pub display_version: &'static str,
 }
 
 impl AppModel {
@@ -56,6 +57,7 @@ impl AppModel {
             clock,
             start_page: Page::Meetings,
             report_first_frame: true,
+            display_version: env!("CARGO_PKG_VERSION"),
         }
     }
 
@@ -277,6 +279,7 @@ impl Shell {
             clock: StartupClock::start(),
             start_page: page,
             report_first_frame: false,
+            display_version: "0.0.0-test",
         });
         init(model, cx);
         let shell = cx.new(|cx| Shell::new(None, window, cx));
@@ -399,7 +402,7 @@ impl Shell {
                     .px(space::SM)
                     .text_size(typography::XS)
                     .text_color(palette.muted_foreground)
-                    .child(strings::version(env!("CARGO_PKG_VERSION"))),
+                    .child(strings::version(self.model.read(cx).display_version)),
             )
     }
 

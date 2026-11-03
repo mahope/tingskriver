@@ -6,6 +6,12 @@ use gpui_component::{Root, ThemeMode};
 use std::{cell::RefCell, collections::HashMap, path::PathBuf, rc::Rc};
 use tingskriver_app::{assets, theme, ui::Shell};
 
+pub fn draw_frame(handle: gpui::AnyWindowHandle, cx: &mut gpui::App) -> Result<()> {
+    // Drawing borrows Root internally; a typed WindowHandle::update would
+    // already hold that entity and panic on the nested borrow.
+    cx.update_window(handle, |_, window, cx| window.draw(cx).clear(cx))
+}
+
 pub fn run() -> Result<()> {
     if std::env::args().skip(1).collect::<Vec<_>>() != ["--capture"] {
         bail!("Windows uses native capture only. Run with --capture; Linux owns goldens.");
@@ -55,12 +61,11 @@ fn capture(cx: &mut gpui::App) -> Result<()> {
                 },
             )?;
             theme::apply(mode, cx);
-            let actual = handle.update(cx, |_, window, cx| {
-                for _ in 0..2 {
-                    window.draw(cx).clear(cx);
-                }
-                window.render_to_image()
-            })??;
+            for _ in 0..2 {
+                draw_frame(handle.into(), cx)?;
+            }
+            let actual =
+                cx.update_window(handle.into(), |_, window, _| window.render_to_image())??;
             let name = format!("{scenario}-{appearance}.png");
             actual.save(output.join(&name))?;
             if appearance == "light" {
@@ -75,7 +80,7 @@ fn capture(cx: &mut gpui::App) -> Result<()> {
                 }
             }
             println!("Rendered {name}");
-            handle.update(cx, |_, window, _| window.remove_window())?;
+            cx.update_window(handle.into(), |_, window, _| window.remove_window())?;
         }
     }
     std::fs::write(

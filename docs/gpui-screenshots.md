@@ -25,15 +25,21 @@ on Windows; a Linux run alone does not establish that WARP works. In pinned
 GPUI 0.3.10, `VisualTestAppContext` is exported only on macOS, despite its
 generic implementation. The native capture adapter is also compiled on Linux
 to catch use of unavailable GPUI APIs before the Windows CI job.
+Both adapters draw through the same untyped window context. Drawing inside
+`WindowHandle<Root>::update` recursively borrows Root and panics; the Linux
+golden run exercises this shared path as a regression check.
 
-The harness fixes the logical viewport to 1100×760 (headless GPUI's 2× scale
+The Linux harness fixes the logical viewport to 1100×760 (headless GPUI's 2× scale
 produces 2200×1520 PNGs), appearance, frame count and simulated clock. It does
-not start the normal app: no database, credentials, tray, audio, network
+not start production services: no database, credentials, tray, audio, network
 providers or single-instance socket. Fixtures inject empty/first-launch and
 error database states, Danish input text and default provider configuration
-in memory. The meetings/settings/dictation pages still contain the shell's
+in memory. Windows shares the fixtures and appearance but uses real event-loop
+time for its capture smoke test. The meetings/settings/dictation pages still contain the shell's
 current placeholders; new populated views need corresponding fixtures when
 they are implemented. This does not test interaction, keyboard input or UIA.
+The fixture version is `0.0.0-test`; ordinary release version bumps therefore
+do not invalidate every image, while the production app shows its real version.
 
 ## Run and update
 

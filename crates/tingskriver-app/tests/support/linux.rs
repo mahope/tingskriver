@@ -60,9 +60,7 @@ pub fn run() -> Result<()> {
             cx.update(|cx| theme::apply(mode, cx));
             // Draw twice: first layout resolves lazy component state/assets.
             for _ in 0..2 {
-                cx.update_window(window.into(), |_, window, cx| {
-                    window.draw(cx).clear(cx);
-                })?;
+                cx.update(|cx| crate::native::draw_frame(window.into(), cx))?;
                 cx.run_until_parked();
             }
             let actual = cx.capture_screenshot(window.into())?;
