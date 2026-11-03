@@ -11,6 +11,28 @@ fn sample(seconds: usize) -> Sample {
     Sample::from_samples(vec![0.0; 16_000 * seconds]).unwrap()
 }
 
+#[test]
+fn candidates_ignore_blank_overrides_and_deduplicate_models() {
+    let mut config = config(&[("chosen", "http://localhost", ProviderKind::OpenAiCompatible)]);
+    let mut blank = ChainLink::new("chosen");
+    blank.model = Some(" ".into());
+    config.functions.insert(
+        Function::Transcription,
+        vec![
+            blank,
+            ChainLink::new("chosen").with_model("test-model"),
+            ChainLink::new("chosen").with_model("second-model"),
+            ChainLink::new("unknown").with_model("unknown-model"),
+        ],
+    );
+    config.functions.insert(
+        Function::Dictation,
+        vec![ChainLink::new("chosen").with_model("second-model")],
+    );
+    let models: Vec<_> = candidates(&config).into_iter().map(|s| s.model).collect();
+    assert_eq!(models, ["test-model", "second-model"]);
+}
+
 fn config(urls: &[(&str, &str, ProviderKind)]) -> ProvidersConfig {
     let providers = urls
         .iter()
@@ -80,6 +102,58 @@ async fn selected_models_only_receive_identical_audio_and_danish_language() {
     let path = report.save(dir.path()).unwrap();
     let restored: Report = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
     assert_eq!(restored.results[0].score, report.results[0].score);
+}
+
+#[tokio::test]
+async fn different_selected_providers_share_audio_and_normalization() {
+    let first = FakeServer::start(vec![Reply::ok(r#"{"text":"RØD-grød, med FLØDE!"}"#)]).await;
+    let second = FakeServer::start(vec![Reply::ok(r#"{"text":"rød grød uden fløde"}"#)]).await;
+    let config = config(&[
+        ("first", &first.base_url, ProviderKind::OpenAiCompatible),
+        ("second", &second.base_url, ProviderKind::OpenAiCompatible),
+    ]);
+    let dir = tempfile::tempdir().unwrap();
+    let service = ProviderService::new(dir.path(), Arc::new(MemoryKeyStore::default()));
+    // Nonzero, exactly representable PCM values expose accidental audio replacement.
+    let sample = Sample::from_samples([0.25, -0.5, 0.75, -1.0].repeat(4_000)).unwrap();
+    let report = run(
+        &config,
+        &service,
+        &[
+            Selection::new("first", "one"),
+            Selection::new("second", "two"),
+        ],
+        &sample,
+        "Rød, grød med fløde.",
+        dir.path(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(report.results[0].wer, Some(0.0));
+    assert_eq!(report.results[1].wer, Some(0.25));
+    assert_eq!(report.results[1].score.unwrap().substitutions, 1);
+    let payload = String::from_utf8_lossy(&sample.wav);
+    for (server, model) in [(&first, "one"), (&second, "two")] {
+        let requests = server.requests();
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].contains(payload.as_ref()));
+        assert!(requests[0].contains(&format!("name=\"model\"\r\n\r\n{model}")));
+        assert!(!requests[0].contains("name=\"prompt\""));
+        assert!(!requests[0].contains("name=\"diarize\""));
+        assert!(!requests[0].contains("Rød, grød med fløde."));
+    }
+    for (pcm, sample) in sample.wav[44..].chunks_exact(2).zip(&sample.samples) {
+        assert_eq!(
+            *sample,
+            i16::from_le_bytes([pcm[0], pcm[1]]) as f32 / 32768.0
+        );
+    }
+    let path = report.save(dir.path()).unwrap();
+    let saved = std::fs::read_to_string(path).unwrap();
+    for private in ["Rød", "FLØDE", "uden", &first.base_url, &second.base_url] {
+        assert!(!saved.contains(private));
+    }
+    assert!(report.save(dir.path()).is_err());
 }
 
 #[tokio::test]

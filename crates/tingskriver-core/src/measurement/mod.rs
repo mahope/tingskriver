@@ -110,7 +110,7 @@ pub fn candidates(config: &ProvidersConfig) -> Vec<Selection> {
             if config.provider(&link.provider).is_none() {
                 continue;
             }
-            if let Some(model) = &link.model {
+            if let Some(model) = link.model.as_ref().filter(|m| !m.trim().is_empty()) {
                 if !result
                     .iter()
                     .any(|s| s.provider == link.provider && s.model == *model)

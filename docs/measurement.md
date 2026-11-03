@@ -8,7 +8,9 @@ from your audio editor to this format. The page does not record from a microphon
 Select the models to compare. Nothing is selected initially. The list contains
 configured providers' default transcription models, model overrides in the
 transcription and dictation chains, and the default local Parakeet and Whisper
-models. Use **Genindlæs udbyderindstillinger** after changing `providers.json`.
+models. Repeated models appear once; blank overrides use the provider's default
+and do not add an empty choice. Use **Genindlæs udbyderindstillinger** after
+changing `providers.json`.
 Models and API keys use the existing provider configuration and Windows Credential
 Manager; the measurement tool never downloads models or asks for keys in files.
 
@@ -46,11 +48,14 @@ cargo test --locked --offline -p tingskriver-core wer:: --lib
 cargo test --locked --offline -p tingskriver-app --lib
 ```
 
-The tests synthesize silent PCM audio in memory and temporary files. They require
+The tests synthesize PCM audio in memory and temporary files. They require
 no real voices, credentials, models or internet access. Loopback HTTP contract
 tests check identical uploads, Danish language, excluded providers, missing keys,
-redirect refusal and validation before the first upload. WER arithmetic and Danish
-normalization regression cases remain in the shared `wer` unit tests.
+redirect refusal and validation before the first upload. A non-silent sample is
+also compared across two separate HTTP endpoints, checking model selection,
+normalization, word errors and that reference text is neither sent nor saved.
+WER arithmetic and Danish normalization regression cases remain in the shared
+`wer` unit tests.
 
 Manual Windows check: import your sample, enter its reference, select a local
 installed model, then compare selected remote services. Confirm missing-key
