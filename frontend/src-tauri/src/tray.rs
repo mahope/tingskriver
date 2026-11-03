@@ -86,12 +86,13 @@ fn toggle_recording_handler<R: Runtime>(app: &AppHandle<R>) {
 
             // Handle result
             match stop_result {
-                Ok(_) => {
+                Ok(saved) => {
                     log::info!("Tray toggle: Recording stopped successfully");
 
                     // Trigger frontend post-processing via event (works from any page)
                     // (SQLite save, navigation, analytics)
-                    if let Err(e) = app_clone.emit("recording-stop-complete", true) {
+                    let saved_audio = saved.as_ref().map_or(true, |s| s.status != crate::audio::finalize::AudioSaveStatus::Failed);
+                    if let Err(e) = app_clone.emit("recording-stop-complete", saved_audio) {
                         log::error!("Tray toggle: Failed to emit recording-stop-complete event: {}", e);
                     }
                 }
@@ -182,12 +183,13 @@ fn stop_recording_handler<R: Runtime>(app: &AppHandle<R>) {
 
         // Handle result
         match stop_result {
-            Ok(_) => {
+            Ok(saved) => {
                 log::info!("Tray: Recording stopped successfully");
 
                 // Trigger frontend post-processing via event (works from any page)
                 // (SQLite save, navigation, analytics)
-                if let Err(e) = app_clone.emit("recording-stop-complete", true) {
+                let saved_audio = saved.as_ref().map_or(true, |s| s.status != crate::audio::finalize::AudioSaveStatus::Failed);
+                if let Err(e) = app_clone.emit("recording-stop-complete", saved_audio) {
                     log::error!("Tray: Failed to emit recording-stop-complete event: {}", e);
                 }
             }
