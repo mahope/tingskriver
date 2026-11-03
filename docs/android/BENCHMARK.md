@@ -3,16 +3,17 @@
 ## Status: NOT MEASURED
 
 2026-11-03: `adb devices` returned an empty device list on agent-worker. No
-physical phone, speech model, native benchmark driver or consented recording
+physical phone, speech model or consented recording
 was available. Milestone 2 is **open**. Do not enable native IME integration or
 cloud fallback on the strength of these changes. No WER, latency, PSS, energy
 or thermal result has been observed. Existing SPEC thresholds remain unchanged.
 
-This change supplies a corpus-lock utility, USB driver launcher, offline scorer,
-synthetic regression tests and a separate path-filtered CI job. **It is not an
-end-to-end Whisper runner:** the persistent arm64 driver described below still
-has to be implemented/built and audited before collection can run. No native
-library or dependency was added to the IME, desktop or root Cargo workspace.
+This change supplies a native CPU Whisper driver, an arm64 NDK build script,
+a corpus-lock utility, USB collection, offline scoring and regression CI.
+The native driver builds against the existing locked whisper-rs-sys 0.11.1
+source (whisper.cpp 1.7.1) on this Linux host. An Android cross-build and actual
+inference require an installed NDK and frozen models; neither is available here.
+No native library or dependency was added to the IME, desktop or Cargo workspace.
 
 | Required run metadata | Current value |
 | --- | --- |
@@ -65,7 +66,7 @@ The lock rejects missing files, existing output and anything other than exactly
 that consent is legally valid, that a person read the reference correctly, or
 that the noise mix follows the protocol; a human must do those checks.
 
-## Device method and driver contract (implementation outstanding)
+## Device method and native driver
 
 Use two **physical** arm64-v8a phones: one midrange and one recent. Record model,
 SoC, RAM, Android version/security patch/build, battery health, ambient temperature,
@@ -79,13 +80,33 @@ never `.en`. Record license, immutable download origin, conversion/quantization
 command and tool revision, SHA-256 and actual file size for each artifact. No
 upstream repository was cloned and no new package was installed in this task.
 
-Required driver at `/data/local/tmp/tingskriver-bench/driver` accepts
-`--manifest PATH --output PATH`. It must load only local WAV/models, force Danish
-`da`, transcription rather than translation, deterministic decoding, fixed
-threads/seed, no prompts or contextual carry-over, and networking disabled.
-Do not suppress silence results in the driver: score the actual returned text.
+The native executable takes `MODEL PCM16_PATH` and emits cold milliseconds,
+warm milliseconds, peak PSS MB (one per line), then the unmodified hypothesis.
+`device.py` creates the result JSON, rather than requiring a second Android
+runtime or JSON library. Each invocation loads one model once, then decodes in
+that same resident process. Danish `da`, greedy decoding, zero temperature and
+fallback increment, four threads, CPU, no prompt and no context carry-over are
+fixed in source. No network API, download or cloud fallback is used. Enable
+Android airplane mode and disable Wi-Fi/Bluetooth before running.
 
-The driver writes one JSON document containing the corpus lock fields,
+Build with an **already audited local clean whisper.cpp checkout** at the chosen
+full commit and an **already installed NDK**. The script never clones or installs
+anything. Record the chosen NDK version and use that exact version on reruns.
+CMake statically links whisper/ggml and the C++ runtime for arm64-v8a/API 28:
+
+```sh
+python3 scripts/android-benchmark/build_driver.py \
+  --source /private/whisper.cpp --revision FULL_40_HEX_COMMIT \
+  --ndk /installed/android-ndk --output /private/bench/build-arm64
+```
+
+Keep `build-arm64/driver.json` beside `driver`. Collection verifies its binary
+hash, ABI and engine revision. It verifies pushed driver/model/PCM hashes using
+Android `sha256sum`. The corpus WAV hashes are verified before conversion to
+PCM16. The native process converts PCM16 to float **inside** the warm window.
+The build metadata is retained in the private results; do not commit it blindly.
+
+The collector writes one JSON document containing the corpus lock fields,
 `engine_revision`, and a `runs` array. For each phone/model/clip, supply exactly
 20 indexed observations (`repeat` 0..19). Each observation contains:
 
@@ -111,9 +132,10 @@ For every observation run a cold arm followed by a warm arm:
   clock from stop/buffer-ready to final text, including preprocessing and decode.
   Exclude the 15 s capture, include all post-stop work. No process launch in this
   window. A standalone whisper CLI invocation is not a warm measurement.
-- Sample PSS with Android `dumpsys meminfo <pid>` at <=100 ms intervals across
-  load and inference. Use TOTAL PSS, convert KiB to decimal MB (KiB * 1024/1e6),
-  and report sampling interval/overhead. Sampled peak may miss short spikes.
+- The driver samples its own `/proc/self/smaps_rollup` Pss every 50 ms across
+  load and inference, converting KiB to decimal MB (KiB * 1024/1e6). Missing PSS
+  fails the observation. This avoids repeated adb/dumpsys overhead; quantify the
+  sampler overhead in the method record. Sampled peak may miss short spikes.
 - Measure per-observation energy over both cold and warm arms with a calibrated
   external power meter, integral watts*time converted to mWh. Disconnect charging
   for timing/thermal runs; report meter setup and battery operating point. If
@@ -128,19 +150,35 @@ For every observation run a cold arm followed by a warm arm:
   and publish aggregate thermal/latency drift; the scorer does not certify that
   sustained experiment. Airplane mode, screen state and battery band must match.
 
-Use an otherwise idle test phone, keep all private files outside the repo, and
-stage only audited driver, frozen models, manifest and WAVs under the fixed adb
-path. USB launcher (uses adb's default single device, rejects emulators):
+Use an otherwise idle test phone and keep all private files outside the repo.
+The collector stages only the supplied driver, models and converted corpus PCM
+under `/data/local/tmp/tingskriver-bench`. It overwrites that dedicated staging
+area; use no other files there. USB collection uses adb's default single device
+and rejects emulators:
 
 ```sh
-python3 scripts/android-benchmark/device.py /private/bench/midrange.json
-# Repeat with the recent phone attached, tier=recent in its local manifest.
+python3 scripts/android-benchmark/device.py /private/bench/midrange.json \
+  --manifest /private/bench/manifest.json --audio-dir /private/bench/audio \
+  --model-dir /private/bench/models --driver /private/bench/build-arm64/driver \
+  --tier midrange --engine-revision FULL_40_HEX_COMMIT
+# Repeat with the recent phone attached and --tier recent.
 ```
 
-The launcher runs the driver in the foreground, attaches allowlisted hardware/OS
-properties and writes private results locally. It does not build/provide the
-driver or auto-install/download anything. Failure is exit 2 with sanitized output.
-Never upload these raw JSON files to CI: hypotheses may contain personal data.
+Models must be named `ggml-base.bin`, `ggml-small.bin`, `ggml-small-q5_1.bin`.
+Execution order is seeded (133) and preserved in result order. There is a 60 s
+foreground cooldown before each observation; this is not proof of a matched
+thermal baseline. Discard/repeat observations outside the recorded baseline.
+Battery temperature and thermal status are read via dumpsys; unavailable fields
+fail collection. Completed rows are saved after each observation so USB failure
+does not lose the run. Use a new output file for every run.
+
+**Energy requires external instrumentation.** The collector sets `energy_mwh`
+to JSON null and records `energy: not collected`. Align power-meter readings to
+the recorded execution order, retain the calibration/time record privately and
+fill each row only with its measured energy before scoring. Null is deliberately
+rejected by the scorer. No battery/energy estimates or fabricated zeroes are used.
+The separate sustained 10-minute test and ambient/battery controls remain manual
+protocol steps. Raw JSON hypotheses may contain personal data; never upload to CI.
 
 ## Scoring and acceptance
 
@@ -184,30 +222,41 @@ there is no evidence to justify a numeric SPEC change now.
 
 ## Verification report
 
-Tests were written first; initial discovery failed because `benchmark` did not
-exist. The implementation then passed all 9 synthetic contract tests, including
-bad WER/latency/PSS/silence rejection, incomplete rows, non-finite values, invalid
-hashes, emulators, metadata collection, CLI exit codes and actual generated WAV hashing. These
-are tests of tools, not measured Danish Whisper accuracy. CI compiles the Python
-tools and runs the same tests without audio/models/dependencies/network access.
+The review's P1 (missing executable/build path) was valid. Native source, a local
+NDK cross-build path, verified staging and full device collection now replace the
+unimplemented executable contract. Regression tests first failed for the missing
+native source/parser, then passed after implementation. Host compilation against
+the existing Cargo-cached Whisper source and real-executable invalid-PCM and
+missing-model smoke tests pass. A fake-engine native test additionally exercises
+PCM conversion, fixed decoding flags and preservation of silence hallucinations.
+CI is configured to build using the locked Cargo dependency and cross-compile
+with the runner's preinstalled NDK; that job has not been observed here.
 
-Android build/test/lint attempt:
-`./gradlew --no-daemon :app:assembleDebug :app:testDebugUnitTest :app:lintDebug`
-failed before configuration: Gradle requires JVM >=17, current JVM is 11.
-No APK/JVM/lint success is claimed from that attempt.
-Python compilation and `git diff --check` passed. Desktop Cargo/frontend build,
-tests and lint were not run: no desktop code changed and frontend dependencies
-are absent. The full relevant benchmark suite was run once after the final
-code change; the combined Android build/JVM/lint gate is environment-blocked.
+No new package was installed and no foreign repository was cloned. The native
+library used for host verification was already present under the existing
+Cargo.lock; the build runs its existing CMake configuration. No model was loaded
+successfully and no phone measurement is claimed. Android NDK/physical inference,
+energy calibration and sustained thermal validation remain unverified locally.
 
-Suggested PR title: `Add Android Whisper benchmark tools and device protocol`.
-Suggested description: Adds consented-corpus locking, offline WER/CER and resource
-scoring, a USB driver launcher and dependency-free contract CI. Nine synthetic
-tests pass; Android validation is blocked by Java 11. No physical measurements
-or persistent native driver are supplied, so #133 and milestone 2 remain open.
-No PR was created by this worker.
+Validation commands:
+
+- `python3 -m compileall -q scripts/android-benchmark` and `git diff --check` pass.
+- `python3 -m unittest discover -s scripts/android-benchmark -v`: 13 tests pass.
+- Native CMake host build and `smoke_native.py`: pass. Upstream CMake emits its
+  existing minimum-version/ccache warnings; driver builds with `-Werror`.
+- Android assemble/JVM tests/lint: blocked before configuration by Java 11
+  (Gradle requires >=17).
+- `cargo test --workspace --locked --offline --no-fail-fast`: failed during
+  build, before tests: missing Tauri `llama-helper` sidecar, and native llama
+  compilation exhausted the shared filesystem. A benchmark test compile also
+  hit that temporary disk shortage; it passed when rerun after Cargo exited.
+- `pnpm --dir frontend build` and `pnpm --dir frontend lint`: blocked because
+  node_modules/Next.js are absent. No frontend test script is defined.
+
+These broader failures are outside this benchmark diff. Full-repository checks
+are **not green**; no desktop/Android application success is claimed.
 
 Outstanding: consented recordings and final hashes, audited engine/model pinning,
-native persistent driver, power instrument, both physical phones, all actual
-measurements and sustained thermal run, aggregate publication and model/SPEC
-decision. Issue #133 must remain open until those are complete.
+both physical phones, calibrated power instrument, all actual measurements,
+sustained thermal run, aggregate publication and model/SPEC decision. Issue #133
+and milestone 2 remain open. Do not infer acceptance from tool tests.

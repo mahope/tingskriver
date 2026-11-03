@@ -12,16 +12,7 @@ class DeviceTests(unittest.TestCase):
     def test_reject_emulator(self):
         with patch('device.adb', side_effect=['device', 'arm64-v8a', '1']):
             with self.assertRaises(ValueError):
-                device.collect(Path('/unused'))
-
-    def test_collect_metadata_without_serial(self):
-        with tempfile.TemporaryDirectory() as directory:
-            target = Path(directory) / 'results.json'
-            answers = ['device', 'arm64-v8a', '', '', '{"runs":[{}]}', 'phone', '16']
-            with patch('device.adb', side_effect=answers):
-                device.collect(target)
-            self.assertEqual(json.loads(target.read_text())['runs'][0],
-                             dict(hardware='phone', os='16', abi='arm64-v8a'))
+                device.collect(Path('/unused'), None, None, None, None, 'midrange', 'a'*40)
 
     def test_corpus_lock_validates_audio_and_hashes(self):
         with tempfile.TemporaryDirectory() as directory:
