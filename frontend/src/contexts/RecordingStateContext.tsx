@@ -177,6 +177,9 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
         // Recording stopped
         const unlistenStopped = await recordingService.onRecordingStopped((payload) => {
           console.log('[RecordingStateContext] Recording stopped event:', payload);
+          if (payload.audio_status && payload.audio_status !== 'ok' && payload.audio_message) {
+            toast.error(payload.audio_message, { duration: 15000 });
+          }
           setState(prev => {
             // Set status to STOPPING if not already in stop flow
             // This ensures smooth UI transition for tray/keyboard stops
