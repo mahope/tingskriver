@@ -574,7 +574,7 @@ impl ParakeetEngine {
             .map_err(|e| anyhow!("Parakeet transcription task failed: {}", e))?
             .map_err(|e| anyhow!("Parakeet transcription failed: {}", e))?;
 
-        log::debug!("Parakeet transcription result: '{}'", text);
+        log::debug!("Parakeet transcription result: {} bytes", text.len());
 
         Ok(text)
     }

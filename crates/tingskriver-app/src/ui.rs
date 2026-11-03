@@ -205,10 +205,16 @@ pub enum Page {
     Meetings,
     Dictation,
     Settings,
+    Measurement,
 }
 
 impl Page {
-    pub const ALL: [Page; 3] = [Page::Meetings, Page::Dictation, Page::Settings];
+    pub const ALL: [Page; 4] = [
+        Page::Meetings,
+        Page::Dictation,
+        Page::Measurement,
+        Page::Settings,
+    ];
 
     /// The page for a `--page` argument (English or Danish name).
     pub fn from_arg(name: &str) -> Option<Page> {
@@ -216,6 +222,7 @@ impl Page {
             "meetings" | "møder" => Some(Page::Meetings),
             "dictation" | "diktering" => Some(Page::Dictation),
             "settings" | "indstillinger" => Some(Page::Settings),
+            "measurement" | "måling" => Some(Page::Measurement),
             _ => None,
         }
     }
@@ -225,6 +232,7 @@ impl Page {
             Page::Meetings => strings::MEETINGS,
             Page::Dictation => strings::DICTATION,
             Page::Settings => strings::SETTINGS,
+            Page::Measurement => strings::MEASURE_TITLE,
         }
     }
 
@@ -233,6 +241,7 @@ impl Page {
             Page::Meetings => IconName::Calendar,
             Page::Dictation => IconName::Mic,
             Page::Settings => IconName::Settings,
+            Page::Measurement => IconName::Mic,
         }
     }
 }
@@ -240,6 +249,7 @@ impl Page {
 pub struct Shell {
     model: Entity<AppModel>,
     page: Page,
+    measurement: Entity<crate::measurement::MeasurementView>,
     probe_line: Entity<InputState>,
     probe_text: Entity<TextareaState>,
     state_path: Option<PathBuf>,
@@ -267,6 +277,14 @@ impl Shell {
             cx.subscribe(&probe_line, |_, _, _: &InputEvent, cx| cx.notify()),
             cx.subscribe(&probe_text, |_, _, _: &InputEvent, cx| cx.notify()),
         ];
+        let measurement = cx.new(|cx| {
+            crate::measurement::MeasurementView::new(
+                model.read(cx).app_data_dir.clone(),
+                model.read(cx).runtime.clone(),
+                window,
+                cx,
+            )
+        });
         let save_path = state_path.clone();
         window.on_window_should_close(cx, move |window, _| {
             if let Some(path) = &save_path {
@@ -281,6 +299,7 @@ impl Shell {
         Shell {
             model,
             page,
+            measurement,
             probe_line,
             probe_text,
             state_path,
@@ -552,6 +571,7 @@ impl Render for Shell {
             (None, Page::Meetings) => self.meetings_page(cx),
             (None, Page::Dictation) => self.dictation_page(cx),
             (None, Page::Settings) => self.settings_page(cx),
+            (None, Page::Measurement) => self.measurement.clone().into_any_element(),
         };
         h_flex()
             .size_full()
@@ -571,7 +591,7 @@ fn palette(cx: &App) -> &'static Palette {
     Palette::for_mode(cx.theme().mode)
 }
 
-fn page(title: &str, subtitle: Option<&str>, body: AnyElement, cx: &App) -> AnyElement {
+pub(crate) fn page(title: &str, subtitle: Option<&str>, body: AnyElement, cx: &App) -> AnyElement {
     v_flex()
         .id(SharedString::from(format!("page-{title}")))
         .size_full()
@@ -599,14 +619,14 @@ fn heading(text: &str) -> impl IntoElement {
         .child(text.to_string())
 }
 
-fn section_title(text: &str) -> impl IntoElement {
+pub(crate) fn section_title(text: &str) -> impl IntoElement {
     div()
         .font_weight(FontWeight::SEMIBOLD)
         .text_size(typography::LG)
         .child(text.to_string())
 }
 
-fn paragraph(text: &str, cx: &App) -> impl IntoElement {
+pub(crate) fn paragraph(text: &str, cx: &App) -> impl IntoElement {
     div()
         .text_size(typography::BASE)
         .text_color(palette(cx).foreground)
@@ -678,7 +698,7 @@ mod tests {
     #[test]
     fn navigation_is_danish_and_ordered() {
         let labels: Vec<_> = Page::ALL.iter().map(|p| p.label()).collect();
-        assert_eq!(labels, ["Møder", "Diktering", "Indstillinger"]);
+        assert_eq!(labels, ["Møder", "Diktering", "Måling", "Indstillinger"]);
     }
 
     #[test]

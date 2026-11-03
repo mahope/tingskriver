@@ -217,6 +217,22 @@ transcription leaves the saved meeting available and reports the error.
   chunks left. Recovery and cleanup share a lock on the canonical folder
   path; verification and deletion both run on a blocking worker.
 
+### Disk recovery regression (#54)
+
+PR #146 tested recovery against a scanner that retained readable samples from
+truncated segments. Main also received `f910177` through #26, which skipped a
+truncated final segment entirely. After merging #146, the truncated fixture
+(three seconds declared, two seconds plus one byte present) therefore disappeared
+from `scan`, and `restore` reported no audio. This was a merge interaction, not
+a dependency or test-order difference.
+
+Recovery retains the complete 16-bit PCM samples, ignores an incomplete trailing
+byte, and keeps the truncated header and original file unchanged. Verification
+still reports partial audio, so repeated recovery cannot authorize deletion of
+the damaged originals. The recovery fixtures cover scanning without UI storage,
+verified restore, database and encoder failures, retries, empty folders, and a
+terminated writer with both tracks and at most two seconds of loss.
+
 ## AI providers: one model, a chain per function
 
 `tingskriver_core::providers` is the one place that knows which AI services

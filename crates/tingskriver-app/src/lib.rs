@@ -13,6 +13,7 @@
 pub mod args;
 pub mod assets;
 pub mod crash;
+mod measurement;
 pub mod probe;
 pub mod single_instance;
 pub mod startup;

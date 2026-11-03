@@ -112,6 +112,38 @@ async fn failed_database_save_remains_discoverable_after_encoding() {
 }
 
 #[tokio::test]
+async fn failed_encoding_keeps_originals_and_does_not_register_meeting() {
+    let root = tempfile::tempdir().unwrap();
+    let folder = fixture(root.path(), "encode-failure", true);
+    let raw_file = folder.join(RAW_DIR).join("microphone_000.wav");
+    let original = std::fs::read(&raw_file).unwrap();
+    let db_dir = tempfile::tempdir().unwrap();
+    let db = crate::database::manager::DatabaseManager::open(db_dir.path())
+        .await
+        .unwrap();
+    let missing_ffmpeg = root.path().join("missing-ffmpeg");
+    let error = restore(
+        root.path(),
+        "encode-failure",
+        db.pool(),
+        Some(&missing_ffmpeg),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        error.to_string().contains("Could not start FFmpeg"),
+        "{error}"
+    );
+    assert_eq!(std::fs::read(raw_file).unwrap(), original);
+    assert_eq!(scan(root.path()).unwrap().len(), 1);
+    let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM meetings")
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+}
+
+#[tokio::test]
 async fn complete_restore_and_empty_folder() {
     let root = tempfile::tempdir().unwrap();
     let folder = fixture(root.path(), "complete", false);
