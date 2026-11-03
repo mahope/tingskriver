@@ -30,6 +30,13 @@ APK: `app/build/outputs/apk/debug/app-debug.apk`. Tests:
 same gates on pushes and pull requests touching this directory or itself.
 It uploads the APK and test/lint reports. No release signing or secrets needed.
 
+JVM tests also cover generation-bound insertion: original connection, stale results,
+cancel/restart, missing/rejected/throwing connections, blank/error results and
+at-most-once commit including reentrant callbacks. The IME captures the original
+InputConnection when recording starts and invalidates it on every lifecycle
+cancellation. Completion must run on the IME main thread. The enabled STT stub
+still inserts no text. No clipboard, surrounding-text reads or Enter are used.
+
 JVM tests cover stub behavior, input-field policy and recording ownership:
 permission denial/open failure, duplicate start, stale worker generations,
 cancel/restart, stop, read failure/revocation, partial chunks, sample capacity
@@ -69,6 +76,17 @@ transcripts, raw logcat or screenshots containing field text. Check app-private
 storage/backup configuration without exporting voice data. API 26 has no system
 microphone indicator: also check release with platform microphone diagnostics.
 A green JVM suite cannot certify OEM lifecycle behavior or the indicator.
+
+### Physical insertion gate (not yet performed)
+
+No device is attached in the worker environment. Before enabling real STT, use
+synthetic final results in a local test build on a physical phone, in both a
+standard EditText and a browser form. Verify one insertion at the original
+cursor, duplicate callbacks, blank/error results, rejected connections, same-app
+field changes, app switches, cancel/new session, hidden IME, screen lock and
+service stop before completion. Late results must write to neither old nor new
+fields. Test text, visible, web and numeric passwords and non-text fields.
+Never ship the synthetic-result hook or use personal text in the checks.
 
 Other device checks still required: API 26 and current Android, light/dark, TalkBack,
 large text, landscape, rotation, system bars, focus changes and switching away.
