@@ -22,7 +22,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - name: Install system libraries
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev cmake clang
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev cmake clang ffmpeg
       - uses: swatinem/rust-cache@v2
       - name: Test measurement guard
         run: python3 -m unittest discover -s scripts/tests -p test_recording_soak.py

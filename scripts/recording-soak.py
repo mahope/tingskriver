@@ -17,14 +17,15 @@ def metrics(pid, folder):
     # utime + stime, in clock ticks; process name can contain spaces.
     fields = Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()
     return dict(rss_bytes=rss, cpu_ticks=int(fields[11]) + int(fields[12]),
-                file_bytes=sum(p.stat().st_size for p in folder.glob('*.wav')))
+                file_bytes=sum(p.stat().st_size for p in folder.rglob('*.wav')))
 
 
 def run(binary, root, seconds, crash=False, interval=300):
     folder = root / ('crash' if crash else 'normal')
     folder.mkdir(parents=True, exist_ok=False)
-    child = subprocess.Popen([str(binary), 'record', str(folder), str(seconds)])
+    child = subprocess.Popen([str(binary), 'record', str(folder), str(seconds), '--measure-final'])
     values = []
+    final_measured = False
     try:
         deadline = time.monotonic() + 60
         while not (folder / 'ready').exists():
@@ -41,6 +42,13 @@ def run(binary, root, seconds, crash=False, interval=300):
                 print(json.dumps(dict(variant=folder.name, elapsed_s=elapsed, **sample)), flush=True)
                 check_memory(values)
                 next_log += interval
+            if not crash and (folder / 'finished').exists() and not (folder / 'measured').exists():
+                sample = metrics(child.pid, folder)
+                values.append(sample['rss_bytes'])
+                print(json.dumps(dict(variant=folder.name, elapsed_s=elapsed, final=True, **sample)), flush=True)
+                check_memory(values)
+                (folder / 'measured').touch()
+                final_measured = True
             if crash and elapsed >= seconds / 2:
                 child.kill()
                 child.wait(timeout=10)
@@ -50,7 +58,8 @@ def run(binary, root, seconds, crash=False, interval=300):
             time.sleep(0.05)
         assert not crash, 'recorder exited before forced stop'
         assert child.returncode == 0, f'recorder failed: {child.returncode}'
-        subprocess.run([str(binary), 'verify', str(folder), str(seconds)], check=True, timeout=600)
+        assert final_measured, 'recorder exited without final memory measurement'
+        subprocess.run([str(binary), 'finish', str(folder), str(seconds)], check=True, timeout=600)
     finally:
         if child.poll() is None:
             child.kill()

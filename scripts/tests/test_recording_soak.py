@@ -1,4 +1,5 @@
 import importlib.util
+import itertools
 from pathlib import Path
 import unittest
 from unittest.mock import Mock, patch
@@ -24,6 +25,23 @@ class Budgets(unittest.TestCase):
             with patch.object(soak.subprocess, 'Popen', side_effect=exited_recorder), patch.object(soak.subprocess, 'run'):
                 with self.assertRaisesRegex(AssertionError, 'forced stop'):
                     soak.run(Path('/fake-recorder'), root, 8, crash=True)
+
+    def test_final_memory_sample_is_checked(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            def recorder(*args, **kwargs):
+                folder = root / 'normal'
+                (folder / 'ready').touch()
+                return Mock(poll=Mock(return_value=None))
+            calls = []
+            def sample(pid, folder):
+                calls.append(pid)
+                (folder / 'finished').touch()
+                return dict(rss_bytes=10 if len(calls) == 1 else 100_000_010)
+            with patch.object(soak.subprocess, 'Popen', side_effect=recorder), patch.object(soak, 'metrics', side_effect=sample), patch.object(soak.time, 'monotonic', side_effect=itertools.count()), patch.object(soak.time, 'sleep'):
+                with self.assertRaisesRegex(AssertionError, 'RAM growth'):
+                    soak.run(Path('/fake-recorder'), root, 8)
+            self.assertEqual(len(calls), 2)
 
     def test_transient_peak_is_not_hidden(self):
         with self.assertRaises(AssertionError):
