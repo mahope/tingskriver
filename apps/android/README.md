@@ -41,6 +41,49 @@ and elapsed-time cutoff even when no samples arrive. They use synthetic sample
 values, never voices. Android lifecycle wiring and physical microphone release
 still require the device checks below.
 
+## Release
+
+Android has its own version and `android-v` tag prefix, independent of the
+desktop apps. The first release is `versionName = "0.1.0-dev.1"` with
+`versionCode = 1` in `app/build.gradle.kts`. Increase `versionCode` for every
+later release, including pre-releases; never reset or reuse it.
+
+The orchestrator creates and retains the keystore outside this repository and
+configures these GitHub Actions secrets:
+
+- `ANDROID_KEYSTORE_BASE64`: base64-encoded release keystore.
+- `ANDROID_KEYSTORE_PASSWORD`: keystore password.
+- `ANDROID_KEY_ALIAS`: signing key alias.
+- `ANDROID_KEY_PASSWORD`: signing key password.
+
+After updating and committing the version, tag that commit and push the tag:
+
+```sh
+git tag android-v0.1.0-dev.1
+git push origin android-v0.1.0-dev.1
+```
+
+`android-release.yml` rejects a tag that differs from `android-v<versionName>`
+and fails tag builds if any signing secret is missing. It runs JVM tests and
+lint, builds the release APK, verifies its signature with `apksigner`, and
+publishes `Tingskriver-Android-<version>.apk` plus its `.apk.sha256` checksum.
+Updates require the same signing key, so keep the keystore safe.
+
+Manual runs (`workflow_dispatch`) upload artifacts only, even when run on a
+tag. With all secrets they verify and upload a signed APK; otherwise they
+upload an unsigned APK, which cannot be installed until signed.
+
+For local signing, Gradle reads `TINGSKRIVER_ANDROID_KEYSTORE` (file path),
+`TINGSKRIVER_ANDROID_KEYSTORE_PASSWORD`, `TINGSKRIVER_ANDROID_KEY_ALIAS` and
+`TINGSKRIVER_ANDROID_KEY_PASSWORD`. If any are missing, `assembleRelease`
+builds unsigned. Debug builds need no secrets. Never commit keystores or passwords.
+
+Android releases are **always pre-releases and never latest**, including versions
+without a suffix: the Tauri updater uses `releases/latest/download/latest.json`.
+They still count toward Velopack's ten newest releases, before pre-release
+filtering. Keep fewer than ten non-Velopack releases between Velopack releases
+so its feed remains visible; see [Updates](../../installer/README.md#updates).
+
 ## Try on a device
 
 1. Install the debug APK, then open Tingskriver.
