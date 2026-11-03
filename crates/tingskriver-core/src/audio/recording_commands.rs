@@ -42,6 +42,10 @@ static IS_RECORDING: AtomicBool = AtomicBool::new(false);
 /// and surfaces a spurious "Microphone fallback failed" toast.
 static IS_RECORDING_STOPPING: AtomicBool = AtomicBool::new(false);
 
+/// Set while the app is about to exit (the Tauri app's move to the GPUI app),
+/// so no recording starts that the exit would cut off.
+static RECORDINGS_BLOCKED: AtomicBool = AtomicBool::new(false);
+
 /// Recording is live and not being torn down — the only state in which the
 /// mic-disconnect fallback should run or report.
 fn recording_live() -> bool {
@@ -326,6 +330,9 @@ pub async fn start_recording_with_meeting_name(
     if current_recording_state {
         return Err("Recording already in progress".to_string());
     }
+    if RECORDINGS_BLOCKED.load(Ordering::SeqCst) {
+        return Err("The app is closing, recording cannot start".to_string());
+    }
 
     // No transcription model or speech runtime is needed to record: the
     // transcript is made from the saved audio after the meeting.
@@ -458,6 +465,9 @@ pub async fn start_recording_with_devices_and_meeting(
     info!("🔍 IS_RECORDING state check: {}", current_recording_state);
     if current_recording_state {
         return Err("Recording already in progress".to_string());
+    }
+    if RECORDINGS_BLOCKED.load(Ordering::SeqCst) {
+        return Err("The app is closing, recording cannot start".to_string());
     }
 
     // No transcription model or speech runtime is needed to record: the
@@ -719,6 +729,23 @@ async fn stop_recording_with_reason(
 
     info!("🎉 Recording stopped in {} ms", stop_started.elapsed().as_millis());
     Ok(save_status)
+}
+
+/// Block new recordings unless one runs. Both start commands hold the engine
+/// lifecycle lock from their check to setting `IS_RECORDING`, so a start in
+/// progress is either seen here or refused. `false`: a recording runs.
+pub async fn block_recordings_if_idle() -> bool {
+    let _engine_lifecycle_guard = super::common::acquire_engine_lifecycle_lock().await;
+    if IS_RECORDING.load(Ordering::SeqCst) {
+        return false;
+    }
+    RECORDINGS_BLOCKED.store(true, Ordering::SeqCst);
+    true
+}
+
+/// Allow recordings again after [`block_recordings_if_idle`].
+pub fn unblock_recordings() {
+    RECORDINGS_BLOCKED.store(false, Ordering::SeqCst);
 }
 
 /// Check if recording is active
@@ -1344,11 +1371,13 @@ async fn trigger_mic_fallback_to_default(
 }
 
 #[cfg(test)]
-mod internal_stop_tests {
+mod tests {
     use super::super::recording_state::AudioError;
     use super::*;
     use crate::{database::manager::DatabaseManager, host::AppHost};
     use std::path::PathBuf;
+
+    static TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
     #[derive(Default)]
     struct EventHost {
@@ -1387,6 +1416,7 @@ mod internal_stop_tests {
 
     #[tokio::test]
     async fn internal_error_stops_emit_reason_and_finish_teardown() {
+        let _test_guard = TEST_LOCK.lock().await;
         let first_stop = StoppingGuard::try_new().unwrap();
         assert!(StoppingGuard::try_new().is_none(), "only one teardown may run at once");
         drop(first_stop);
@@ -1429,5 +1459,20 @@ mod internal_stop_tests {
             assert_eq!(events.len(), 1);
             assert_eq!(events[0]["reason"], error.user_message());
         }
+    }
+
+    #[tokio::test]
+    async fn blocking_recordings_waits_for_a_running_one() {
+        let _test_guard = TEST_LOCK.lock().await;
+        IS_RECORDING.store(true, Ordering::SeqCst);
+        assert!(!block_recordings_if_idle().await);
+        assert!(!RECORDINGS_BLOCKED.load(Ordering::SeqCst));
+
+        IS_RECORDING.store(false, Ordering::SeqCst);
+        assert!(block_recordings_if_idle().await);
+        assert!(RECORDINGS_BLOCKED.load(Ordering::SeqCst));
+
+        unblock_recordings();
+        assert!(!RECORDINGS_BLOCKED.load(Ordering::SeqCst));
     }
 }

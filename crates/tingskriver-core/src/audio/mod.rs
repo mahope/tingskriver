@@ -51,6 +51,7 @@ pub mod transcription;
 
 // Shared utilities for import and retranscription
 pub mod common;
+pub(crate) mod chunk_checkpoint;
 
 // Shared constants
 pub mod constants;

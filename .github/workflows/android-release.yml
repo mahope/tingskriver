@@ -1,0 +1,153 @@
+name: Android release
+
+on:
+  push:
+    tags:
+      - 'android-v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Release APK, JVM tests and lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    defaults:
+      run:
+        working-directory: apps/android
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Read and validate version
+        id: version
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/^[[:space:]]*versionName = "\([0-9][0-9A-Za-z.+-]*\)"[[:space:]]*$/\1/p' app/build.gradle.kts)
+          if [ -z "$version" ] || [[ "$version" == *$'\n'* ]]; then
+            echo "::error::Could not read a unique Android versionName"
+            exit 1
+          fi
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "android-v$version" ]; then
+            echo "::error::Tag does not match versionName (expected android-v$version). Update app/build.gradle.kts first."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v6.1.0
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install SDK platform and build tools
+        run: '"$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0"'
+
+      - name: Set up Gradle and validate wrapper
+        uses: gradle/actions/setup-gradle@v6.4.1
+
+      - name: Run JVM unit tests and lint
+        run: ./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug
+
+      - name: Build and verify release APK
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          TINGSKRIVER_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          TINGSKRIVER_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          TINGSKRIVER_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          missing=false
+          for name in ANDROID_KEYSTORE_BASE64 TINGSKRIVER_ANDROID_KEYSTORE_PASSWORD TINGSKRIVER_ANDROID_KEY_ALIAS TINGSKRIVER_ANDROID_KEY_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "::warning::Missing signing secret for $name"
+              missing=true
+            fi
+          done
+          if [ "$missing" = true ] && [ "$GITHUB_REF_TYPE" = tag ]; then
+            echo "::error::Tag builds require ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD"
+            exit 1
+          fi
+          if [ "$missing" = false ]; then
+            umask 077
+            export TINGSKRIVER_ANDROID_KEYSTORE="$RUNNER_TEMP/tingskriver-android.jks"
+            trap 'rm -f "$TINGSKRIVER_ANDROID_KEYSTORE"' EXIT
+            printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$TINGSKRIVER_ANDROID_KEYSTORE"
+          else
+            echo "::notice::Manual build without all signing secrets: uploading an unsigned APK"
+            unset TINGSKRIVER_ANDROID_KEYSTORE_PASSWORD TINGSKRIVER_ANDROID_KEY_ALIAS TINGSKRIVER_ANDROID_KEY_PASSWORD
+          fi
+          unset ANDROID_KEYSTORE_BASE64
+          ./gradlew --no-daemon :app:assembleRelease
+          apk=app/build/outputs/apk/release/app-release-unsigned.apk
+          if [ "$missing" = false ]; then
+            apk=app/build/outputs/apk/release/app-release.apk
+            "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs "$apk"
+          fi
+          mkdir -p release
+          cp "$apk" "release/Tingskriver-Android-$VERSION.apk"
+          cd release
+          sha256sum "Tingskriver-Android-$VERSION.apk" > "Tingskriver-Android-$VERSION.apk.sha256"
+
+      - name: Upload release APK and checksum
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: tingskriver-android-release
+          path: apps/android/release/*
+          if-no-files-found: error
+
+      - name: Upload test and lint reports
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: tingskriver-android-release-reports
+          path: |
+            apps/android/app/build/reports/
+            apps/android/app/build/test-results/
+          if-no-files-found: warn
+
+  release:
+    name: Publish Android pre-release
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - name: Download verified APK and checksum
+        env:
+          RUN_ID: ${{ github.run_id }}
+        run: gh run download "$RUN_ID" --name tingskriver-android-release --dir release
+
+      - name: Publish GitHub Release
+        run: |
+          set -euo pipefail
+          notes="$RUNNER_TEMP/android-notes.md"
+          cat > "$notes" <<'NOTES'
+          Dette er en testversion af Tingskriver-tastaturet til Android.
+
+          Talegenkendelsen er endnu ikke koblet på. Mikrofonen kan optage kortvarigt i hukommelsen, men lyden kasseres, når optagelsen stopper, og der indsættes ingen tekst.
+
+          Hent APK-filen nedenfor og åbn den på din Android-telefon. Ved installation uden for Google Play skal du tillade installation fra ukendte kilder for den browser eller filapp, du åbner APK-filen med. Tilladelsen kan slås fra igen efter installationen. Åbn derefter Tingskriver og følg vejledningen for at aktivere tastaturet.
+
+          Opdateringer installeres ved at hente og åbne en nyere APK. De kræver samme signatur som den installerede version. SHA-256-kontrolsummen ligger ved siden af APK-filen.
+          NOTES
+          gh release create "$GITHUB_REF_NAME" --prerelease --latest=false --verify-tag \
+            --title "Tingskriver Android $VERSION" --notes-file "$notes" release/*

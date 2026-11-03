@@ -630,6 +630,70 @@ impl WhisperEngine {
         repeated_words as f32 / total_words
     }
     
+    pub async fn transcribe_audio_timed(
+        &self,
+        audio_data: Vec<f32>,
+        language: Option<String>,
+    ) -> Result<Vec<crate::stt::TimedWord>> {
+        if let Some(remote) = self.remote.read().await.clone() {
+            let call = self.start_call();
+            return tokio::task::spawn_blocking(move || {
+                let _call = call;
+                remote.transcribe_timed(&audio_data, language)
+            })
+            .await?
+            .map_err(anyhow::Error::msg);
+        }
+        self.run_blocking(move |ctx| {
+            let config = crate::audio::HardwareProfile::detect().get_whisper_config();
+            let mut params = FullParams::new(SamplingStrategy::BeamSearch {
+                beam_size: config.beam_size as i32,
+                patience: 1.0,
+            });
+            let (code, translate) = match language.as_deref() {
+                Some("auto") | None => (None, false),
+                Some("auto-translate") => (None, true),
+                Some(lang) => (Some(lang), false),
+            };
+            params.set_language(code);
+            params.set_translate(translate);
+            // Token alignment also runs without timestamp tokens. Keep the existing
+            // decoding mode that avoids dropping valid segments at chunk boundaries.
+            params.set_no_timestamps(true);
+            params.set_token_timestamps(true);
+            params.set_print_special(false);
+            params.set_print_progress(false);
+            params.set_print_realtime(false);
+            params.set_print_timestamps(false);
+            params.set_suppress_blank(true);
+            params.set_suppress_non_speech_tokens(true);
+            params.set_temperature(config.temperature);
+            params.set_max_initial_ts(1.0);
+            params.set_entropy_thold(2.4);
+            params.set_logprob_thold(-1.0);
+            params.set_no_speech_thold(0.55);
+            params.set_max_len(200);
+            params.set_single_segment(false);
+            let duration_ms = audio_data.len() as f64 / 16.0;
+            let mut state = ctx.create_state()?;
+            state.full(params, &audio_data)?;
+            let mut tokens = Vec::new();
+            for segment in 0..state.full_n_segments()? {
+                for token in 0..state.full_n_tokens(segment)? {
+                    let data = state.full_get_token_data(segment, token)?;
+                    if data.id >= ctx.token_eot() {
+                        continue;
+                    }
+                    let text = ctx.token_to_cstr(data.id)?.to_bytes().to_vec();
+                    tokens.push((text, (data.t0 as f64 * 10.0).min(duration_ms),
+                        (data.t1 as f64 * 10.0).min(duration_ms)));
+                }
+            }
+            crate::stt::words_from_token_bytes(tokens)
+        })
+        .await
+    }
+
     /// Transcribe audio with streaming support for partial results and adaptive quality
     pub async fn transcribe_audio_with_confidence(&self, audio_data: Vec<f32>, language: Option<String>) -> Result<(String, f32, bool)> {
         let remote = self.remote.read().await.clone();
