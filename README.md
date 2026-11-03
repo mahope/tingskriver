@@ -147,3 +147,11 @@ Tingskriver is a fork of [Meetily](https://github.com/Zackriya-Solutions/meetily
 - [Dictation modes](docs/dictation-modes.md) collect per-program provider, language, style and output rules, with versioned JSON import/export.
 
 - Testing device switching: `rustc --edition 2021 --test crates/tingskriver-core/src/audio/device_follow.rs -o /tmp/df && /tmp/df` (plain std, runs on Linux; CI runs it on every branch). Manual test on Windows: record, take the headset off and put it on again, and check that `audio.mp4` has no gaps and the `[DEVICE_FOLLOW]` lines in the log show the switch within about a second. Also press mute on the headset for at least 30 seconds while recording and check that no switch happens.
+
+### Recovery from disk (core)
+
+On startup both desktop hosts scan the recordings folder independently of webview storage. `tingskriver_core::recover::scan(root)` lists unfinished recordings with readable raw audio, duration, last-write time (Unix milliseconds), and track kinds. `startup_recordings()` returns the startup snapshot. Empty and header-only folders are excluded.
+
+`recover::restore(root, id, pool, ffmpeg)` repairs and verifies the audio before registering the meeting in SQLite. Retries reuse the meeting ID; raw tracks remain available until acknowledged through the existing verified cleanup API. If database persistence fails after encoding, a disk marker keeps the recording discoverable. `restore_and_transcribe(host, id)` then uses the normal saved-file transcription path. The recovery offer itself belongs to the meeting-list UI.
+
+Run `cargo test --locked -p tingskriver-core recover::tests` for complete, truncated, empty, persistence-failure, and killed-writer fixtures (FFmpeg required). The killed-writer test terminates a separate process recording both tracks and restores into a fresh database, with a maximum two-second loss assertion.
