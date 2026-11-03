@@ -14,6 +14,7 @@ pub mod console_utils;
 pub mod database;
 pub mod dictation;
 pub mod file_logger;
+pub mod move_to_gpui;
 pub mod notifications;
 pub mod ollama;
 pub mod onboarding;
@@ -409,6 +410,22 @@ pub fn run() {
 
             // Windows Error Reporting writes a minidump on a native crash.
             tingskriver_core::crash_dumps::apply_in_background();
+
+            // The last Tauri release moves the installation to the GPUI app
+            // (installer/README.md, "Move from Tauri").
+            #[cfg(all(windows, not(debug_assertions)))]
+            {
+                let app_for_move = _app.handle().clone();
+                move_to_gpui::start(
+                    || {
+                        tauri::async_runtime::block_on(audio::recording_commands::is_recording())
+                            || tingskriver_core::audio::finalize::is_finalizing()
+                            || tingskriver_core::audio::retranscription::is_retranscription_in_progress()
+                            || tingskriver_core::audio::import::is_import_in_progress()
+                    },
+                    move || app_for_move.exit(0),
+                );
+            }
 
             // Initialize system tray
             if let Err(e) = tray::create_tray(_app.handle()) {

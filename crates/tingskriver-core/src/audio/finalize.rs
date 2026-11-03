@@ -559,6 +559,15 @@ impl FinalizeOutcome {
 /// must not encode the same folder twice).
 static IN_PROGRESS: Mutex<Option<HashSet<PathBuf>>> = Mutex::new(None);
 
+/// Is a meeting's audio being encoded right now?
+pub fn is_finalizing() -> bool {
+    IN_PROGRESS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .is_some_and(|set| !set.is_empty())
+}
+
 pub(super) struct FolderGuard(PathBuf);
 
 impl FolderGuard {
@@ -980,6 +989,14 @@ mod tests {
         }
         drop(tx);
         handle.join().unwrap();
+    }
+
+    #[test]
+    fn a_folder_being_finalized_counts_as_finalizing() {
+        let dir = tempfile::tempdir().unwrap();
+        let guard = FolderGuard::acquire(dir.path()).unwrap();
+        assert!(is_finalizing());
+        drop(guard);
     }
 
     #[test]
