@@ -9,7 +9,7 @@ use tingskriver_core::audio::{
     devices::{AudioDevice, DeviceType as DeviceKind},
     finalize::{
         decoded_duration_seconds, finalize_raw_tracks, pending_finalize_folders, scan_raw_tracks,
-        AudioSaveStatus, SourceReader, RAW_DIR,
+        AudioSaveStatus, Source, SourceReader, RAW_DIR,
     },
     incremental_saver::{has_audio_checkpoints, recover_audio_from_checkpoints},
     pipeline::AudioCapture,
@@ -120,9 +120,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "duration {duration}, expected {seconds}"
             );
             assert!(track.offset_samples < RATE as u64 / 2);
-            // The writer aligns track ends; callback arrival times can differ by
-            // a fraction of one block, leaving a short silent tail.
-            let signal_samples = track.samples() / BLOCK * BLOCK;
+            // Scanner padding can span whole callbacks after a crash. Only
+            // file sources contain signal (plus the writer's sub-block tail).
+            let signal_samples = track
+                .sources
+                .iter()
+                .rev()
+                .skip_while(|source| matches!(source, Source::Silence(_)))
+                .map(|source| match source {
+                    Source::File { samples, .. } | Source::Silence(samples) => *samples,
+                })
+                .sum::<u64>()
+                / BLOCK
+                * BLOCK;
             let mut reader = SourceReader::new(track.sources);
             let mut block = Vec::new();
             let mut position = 0;
