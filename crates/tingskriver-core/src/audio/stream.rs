@@ -62,11 +62,20 @@ impl CaptureWorker {
                     let size = capacity;
                     let mut raw = vec![T::default(); size];
                     let mut converted = vec![0.0; size];
+                    let mut last_stamp = super::callback_queue::CaptureStamp::default();
                     loop {
                         while let Some(error) = error_output.try_pop() {
                             capture.handle_stream_error(error);
                         }
-                        if let Some((len, stamp)) = output.pop_into(&mut raw) {
+                        if let Some((len, stamp, lost)) = output.pop_into(&mut raw) {
+                            if lost > 0 {
+                                let mut gap_end = stamp;
+                                gap_end.position = stamp.position.saturating_sub(std::time::Duration::from_secs_f64(
+                                    len as f64 / channels as f64 / sample_rate as f64,
+                                ));
+                                capture.process_capture_loss(lost, gap_end);
+                            }
+                            last_stamp = stamp;
                             for (dst, src) in converted[..len].iter_mut().zip(&raw[..len]) {
                                 *dst = convert(*src);
                             }
@@ -76,6 +85,13 @@ impl CaptureWorker {
                         } else {
                             std::thread::sleep(std::time::Duration::from_millis(2));
                         }
+                    }
+                    let trailing = output.take_trailing_loss();
+                    if trailing > 0 {
+                        last_stamp.position += std::time::Duration::from_secs_f64(
+                            trailing as f64 / channels as f64 / sample_rate as f64,
+                        );
+                        capture.process_capture_loss(trailing, last_stamp);
                     }
                     let dropped = output.dropped_samples();
                     if dropped != 0 {
@@ -603,6 +619,74 @@ mod worker_tests {
     };
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn callback_overflow_preserves_short_gap_and_reports_loss_in_manifest() {
+        for rate in [48000, 16000] {
+            for trailing in [false, true] {
+                let dir = tempfile::tempdir().unwrap();
+                let state = RecordingState::new();
+                state.start_recording().unwrap();
+                let (sender, writer) =
+                    spawn_writer(dir.path().to_owned(), 48000, Arc::new(LogObserver)).unwrap();
+                state.set_audio_sender(sender);
+                let device = Arc::new(AudioDevice::new(
+                    "Fake system audio".into(),
+                    super::super::devices::DeviceType::Output,
+                ));
+                let capture =
+                    AudioCapture::new(device, state.clone(), rate, 2, DeviceType::System, None);
+                let (mut input, mut output) =
+                    super::super::callback_queue::queue::<f32>(rate as usize, 2);
+                let mut buffer = vec![0.0; rate as usize];
+                let stamp = |seconds| CaptureStamp {
+                    position: Duration::from_secs_f64(seconds),
+                    muted: false,
+                };
+                assert!(input.copy_from(&vec![0.2; rate as usize], stamp(0.5)));
+                assert!(!input.copy_from(&vec![0.4; rate as usize / 5], stamp(0.6)));
+                let (n, at, lost) = output.pop_into(&mut buffer).unwrap();
+                assert_eq!(lost, 0);
+                capture.process_audio_data_at(&buffer[..n], Some(at));
+                if trailing {
+                    drop(input);
+                    capture.process_capture_loss(output.take_trailing_loss(), stamp(0.6));
+                } else {
+                    assert!(input.copy_from(&vec![0.6; rate as usize / 5], stamp(0.7)));
+                    let (n, at, lost) = output.pop_into(&mut buffer).unwrap();
+                    capture.process_capture_loss(lost, stamp(0.6));
+                    capture.process_audio_data_at(&buffer[..n], Some(at));
+                    drop(input);
+                }
+                capture.flush_tail();
+                state.close_audio_sender();
+                let summary = writer.join().unwrap();
+                assert_eq!(summary.lost_samples(), 4800);
+                assert!(summary.storage_error.is_some());
+                let track = &summary.tracks[0].1;
+                assert_eq!(
+                    track.offset_samples + track.written_samples,
+                    if trailing { 28800 } else { 33600 }
+                );
+                let manifest: serde_json::Value =
+                    serde_json::from_slice(&std::fs::read(dir.path().join("tracks.json")).unwrap())
+                        .unwrap();
+                assert_eq!(manifest["dropped_samples"], 4800);
+                if rate == 48000 {
+                    let wav = std::fs::read(dir.path().join("system_000.wav")).unwrap();
+                    let samples: Vec<i16> = wav[44..]
+                        .chunks_exact(2)
+                        .map(|b| i16::from_le_bytes([b[0], b[1]]))
+                        .collect();
+                    assert!(samples[..24000].iter().all(|&s| s > 0));
+                    assert!(samples[24000..28800].iter().all(|&s| s == 0));
+                    if !trailing {
+                        assert!(samples[28800..].iter().all(|&s| s > 0));
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn worker_panic_stops_recording_instead_of_silently_filling_the_queue() {

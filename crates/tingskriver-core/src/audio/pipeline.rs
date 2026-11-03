@@ -233,6 +233,31 @@ impl AudioCapture {
         self.process_audio_data_at(data, None);
     }
 
+    pub(super) fn process_capture_loss(
+        &self,
+        samples: u64,
+        end: super::callback_queue::CaptureStamp,
+    ) {
+        let frames = samples / self.channels as u64;
+        let lost = (frames as f64 * 48000.0 / self.sample_rate as f64).round() as u64;
+        self.state.record_capture_loss(lost);
+        // Feed silence through the same resampler so buffered audio and its
+        // fractional position are preserved across a missing callback.
+        let block = vec![0.0; (self.sample_rate as usize / 10).max(1) * self.channels as usize];
+        let mut remaining = samples;
+        while remaining > 0 {
+            let n = remaining.min(block.len() as u64) as usize;
+            remaining -= n as u64;
+            let mut stamp = end;
+            stamp.position = stamp
+                .position
+                .saturating_sub(std::time::Duration::from_secs_f64(
+                    remaining as f64 / self.channels as f64 / self.sample_rate as f64,
+                ));
+            self.process_audio_data_at(&block[..n], Some(stamp));
+        }
+    }
+
     pub(super) fn process_audio_data_at(&self, data: &[f32], stamp: Option<super::callback_queue::CaptureStamp>) {
         *self.last_capture_stamp.lock().unwrap_or_else(|e| e.into_inner()) = stamp;
         // Check if still recording

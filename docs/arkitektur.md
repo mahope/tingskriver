@@ -184,6 +184,12 @@ transcription leaves the saved meeting available and reports the error.
   through `RecordingState::send_audio_chunk`. That uses a bounded channel
   with `try_send`: capture never blocks; a full queue drops the chunk and the
   writer reports it.
+- The CPAL callback queue carries a cumulative loss count with each accepted
+  buffer. The DSP worker inserts the missing duration as silence before the
+  next buffer (or at stop for trailing loss), through the same resampler.
+  Loss is converted from interleaved device samples to 48 kHz mono and added
+  to the writer's persistent dropped-sample count, so even gaps below the
+  clock-gap threshold keep their position and finalize reports partial audio.
 - The writer (`audio::recording_writer`) is one thread. It writes the
   microphone and system tracks separately (`audio::track_writer`) as 16-bit
   WAV segments of 10 minutes in `<meeting>/.checkpoints/`

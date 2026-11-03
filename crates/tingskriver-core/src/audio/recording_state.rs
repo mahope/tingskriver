@@ -428,6 +428,17 @@ impl RecordingState {
         }
     }
 
+    pub(super) fn record_capture_loss(&self, samples: u64) {
+        if let Some(sender) = self
+            .audio_sender
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+        {
+            sender.record_capture_loss(samples);
+        }
+    }
+
     // Error handling
     pub fn set_error_callback<F>(&self, callback: F)
     where

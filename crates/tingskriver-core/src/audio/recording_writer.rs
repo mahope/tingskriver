@@ -132,6 +132,10 @@ pub struct StorageSender {
 }
 
 impl StorageSender {
+    pub(super) fn record_capture_loss(&self, samples: u64) {
+        self.dropped_samples.fetch_add(samples, Ordering::Relaxed);
+    }
+
     /// Queue a chunk without blocking. `end_seconds` is the position of the
     /// chunk's last sample on the recording clock (pauses excluded).
     pub fn send(
