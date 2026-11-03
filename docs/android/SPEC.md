@@ -1,7 +1,8 @@
 # Tingskriver Android v0
 
 Status: låst MVP-scope, 2. november 2026. [Research og begrundelser](RESEARCH.md).
-Denne ændring leverer milepæl 1 (skelet), ikke færdig talegenkendelse.
+Milepæl 1 (skelet) og 4 (PCM-optagelse) er implementeret. Fysisk kontrol af
+mikrofonindikatoren udestår; talegenkendelse er ikke tilsluttet.
 
 ## Resultat og betjening
 
@@ -11,9 +12,9 @@ for at afslutte. Hold-tal-slip kan tilføjes efter v0; tryk-start/tryk-stop er
 tilgængeligt med TalkBack og kræver ingen langvarig berøring. Teksten indsættes
 én gang ved markøren i det oprindelige felt. Der sendes aldrig Enter automatisk.
 
-Mikrofon, læsbar status, annuller og skift tastatur er v0-betjeningen. Skelettet
-har mikrofonknap, status og tastaturskift; mikrofonen viser ærligt, at STT endnu
-ikke er tilsluttet. Den optager ikke og indsætter ikke opdigtet tekst.
+Mikrofon, læsbar status, annuller og skift tastatur er v0-betjeningen. Tastaturet
+har mikrofonknap, status, annuller og tastaturskift. PCM optages kun i RAM og
+kasseres ved stop; STT er endnu ikke tilsluttet, og ingen tekst indsættes.
 Indstillingsaktiviteten åbner systemets IME-indstillinger og tastaturvælger.
 
 ## Låste valg
@@ -45,11 +46,11 @@ InputMethodService -> session-controller -> SpeechToText-interface
 
 `SpeechToText` returnerer et eksplicit resultat: tekst, tom tale, annulleret,
 ikke implementeret eller fejl. Stubben returnerer kun ikke implementeret.
-Interfacet i skelettet har synkront `transcribe` med in-memory PCM; det kaldes
-kun med tomme data til stubben. En virkelig adapter skal kaldes på en worker,
+Interfacet har synkront `transcribe` med in-memory PCM; optagelsen kalder
+det endnu ikke. En virkelig adapter skal kaldes på en worker,
 aldrig på UI-tråden. PCM bliver mono 16 kHz, 16-bit med højst 30 s pr. session
-(ca. 960 kB rå lyd). AudioRecord-ejerskab, worker og cancellation indføres før
-adapteren kan aktiveres. Ingen midlertidig WAV-fil.
+(ca. 960 kB rå lyd). AudioRecord-ejerskab, worker og cancellation er
+implementeret; adapteren er endnu ikke aktiveret. Ingen midlertidig WAV-fil.
 
 MVP-tilstande: inaktiv, optager, behandler, fejl. Hver session får generation og
 det oprindelige felt/forbindelse. `onStartInput`, `onFinishInput`, skjult IME,
@@ -65,13 +66,11 @@ af almindelige tekstfelter er målet, ikke en garanti for specialbyggede editors
 
 ## Privatliv
 
-Skelettet har hverken INTERNET- eller RECORD_AUDIO-tilladelse, netværksklient,
-lydopsamling, analyse, tekstlogning eller persistens. Backup er deaktiveret.
-Det anmoder ikke om tilladelser, det endnu ikke bruger.
-
-Før rigtig STT: tilføj RECORD_AUDIO og runtime-forespørgsel fra aktiviteten med
-forklaring; håndter afslag og senere tilbagekaldelse. Optag kun ved brugerens
-handling mens IME er synlig. Ingen baggrundsmikrofon eller Accessibility,
+Appen har RECORD_AUDIO og runtime-forespørgsel fra aktiviteten med dansk
+forklaring. Den håndterer afslag og senere tilbagekaldelse. Ingen INTERNET,
+netværksklient, analyse, tekstlogning eller persistens. Backup er deaktiveret.
+Optagelse starter kun ved brugerens handling mens IME er synlig og ulåst.
+Ingen baggrundsmikrofon eller Accessibility,
 overlays, kontaktadgang, clipboard eller læsning af omgivende felttekst.
 PCM og transskription lever kun i RAM og frigives ved stop/annuller/fejl.
 Vi lover ikke kryptografisk sletning af JVM-strenge. Modelfiler og brugerens

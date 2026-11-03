@@ -9,7 +9,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:accessibilityLiveRegion="polite"
-        android:text="@string/stub_status"
+        android:text="@string/ready_status"
         android:textSize="16sp" />
     <Button
         android:id="@+id/microphone"
@@ -18,6 +18,12 @@
         android:layout_marginTop="8dp"
         android:minHeight="48dp"
         android:text="@string/microphone" />
+    <Button
+        android:id="@+id/cancel_recording"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:minHeight="48dp"
+        android:text="@string/cancel_recording" />
     <Button
         android:id="@+id/switch_keyboard"
         android:layout_width="match_parent"
