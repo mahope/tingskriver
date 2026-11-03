@@ -39,6 +39,8 @@ pub mod api;
 pub mod audio;
 pub mod calendar;
 pub mod config;
+pub mod format_da;
+pub mod strings;
 pub mod crash_dumps;
 pub mod database;
 pub mod dictation;
