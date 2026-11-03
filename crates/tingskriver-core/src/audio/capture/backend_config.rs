@@ -109,13 +109,19 @@ impl BackendConfig {
 
     /// Get current backend
     pub fn get(&self) -> AudioCaptureBackend {
-        *self.current_backend.read().unwrap()
+        *self
+            .current_backend
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     /// Set current backend
     pub fn set(&self, backend: AudioCaptureBackend) {
         info!("Switching audio capture backend to: {:?}", backend);
-        *self.current_backend.write().unwrap() = backend;
+        *self
+            .current_backend
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = backend;
     }
 
     /// Get available backends

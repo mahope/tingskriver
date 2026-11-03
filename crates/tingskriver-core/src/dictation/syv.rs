@@ -19,9 +19,10 @@ pub async fn transcribe(
     wav: Vec<u8>,
     prompt: Option<String>,
 ) -> Result<String, String> {
-    transcribe_language(client, endpoint, api_key, model, wav, prompt, "da").await
+    transcribe_in(client, endpoint, api_key, model, "da", wav, prompt).await
 }
 
+/// Compatibility entry point used by the mode-aware dictation service.
 pub async fn transcribe_language(
     client: &reqwest::Client,
     endpoint: &str,
@@ -31,6 +32,23 @@ pub async fn transcribe_language(
     prompt: Option<String>,
     language: &str,
 ) -> Result<String, String> {
+    transcribe_in(client, endpoint, api_key, model, language, wav, prompt).await
+}
+
+/// [`transcribe`] in another speech language ("en"); "" means Danish.
+pub async fn transcribe_in(
+    client: &reqwest::Client,
+    endpoint: &str,
+    api_key: &str,
+    model: &str,
+    language: &str,
+    wav: Vec<u8>,
+    prompt: Option<String>,
+) -> Result<String, String> {
+    let language = match language.trim() {
+        "" => "da".to_string(),
+        l => l.to_lowercase(),
+    };
     let file = Part::bytes(wav)
         .file_name("diktering.wav")
         .mime_str("audio/wav")
@@ -38,7 +56,7 @@ pub async fn transcribe_language(
     let mut form = Form::new()
         .part("file", file)
         .text("model", model.to_string())
-        .text("language", language.to_string())
+        .text("language", language)
         .text("response_format", "json");
     if let Some(prompt) = prompt.filter(|p| !p.trim().is_empty()) {
         form = form.text("prompt", prompt);
@@ -125,6 +143,18 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sends_the_mode_language() {
+        let (endpoint, server) = fake_server("200 OK", r#"{"text":"Hello."}"#).await;
+        let client = reqwest::Client::new();
+        let text = transcribe_in(&client, &endpoint, "hv_test", "syv-transcribe", " EN", vec![1], None)
+            .await
+            .unwrap();
+        assert_eq!(text, "Hello.");
+        let request = server.await.unwrap();
+        assert!(request.contains("name=\"language\"\r\n\r\nen\r\n"));
+    }
+
+    #[tokio::test]
     async fn sends_openai_compatible_request() {
         let (endpoint, server) = fake_server("200 OK", r#"{"text":"Hej Mads."}"#).await;
         let client = reqwest::Client::new();
@@ -143,16 +173,6 @@ mod tests {
             );
         }
         assert!(request.contains("filename=\"diktering.wav\""));
-    }
-
-    #[tokio::test]
-    async fn mode_can_override_language_and_prompt() {
-        let (endpoint, server) = fake_server("200 OK", r#"{"text":"Hello"}"#).await;
-        transcribe_language(&reqwest::Client::new(), &endpoint, "test", "chosen-model", vec![1], Some("Keep English words".into()), "en").await.unwrap();
-        let request = server.await.unwrap();
-        for (name, value) in [("model", "chosen-model"), ("language", "en"), ("prompt", "Keep English words")] {
-            assert!(request.contains(&format!("name=\"{name}\"\r\n\r\n{value}\r\n")));
-        }
     }
 
     #[tokio::test]

@@ -17,6 +17,54 @@ use tingskriver_core::paths::DATABASE_FILE;
 const SHORT_BUSY: Duration = Duration::from_millis(200);
 const LOCK_HELPER_ENV: &str = "TINGSKRIVER_TEST_LOCK_DB";
 
+#[tokio::test]
+async fn startup_fails_only_expired_pending_summaries() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = create_database(dir.path()).await;
+    let now = chrono::Utc::now();
+    for (id, status, age) in [
+        ("expired", "PENDING", 901),
+        ("recent", "PENDING", 30),
+        ("lowercase", "pending", 901),
+        ("completed", "completed", 901),
+        ("cancelled", "cancelled", 901),
+    ] {
+        insert_meeting(db.pool(), id).await;
+        sqlx::query("INSERT INTO summary_processes (meeting_id, status, created_at, updated_at, start_time, result, result_backup) VALUES (?, ?, ?, ?, ?, ?, ?)")
+            .bind(id).bind(status)
+            .bind(now - chrono::Duration::seconds(age))
+            .bind(now).bind(now - chrono::Duration::seconds(age))
+            .bind("{\"markdown\":\"current\"}")
+            .bind("{\"markdown\":\"previous\"}")
+            .execute(db.pool()).await.unwrap();
+    }
+    db.pool().close().await;
+    let reopened = DatabaseManager::open(dir.path()).await.unwrap();
+    for id in ["expired", "lowercase"] {
+        let row: (String, String, Option<String>, Option<String>, Option<String>) = sqlx::query_as(
+            "SELECT status, result, result_backup, error, end_time FROM summary_processes WHERE meeting_id = ?")
+            .bind(id).fetch_one(reopened.pool()).await.unwrap();
+        assert_eq!(row.0, "failed");
+        assert_eq!(row.1, "{\"markdown\":\"previous\"}");
+        assert!(row.2.is_none());
+        assert!(row.3.unwrap().contains("try again"));
+        assert!(row.4.is_some());
+    }
+    for (id, expected) in [
+        ("recent", "PENDING"),
+        ("completed", "completed"),
+        ("cancelled", "cancelled"),
+    ] {
+        let status: String =
+            sqlx::query_scalar("SELECT status FROM summary_processes WHERE meeting_id = ?")
+                .bind(id)
+                .fetch_one(reopened.pool())
+                .await
+                .unwrap();
+        assert_eq!(status, expected);
+    }
+}
+
 /// The log file shared by all tests in this binary.
 fn log_file() -> &'static Path {
     static LOG: OnceLock<PathBuf> = OnceLock::new();
@@ -520,6 +568,68 @@ async fn three_hour_meeting_loads_with_50_meetings() {
 }
 
 #[tokio::test]
+async fn transcript_api_continues_after_a_deleted_segment_without_skipping() {
+    use tingskriver_core::api::api::api_get_meeting_transcripts;
+    use tingskriver_core::state::AppState;
+
+    let dir = tempfile::tempdir().unwrap();
+    let db = create_database(dir.path()).await;
+    insert_meeting(db.pool(), "m").await;
+    for i in 0..3 {
+        sqlx::query("INSERT INTO transcripts (id, meeting_id, transcript, timestamp, audio_start_time) VALUES (?, 'm', 'segment', '00:00', ?)")
+            .bind(format!("t{i}"))
+            .bind(i as f64)
+            .execute(db.pool()).await.unwrap();
+    }
+    let state = AppState { db_manager: db };
+    let first = api_get_meeting_transcripts("m".into(), 1, None, None, &state)
+        .await
+        .unwrap();
+    assert_eq!(first.transcripts[0].id, "t0");
+    assert_eq!(first.total_count, 3);
+    assert!(first.has_more);
+    let cursor = first.next_cursor.expect("next page cursor");
+    sqlx::query("DELETE FROM transcripts WHERE id = 't0'")
+        .execute(state.db_manager.pool())
+        .await
+        .unwrap();
+    let next = api_get_meeting_transcripts("m".into(), 5, None, Some(cursor), &state)
+        .await
+        .unwrap();
+    assert_eq!(
+        next.transcripts
+            .iter()
+            .map(|t| t.id.as_str())
+            .collect::<Vec<_>>(),
+        ["t1", "t2"]
+    );
+    assert!(!next.has_more);
+    assert!(next.next_cursor.is_none());
+    let exact = api_get_meeting_transcripts("m".into(), 2, None, None, &state)
+        .await
+        .unwrap();
+    assert_eq!(exact.transcripts.len(), 2);
+    assert!(
+        !exact.has_more,
+        "a full final page must not advertise another page"
+    );
+    assert!(exact.next_cursor.is_none());
+    // Full-export callers can still request all rows from offset zero.
+    let all = api_get_meeting_transcripts("m".into(), 5, Some(0), None, &state)
+        .await
+        .unwrap();
+    assert_eq!(all.transcripts.len(), 2);
+    assert_eq!(all.total_count, 2);
+    for (limit, offset) in [(0, None), (-1, None), (1, Some(-1))] {
+        assert!(
+            api_get_meeting_transcripts("m".into(), limit, offset, None, &state)
+                .await
+                .is_err()
+        );
+    }
+}
+
+#[tokio::test]
 #[ignore = "performance benchmark; run separately in release mode"]
 async fn three_hour_meeting_loads_in_under_200_ms_with_50_meetings() {
     let (keyset, single) = load_three_hour_meeting_with_50_meetings().await;
@@ -574,17 +684,21 @@ async fn load_three_hour_meeting_with_50_meetings() -> (Duration, Duration) {
     let started = Instant::now();
     let mut cursor = None;
     let mut loaded = 0;
+    let state = tingskriver_core::state::AppState {
+        db_manager: db.clone(),
+    };
     loop {
-        let (page, next) = MeetingsRepository::get_meeting_transcripts_page(
-            pool,
-            "meeting-7",
-            cursor.as_ref(),
+        let page = tingskriver_core::api::api::api_get_meeting_transcripts(
+            "meeting-7".into(),
             500,
+            None,
+            cursor,
+            &state,
         )
         .await
         .unwrap();
-        loaded += page.len();
-        match next {
+        loaded += page.transcripts.len();
+        match page.next_cursor {
             Some(next) => cursor = Some(next),
             None => break,
         }

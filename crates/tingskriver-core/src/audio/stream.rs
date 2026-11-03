@@ -28,12 +28,107 @@ pub enum StreamBackend {
 // from the same thread context by using spawn_blocking for operations that cross thread boundaries
 unsafe impl Send for StreamBackend {}
 
+struct CaptureWorker {
+    stopping: Arc<std::sync::atomic::AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl CaptureWorker {
+    fn spawn<T: Copy + Default + Send + 'static>(
+        capture: AudioCapture,
+        sample_rate: u32,
+        channels: usize,
+        convert: fn(T) -> f32,
+    ) -> Result<(
+        super::callback_queue::Input<T>,
+        ringbuf::HeapProd<cpal::StreamError>,
+        Self,
+    )> {
+        use ringbuf::{
+            traits::{Consumer, Split},
+            HeapRb,
+        };
+        use std::sync::atomic::{AtomicBool, Ordering};
+        // Half a second of bounded slack; a stalled worker never blocks CPAL.
+        let capacity = sample_rate as usize * channels / 2;
+        let (input, mut output) = super::callback_queue::queue::<T>(capacity, channels);
+        let (errors, mut error_output) = HeapRb::<cpal::StreamError>::new(16).split();
+        let stopping = Arc::new(AtomicBool::new(false));
+        let stop = stopping.clone();
+        let thread = std::thread::Builder::new()
+            .name("audio-dsp".into())
+            .spawn(move || {
+                let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let size = capacity;
+                    let mut raw = vec![T::default(); size];
+                    let mut converted = vec![0.0; size];
+                    loop {
+                        while let Some(error) = error_output.try_pop() {
+                            capture.handle_stream_error(error);
+                        }
+                        if let Some((len, stamp)) = output.pop_into(&mut raw) {
+                            for (dst, src) in converted[..len].iter_mut().zip(&raw[..len]) {
+                                *dst = convert(*src);
+                            }
+                            capture.process_audio_data_at(&converted[..len], Some(stamp));
+                        } else if stop.load(Ordering::Acquire) {
+                            break;
+                        } else {
+                            std::thread::sleep(std::time::Duration::from_millis(2));
+                        }
+                    }
+                    let dropped = output.dropped_samples();
+                    if dropped != 0 {
+                        warn!(
+                            "Audio callback queue for {} dropped {} samples",
+                            capture.device_name(),
+                            dropped
+                        );
+                    }
+                    #[cfg(debug_assertions)]
+                    info!(
+                        "Audio callback p99 <= {} us (debug histogram, {} callbacks, device {})",
+                        output.callback_p99_us(),
+                        output.callback_count(),
+                        capture.device_name()
+                    );
+                    capture.flush_tail();
+                }));
+                if outcome.is_err() {
+                    error!("Audio DSP worker panicked; stopping recording");
+                    capture.worker_failed();
+                }
+            })?;
+        Ok((
+            input,
+            errors,
+            CaptureWorker {
+                stopping,
+                thread: Some(thread),
+            },
+        ))
+    }
+}
+
+impl Drop for CaptureWorker {
+    fn drop(&mut self) {
+        self.stopping
+            .store(true, std::sync::atomic::Ordering::Release);
+        if let Some(thread) = self.thread.take() {
+            if thread.join().is_err() {
+                error!("Audio DSP worker panicked");
+            }
+        }
+    }
+}
+
 /// Simplified audio stream wrapper with multi-backend support
 pub struct AudioStream {
     device: Arc<AudioDevice>,
     backend: StreamBackend,
     /// Kept to flush the resampler tail after the callbacks stopped.
     capture: Option<AudioCapture>,
+    worker: Option<CaptureWorker>,
 }
 
 // SAFETY: AudioStream contains StreamBackend which we've marked as Send
@@ -130,7 +225,7 @@ impl AudioStream {
         );
 
         // Build the appropriate stream based on sample format
-        let stream = Self::build_stream(&cpal_device, &config, capture.clone())?;
+        let (stream, worker) = Self::build_stream(&cpal_device, &config, capture.clone())?;
 
         // Start the stream
         stream.play()?;
@@ -139,7 +234,8 @@ impl AudioStream {
         Ok(Self {
             device,
             backend: StreamBackend::Cpal(stream),
-            capture: Some(capture),
+            capture: None,
+            worker: Some(worker),
         })
     }
 
@@ -234,85 +330,66 @@ impl AudioStream {
                 task: Some(task),
             },
             capture: Some(capture),
+            worker: None,
         })
     }
 
-    /// Build stream based on sample format
+    /// Build stream based on sample format. Conversion and DSP belong to
+    /// the consumer thread, including for integer device formats.
     fn build_stream(
         device: &Device,
         config: &SupportedStreamConfig,
         capture: AudioCapture,
-    ) -> Result<Stream> {
-        let config_copy = config.clone();
-
-        let stream = match config.sample_format() {
-            cpal::SampleFormat::F32 => {
-                let capture_clone = capture.clone();
-                device.build_input_stream(
-                    &config_copy.into(),
-                    move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                        capture.process_audio_data(data);
-                    },
-                    move |err| {
-                        capture_clone.handle_stream_error(err);
-                    },
-                    None,
-                )?
-            }
+    ) -> Result<(Stream, CaptureWorker)> {
+        match config.sample_format() {
+            cpal::SampleFormat::F32 => Self::build_typed::<f32>(device, config, capture, |x| x),
             cpal::SampleFormat::I16 => {
-                let capture_clone = capture.clone();
-                device.build_input_stream(
-                    &config_copy.into(),
-                    move |data: &[i16], _: &cpal::InputCallbackInfo| {
-                        let f32_data: Vec<f32> = data.iter()
-                            .map(|&sample| sample as f32 / i16::MAX as f32)
-                            .collect();
-                        capture.process_audio_data(&f32_data);
-                    },
-                    move |err| {
-                        capture_clone.handle_stream_error(err);
-                    },
-                    None,
-                )?
+                Self::build_typed::<i16>(device, config, capture, |x| x as f32 / i16::MAX as f32)
             }
             cpal::SampleFormat::I32 => {
-                let capture_clone = capture.clone();
-                device.build_input_stream(
-                    &config_copy.into(),
-                    move |data: &[i32], _: &cpal::InputCallbackInfo| {
-                        let f32_data: Vec<f32> = data.iter()
-                            .map(|&sample| sample as f32 / i32::MAX as f32)
-                            .collect();
-                        capture.process_audio_data(&f32_data);
-                    },
-                    move |err| {
-                        capture_clone.handle_stream_error(err);
-                    },
-                    None,
-                )?
+                Self::build_typed::<i32>(device, config, capture, |x| x as f32 / i32::MAX as f32)
             }
             cpal::SampleFormat::I8 => {
-                let capture_clone = capture.clone();
-                device.build_input_stream(
-                    &config_copy.into(),
-                    move |data: &[i8], _: &cpal::InputCallbackInfo| {
-                        let f32_data: Vec<f32> = data.iter()
-                            .map(|&sample| sample as f32 / i8::MAX as f32)
-                            .collect();
-                        capture.process_audio_data(&f32_data);
-                    },
-                    move |err| {
-                        capture_clone.handle_stream_error(err);
-                    },
-                    None,
-                )?
+                Self::build_typed::<i8>(device, config, capture, |x| x as f32 / i8::MAX as f32)
             }
-            _ => {
-                return Err(anyhow::anyhow!("Unsupported sample format: {:?}", config.sample_format()));
-            }
-        };
+            format => Err(anyhow::anyhow!("Unsupported sample format: {:?}", format)),
+        }
+    }
 
-        Ok(stream)
+    fn build_typed<T: cpal::SizedSample + Copy + Default + Send + 'static>(
+        device: &Device,
+        config: &SupportedStreamConfig,
+        capture: AudioCapture,
+        convert: fn(T) -> f32,
+    ) -> Result<(Stream, CaptureWorker)> {
+        use ringbuf::traits::Producer;
+        let frames = capture.clone();
+        // Initialise the atomic frame clock before entering the callback.
+        frames.note_callback_frames(false);
+        let (mut input, mut errors, worker) = CaptureWorker::spawn(
+            capture,
+            config.sample_rate().0,
+            config.channels() as usize,
+            convert,
+        )?;
+        let stream = device.build_input_stream(
+            &config.clone().into(),
+            move |data: &[T], _: &cpal::InputCallbackInfo| {
+                #[cfg(debug_assertions)]
+                let started = std::time::Instant::now();
+                frames.note_callback_frames(!data.is_empty());
+                if let Some(stamp) = frames.callback_stamp() {
+                    input.copy_from(data, stamp);
+                }
+                #[cfg(debug_assertions)]
+                input.record_duration(started.elapsed());
+            },
+            move |error| {
+                let _ = errors.try_push(error);
+            },
+            None,
+        )?;
+        Ok((stream, worker))
     }
 
     /// Get device info
@@ -323,7 +400,7 @@ impl AudioStream {
     /// Stop the stream
     pub fn stop(self) -> Result<()> {
         info!("Stopping audio stream for device: {}", self.device.name);
-        let AudioStream { device, backend, capture } = self;
+        let AudioStream { device, backend, capture, worker } = self;
 
         match backend {
             StreamBackend::Cpal(stream) => {
@@ -349,6 +426,9 @@ impl AudioStream {
                 }
             }
         }
+
+        // Drop CPAL first, then drain and join DSP before the writer closes.
+        drop(worker);
 
         // No more callbacks: the last samples in the resampler go to the track.
         if let Some(capture) = capture {
@@ -511,6 +591,87 @@ impl Drop for AudioStreamManager {
     fn drop(&mut self) {
         if let Err(e) = self.stop_streams() {
             error!("Error stopping streams during drop: {}", e);
+        }
+    }
+}
+
+#[cfg(test)]
+mod worker_tests {
+    use super::super::{
+        callback_queue::CaptureStamp,
+        recording_writer::{spawn_writer, LogObserver},
+    };
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn worker_panic_stops_recording_instead_of_silently_filling_the_queue() {
+        let state = RecordingState::new();
+        state.start_recording().unwrap();
+        let device = Arc::new(AudioDevice::new(
+            "Fake device".into(),
+            super::super::devices::DeviceType::Output,
+        ));
+        let capture = AudioCapture::new(device, state.clone(), 48000, 1, DeviceType::System, None);
+        let (mut input, errors, worker) =
+            CaptureWorker::spawn(capture, 48000, 1, |_: f32| -> f32 {
+                panic!("fake DSP failure")
+            })
+            .unwrap();
+        input.copy_from(&[0.1], CaptureStamp::default());
+        drop(input);
+        drop(errors);
+        drop(worker);
+        assert!(!state.is_recording());
+        assert!(matches!(
+            state.get_last_error(),
+            Some(super::super::recording_state::AudioError::ChannelClosed)
+        ));
+    }
+
+    #[test]
+    fn worker_drains_capture_buffers_and_resampler_tail_before_writer_closes() {
+        for rate in [48000, 16000] {
+            let dir = tempfile::tempdir().unwrap();
+            let state = RecordingState::new();
+            state.start_recording().unwrap();
+            let (sender, writer) =
+                spawn_writer(dir.path().to_owned(), 48000, Arc::new(LogObserver)).unwrap();
+            state.set_audio_sender(sender);
+            let device = Arc::new(AudioDevice::new(
+                "Fake system audio".into(),
+                super::super::devices::DeviceType::Output,
+            ));
+            let capture =
+                AudioCapture::new(device, state.clone(), rate, 1, DeviceType::System, None);
+            let (mut input, errors, worker) =
+                CaptureWorker::spawn(capture, rate, 1, |x: i16| x as f32 / i16::MAX as f32)
+                    .unwrap();
+            let samples = [1000i16; 1000];
+            assert!(input.copy_from(
+                &samples,
+                CaptureStamp {
+                    position: Duration::from_secs_f64(1000.0 / rate as f64),
+                    muted: false,
+                }
+            ));
+            // Already captured audio must survive a pause while DSP is queued.
+            state.pause_recording().unwrap();
+            drop(input);
+            drop(errors);
+            drop(worker);
+            state.close_audio_sender();
+            let summary = writer.join().unwrap();
+            assert_eq!(summary.tracks.len(), 1);
+            let track = &summary.tracks[0].1;
+            // Rubato has an initial filter delay, represented by the track's
+            // offset. The last sample must still land at the capture time.
+            assert_eq!(
+                track.offset_samples + track.written_samples,
+                1000 * 48000 / rate as u64
+            );
+            assert!(track.written_samples > 0);
+            assert_eq!(summary.lost_samples(), 0);
         }
     }
 }

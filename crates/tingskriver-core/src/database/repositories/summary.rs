@@ -7,6 +7,29 @@ use tracing::{error, info as log_info};
 pub struct SummaryProcessesRepository;
 
 impl SummaryProcessesRepository {
+    pub async fn fail_expired_pending(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+        let now = Utc::now();
+        let cutoff = now
+            - chrono::Duration::seconds(
+                crate::summary::summary_engine::models::GENERATION_TIMEOUT_SECS as i64,
+            );
+        sqlx::query(
+            "UPDATE summary_processes SET status = 'failed',
+                error = 'Summary generation was interrupted; please try again',
+                updated_at = ?, end_time = ?,
+                result = COALESCE(result_backup, result),
+                result_backup = NULL, result_backup_timestamp = NULL
+             WHERE LOWER(status) = 'pending'
+                AND julianday(COALESCE(start_time, updated_at, created_at)) < julianday(?)",
+        )
+        .bind(now)
+        .bind(now)
+        .bind(cutoff)
+        .execute(pool)
+        .await?;
+        Ok(())
+    }
+
     /// Retrieves the current summary process state for a given meeting ID.
     pub async fn get_summary_data(
         pool: &SqlitePool,

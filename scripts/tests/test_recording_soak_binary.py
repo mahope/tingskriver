@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+import wave
 
 
 @unittest.skipUnless(os.environ.get('RECORDING_SOAK_BINARY'), 'build recording_soak and set RECORDING_SOAK_BINARY')
@@ -21,11 +22,45 @@ class SampleVerifier(unittest.TestCase):
             segment.write_bytes(audio)
             manifest_path = segment.parent / 'tracks.json'
             manifest = json.loads(manifest_path.read_text())
+            manifest['complete'] = False
             for track in manifest['tracks']:
                 if track['kind'] == 'system':
                     track['recorded_samples'] = (len(audio) - 44) // 2
             manifest_path.write_text(json.dumps(manifest))
-            subprocess.run([binary, 'verify', directory, '4'], check=True)
+            subprocess.run([binary, 'recover', directory, '4'], check=True)
+
+    def test_accepts_alignment_tail_and_rejects_corruption(self):
+        binary = str(Path(os.environ['RECORDING_SOAK_BINARY']).resolve())
+        with tempfile.TemporaryDirectory() as directory:
+            subprocess.run([binary, 'record', directory, '1'], check=True)
+            raw = Path(directory) / '.checkpoints'
+            manifest_path = raw / 'tracks.json'
+            manifest = json.loads(manifest_path.read_text())
+            # Model callbacks arriving 20 ms apart, with equal generated audio.
+            for track in manifest['tracks']:
+                segment = raw / track['segments'][0]
+                with wave.open(str(segment), 'rb') as reader:
+                    params = reader.getparams()
+                    pcm = reader.readframes(48_000)
+                early = segment.name.startswith('microphone_')
+                track['offset_samples'] = 0 if early else 960
+                track['recorded_samples'] = 48_000 + (960 if early else 0)
+                with wave.open(str(segment), 'wb') as writer:
+                    writer.setparams(params)
+                    writer.writeframes(pcm + (bytes(960 * 2) if early else b''))
+            manifest_path.write_text(json.dumps(manifest))
+            subprocess.run([binary, 'verify', directory, '1'], check=True)
+            segment = next(raw.glob('microphone_*.wav'))
+            for position in [47_999, 48_000, 48_959]:
+                with self.subTest(position=position):
+                    original = segment.read_bytes()
+                    with segment.open('r+b') as stream:
+                        stream.seek(44 + position * 2)
+                        stream.write(b'\x01\x00')
+                    result = subprocess.run([binary, 'verify', directory, '1'], capture_output=True)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(b'marker/gap', result.stderr)
+                    segment.write_bytes(original)
 
     def test_detects_zero_gap_and_repairs_stale_header(self):
         binary = str(Path(os.environ['RECORDING_SOAK_BINARY']).resolve())

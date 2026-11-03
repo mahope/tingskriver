@@ -7,6 +7,14 @@ use super::platform;
 
 /// List all available audio devices on the system
 pub async fn list_audio_devices() -> Result<Vec<AudioDevice>> {
+    // Drivers can stall enumeration (notably disconnected Bluetooth devices).
+    // Keep that work off the async executor so stopping capture stays responsive.
+    tokio::task::spawn_blocking(enumerate_audio_devices)
+        .await
+        .map_err(|e| anyhow::anyhow!("Audio device enumeration task failed: {}", e))?
+}
+
+fn enumerate_audio_devices() -> Result<Vec<AudioDevice>> {
     let host = cpal::default_host();
 
     // Platform-specific device enumeration

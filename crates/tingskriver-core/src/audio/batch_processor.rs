@@ -152,8 +152,8 @@ impl AudioMetricsBatcher {
                 let total_duration_ms: f64 = metrics.iter().map(|m| m.duration_ms).sum();
                 let average_level: f32 = metrics.iter().map(|m| m.average_level).sum::<f32>() / total_chunks as f32;
 
-                let first_timestamp = metrics.first().unwrap().timestamp;
-                let last_timestamp = metrics.last().unwrap().timestamp;
+                let first_timestamp = metrics[0].timestamp;
+                let last_timestamp = metrics[metrics.len() - 1].timestamp;
                 let timespan = last_timestamp.duration_since(first_timestamp);
 
                 let chunks_per_second = if timespan.as_secs_f64() > 0.0 {

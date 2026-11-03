@@ -30,8 +30,11 @@ Tingskriver understøtter kun Windows 11 (x64). Udgivelserne indeholder ikke mac
 Hold `Ctrl+Win`, tal, og slip. Teksten bliver renskrevet og skrevet ind dér, hvor markøren står, i alle programmer. To hurtige tryk dikterer håndfrit, til du trykker igen. En lille pille nederst på skærmen viser lydniveauet og "Skriver …", og den tager aldrig fokus fra det program, du skriver i. Genvejen kan ændres under Indstillinger → Diktering.
 
 - **Tale til tekst:** Med en Syv.ai-nøgle bruges Syv.ai (dansk). Fejler Syv.ai, eller svarer den ikke inden for 2 sekunder, bruges den lokale Parakeet-model automatisk. Uden nøgle bruges kun den lokale model.
-- **Renskrivning:** øh og altså fjernes, og du kan sige tegn: "punktum", "komma", "spørgsmålstegn", "udråbstegn", "kolon", "ny linje" og "nyt afsnit". Sætninger får stort begyndelsesbogstav. I kodeprogrammer og terminaler (fx VS Code og Windows Terminal) skrives teksten råt. Polering med en sprogmodel kan slås til, men er slået fra som standard.
-- **Ordbog og snippets:** Egne ord og navne staves rigtigt, og en talt udløser som "mit CVR" kan indsætte en fast tekst.
+- **Renskrivning:** øh og altså fjernes, og du kan sige 38 tegn, fx "punktum", "komma", "bindestreg", "skråstreg", "parentes start", "anførselstegn", "snabel-a" og "ny linje", også med Windows' ord som "linjeskift". "Skriv ordet komma" giver ordet i stedet for tegnet. Sætninger får stort begyndelsesbogstav. Polering med en sprogmodel kan slås til, men er slået fra som standard, og der oversættes aldrig.
+- **Tal og adresser:** "tretten hundrede og halvtreds" bliver 1.350, "den tredje november" bliver 3. november, "klokken fjorten tredive" bliver kl. 14.30, "tolv procent" bliver 12 % og "fem tusind kroner" bliver 5.000 kr. Uger, telefon- og CVR-numre skrives også på dansk. "anna snabel-a eksempel punktum dk" bliver anna@eksempel.dk. Begge dele kan slås fra og er altid slået fra i Kode/rå.
+- **Stemmekommandoer:** "slet det" fjerner den senest indsatte tekst og "vælg det" markerer den, men kun hvis feltet stadig har fokus. "Stop diktering" sidst i en diktering bliver ikke skrevet med. Håndfri diktering stopper stadig først, når du trykker på genvejen.
+- **Tilstande:** Standard, Formel (Outlook, Spark), Chat (Slack, Teams, Discord) og Kode/rå (VS Code, terminaler) vælges efter programmet eller vinduets titel. I Chat sender "send" sidst i beskeden teksten med Enter. Tilstande kan eksporteres og importeres som JSON.
+- **Ordbog og snippets:** Egne ord og navne staves rigtigt, og en talt udløser som "mit CVR" kan indsætte en fast tekst. Ord mærket "engelsk" står altid med engelsk stavning.
 - **Indsættelse:** Teksten indsættes via udklipsholderen og `Ctrl+V`, og din udklipsholder sættes tilbage bagefter. Kan udklipsholderen ikke bruges, eller kan `Ctrl+V` ikke sendes, skrives teksten tegn for tegn i stedet. Felter, der selv afviser indsæt, får ingen tekst, men den kan kopieres fra historikken, hvis den er slået til. Under en mødeoptagelse er mødets mikrofonspor stille, mens du dikterer, så dikteringen ikke kommer med i mødet.
 - **Historik:** De seneste 500 dikteringer står på siden "Diktering" med svartid og program og kan kopieres igen. Lyden gemmes i 24 timer. Begge dele kan slås fra.
 
@@ -87,9 +90,19 @@ Se [målemetoden](docs/ydeevne.md) og [release-checklisten](docs/release-checkli
 - Pushes til andre grene end `main` bygger uden at lave en udgivelse.
 - Byggevejledning: [docs/BUILDING.md](docs/BUILDING.md). Frontenden ligger i `frontend/` (Tauri 2, Next.js, Rust).
 - Logfiler: `%LOCALAPPDATA%\dk.mahoje.tingskriver\logs\` (`tingskriver.log`, roterer ved 5 MB, de to seneste filer gemmes også). Åbn mappen fra Indstillinger under "Logfiler". Enhedsskift står som `[DEVICE_FOLLOW]`-linjer med tidsstempel.
+- Lange optagelser: import og gen-transskription deler ved pauser med overlap, samler ud fra ordtider og gemmer hvert færdigt svar, så en afbrudt kørsel kan genoptages. Se [profiler, checkpoints og testbegrænsninger](docs/transcription-chunks.md).
 - Test af diktering: `cargo test -p tingskriver-core dictation` (renskrivning, genvej, dobbelttryk, reservevalg, SQLite-lager og Syv.ai-kaldet mod en falsk server; kører på Linux og i CI).
+- Lyd-callbacken bruger en låsefri kø til en DSP-arbejdstråd. Se [test og måling af callbacken](docs/audio-callback.md), herunder Windows-målingen af p99 og fejlgrænserne pr. minut.
+- Ingen brugsstatistik eller telemetri indsamles.
+- Afbrudte referater: ved opstart markeres ventende referater ældre end generationstimeout (15 minutter) som fejlede og kan prøves igen. Et tidligere referat bevares.
+- Database: mødesiden henter transskripter med en cursor frem for OFFSET. Kør `cargo test --locked -p tingskriver-core --test database_startup` for indeks, WAL, sikkerhedskopiering og paginering. Benchmarken køres med `cargo test --locked --release -p tingskriver-core --test database_startup three_hour_meeting_loads_in_under_200_ms -- --ignored --nocapture`.
 
 - Test af enhedsskift: `rustc --edition 2021 --test crates/tingskriver-core/src/audio/device_follow.rs -o /tmp/df && /tmp/df` (ren std, kører på Linux; det samme gør CI på hver gren). Manuel test på Windows: optag, tag headsettet af og på igen, og tjek at `audio.mp4` ikke har huller og at `[DEVICE_FOLLOW]`-linjerne i loggen viser skiftet inden for ca. 1 sekund. Tryk også på mute på headsettet i mindst 30 sekunder under optagelsen og tjek, at der ikke kommer noget skift.
+
+Lokal Parakeet, Whisper og Silero-VAD kører i `tingskriver-stt`, så et native
+modelnedbrud ikke lukker optagelse, genvej eller tray. Det berørte kald fejler;
+næste kald genstarter processen. Kan ONNX Runtime ikke starte, bruger automatisk
+VAD energidetektion. Se [bygning og test af sidecaren](docs/BUILDING.md#isolated-local-speech-inference).
 
 ## English
 
@@ -118,8 +131,11 @@ Tingskriver supports Windows 11 (x64) only. Releases contain no macOS or Linux b
 Hold `Ctrl+Win`, speak, and release. The text is cleaned up and typed where your cursor is, in any program. Double-tap to dictate hands-free until the next press. A small pill at the bottom of the screen shows the input level and "Skriver …" (writing), and never takes focus from the program you are typing in. The shortcut can be changed under Settings → Diktering.
 
 - **Speech to text:** With a Syv.ai key, Syv.ai (Danish) is used. If Syv.ai fails or takes longer than 2 seconds, the local Parakeet model is used automatically. Without a key, only the local model is used.
-- **Cleanup:** Danish fillers ("øh", "altså") are removed and spoken punctuation ("punktum", "komma", "spørgsmålstegn", "udråbstegn", "kolon", "ny linje", "nyt afsnit") becomes characters. Sentences are capitalised. Code editors and terminals get raw text. Optional LLM polishing is off by default.
-- **Dictionary and snippets:** Your own words and names are spelled correctly, and a spoken trigger such as "mit CVR" can insert a fixed block of text.
+- **Cleanup:** Danish fillers ("øh", "altså") are removed and 38 spoken signs become characters ("punktum", "komma", "bindestreg", "skråstreg", "parentes start", "anførselstegn", "snabel-a", "ny linje", plus the Windows voice typing words such as "linjeskift"). "Skriv ordet komma" gives the word instead of the sign. Sentences are capitalised. Optional LLM polishing is off by default, and nothing is ever translated.
+- **Numbers and addresses:** Danish formats for numbers, dates, times, amounts, weeks, phone and CVR numbers ("tretten hundrede og halvtreds" → 1.350, "klokken fjorten tredive" → kl. 14.30, "fem tusind kroner" → 5.000 kr.) and spoken e-mail and web addresses ("anna snabel-a eksempel punktum dk" → anna@eksempel.dk). Both can be turned off.
+- **Voice commands:** "slet det" removes the text the last dictation inserted and "vælg det" selects it, only while that field still has focus. "Stop diktering" at the end of a dictation is left out of the text. Hands-free dictation still stops only when you press the shortcut.
+- **Modes:** Standard, Formel (Outlook, Spark), Chat (Slack, Teams, Discord) and Kode/rå (VS Code, terminals) are chosen by program or window title. In Chat, "send" at the end presses Enter. Modes can be exported and imported as JSON. See [docs/dictation-text.md](docs/dictation-text.md).
+- **Dictionary and snippets:** Your own words and names are spelled correctly, and a spoken trigger such as "mit CVR" can insert a fixed block of text. Words marked English keep their English spelling.
 - **Insertion:** Text is pasted through the clipboard with `Ctrl+V` and your clipboard is restored afterwards. If the clipboard can't be used or `Ctrl+V` can't be sent, the text is typed character by character instead. Fields that refuse paste themselves get no text, but it can be copied from the history when that is on. During a meeting recording the meeting's microphone track is silent while you dictate, so dictation stays out of the meeting.
 - **History:** The last 500 dictations are listed on the "Diktering" page with latency and program, and can be copied again. Audio is kept for 24 hours. Both can be turned off.
 
@@ -148,7 +164,11 @@ Tingskriver is a fork of [Meetily](https://github.com/Zackriya-Solutions/meetily
 - Build instructions: [docs/BUILDING.md](docs/BUILDING.md). The app lives in `frontend/` (Tauri 2, Next.js, Rust).
 - Log files: `%LOCALAPPDATA%\dk.mahoje.tingskriver\logs\` (`tingskriver.log`, rotates at 5 MB, the two previous files are kept). Open the folder from Settings under "Logfiler". Device switches appear as `[DEVICE_FOLLOW]` lines with timestamps.
 - Testing dictation: `cargo test -p tingskriver-core dictation` (cleanup, shortcut, double tap, fallback decisions, the SQLite store and the Syv.ai request against a fake server; runs on Linux and in CI).
+- No usage analytics or telemetry is collected.
+- Interrupted summaries: startup marks pending summaries older than the generation timeout (15 minutes) as failed so they can be retried, preserving any previous summary.
+- Database: the meeting view loads transcripts using a cursor instead of OFFSET. Run `cargo test --locked -p tingskriver-core --test database_startup` for index, WAL, backup and pagination checks. Run the benchmark with `cargo test --locked --release -p tingskriver-core --test database_startup three_hour_meeting_loads_in_under_200_ms -- --ignored --nocapture`.
 - [Dictation modes](docs/dictation-modes.md) collect per-program provider, language, style and output rules, with versioned JSON import/export.
+- [Transcription queue](docs/transcription-queue.md) documents the persistent core queue, retry policy, result versions and remaining host integration.
 
 - Testing device switching: `rustc --edition 2021 --test crates/tingskriver-core/src/audio/device_follow.rs -o /tmp/df && /tmp/df` (plain std, runs on Linux; CI runs it on every branch). Manual test on Windows: record, take the headset off and put it on again, and check that `audio.mp4` has no gaps and the `[DEVICE_FOLLOW]` lines in the log show the switch within about a second. Also press mute on the headset for at least 30 seconds while recording and check that no switch happens.
 

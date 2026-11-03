@@ -79,6 +79,14 @@ impl DatabaseManager {
             return Err(fail(kind_from_migrate(&e), e.to_string()));
         }
 
+        if let Err(e) =
+            super::repositories::summary::SummaryProcessesRepository::fail_expired_pending(&pool)
+                .await
+        {
+            pool.close().await;
+            return Err(fail(kind_from_sqlx(&e), e.to_string()));
+        }
+
         Ok(DatabaseManager { pool })
     }
 

@@ -125,7 +125,9 @@ fn find_ffmpeg_path_internal() -> Option<PathBuf> {
         return Some(path);
     }
 
-    let installation_dir = sidecar_dir().map_err(|e| e.to_string()).unwrap();
+    let installation_dir = sidecar_dir()
+        .map_err(|e| error!("Failed to locate ffmpeg sidecar directory: {}", e))
+        .ok()?;
     let ffmpeg_in_installation = installation_dir.join(EXECUTABLE_NAME);
     if ffmpeg_in_installation.is_file() {
         debug!("found ffmpeg in directory: {:?}", ffmpeg_in_installation);

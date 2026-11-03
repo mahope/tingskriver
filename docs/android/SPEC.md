@@ -94,6 +94,8 @@ Ingen ændring af root Cargo.toml/Cargo.lock eller desktopflows i denne fase.
    ikke-personlige resultater. Mål: WER <= 15 % på fastlåst stille talesæt,
    ingen tekst ved stilhed, warm stop-til-tekst p95 <= 3 s for 15 s lyd,
    peak PSS <= 700 MB for base. Dette er acceptmål, ikke observerede resultater.
+   [Benchmarkprotokol og status](BENCHMARK.md): værktøj og CI er tilføjet;
+   native-måledriver er implementeret. Talesæt og målinger på fysiske telefoner udestår.
 3. **Modelhåndtering:** lås native-version/modellicens/hash, download med
    brugerens valg, checksum og atomisk aktivering; håndter afbrud og lav disk.
    Ingen model i git/APK og ingen hemmelige URL'er.

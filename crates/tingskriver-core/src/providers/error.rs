@@ -28,7 +28,11 @@ pub enum ProviderError {
     /// The server could not be reached at all.
     Unreachable { detail: String },
     /// Any other HTTP error status.
-    Http { status: u16 },
+    Http {
+        status: u16,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        retry_after_secs: Option<u64>,
+    },
     /// The answer was not what an OpenAI-compatible API returns.
     BadResponse { detail: String },
     /// The configuration cannot be used (unknown provider, local provider
@@ -76,7 +80,7 @@ impl ProviderError {
             ProviderError::Unreachable { detail } => {
                 format!("{provider} kunne ikke nås. Tjek adressen og netværket ({detail}).")
             }
-            ProviderError::Http { status } => format!("{provider} svarede med fejl {status}."),
+            ProviderError::Http { status, .. } => format!("{provider} svarede med fejl {status}."),
             ProviderError::BadResponse { detail } => format!("Uventet svar fra {provider}: {detail}"),
             ProviderError::Config { detail } => format!("{provider} kan ikke bruges: {detail}"),
             ProviderError::Local { detail } => format!("{provider} fejlede: {detail}"),

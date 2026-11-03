@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Transcript, MeetingMetadata, PaginatedTranscriptsResponse, TranscriptSegmentData } from "@/types";
+import { Transcript, TranscriptCursor, MeetingMetadata, PaginatedTranscriptsResponse, TranscriptSegmentData } from "@/types";
 
 const DEFAULT_PAGE_SIZE = 100;
 
@@ -52,7 +52,7 @@ export function usePaginatedTranscripts({
     const [hasMore, setHasMore] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-    const offsetRef = useRef(0);
+    const cursorRef = useRef<TranscriptCursor | null>(null);
     const activeMeetingIdRef = useRef<string | null>(null);
     const requestIdRef = useRef(0);
     const isLoadingRef = useRef(false);
@@ -75,7 +75,7 @@ export function usePaginatedTranscripts({
         setIsLoadingMore(false);
         setHasMore(false);
         setError(null);
-        offsetRef.current = 0;
+        cursorRef.current = null;
     }, []);
 
     // Load meeting metadata
@@ -97,10 +97,10 @@ export function usePaginatedTranscripts({
         }
     }, [meetingId, isCurrentRequest]);
 
-    // Load transcripts at specific offset
-    const loadTranscriptsAtOffset = useCallback(async (
+    // Load the page following the last returned cursor
+    const loadTranscriptPage = useCallback(async (
         requestId: number,
-        offset: number,
+        after: TranscriptCursor | null,
         append: boolean = true
     ): Promise<Transcript[]> => {
         if (!meetingId || !isCurrentRequest(requestId)) return [];
@@ -111,7 +111,7 @@ export function usePaginatedTranscripts({
                 {
                     meetingId,
                     limit: DEFAULT_PAGE_SIZE,
-                    offset,
+                    after,
                 }
             );
 
@@ -135,7 +135,7 @@ export function usePaginatedTranscripts({
 
             setHasMore(response.has_more);
             setTotalCount(response.total_count);
-            offsetRef.current = offset + newTranscripts.length;
+            cursorRef.current = response.next_cursor;
 
             return newTranscripts;
         } catch (err) {
@@ -162,14 +162,14 @@ export function usePaginatedTranscripts({
         isLoadingRef.current = true;
         setIsLoadingMore(true);
         try {
-            await loadTranscriptsAtOffset(requestId, offsetRef.current, true);
+            await loadTranscriptPage(requestId, cursorRef.current, true);
         } finally {
             if (isCurrentRequest(requestId)) {
                 setIsLoadingMore(false);
                 isLoadingRef.current = false;
             }
         }
-    }, [hasMore, meetingId, loadTranscriptsAtOffset, isLoading, isCurrentRequest]);
+    }, [hasMore, meetingId, loadTranscriptPage, isLoading, isCurrentRequest]);
 
     // Force refetch of data (e.g., after retranscription)
     const refetch = useCallback(async () => {
@@ -179,11 +179,11 @@ export function usePaginatedTranscripts({
         const requestId = requestIdRef.current;
         try {
             await loadMetadata(requestId);
-            await loadTranscriptsAtOffset(requestId, 0, false);
+            await loadTranscriptPage(requestId, null, false);
         } finally {
             if (isCurrentRequest(requestId)) setIsLoading(false);
         }
-    }, [meetingId, reset, loadMetadata, loadTranscriptsAtOffset, isCurrentRequest]);
+    }, [meetingId, reset, loadMetadata, loadTranscriptPage, isCurrentRequest]);
 
     // A new meeting or effect lifetime owns its own requests.
     useEffect(() => {

@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "clips": [
+    {"id": "quiet-01", "kind": "quiet", "duration_s": 15, "reference": "Toget fra Aarhus til København stopper i Odense. På lørdag besøger vi Tivoli og går derefter en tur ved Nyhavn."},
+    {"id": "quiet-02", "kind": "quiet", "duration_s": 15, "reference": "På kortet finder du Aalborg, Skagen og Silkeborg. Ruten fortsætter mod Vesterhavet, hvor vinden blæser ind over stranden hele eftermiddagen."},
+    {"id": "noise-01", "kind": "noise", "duration_s": 15, "reference": "Toget fra Aarhus til København stopper i Odense. På lørdag besøger vi Tivoli og går derefter en tur ved Nyhavn."},
+    {"id": "noise-02", "kind": "noise", "duration_s": 15, "reference": "På kortet finder du Aalborg, Skagen og Silkeborg. Ruten fortsætter mod Vesterhavet, hvor vinden blæser ind over stranden hele eftermiddagen."},
+    {"id": "silence-01", "kind": "silence", "duration_s": 15, "reference": ""},
+    {"id": "silence-02", "kind": "silence", "duration_s": 15, "reference": ""}
+  ]
+}

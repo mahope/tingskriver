@@ -65,6 +65,14 @@ jobs:
           mkdir -p frontend/src-tauri/binaries
           touch frontend/src-tauri/binaries/llama-helper-x86_64-pc-windows-msvc.exe
 
+      # tauri-build copies staged sidecars into target/debug. An empty STT
+      # placeholder would overwrite the real worker used by integration tests.
+      - name: Stage real STT worker
+        shell: bash
+        run: |
+          cargo build --locked -p tingskriver-core --bin tingskriver-stt
+          cp target/debug/tingskriver-stt.exe frontend/src-tauri/binaries/tingskriver-stt-x86_64-pc-windows-msvc.exe
+
       - name: Build workspace
         shell: bash
         run: .github/scripts/annotate-errors.sh cargo build --workspace --locked
@@ -169,13 +177,30 @@ jobs:
 
       - name: Build tingskriver-app (release)
         shell: bash
-        run: .github/scripts/annotate-errors.sh cargo build --release --locked -p tingskriver-app
+        run: .github/scripts/annotate-errors.sh cargo build --release --locked -p tingskriver-app -p tingskriver-core --bin tingskriver-app --bin tingskriver-stt
 
-      - name: Upload tingskriver-app.exe
+      # Same pinned runtime and archive checksum as the Tauri bundler.
+      - name: Stage ONNX Runtime for the isolated speech worker
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP "tingskriver-onnx.zip"
+          Invoke-WebRequest "https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-win-x64-1.22.0.zip" -OutFile $archive
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne "174c616efc0271194488642a72f1a514e01487da4dfe84c49296d66e40ebe0da") { throw "ONNX Runtime checksum mismatch" }
+          Expand-Archive $archive -DestinationPath (Join-Path $env:RUNNER_TEMP "tingskriver-onnx") -Force
+          $runtime = Join-Path $env:RUNNER_TEMP "tingskriver-onnx/onnxruntime-win-x64-1.22.0"
+          Copy-Item "$runtime/lib/onnxruntime.dll","$runtime/lib/onnxruntime_providers_shared.dll" target/release/
+          Copy-Item "$runtime/LICENSE" target/release/onnxruntime-LICENSE.txt
+
+      - name: Upload GPUI app and speech runtime
         uses: actions/upload-artifact@v4
         with:
           name: tingskriver-app-windows-x64
-          path: target/release/tingskriver-app.exe
+          path: |
+            target/release/tingskriver-app.exe
+            target/release/tingskriver-stt.exe
+            target/release/onnxruntime.dll
+            target/release/onnxruntime_providers_shared.dll
+            target/release/onnxruntime-LICENSE.txt
           if-no-files-found: error
           retention-days: 30
 

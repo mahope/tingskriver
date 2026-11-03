@@ -1,3 +1,5 @@
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+
 // src/audio/mod.rs
 pub mod audio_processing;
 pub mod decoder;
@@ -19,6 +21,7 @@ pub mod ffmpeg_mixer;  // NEW: FFmpeg-style adaptive audio mixer
 pub mod recording_state;
 pub mod pipeline;
 pub mod stream;
+mod callback_queue;
 pub mod recording_manager;
 pub mod recording_commands;
 pub mod recording_preferences;
@@ -48,6 +51,7 @@ pub mod transcription;
 
 // Shared utilities for import and retranscription
 pub mod common;
+pub(crate) mod chunk_checkpoint;
 
 // Shared constants
 pub mod constants;

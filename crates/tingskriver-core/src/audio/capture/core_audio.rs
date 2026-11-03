@@ -96,7 +96,9 @@ impl CoreAudioCapture {
             })?;
 
         // Get tap information
-        let tap_uid = tap.uid().unwrap_or_else(|_| cf::Uuid::new().to_cf_string());
+        let tap_uid = tap
+            .uid()
+            .map_err(|e| anyhow::anyhow!("Failed to get audio tap UID: {:?}", e))?;
         let tap_asbd = tap.asbd();
 
         match tap_asbd {
@@ -113,7 +115,7 @@ impl CoreAudioCapture {
         // Create sub-tap dictionary
         let sub_tap = cf::DictionaryOf::with_keys_values(
             &[ca::sub_device_keys::uid()],
-            &[tap.uid().unwrap().as_type_ref()],
+            &[tap_uid.as_type_ref()],
         );
 
         // Create aggregate device descriptor
@@ -164,7 +166,10 @@ impl CoreAudioCapture {
             _output_time: &cat::AudioTimeStamp,
             ctx: Option<&mut AudioContext>,
         ) -> os::Status {
-            let ctx = ctx.unwrap();
+            let Some(ctx) = ctx else {
+                error!("CoreAudio callback has no audio context");
+                return os::Status::NO_ERR;
+            };
 
             // Check for sample rate changes
             let after = device
@@ -316,7 +321,10 @@ fn process_audio_data(ctx: &mut AudioContext, data: &[f32]) {
 
     if pushed > 0 {
         let should_wake = {
-            let mut waker_state = ctx.waker_state.lock().unwrap();
+            let mut waker_state = ctx
+                .waker_state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             if !waker_state.has_data {
                 waker_state.has_data = true;
                 waker_state.waker.take()
@@ -363,7 +371,10 @@ impl Stream for CoreAudioStream {
 
         // No data available, register waker and return pending
         {
-            let mut state = self.waker_state.lock().unwrap();
+            let mut state = self
+                .waker_state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             state.has_data = false;
             state.waker = Some(cx.waker().clone());
         }

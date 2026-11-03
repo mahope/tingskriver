@@ -133,19 +133,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "duration {duration}, expected {seconds}"
             );
             assert!(track.offset_samples < RATE as u64 / 2);
-            // Scanner padding can span whole callbacks after a crash. Only
-            // file sources contain signal (plus the writer's sub-block tail).
-            let signal_samples = track
-                .sources
-                .iter()
-                .rev()
-                .skip_while(|source| matches!(source, Source::Silence(_)))
-                .map(|source| match source {
-                    Source::File { samples, .. } | Source::Silence(samples) => *samples,
-                })
-                .sum::<u64>()
-                / BLOCK
-                * BLOCK;
+            let signal_samples = if mode == "recover" {
+                // Crash alignment may append whole callbacks of silence.
+                track
+                    .sources
+                    .iter()
+                    .rev()
+                    .skip_while(|source| matches!(source, Source::Silence(_)))
+                    .map(|source| match source {
+                        Source::File { samples, .. } | Source::Silence(samples) => *samples,
+                    })
+                    .sum::<u64>()
+                    / BLOCK
+                    * BLOCK
+            } else {
+                // Completed recordings contain every generated block followed
+                // by alignment silence, even when callback skew exceeds a block.
+                let generated = (seconds * 100.0).round() as u64 * BLOCK;
+                assert!(track.samples() >= generated, "missing generated audio");
+                generated
+            };
             let mut reader = SourceReader::new(track.sources);
             let mut block = Vec::new();
             let mut position = 0;

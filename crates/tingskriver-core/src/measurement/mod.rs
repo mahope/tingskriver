@@ -242,6 +242,7 @@ pub async fn run(
         language: Some("da".into()),
         prompt: None,
         diarize: false,
+        timestamps: false,
     };
     // Sequential calls avoid competing local models and retain only one loaded engine.
     for (link, selection) in links.into_iter().zip(selected) {

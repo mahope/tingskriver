@@ -2,7 +2,7 @@
     "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
     "productName": "Tingskriver",
     "mainBinaryName": "tingskriver",
-    "version": "0.5.0-dev.2",
+    "version": "0.5.0-dev.3",
     "identifier": "dk.mahoje.tingskriver",
     "build": {
         "frontendDist": "../out",
@@ -101,6 +101,7 @@
         },
         "externalBin": [
             "binaries/llama-helper",
+            "binaries/tingskriver-stt",
             "binaries/ffmpeg"
         ],
         "macOS": {

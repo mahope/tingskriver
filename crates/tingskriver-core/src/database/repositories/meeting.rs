@@ -201,17 +201,18 @@ impl MeetingsRepository {
         after: Option<&TranscriptCursor>,
         limit: i64,
     ) -> Result<(Vec<Transcript>, Option<TranscriptCursor>), SqlxError> {
-        if meeting_id.trim().is_empty() {
+        if meeting_id.trim().is_empty() || limit <= 0 {
             return Err(SqlxError::Protocol(
-                "meeting_id cannot be empty".to_string(),
+                "meeting_id must not be empty and limit must be positive".to_string(),
             ));
         }
 
-        let rows = match after {
+        let fetch_limit = limit.saturating_add(1);
+        let mut rows = match after {
             None => {
                 sqlx::query(TRANSCRIPT_FIRST_PAGE_SQL)
                     .bind(meeting_id)
-                    .bind(limit)
+                    .bind(fetch_limit)
                     .fetch_all(pool)
                     .await?
             }
@@ -222,7 +223,7 @@ impl MeetingsRepository {
                 sqlx::query(TRANSCRIPT_PAGE_AFTER_NULL_SQL)
                     .bind(meeting_id)
                     .bind(row)
-                    .bind(limit)
+                    .bind(fetch_limit)
                     .fetch_all(pool)
                     .await?
             }
@@ -234,11 +235,15 @@ impl MeetingsRepository {
                     .bind(meeting_id)
                     .bind(start)
                     .bind(row)
-                    .bind(limit)
+                    .bind(fetch_limit)
                     .fetch_all(pool)
                     .await?
             }
         };
+        let has_more = rows.len() as i64 > limit;
+        if has_more {
+            rows.pop();
+        }
 
         let mut transcripts = Vec::with_capacity(rows.len());
         let mut last_row = None;
@@ -247,12 +252,10 @@ impl MeetingsRepository {
             last_row = Some(row.try_get::<i64, _>("cursor_row")?);
         }
         let next = match (last_row, transcripts.last()) {
-            (Some(row), Some(last)) if transcripts.len() as i64 == limit => {
-                Some(TranscriptCursor {
-                    audio_start_time: last.audio_start_time,
-                    row,
-                })
-            }
+            (Some(row), Some(last)) if has_more => Some(TranscriptCursor {
+                audio_start_time: last.audio_start_time,
+                row,
+            }),
             _ => None,
         };
         Ok((transcripts, next))

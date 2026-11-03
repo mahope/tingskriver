@@ -47,6 +47,7 @@ const metadata = (id: string): MeetingMetadata => ({ id, title: id, created_at: 
 const page = (text: string, hasMore = false): PaginatedTranscriptsResponse => ({
   transcripts: [{ id: text, text, timestamp: '00:00', audio_start_time: 0 }],
   total_count: hasMore ? 2 : 1, has_more: hasMore,
+  next_cursor: hasMore ? { audio_start_time: 0, row: 1 } : null,
 });
 async function resolve(req: Request, value: unknown) {
   await act(async () => { req.resolve(value); });
@@ -58,6 +59,26 @@ async function load(meetingId: string, hasMore = false) {
 }
 
 describe('paginated transcript request ownership', () => {
+  test('uses the returned cursor for subsequent pages and clears it on refetch', async () => {
+    await show('A');
+    await resolve(request('metadata', 'A'), metadata('A'));
+    const first = request('transcripts', 'A');
+    expect(first.args.offset).toBeUndefined();
+    expect(first.args.after).toBeNull();
+    const cursor = { audio_start_time: 0, row: 42 };
+    await resolve(first, { ...page('first', true), next_cursor: cursor });
+    await act(async () => { void state.loadMore(); });
+    const next = request('transcripts', 'A', 1);
+    expect(next.args.after).toEqual(cursor);
+    expect(next.args.offset).toBeUndefined();
+    await resolve(next, { ...page('second'), next_cursor: null });
+    expect(state.transcripts.map(t => t.text)).toEqual(['first', 'second']);
+    expect(state.hasMore).toBe(false);
+    await act(async () => { void state.refetch(); });
+    await resolve(request('metadata', 'A', 1), metadata('A'));
+    expect(request('transcripts', 'A', 2).args.after).toBeNull();
+  });
+
   test('ignores late A metadata after B finishes and does not start A transcripts', async () => {
     await show('A');
     const stale = request('metadata', 'A');
