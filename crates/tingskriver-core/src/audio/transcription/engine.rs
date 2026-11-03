@@ -183,7 +183,7 @@ pub async fn get_or_init_transcription_engine(
             let engine = {
                 let guard = crate::parakeet_engine::commands::PARAKEET_ENGINE
                     .lock()
-                    .unwrap();
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
                 guard.as_ref().cloned()
             };
 
@@ -221,7 +221,7 @@ pub async fn get_or_init_whisper(
     let existing_engine = {
         let engine_guard = crate::whisper_engine::commands::WHISPER_ENGINE
             .lock()
-            .unwrap();
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         engine_guard.as_ref().cloned()
     };
 
@@ -301,7 +301,7 @@ pub async fn get_or_init_whisper(
     let engine = {
         let engine_guard = crate::whisper_engine::commands::WHISPER_ENGINE
             .lock()
-            .unwrap();
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         engine_guard
             .as_ref()
             .cloned()

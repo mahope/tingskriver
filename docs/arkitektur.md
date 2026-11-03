@@ -68,6 +68,12 @@ registers at startup.
 
 ## Startup, database and logs
 
+- Recording state, the recording manager, audio buffer pools and transcription
+  command locks recover the inner value from `PoisonError`, so a worker panic
+  does not make later recording attempts panic on the same lock. Release builds
+  retain `panic = "unwind"`. The active `audio` module denies Clippy's
+  `unwrap_used` and `expect_used` outside tests; fallible import and conversion
+  paths return errors through the existing command/error-event handling.
 - `tingskriver_core::logging::init(<file>)` installs the logger (stderr and
   a rotating file in `%LOCALAPPDATA%\dk.mahoje.tingskriver\logs`) and a
   panic hook that writes thread, message and backtrace to the log, from any

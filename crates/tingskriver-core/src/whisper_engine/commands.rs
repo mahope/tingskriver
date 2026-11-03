@@ -28,17 +28,24 @@ pub fn set_models_directory(app: &HostHandle) {
 
     log::info!("Models directory set to: {}", models_dir.display());
 
-    let mut guard = MODELS_DIR.lock().unwrap();
+    let mut guard = MODELS_DIR
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     *guard = Some(models_dir);
 }
 
 /// Get the configured models directory
 fn get_models_directory() -> Option<PathBuf> {
-    MODELS_DIR.lock().unwrap().clone()
+    MODELS_DIR
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
 }
 
 pub async fn whisper_init() -> Result<(), String> {
-    let mut guard = WHISPER_ENGINE.lock().unwrap();
+    let mut guard = WHISPER_ENGINE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     if guard.is_some() {
         return Ok(());
     }
@@ -52,7 +59,9 @@ pub async fn whisper_init() -> Result<(), String> {
 
 pub async fn whisper_get_available_models() -> Result<Vec<ModelInfo>, String> {
     let engine = {
-        let guard = WHISPER_ENGINE.lock().unwrap();
+        let guard = WHISPER_ENGINE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard.as_ref().cloned()
     };
 
@@ -126,7 +135,9 @@ pub async fn whisper_load_model(
     model_name: String
 ) -> Result<(), String> {
     let engine = {
-        let guard = WHISPER_ENGINE.lock().unwrap();
+        let guard = WHISPER_ENGINE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard.as_ref().cloned()
     };
 
@@ -176,7 +187,9 @@ pub async fn whisper_load_model(
 
 pub async fn whisper_get_current_model() -> Result<Option<String>, String> {
     let engine = {
-        let guard = WHISPER_ENGINE.lock().unwrap();
+        let guard = WHISPER_ENGINE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard.as_ref().cloned()
     };
 
@@ -189,7 +202,9 @@ pub async fn whisper_get_current_model() -> Result<Option<String>, String> {
 
 pub async fn whisper_is_model_loaded() -> Result<bool, String> {
     let engine = {
-        let guard = WHISPER_ENGINE.lock().unwrap();
+        let guard = WHISPER_ENGINE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard.as_ref().cloned()
     };
 
@@ -202,7 +217,9 @@ pub async fn whisper_is_model_loaded() -> Result<bool, String> {
 
 pub async fn whisper_has_available_models() -> Result<bool, String> {
     let engine = {
-        let guard = WHISPER_ENGINE.lock().unwrap();
+        let guard = WHISPER_ENGINE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard.as_ref().cloned()
     };
 
@@ -226,7 +243,9 @@ pub async fn whisper_has_available_models() -> Result<bool, String> {
 
 pub async fn whisper_validate_model_ready() -> Result<String, String> {
     let engine = {
-        let guard = WHISPER_ENGINE.lock().unwrap();
+        let guard = WHISPER_ENGINE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard.as_ref().cloned()
     };
 
@@ -274,7 +293,9 @@ pub async fn whisper_validate_model_ready_with_config(
     app: &HostHandle,
 ) -> Result<String, String> {
     let engine = {
-        let guard = WHISPER_ENGINE.lock().unwrap();
+        let guard = WHISPER_ENGINE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard.as_ref().cloned()
     };
 
@@ -375,7 +396,9 @@ pub async fn whisper_validate_model_ready_with_config(
 
 pub async fn whisper_transcribe_audio(audio_data: Vec<f32>) -> Result<String, String> {
     let engine = {
-        let guard = WHISPER_ENGINE.lock().unwrap();
+        let guard = WHISPER_ENGINE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard.as_ref().cloned()
     };
 
@@ -393,7 +416,9 @@ pub async fn whisper_transcribe_audio(audio_data: Vec<f32>) -> Result<String, St
 
 pub async fn whisper_get_models_directory() -> Result<String, String> {
     let engine = {
-        let guard = WHISPER_ENGINE.lock().unwrap();
+        let guard = WHISPER_ENGINE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard.as_ref().cloned()
     };
 
@@ -410,7 +435,9 @@ pub async fn whisper_download_model(
     model_name: String,
 ) -> Result<(), String> {
     let engine = {
-        let guard = WHISPER_ENGINE.lock().unwrap();
+        let guard = WHISPER_ENGINE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard.as_ref().cloned()
     };
 
@@ -479,7 +506,9 @@ pub async fn whisper_download_model(
 
 pub async fn whisper_cancel_download(model_name: String) -> Result<CancelDownloadOutcome, String> {
     let engine = {
-        let guard = WHISPER_ENGINE.lock().unwrap();
+        let guard = WHISPER_ENGINE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard.as_ref().cloned()
     };
 
@@ -495,7 +524,9 @@ pub async fn whisper_cancel_download(model_name: String) -> Result<CancelDownloa
 
 pub async fn whisper_delete_corrupted_model(model_name: String) -> Result<String, String> {
     let engine = {
-        let guard = WHISPER_ENGINE.lock().unwrap();
+        let guard = WHISPER_ENGINE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard.as_ref().cloned()
     };
 
