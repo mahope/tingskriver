@@ -808,14 +808,15 @@ pub struct ContinuousVadProcessor {
 
 impl ContinuousVadProcessor {
     pub fn new(input_sample_rate: u32, redemption_time_ms: u32) -> Result<Self> {
-        let mut config = VadConfig::default();
-        config.sample_rate = 16000;
-        config.positive_speech_threshold = 0.50;
-        config.negative_speech_threshold = 0.35;
-        config.redemption_time = Duration::from_millis(redemption_time_ms.into());
-        config.pre_speech_pad = Duration::from_millis(300);
-        config.post_speech_pad = Duration::from_millis(400);
-        config.min_speech_time = Duration::from_millis(250);
+        let config = VadConfig {
+            sample_rate: 16000,
+            positive_speech_threshold: 0.50,
+            negative_speech_threshold: 0.35,
+            redemption_time: Duration::from_millis(redemption_time_ms.into()),
+            pre_speech_pad: Duration::from_millis(300),
+            post_speech_pad: Duration::from_millis(400),
+            min_speech_time: Duration::from_millis(250),
+        };
         Self::with_config(input_sample_rate, config)
     }
 
