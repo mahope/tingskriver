@@ -80,7 +80,6 @@ impl Host {
     /// Start the host. `runtime` is the core runtime (already registered
     /// with `tingskriver_core::runtime::set_handle`).
     pub fn start(app_data_dir: PathBuf, runtime: Handle) -> (Host, UnboundedReceiver<Request>) {
-        runtime.spawn(tingskriver_core::audio::finalize::finalize_pending_at_startup());
         let bridge = Arc::new(Bridge::new(app_data_dir));
         let elevated = runs_elevated();
         if elevated {
