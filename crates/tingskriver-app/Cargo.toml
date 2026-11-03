@@ -10,6 +10,15 @@ publish = false
 [lib]
 path = "src/lib.rs"
 
+[features]
+screenshot-tests = ["gpui/test-support", "gpui_platform/test-support"]
+
+[[test]]
+name = "screenshots"
+path = "tests/screenshots.rs"
+harness = false
+required-features = ["screenshot-tests"]
+
 [[bin]]
 name = "tingskriver-app"
 path = "src/main.rs"
@@ -45,3 +54,4 @@ velopack = "=1.2.161"
 
 [dev-dependencies]
 ttf-parser = "0.25"
+image = { version = "=0.25.10", default-features = false, features = ["png"] }

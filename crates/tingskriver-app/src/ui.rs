@@ -259,6 +259,49 @@ pub struct Shell {
 }
 
 impl Shell {
+    /// Fixed shell state for raster tests, without opening a database,
+    /// reading credentials, registering shortcuts or starting audio.
+    #[cfg(feature = "screenshot-tests")]
+    pub fn fixture(
+        page: Page,
+        db: DbState,
+        runtime: Handle,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Entity<Self> {
+        let model = cx.new(|_| AppModel {
+            db,
+            app_data_dir: None,
+            log_path: Some(PathBuf::from("fixtures/tingskriver.log")),
+            runtime,
+            clock: StartupClock::start(),
+            start_page: page,
+            report_first_frame: false,
+        });
+        init(model, cx);
+        let shell = cx.new(|cx| Shell::new(None, window, cx));
+        shell.update(cx, |shell, cx| {
+            shell.measurement = cx.new(|cx| {
+                crate::measurement::MeasurementView::fixture(
+                    shell.model.read(cx).runtime.clone(),
+                    window,
+                    cx,
+                )
+            });
+            shell.probe_line.update(cx, |input, cx| {
+                input.set_value("æøå ÆØÅ é ü @ €", window, cx)
+            });
+            shell.probe_text.update(cx, |input, cx| {
+                input.set_value(
+                    "Et syntetisk eksempel.\nIngen mødedata indlæses.",
+                    window,
+                    cx,
+                )
+            });
+        });
+        shell
+    }
+
     fn new(state_path: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let model = model(cx);
         let probe_line = cx.new(|cx| InputState::new(window, cx).placeholder(strings::PROBE_LINE));

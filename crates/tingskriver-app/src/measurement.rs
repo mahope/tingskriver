@@ -73,6 +73,15 @@ impl MeasurementView {
             .as_ref()
             .ok_or_else(|| strings::MEASURE_NO_FOLDER.to_string())
             .and_then(|dir| ProviderService::new(dir, Arc::new(CredentialManager)).load());
+        self.apply_config(result, window, cx);
+    }
+
+    fn apply_config(
+        &mut self,
+        result: Result<Option<ProvidersConfig>, String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         match result {
             Ok(config) => {
                 self.config = config.unwrap_or_default();
@@ -111,6 +120,19 @@ impl MeasurementView {
             }
         }
         cx.notify();
+    }
+
+    #[cfg(feature = "screenshot-tests")]
+    pub(crate) fn fixture(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let mut view = Self::new(None, runtime, window, cx);
+        view.apply_config(Ok(Some(ProvidersConfig::default())), window, cx);
+        view.path.update(cx, |input, cx| {
+            input.set_value("fixtures/proeve.wav", window, cx)
+        });
+        view.reference.update(cx, |input, cx| {
+            input.set_value("Vi mødes på torsdag klokken ti.", window, cx)
+        });
+        view
     }
 
     fn start(&mut self, cx: &mut Context<Self>) {
