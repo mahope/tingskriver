@@ -1,6 +1,5 @@
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::{Result, Sqlite, SqlitePool, Transaction};
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -52,7 +51,9 @@ impl DatabaseManager {
         };
 
         if let Some(parent_dir) = database_path.parent() {
-            fs::create_dir_all(parent_dir).map_err(|e| fail(kind_from_io(&e), e.to_string()))?;
+            tokio::fs::create_dir_all(parent_dir)
+                .await
+                .map_err(|e| fail(kind_from_io(&e), e.to_string()))?;
         }
 
         let exists = database_path.exists();
@@ -62,7 +63,8 @@ impl DatabaseManager {
                 legacy_path.display(),
                 database_path.display()
             );
-            fs::copy(legacy_path, database_path)
+            tokio::fs::copy(legacy_path, database_path)
+                .await
                 .map_err(|e| fail(kind_from_io(&e), e.to_string()))?;
         } else if !exists {
             log::info!("Creating database at {}", database_path.display());
@@ -156,7 +158,7 @@ impl DatabaseManager {
                 },
             )
         };
-        fs::create_dir_all(app_data_dir).map_err(fail)?;
+        tokio::fs::create_dir_all(app_data_dir).await.map_err(fail)?;
 
         // Copy legacy database to app data directory as meeting_minutes.db
         let target_legacy_path = app_data_dir.join("meeting_minutes.db");
@@ -166,7 +168,9 @@ impl DatabaseManager {
             target_legacy_path.display()
         );
 
-        fs::copy(legacy_db_path, &target_legacy_path).map_err(fail)?;
+        tokio::fs::copy(legacy_db_path, &target_legacy_path)
+            .await
+            .map_err(fail)?;
 
         // Now use the standard initialization which will detect and migrate the legacy db
         Self::new_from_app_data_dir(app_data_dir).await

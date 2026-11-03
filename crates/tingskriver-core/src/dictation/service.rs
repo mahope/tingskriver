@@ -231,6 +231,7 @@ impl Service {
         cleanup::clean(text, style, &self.rules())
     }
 
+    #[allow(clippy::disallowed_methods)] // Synchronous disk worker.
     pub fn delete_files(&self, paths: Vec<String>) {
         for path in paths {
             let path = PathBuf::from(path);
@@ -922,10 +923,13 @@ impl Service {
             let audio_dir = self.audio_dir.clone();
             let output = path.clone();
             let samples = samples.to_vec();
-            let written = tokio::task::spawn_blocking(move || {
-                std::fs::create_dir_all(audio_dir)?;
-                std::fs::write(output, audio::wav_bytes(&samples, audio::TARGET_RATE))
-            })
+            let written = tokio::task::spawn_blocking(
+                #[allow(clippy::disallowed_methods)]
+                move || {
+                    std::fs::create_dir_all(audio_dir)?;
+                    std::fs::write(output, audio::wav_bytes(&samples, audio::TARGET_RATE))
+                },
+            )
             .await
             .map_err(std::io::Error::other)
             .and_then(|result| result);

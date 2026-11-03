@@ -69,6 +69,7 @@ pub(crate) fn create_transcript_segments(transcripts: &[(String, f64, f64)]) -> 
 }
 
 /// Write transcripts.json to a meeting folder (atomic write with temp file)
+#[allow(clippy::disallowed_methods)] // Synchronous disk worker.
 pub(crate) fn write_transcripts_json(folder: &Path, segments: &[TranscriptSegment]) -> Result<()> {
     let transcript_path = folder.join("transcripts.json");
     let temp_path = folder.join(".transcripts.json.tmp");

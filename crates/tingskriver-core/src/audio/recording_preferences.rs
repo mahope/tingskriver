@@ -76,6 +76,7 @@ pub fn get_default_recordings_folder() -> PathBuf {
 }
 
 /// Ensure the recordings directory exists
+#[allow(clippy::disallowed_methods)] // Synchronous disk worker.
 pub fn ensure_recordings_directory(path: &PathBuf) -> Result<()> {
     if !path.exists() {
         std::fs::create_dir_all(path)?;

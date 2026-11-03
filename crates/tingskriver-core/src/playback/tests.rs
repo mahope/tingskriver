@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 use super::*;
 use std::{f64::consts::TAU, fs::File, io::Write, path::Path, time::Instant};
 

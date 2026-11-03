@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 use super::*;
 use tokio::io::AsyncWriteExt;
 

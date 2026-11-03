@@ -70,11 +70,15 @@ capped at that limit. Large downloads, model pulls and inference can now time
 out too; callers must report the error and use their existing retry/resume
 paths rather than extend the deadline. The shared client is in `http.rs`.
 
-`tingskriver-core/clippy.toml` forbids blocking reqwest types. Async HTTP
-modules deny `clippy::disallowed_methods`, including blocking HTTP and direct
-`std::fs` calls. Synchronous disk workers remain permitted. Check the guard
-with `scripts/check-async-io-guard.sh`, which must reject both deliberately
-inserted violations. `read_audio_file` is removed; playback uses core's seekable
+`tingskriver-core/clippy.toml` forbids blocking reqwest types. Core denies
+`clippy::disallowed_methods` at crate scope, including blocking HTTP and direct
+`std::fs` calls. Exceptions are scoped to synchronous disk workers and test
+fixtures, never entire production modules. Check the guard with
+`scripts/check-async-io-guard.sh`, which copies core's actual crate lint
+attributes and must reject both deliberately inserted violations without
+adding its own deny rules. Engine initialization constructs on a blocking
+worker outside the shared engine mutex, then briefly locks to publish the
+first completed instance. `read_audio_file` is removed; playback uses core's seekable
 playback service instead of serializing audio bytes into a JSON number array.
 
 ## What stays in the Tauri crate

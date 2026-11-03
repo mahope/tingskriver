@@ -108,7 +108,9 @@ fn db_err(e: sqlx::Error) -> String {
 impl Store {
     pub async fn open(path: &Path) -> Result<Store, String> {
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| e.to_string())?;
         }
         let options = SqliteConnectOptions::new()
             .filename(path)

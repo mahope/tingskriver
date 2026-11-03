@@ -273,6 +273,7 @@ fn needs_ffmpeg_conversion(path: &Path) -> bool {
 ///
 /// Returns a `TempPath` that auto-deletes the temporary WAV file when dropped.
 /// The caller must keep the `TempPath` alive until decoding of the WAV is complete.
+#[allow(clippy::disallowed_methods)] // Synchronous disk worker.
 fn convert_to_wav_with_ffmpeg(
     input_path: &Path,
     progress_callback: Option<&ProgressCallback>,
@@ -394,6 +395,7 @@ pub fn decode_audio_file(path: &Path) -> Result<DecodedAudio> {
 }
 
 /// Decode an audio file with optional progress callback
+#[allow(clippy::disallowed_methods)] // Synchronous disk worker.
 pub fn decode_audio_file_with_progress(
     path: &Path,
     progress_callback: Option<ProgressCallback>,

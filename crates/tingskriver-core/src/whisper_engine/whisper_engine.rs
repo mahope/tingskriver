@@ -237,7 +237,7 @@ impl WhisperEngine {
             let model_path = models_dir.join(filename);
             let status = if model_path.exists() {
                 // Check if file size is reasonable (at least 1MB for a valid model)
-                match std::fs::metadata(&model_path) {
+                match tokio::fs::metadata(&model_path).await {
                     Ok(metadata) => {
                         let file_size_bytes = metadata.len();
                         let file_size_mb = file_size_bytes / (1024 * 1024);
@@ -1344,6 +1344,7 @@ impl WhisperEngine {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};

@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 //! Contract tests against a fake OpenAI-compatible server, chain fallback,
 //! key handling and the migration of the old settings.
 

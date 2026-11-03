@@ -1,6 +1,5 @@
 #![deny(clippy::disallowed_types)]
-// Synchronous disk workers are allowed; async I/O modules opt into the method guard.
-#![allow(clippy::disallowed_methods)]
+#![deny(clippy::disallowed_methods)]
 
 //! UI-free core of Tingskriver: audio, transcription, database, AI providers,
 //! dictation and summaries. The UI layer (the Tauri app today, the GPUI app

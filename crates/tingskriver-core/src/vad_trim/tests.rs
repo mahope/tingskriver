@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 use super::*;
 use crate::audio::transcription::provider::{
     TranscriptResult, TranscriptionError, TranscriptionProvider,

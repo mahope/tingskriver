@@ -1,4 +1,5 @@
 disallowed-types = [
+    { path = "reqwest::blocking::Response", reason = "Core must use asynchronous HTTP with a deadline" },
     { path = "reqwest::blocking::Client", reason = "Core must use asynchronous HTTP with a deadline" },
     { path = "reqwest::blocking::ClientBuilder", reason = "Core must use asynchronous HTTP with a deadline" },
     { path = "reqwest::blocking::RequestBuilder", reason = "Core must use asynchronous HTTP with a deadline" },
