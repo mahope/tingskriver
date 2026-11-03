@@ -13,6 +13,10 @@ See [research](../../docs/android/RESEARCH.md) and the locked
 [v0 specification](../../docs/android/SPEC.md) for the planned local Whisper
 engine and later Rust text-processing bridge.
 
+The [Whisper benchmark protocol and status](../../docs/android/BENCHMARK.md)
+describe the separate offline scoring tools and physical-device measurements
+still required before native integration. No model has passed that gate yet.
+
 ## Build and test
 
 Install JDK 17 and Android SDK platform 36 / build-tools 36.0.0. Set
