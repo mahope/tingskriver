@@ -66,11 +66,18 @@ def summarize(data):
             value = row[key]
             require(type(value) in (int, float) and math.isfinite(value) and value >= 0)
         require(row['model_bytes'] > 0 and row['peak_pss_mb'] > 0)
+        require(type(row['thermal_status']) is int and row['thermal_status'] <= 6)
         require(type(row['repeat']) is int and 0 <= row['repeat'] < 20)
         identity = (row['tier'], row['model'], row['clip'], row['repeat'])
         require(identity not in identities)
         identities.add(identity)
     require(len(identities) == 2 * 3 * len(clips) * 20)
+    for model in MODELS:
+        for key in ('model_sha256', 'model_bytes'):
+            require(len({r[key] for r in runs if r['model'] == model}) == 1)
+    for tier in TIERS:
+        for key in ('hardware', 'os'):
+            require(len({r[key] for r in runs if r['tier'] == tier}) == 1)
     output = []
     for tier in TIERS:
         for model in MODELS:

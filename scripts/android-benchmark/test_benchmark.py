@@ -1,4 +1,10 @@
 import copy
+import hashlib
+import json
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
 import unittest
 import benchmark as b
 
@@ -48,6 +54,8 @@ class BenchmarkTests(unittest.TestCase):
                        lambda d: d['runs'][0].update(warm_ms=float('nan')),
                        lambda d: d['runs'][0].update(abi='x86_64'),
                        lambda d: d.update(consent=''),
+                       lambda d: d['runs'][0].update(model_sha256='e'*64),
+                       lambda d: d['runs'][0].update(thermal_status=7),
                        lambda d: d['runs'][0].update(model_sha256='unknown')):
             data = copy.deepcopy(self.fixture())
             mutate(data)
@@ -56,6 +64,29 @@ class BenchmarkTests(unittest.TestCase):
 
     def test_nearest_rank_p95(self):
         self.assertEqual(b.percentile(list(range(1, 21)), .95), 19)
+
+    def test_cli_accept_reject_and_hash_mismatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            data = self.fixture()
+            for clip in data['clips']:
+                audio = b'synthetic hash contract fixture'
+                (root / (clip['id'] + '.wav')).write_bytes(audio)
+                clip['sha256'] = hashlib.sha256(audio).hexdigest()
+            source, output = root / 'input.json', root / 'summary.json'
+            command = [sys.executable, b.__file__, str(source), '--audio-dir',
+                       str(root), '--output', str(output)]
+            source.write_text(json.dumps(data))
+            self.assertEqual(subprocess.run(command, capture_output=True).returncode, 0)
+            self.assertNotIn('hypothesis', output.read_text())
+            for row in data['runs']:
+                row['warm_ms'] = 3001
+            source.write_text(json.dumps(data))
+            self.assertEqual(subprocess.run(command, capture_output=True).returncode, 1)
+            (root / 'quiet.wav').write_bytes(b'changed')
+            result = subprocess.run(command, capture_output=True)
+            self.assertEqual(result.returncode, 2)
+            self.assertNotIn(b'Tivoli', result.stderr)
 
 
 if __name__ == '__main__':
