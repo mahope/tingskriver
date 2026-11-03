@@ -10,7 +10,6 @@ publish = false
 
 [dependencies]
 anyhow = "1.0"
-posthog-rs = "0.3.7"
 async-trait = "0.1"
 bytemuck = "1.16.1"
 dashmap = "6.1.0"

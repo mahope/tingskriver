@@ -91,6 +91,7 @@ Se [målemetoden](docs/ydeevne.md) og [release-checklisten](docs/release-checkli
 - Byggevejledning: [docs/BUILDING.md](docs/BUILDING.md). Frontenden ligger i `frontend/` (Tauri 2, Next.js, Rust).
 - Logfiler: `%LOCALAPPDATA%\dk.mahoje.tingskriver\logs\` (`tingskriver.log`, roterer ved 5 MB, de to seneste filer gemmes også). Åbn mappen fra Indstillinger under "Logfiler". Enhedsskift står som `[DEVICE_FOLLOW]`-linjer med tidsstempel.
 - Test af diktering: `cargo test -p tingskriver-core dictation` (renskrivning, genvej, dobbelttryk, reservevalg, SQLite-lager og Syv.ai-kaldet mod en falsk server; kører på Linux og i CI).
+- Ingen brugsstatistik eller telemetri indsamles.
 - Afbrudte referater: ved opstart markeres ventende referater ældre end generationstimeout (15 minutter) som fejlede og kan prøves igen. Et tidligere referat bevares.
 - Database: mødesiden henter transskripter med en cursor frem for OFFSET. Kør `cargo test --locked -p tingskriver-core --test database_startup` for indeks, WAL, sikkerhedskopiering og paginering. Benchmarken køres med `cargo test --locked --release -p tingskriver-core --test database_startup three_hour_meeting_loads_in_under_200_ms -- --ignored --nocapture`.
 
@@ -161,6 +162,7 @@ Tingskriver is a fork of [Meetily](https://github.com/Zackriya-Solutions/meetily
 - Build instructions: [docs/BUILDING.md](docs/BUILDING.md). The app lives in `frontend/` (Tauri 2, Next.js, Rust).
 - Log files: `%LOCALAPPDATA%\dk.mahoje.tingskriver\logs\` (`tingskriver.log`, rotates at 5 MB, the two previous files are kept). Open the folder from Settings under "Logfiler". Device switches appear as `[DEVICE_FOLLOW]` lines with timestamps.
 - Testing dictation: `cargo test -p tingskriver-core dictation` (cleanup, shortcut, double tap, fallback decisions, the SQLite store and the Syv.ai request against a fake server; runs on Linux and in CI).
+- No usage analytics or telemetry is collected.
 - Interrupted summaries: startup marks pending summaries older than the generation timeout (15 minutes) as failed so they can be retried, preserving any previous summary.
 - Database: the meeting view loads transcripts using a cursor instead of OFFSET. Run `cargo test --locked -p tingskriver-core --test database_startup` for index, WAL, backup and pagination checks. Run the benchmark with `cargo test --locked --release -p tingskriver-core --test database_startup three_hour_meeting_loads_in_under_200_ms -- --ignored --nocapture`.
 - [Dictation modes](docs/dictation-modes.md) collect per-program provider, language, style and output rules, with versioned JSON import/export.

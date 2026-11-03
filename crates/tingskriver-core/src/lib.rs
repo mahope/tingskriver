@@ -33,7 +33,6 @@ pub(crate) use perf_debug;
 #[allow(unused_imports)]
 pub(crate) use perf_trace;
 
-pub mod analytics;
 pub mod anthropic;
 pub mod api;
 pub mod audio;
