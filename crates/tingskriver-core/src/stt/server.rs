@@ -117,6 +117,23 @@ pub(super) fn run() -> anyhow::Result<()> {
                     Err(_) => serde_json::json!({"error": "Den lokale model kunne ikke indlæses."}),
                 }
             }
+            Request::WhisperTimed { language } => {
+                let result = if let Some(engine) = whisper.as_ref() {
+                    runtime
+                        .block_on(engine.transcribe_audio_timed(frame.samples, language))
+                        .map_err(|_| "Lokal transskription med ordtider mislykkedes.".to_string())
+                } else {
+                    Err("Ingen lokal model indlæst.".to_string())
+                };
+                serde_json::to_value(result)?
+            }
+            Request::TranscribeTimed => {
+                let result = model
+                    .as_mut()
+                    .ok_or_else(|| "Ingen lokal model indlæst.".to_string())
+                    .and_then(|m| m.transcribe_timed(frame.samples));
+                serde_json::to_value(result)?
+            }
             Request::Transcribe => {
                 let result = model
                     .as_mut()
