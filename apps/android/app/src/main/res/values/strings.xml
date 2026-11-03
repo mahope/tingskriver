@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Tingskriver</string>
+    <string name="microphone">Mikrofon</string>
+    <string name="switch_keyboard">Skift tastatur</string>
+    <string name="stub_status">Talegenkendelse er ikke tilsluttet endnu. Mikrofonen optager ikke.</string>
+    <string name="unsupported_field">Diktering er slået fra i dette felt.</string>
+    <string name="settings_title">Tingskriver til Android</string>
+    <string name="settings_intro">Dette er et tidligt skelet til dansk diktering. Det optager ingen lyd, sender ingen data og gemmer ingen tekst. Aktivér tastaturet i Androids indstillinger, og vælg det derefter i et tekstfelt.</string>
+    <string name="enable_keyboard">Åbn tastaturindstillinger</string>
+</resources>
