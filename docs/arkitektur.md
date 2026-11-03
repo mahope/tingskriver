@@ -189,7 +189,9 @@ transcription leaves the saved meeting available and reports the error.
   WAV segments of 10 minutes in `<meeting>/.checkpoints/`
   (`microphone_000.wav`, `system_000.wav`, ...). Every second the new samples
   and the header sizes go to the OS (a killed process loses at most about a
-  second); every 5 s and at stop they are synced to the disk.
+  second); every 1 s and at stop they are synced to the disk. The sync interval
+  leaves room for the next commit within the 2 s power-loss budget on a healthy
+  disk; storage stalls are reported through the errors and backlog below.
   `tracks.json` holds each track's offset on the shared recording clock (the
   active duration, pauses excluded). A track that lags that clock for more
   than a second gets silence for the missing time, and at stop both tracks

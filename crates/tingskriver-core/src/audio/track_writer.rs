@@ -22,13 +22,13 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-/// How often buffered samples are written and synced. A crash loses at most
+/// How often buffered samples are written to the OS. A crash loses at most
 /// this much audio (plus what is still in the channel).
 pub const COMMIT_INTERVAL: Duration = Duration::from_secs(1);
 
-/// How often the files are flushed to the disk itself (`sync_data`). Not on
-/// every commit: a slow disk can take hundreds of milliseconds per sync.
-pub const SYNC_INTERVAL: Duration = Duration::from_secs(5);
+/// How often the files are flushed to the disk itself (`sync_data`). Leave
+/// room for the next commit within the two-second power-loss budget.
+pub const SYNC_INTERVAL: Duration = Duration::from_secs(1);
 
 /// While the storage fails, at most one write attempt per this interval.
 pub const RETRY_INTERVAL: Duration = Duration::from_secs(10);
@@ -857,6 +857,30 @@ pub fn f32_to_i16(x: f32) -> i16 {
 pub(crate) mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn both_tracks_sync_samples_and_headers_each_second() {
+        for kind in [TrackKind::Microphone, TrackKind::System] {
+            let dir = tempfile::tempdir().unwrap();
+            let mut storage = WavSegmentStorage::new(dir.path(), kind, 48000);
+            assert_eq!(storage.write(&[1]).committed, 1);
+            storage.current.as_mut().unwrap().last_sync = Instant::now() - Duration::from_secs(1);
+            let mut synced = false;
+            storage
+                .write_into_current_with_sync(&[2, 3], |file| {
+                    let mut file = file.try_clone()?;
+                    file.seek(SeekFrom::Start(40))?;
+                    let mut bytes = [0; 10];
+                    file.read_exact(&mut bytes)?;
+                    assert_eq!(u32::from_le_bytes(bytes[..4].try_into().unwrap()), 6);
+                    assert_eq!(&bytes[4..], &[1, 0, 2, 0, 3, 0]);
+                    synced = true;
+                    Ok(())
+                })
+                .unwrap();
+            assert!(synced, "{kind:?} must reach the disk every second");
+        }
+    }
 
     #[test]
     fn sync_failure_retry_does_not_duplicate_samples() {
