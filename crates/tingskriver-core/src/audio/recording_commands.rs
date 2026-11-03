@@ -136,6 +136,8 @@ fn install_recording_error_callback(manager: &RecordingManager, app: &HostHandle
             let reason = error.user_message().to_string();
             // Run teardown outside the DSP worker: stop joins that worker.
             runtime.spawn(async move {
+                // Startup publishes the manager and emits recording-started under this lock.
+                let _startup_guard = super::common::acquire_engine_lifecycle_lock().await;
                 if !session_live(&session) {
                     return;
                 }
@@ -410,8 +412,6 @@ pub async fn start_recording_with_meeting_name(
     // Flip recording live + reset per-session flags (speech-detected latch,
     // mic-recovery budget). Shared with the other start path — see helper.
     finalize_recording_start();
-    drop(engine_lifecycle_guard);
-
 
     // Emit success event
     app.emit("recording-started", serde_json::json!({
@@ -419,6 +419,8 @@ pub async fn start_recording_with_meeting_name(
         "devices": ["Default Microphone", "Default System Audio"],
         "workers": 3
     })).map_err(|e| e.to_string())?;
+
+    drop(engine_lifecycle_guard);
 
     // Update tray menu to reflect recording state
     app.refresh_status_ui();
@@ -527,8 +529,6 @@ pub async fn start_recording_with_devices_and_meeting(
     // Flip recording live + reset per-session flags (speech-detected latch,
     // mic-recovery budget). Shared with the other start path — see helper.
     finalize_recording_start();
-    drop(engine_lifecycle_guard);
-
 
     // Emit success event
     app.emit("recording-started", serde_json::json!({
@@ -539,6 +539,8 @@ pub async fn start_recording_with_devices_and_meeting(
         ],
         "workers": 3
     })).map_err(|e| e.to_string())?;
+
+    drop(engine_lifecycle_guard);
 
     // Update tray menu to reflect recording state
     app.refresh_status_ui();
@@ -1388,15 +1390,19 @@ mod internal_stop_tests {
         let first_stop = StoppingGuard::try_new().unwrap();
         assert!(StoppingGuard::try_new().is_none(), "only one teardown may run at once");
         drop(first_stop);
-        for recoverable in [true, false] {
+        for (recoverable, during_startup) in [(true, false), (false, false), (false, true)] {
+            let startup_guard = super::super::common::acquire_engine_lifecycle_lock().await;
             let host = Arc::new(EventHost::default());
             let app: HostHandle = host.clone();
             let manager = RecordingManager::new();
             let state = manager.get_state().clone();
             state.start_recording().unwrap();
             install_recording_error_callback(&manager, &app);
-            *RECORDING_MANAGER.lock().unwrap() = Some(manager);
-            IS_RECORDING.store(true, Ordering::SeqCst);
+            let mut manager = Some(manager);
+            if !during_startup {
+                *RECORDING_MANAGER.lock().unwrap() = manager.take();
+                finalize_recording_start();
+            }
             let error = if recoverable {
                 AudioError::StreamFailed
             } else {
@@ -1406,6 +1412,14 @@ mod internal_stop_tests {
             for _ in 0..count {
                 state.report_error(error.clone());
             }
+            if during_startup {
+                // Let the stop task run before the session becomes globally visible.
+                tokio::task::yield_now().await;
+                assert!(host.events.lock().unwrap().is_empty());
+                *RECORDING_MANAGER.lock().unwrap() = manager.take();
+                finalize_recording_start();
+            }
+            drop(startup_guard);
             tokio::time::timeout(std::time::Duration::from_secs(2), host.stopped.notified())
                 .await
                 .unwrap();

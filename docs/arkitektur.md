@@ -208,6 +208,9 @@ transcription leaves the saved meeting available and reports the error.
   the recording indicator.
   Replaced audio and samples dropped from a full queue are persisted in
   `tracks.json`; a later finalize still reports `delvis` after storage recovers.
+- Internal error stops wait for startup to publish the session and emit
+  `recording-started` before tearing it down and emitting `recording-stopped`
+  with a reason, including when a worker fails while streams are starting.
 - Stop stops the streams (their last callbacks and the resampler tail still
   reach the writer), closes the channel and waits for the writer to drain it.
   The log line `Stop-to-saved: N ms` measures this. `recording-saved` and
