@@ -53,8 +53,10 @@ JSON record to retry just that chunk. Existing database transcripts are only
 replaced by the final transaction once every chunk has succeeded.
 
 The batch paths still decode the source into memory. They consume VAD segments
-when building chunks rather than cloning all unsplit audio, but this is not a
-streaming decoder or a constant-memory transcription pipeline.
+when building chunks rather than cloning all unsplit audio. Each processed
+chunk is moved into the provider and released instead of retaining another
+copy until the batch ends. This is not a streaming decoder or a constant-memory
+transcription pipeline.
 
 ## Validation
 

@@ -554,7 +554,7 @@ async fn run_import(
     let mut all_transcripts: Vec<(String, f64, f64)> = Vec::new();
     let mut total_confidence = 0.0f32;
 
-    for (i, segment) in processable_segments.iter().enumerate() {
+    for (i, segment) in processable_segments.into_iter().enumerate() {
         if IMPORT_CANCELLED.load(Ordering::SeqCst) {
             let _ = std::fs::remove_dir_all(&meeting_folder);
             return Err(anyhow!("Import cancelled"));
@@ -594,7 +594,7 @@ async fn run_import(
                     .as_ref()
                     .ok_or_else(|| anyhow!("Parakeet engine is not initialized"))?;
                 let text = engine
-                    .transcribe_audio(segment.samples.clone())
+                    .transcribe_audio(segment.samples)
                     .await
                     .map_err(|e| anyhow!("Parakeet transcription failed on segment {}: {}", i, e))?;
                 (text, 0.9f32)
@@ -603,7 +603,7 @@ async fn run_import(
                     .as_ref()
                     .ok_or_else(|| anyhow!("Whisper engine is not initialized"))?;
                 let (text, conf, _) = engine
-                    .transcribe_audio_with_confidence(segment.samples.clone(), language.clone())
+                    .transcribe_audio_with_confidence(segment.samples, language.clone())
                     .await
                     .map_err(|e| anyhow!("Whisper transcription failed on segment {}: {}", i, e))?;
                 (text, conf)

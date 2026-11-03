@@ -144,13 +144,8 @@ pub(crate) fn append_chunk(
                         .all(|(a, b)| !normalize(a).is_empty() && normalize(a) == normalize(b))
                 })
                 .unwrap_or(0);
-            if shared > 0 {
-                let offset = text
-                    .split_whitespace()
-                    .take(shared)
-                    .last()
-                    .map(|word| word.as_ptr() as usize - text.as_ptr() as usize + word.len())
-                    .unwrap();
+            if let Some(word) = text.split_whitespace().take(shared).last() {
+                let offset = word.as_ptr() as usize - text.as_ptr() as usize + word.len();
                 text = text[offset..].trim_start().to_string();
             }
             start = *previous_end;
