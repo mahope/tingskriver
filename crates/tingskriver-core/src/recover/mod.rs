@@ -125,12 +125,13 @@ pub async fn restore(
     );
     let folder_string = folder.to_string_lossy().into_owned();
     // A stable ID also makes retries after DB failures and concurrent requests safe.
-    let existing: Option<(String,)> =
-        sqlx::query_as("SELECT id FROM meetings WHERE folder_path = ? LIMIT 1")
-            .bind(&folder_string)
-            .fetch_optional(pool)
+    let existing: Vec<(String, String)> =
+        sqlx::query_as("SELECT id, folder_path FROM meetings WHERE folder_path IS NOT NULL")
+            .fetch_all(pool)
             .await?;
     let meeting_id = existing
+        .into_iter()
+        .find(|(_, saved)| Path::new(saved).canonicalize().ok().as_ref() == Some(&folder))
         .map(|row| row.0)
         .unwrap_or_else(|| format!("recovered-{id}"));
     // If DB persistence fails after encoding, startup must still offer recovery.
@@ -152,7 +153,7 @@ pub async fn restore(
             .fetch_one(pool)
             .await?;
     anyhow::ensure!(
-        saved_folder == folder_string,
+        Path::new(&saved_folder).canonicalize()? == folder,
         "Recovery ID belongs to another recording"
     );
     std::fs::remove_file(pending)?;
@@ -170,24 +171,53 @@ pub async fn restore_and_transcribe(
         .database()
         .ok_or_else(|| anyhow::anyhow!("Database not initialized"))?;
     let root = crate::audio::recording_preferences::get_default_recordings_folder();
-    let restored = restore(
+    restore_and_transcribe_with(
         &root,
         id,
         db.pool(),
+        |meeting_id, folder, model, provider| {
+            crate::audio::retranscription::start_retranscription(
+                app, meeting_id, folder, None, model, provider,
+            )
+        },
+    )
+    .await
+}
+
+async fn restore_and_transcribe_with<F, Fut, T>(
+    root: &Path,
+    id: &str,
+    pool: &sqlx::SqlitePool,
+    transcribe: F,
+) -> anyhow::Result<Restored>
+where
+    F: FnOnce(String, String, Option<String>, Option<String>) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<T>>,
+{
+    let restored = restore(
+        root,
+        id,
+        pool,
         crate::audio::ffmpeg::find_ffmpeg_path().as_deref(),
     )
     .await?;
     let folder = root.join(id).to_string_lossy().into_owned();
-    crate::audio::retranscription::start_retranscription(
-        app,
-        restored.meeting_id.clone(),
-        folder,
-        None,
-        None,
-        None,
-    )
-    .await?;
+    let (provider, model) = transcription_settings(pool).await?;
+    transcribe(restored.meeting_id.clone(), folder, model, provider).await?;
     Ok(restored)
+}
+
+async fn transcription_settings(
+    pool: &sqlx::SqlitePool,
+) -> anyhow::Result<(Option<String>, Option<String>)> {
+    let settings: Option<(String, String)> =
+        sqlx::query_as("SELECT provider, model FROM transcript_settings WHERE id = '1'")
+            .fetch_optional(pool)
+            .await?;
+    Ok(match settings {
+        Some((provider, model)) => (Some(provider), Some(model)),
+        None => (None, None),
+    })
 }
 
 #[cfg(test)]

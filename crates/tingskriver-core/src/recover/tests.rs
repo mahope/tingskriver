@@ -57,7 +57,7 @@ async fn restore_verifies_audio_and_registers_meeting_idempotently() {
         .unwrap();
     let ffmpeg = crate::audio::ffmpeg::find_ffmpeg_path().expect("ffmpeg required");
     sqlx::query("INSERT INTO meetings (id, title, created_at, updated_at, folder_path) VALUES ('existing', 'Fixture', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?)")
-        .bind(folder.canonicalize().unwrap().to_string_lossy().as_ref())
+        .bind(root.path().join(".").join("crashed").to_string_lossy().as_ref())
         .execute(db.pool()).await.unwrap();
     let result = restore(root.path(), "crashed", db.pool(), Some(&ffmpeg))
         .await
@@ -215,4 +215,69 @@ async fn killed_writer_recovers_both_tracks_without_ui_storage() {
     .unwrap();
     assert!((duration - found[0].duration_seconds).abs() < 0.2);
     assert!(duration >= 1.0, "more than 2 seconds lost after restore");
+}
+
+#[tokio::test]
+async fn recovery_uses_configured_transcription_provider_and_model() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = crate::database::manager::DatabaseManager::open(dir.path())
+        .await
+        .unwrap();
+    for provider in ["parakeet", "localWhisper"] {
+        crate::database::repositories::setting::SettingsRepository::save_transcript_config(
+            db.pool(),
+            provider,
+            "fixture-model",
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            transcription_settings(db.pool()).await.unwrap(),
+            (
+                Some(provider.to_string()),
+                Some("fixture-model".to_string())
+            )
+        );
+    }
+    sqlx::query("DELETE FROM transcript_settings")
+        .execute(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        transcription_settings(db.pool()).await.unwrap(),
+        (None, None)
+    );
+}
+
+#[tokio::test]
+async fn restore_and_transcribe_passes_parakeet_settings_to_transcription() {
+    let root = tempfile::tempdir().unwrap();
+    let folder = fixture(root.path(), "parakeet", false);
+    let db_dir = tempfile::tempdir().unwrap();
+    let db = crate::database::manager::DatabaseManager::open(db_dir.path())
+        .await
+        .unwrap();
+    crate::database::repositories::setting::SettingsRepository::save_transcript_config(
+        db.pool(),
+        "parakeet",
+        "fixture-parakeet",
+    )
+    .await
+    .unwrap();
+    let restored = restore_and_transcribe_with(
+        root.path(),
+        "parakeet",
+        db.pool(),
+        |meeting_id, audio_folder, model, provider| async move {
+            assert_eq!(meeting_id, "recovered-parakeet");
+            assert_eq!(Path::new(&audio_folder), folder);
+            assert!(Path::new(&audio_folder).join(MIXED_FILE).is_file());
+            assert_eq!(model.as_deref(), Some("fixture-parakeet"));
+            assert_eq!(provider.as_deref(), Some("parakeet"));
+            Ok(())
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(restored.meeting_id, "recovered-parakeet");
 }
