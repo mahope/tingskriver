@@ -53,7 +53,16 @@ impl Queue {
         };
         let started = std::time::Instant::now();
         emit(event(&job, "running", None, None));
-        let result = execute(&job, service, default_config, &mut local, &mut emit).await;
+        let result = execute(
+            self,
+            &job,
+            service,
+            default_config,
+            &mut local,
+            &mut emit,
+            now,
+        )
+        .await;
         match result {
             Ok(value) => {
                 self.complete(&job, &value).await?;
@@ -87,17 +96,21 @@ fn event(job: &Job, status: &str, next_attempt: Option<i64>, track: Option<&str>
 }
 
 async fn execute<L, Fut>(
+    queue: &Queue,
     job: &Job,
     service: &ProviderService,
     default_config: &crate::providers::ProvidersConfig,
     local: &mut L,
     emit: &mut impl FnMut(QueueEvent),
+    now: i64,
 ) -> Result<serde_json::Value, Option<u64>>
 where
     L: FnMut(ResolvedLink, TranscriptionRequest) -> Fut,
     Fut: Future<Output = Result<Transcription, ProviderError>>,
 {
     let config = job.spec.providers.as_ref().unwrap_or(default_config);
+    let started = std::time::Instant::now();
+    let clock = || now.saturating_add(started.elapsed().as_secs().min(i64::MAX as u64) as i64);
     let mut tracks = Vec::new();
     for (name, path, diarize) in [
         ("microphone", Some(job.spec.microphone.as_path()), false),
@@ -111,28 +124,48 @@ where
             file_name: "track.wav".into(),
             language: Some(job.spec.language.clone()),
             diarize,
+            timestamps: true,
             prompt: None,
         };
-        let delivered = chain::transcribe(
-            Function::Transcription,
-            service.resolve(config, Function::Transcription),
-            request,
-            &mut *local,
-        )
-        .await
-        .map_err(|error| {
-            error
-                .attempts
-                .iter()
-                .filter_map(|attempt| match attempt.error {
-                    ProviderError::RateLimited { retry_after_secs }
-                    | ProviderError::Http {
-                        retry_after_secs, ..
-                    } => retry_after_secs,
-                    _ => None,
-                })
-                .max()
-        })?;
+        let cooldowns = queue.cooldowns(clock()).await.map_err(|_| None)?;
+        let links = service
+            .resolve(config, Function::Transcription)
+            .into_iter()
+            .filter(|link| !cooldowns.contains_key(&link.provider_id))
+            .collect();
+        let result = chain::transcribe(Function::Transcription, links, request, &mut *local).await;
+        let attempts = match &result {
+            Ok(delivered) => &delivered.attempts,
+            Err(error) => &error.attempts,
+        };
+        for attempt in attempts {
+            let wait = match attempt.error {
+                ProviderError::RateLimited { retry_after_secs }
+                | ProviderError::Http {
+                    retry_after_secs, ..
+                } => retry_after_secs,
+                _ => None,
+            };
+            if let Some(wait) = wait {
+                queue
+                    .defer_provider(
+                        &attempt.provider_id,
+                        clock().saturating_add(wait.min(i64::MAX as u64) as i64),
+                    )
+                    .await
+                    .map_err(|_| None)?;
+            }
+        }
+        let delivered = match result {
+            Ok(delivered) => delivered,
+            Err(_) => {
+                let cooldowns = queue.cooldowns(clock()).await.map_err(|_| None)?;
+                return Err(cooldowns
+                    .values()
+                    .map(|until| until.saturating_sub(clock()).max(0) as u64)
+                    .max());
+            }
+        };
         tracks.push(delivered);
     }
     let mic = &tracks[0].value;
@@ -160,18 +193,9 @@ where
 }
 
 fn segments(transcript: &Transcription, offset: u64) -> Vec<Segment> {
-    let fallback;
-    let input = if transcript.segments.is_empty() && !transcript.text.trim().is_empty() {
-        fallback = vec![TranscriptSegment {
-            text: transcript.text.clone(),
-            ..Default::default()
-        }];
-        &fallback
-    } else {
-        &transcript.segments
-    };
     let ms = |t: Option<f64>| (t.unwrap_or(0.0).max(0.0) * 1000.0) as u64;
-    input
+    transcript
+        .segments
         .iter()
         .map(|s| Segment {
             start_ms: offset.saturating_add(ms(s.start)),
@@ -188,6 +212,14 @@ pub async fn transcribe_local(
     provider: Arc<dyn crate::audio::transcription::TranscriptionProvider>,
     request: TranscriptionRequest,
 ) -> Result<Transcription, ProviderError> {
+    transcribe_local_with_vad(provider, request, crate::vad_trim::TrimConfig::default()).await
+}
+
+pub(super) async fn transcribe_local_with_vad(
+    provider: Arc<dyn crate::audio::transcription::TranscriptionProvider>,
+    request: TranscriptionRequest,
+    vad: crate::vad_trim::TrimConfig,
+) -> Result<Transcription, ProviderError> {
     let samples = tokio::task::spawn_blocking(move || -> Result<Vec<f32>> {
         let mut file = tempfile::Builder::new().suffix(".wav").tempfile()?;
         std::io::Write::write_all(&mut file, &request.wav)?;
@@ -196,19 +228,37 @@ pub async fn transcribe_local(
     .await
     .map_err(|_| ProviderError::local("Audio decoder stopped"))?
     .map_err(|_| ProviderError::local("Audio could not be decoded"))?;
-    let duration = samples.len() as f64 / 16000.0;
-    let result = provider
-        .transcribe(samples, request.language)
-        .await
-        .map_err(|_| ProviderError::local("Local transcription failed"))?;
+    let chunks = tokio::task::spawn_blocking(move || {
+        crate::vad_trim::trim(&samples, &vad).map(|trimmed| (samples, trimmed.segments))
+    })
+    .await
+    .map_err(|_| ProviderError::local("Speech detection stopped"))?
+    .map_err(|_| ProviderError::local("Speech detection failed"))?;
+    let mut segments = Vec::new();
+    for chunk in chunks.1 {
+        let result = provider
+            .transcribe(
+                chunks.0[chunk.orig_start..chunk.orig_end].to_vec(),
+                request.language.clone(),
+            )
+            .await
+            .map_err(|_| ProviderError::local("Local transcription failed"))?;
+        if !result.text.trim().is_empty() {
+            segments.push(TranscriptSegment {
+                start: Some(chunk.orig_start as f64 / 16000.0),
+                end: Some(chunk.orig_end as f64 / 16000.0),
+                text: result.text,
+                speaker: None,
+            });
+        }
+    }
     Ok(Transcription {
-        segments: vec![TranscriptSegment {
-            start: Some(0.0),
-            end: Some(duration),
-            text: result.text.clone(),
-            speaker: None,
-        }],
-        text: result.text,
+        text: segments
+            .iter()
+            .map(|s| s.text.as_str())
+            .collect::<Vec<_>>()
+            .join(" "),
+        segments,
         ..Default::default()
     })
 }

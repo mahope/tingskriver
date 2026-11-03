@@ -75,6 +75,7 @@ fn wav_request() -> TranscriptionRequest {
         language: Some("da".to_string()),
         prompt: Some("Mahoje, Syv.ai".to_string()),
         diarize: false,
+        timestamps: false,
     }
 }
 

@@ -84,11 +84,36 @@ impl Queue {
                 result TEXT, created_at INTEGER NOT NULL
             );
             CREATE INDEX IF NOT EXISTS transcription_jobs_due
-                ON transcription_jobs(status, next_attempt);",
+                ON transcription_jobs(status, next_attempt);
+            CREATE TABLE IF NOT EXISTS transcription_provider_cooldowns (
+                provider_id TEXT PRIMARY KEY, until INTEGER NOT NULL
+            );",
         )
         .execute(&pool)
         .await?;
         Ok(Self { pool })
+    }
+
+    pub(super) async fn cooldowns(
+        &self,
+        now: i64,
+    ) -> Result<std::collections::HashMap<String, i64>> {
+        let rows = sqlx::query(
+            "SELECT provider_id, until FROM transcription_provider_cooldowns WHERE until > ?",
+        )
+        .bind(now)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| (r.get("provider_id"), r.get("until")))
+            .collect())
+    }
+
+    pub(super) async fn defer_provider(&self, id: &str, until: i64) -> Result<()> {
+        sqlx::query("INSERT INTO transcription_provider_cooldowns (provider_id, until) VALUES (?, ?) ON CONFLICT(provider_id) DO UPDATE SET until = MAX(until, excluded.until)")
+            .bind(id).bind(until).execute(&self.pool).await?;
+        Ok(())
     }
 
     /// A rerun is a new job. Earlier successful results remain immutable.

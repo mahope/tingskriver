@@ -96,3 +96,40 @@ model/Syv.ai validation remain as described above.
 
 Core scope of #52. The orchestrator should decide issue closure after reviewing
 the remaining application integration.
+
+## Review corrections, 2026-11-03
+
+All three review findings were confirmed and corrected; none were rejected or
+left unresolved. The review contained no P3 findings.
+
+- P1: queue requests now ask for timestamped segments independently of
+  diarization. Untimed nonempty responses fail their chain link and can use a
+  reserve instead of being assigned an invented zero timestamp. Local inference
+  runs separately on the existing VAD speech ranges, preserving their original
+  positions. Tests cover alternating remote replies, two local speech ranges
+  separated by silence, and merging those ranges with intervening system replies.
+- P2: provider cooldowns are persisted in SQLite from failed attempts in both
+  successful and failed chains. Later tracks and jobs skip cooling providers.
+  A fake-server regression verifies one HTTP request despite two tracks and a
+  subsequent job after reopening the queue, then a new request after expiry.
+- P2: the queue imports the existing `cfg(test)` fake server instead of loading
+  the same source file as a second module.
+
+Verification of the corrections:
+
+- The new request-format and cooldown assertions failed before the fixes.
+- `cargo build --locked -p tingskriver-core`: passed.
+- `cargo test --locked -p tingskriver-core`: 692 passed, 0 failed, 8 ignored,
+  including all 12 queue tests. This is the complete core suite, including
+  integration and documentation tests; the Windows workspace was not run.
+- `cargo clippy --locked -p tingskriver-core --all-targets -- -D clippy::duplicate_mod`:
+  the duplicate-module error is gone. The command still fails on the same three
+  baseline errors listed above. Their files are unchanged by these corrections;
+  no diagnostics refer to the changed queue/provider files.
+- Targeted `rustfmt --check` and `git diff --check`: passed.
+
+An initial full-suite attempt against the shared external build directory
+failed during compilation because dependency artifacts disappeared. The final
+successful run used this worktree's own `target` directory. No dependencies
+were added or upgraded. No PR was created; host/UI and real-model verification
+remain outside this review correction.

@@ -23,6 +23,9 @@ are private meeting data and belong in the application's local data directory.
    callback that loads the resolved link's Parakeet/Whisper model. The
    `transcribe_local` adapter accepts an already loaded `TranscriptionProvider`,
    decodes saved WAV bytes to 16 kHz and passes the requested language through.
+   It transcribes each VAD speech range separately and keeps its original
+   timestamps, including leading silence and pauses. Custom local callbacks
+   must likewise return timestamped segments rather than text alone.
    No-key links are skipped by the shared chain; the default reserve is local.
 5. Forward `QueueEvent` to the host event bus (suggested name
    `transcription-queue-status`). Events contain job/meeting IDs, status,
@@ -35,13 +38,17 @@ whole job again, up to five attempts, with 5/10/20/40 second exponential backoff
 plus 0–25% jitter. A provider's `Retry-After` is a lower bound, including when
 other links fail afterwards. Scheduling starts after the call has finished.
 The common provider client handles HTTP timeouts and `Retry-After` parsing.
+Provider cooldowns are stored in SQLite even when a reserve succeeds. Later
+tracks and jobs skip those providers until their deadline, also after restart.
 Results are committed before the completed event. A crash in that interval
 leaves a completed version, which the host can retrieve on startup.
 
 Microphone requests never ask for diarization; system requests do. The shared
 client only sends `diarize` to providers that support it. Both use the explicit
-language and `/audio/transcriptions`, never the translation endpoint. Results
-are merged by `transcript_merge`; missing system speakers remain unknown.
+language and `/audio/transcriptions`, never the translation endpoint. Requests
+use `verbose_json` independently of diarization; nonempty text without valid
+segment timestamps fails that link instead of inventing timing. Results are
+merged by `transcript_merge`; missing system speakers remain unknown.
 Stored results include raw per-track deliveries/provenance and merged segments.
 
 ## Run again and versions

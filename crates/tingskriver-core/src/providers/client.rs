@@ -91,6 +91,8 @@ pub struct TranscriptionRequest {
     pub prompt: Option<String>,
     /// Ask for speaker labels. Only sent to providers with diarization.
     pub diarize: bool,
+    /// Request segment timestamps independently of speaker labels.
+    pub timestamps: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
@@ -110,6 +112,22 @@ pub struct Transcription {
     /// Speaker labels were asked for but this link does not deliver them.
     /// The UI shows the speakers as missing instead of guessing.
     pub speakers_missing: bool,
+}
+
+impl Transcription {
+    pub(crate) fn require_timestamps(&self) -> Result<(), ProviderError> {
+        if (!self.text.trim().is_empty() && self.segments.is_empty())
+            || self.segments.iter().any(|s| {
+                !matches!((s.start, s.end), (Some(start), Some(end))
+                    if start.is_finite() && end.is_finite() && start >= 0.0 && end >= start)
+            })
+        {
+            return Err(ProviderError::BadResponse {
+                detail: "Transcription is missing segment timestamps".into(),
+            });
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -186,7 +204,11 @@ pub async fn transcribe(
         .text("model", link.model.clone())
         .text(
             "response_format",
-            if diarize { "verbose_json" } else { "json" },
+            if diarize || request.timestamps {
+                "verbose_json"
+            } else {
+                "json"
+            },
         );
     if let Some(language) = request.language.as_deref().filter(|l| !l.trim().is_empty()) {
         form = form.text("language", language.to_string());
@@ -213,11 +235,15 @@ pub async fn transcribe(
         })
         .collect();
     let has_speakers = !segments.is_empty() && segments.iter().all(|s| s.speaker.is_some());
-    Ok(Transcription {
+    let transcript = Transcription {
         text: raw.text.trim().to_string(),
         speakers_missing: request.diarize && !has_speakers,
         segments,
-    })
+    };
+    if request.timestamps {
+        transcript.require_timestamps()?;
+    }
+    Ok(transcript)
 }
 
 fn speaker_label(value: serde_json::Value) -> Option<String> {

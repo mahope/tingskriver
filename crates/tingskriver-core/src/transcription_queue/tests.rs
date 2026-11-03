@@ -1,9 +1,10 @@
 use super::*;
-use crate::providers::{model::*, secrets::MemoryKeyStore, ProviderService, Transcription};
+use crate::providers::{
+    client::TranscriptSegment, model::*, secrets::MemoryKeyStore, ProviderService, Transcription,
+};
 use std::{sync::Arc, time::Duration};
 
-#[path = "../providers/fake_server.rs"]
-mod fake_server;
+use crate::providers::fake_server;
 
 fn service(dir: &std::path::Path) -> ProviderService {
     ProviderService::new(dir, Arc::new(MemoryKeyStore::default()))
@@ -146,6 +147,12 @@ async fn no_key_uses_local_in_danish_and_merges_speakers() {
                 async {
                     Ok(Transcription {
                         text: "Det er dansk tekst.".into(),
+                        segments: vec![TranscriptSegment {
+                            start: Some(0.0),
+                            end: Some(1.0),
+                            text: "Det er dansk tekst.".into(),
+                            speaker: None,
+                        }],
                         ..Default::default()
                     })
                 }
@@ -168,8 +175,8 @@ async fn no_key_uses_local_in_danish_and_merges_speakers() {
 async fn remote_system_speakers_stay_separate_and_requests_do_not_translate() {
     use fake_server::{FakeServer, Reply};
     let server = FakeServer::start(vec![
-        Reply::ok(r#"{"text":"mig","segments":[{"start":0,"end":1,"text":"mig"}]}"#),
-        Reply::ok(r#"{"text":"andre","segments":[{"start":1,"end":2,"text":"en","speaker":"a"},{"start":2,"end":3,"text":"to","speaker":"b"}]}"#),
+        Reply::ok(r#"{"text":"mig igen","segments":[{"start":1,"end":2,"text":"mig"},{"start":3,"end":4,"text":"igen"}]}"#),
+        Reply::ok(r#"{"text":"andre","segments":[{"start":0,"end":1,"text":"en","speaker":"a"},{"start":2,"end":3,"text":"to","speaker":"b"}]}"#),
     ]).await;
     let dir = tempfile::tempdir().unwrap();
     let mic = dir.path().join("mic.wav");
@@ -191,16 +198,99 @@ async fn remote_system_speakers_stay_separate_and_requests_do_not_translate() {
         .unwrap();
     let versions = queue.versions("m").await.unwrap();
     let segments = &versions[0].result["segments"];
-    assert_eq!(segments[0]["speaker"], "Mig");
-    assert_eq!(segments[1]["speaker"], "Taler 1");
+    assert_eq!(segments[0]["speaker"], "Taler 1");
+    assert_eq!(segments[1]["speaker"], "Mig");
     assert_eq!(segments[2]["speaker"], "Taler 2");
+    assert_eq!(segments[3]["speaker"], "Mig");
     let requests = server.requests();
     for request in &requests {
         assert!(request.starts_with("POST /v1/audio/transcriptions"));
         assert!(request.contains("name=\"language\"\r\n\r\nda"));
+        assert!(request.contains("name=\"response_format\"\r\n\r\nverbose_json"));
     }
     assert!(!requests[0].contains("name=\"diarize\""));
     assert!(requests[1].contains("name=\"diarize\"\r\n\r\ntrue"));
+}
+
+#[tokio::test]
+async fn successful_fallback_preserves_provider_cooldown_across_tracks_and_restart() {
+    use fake_server::{FakeServer, Reply};
+    let server = FakeServer::start(vec![
+        Reply::json("429 Too Many Requests", "{}").with_header("retry-after", "120")
+    ])
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    let mic = dir.path().join("mic.wav");
+    std::fs::write(&mic, [1]).unwrap();
+    let db = dir.path().join("queue.sqlite");
+    let mut config = remote_config(&server.base_url);
+    config
+        .functions
+        .get_mut(&Function::Transcription)
+        .unwrap()
+        .push(ChainLink::new(LOCAL_ID));
+    for now in [0, 1, 121] {
+        let queue = Queue::open(&db).await.unwrap();
+        queue
+            .enqueue(&JobSpec::new("m", mic.clone(), Some(mic.clone())), now)
+            .await
+            .unwrap();
+        queue
+            .run_once_at(
+                &service(dir.path()),
+                &config,
+                |_, _| async { Ok(Transcription::default()) },
+                |_| {},
+                now,
+            )
+            .await
+            .unwrap();
+        assert_eq!(server.requests().len(), if now < 120 { 1 } else { 2 });
+    }
+}
+
+#[tokio::test]
+async fn untimed_remote_text_uses_timestamped_reserve() {
+    use fake_server::{FakeServer, Reply};
+    let server = FakeServer::start(vec![Reply::ok(r#"{"text":"untimed"}"#)]).await;
+    let dir = tempfile::tempdir().unwrap();
+    let mic = dir.path().join("mic.wav");
+    std::fs::write(&mic, [1]).unwrap();
+    let mut config = remote_config(&server.base_url);
+    config
+        .functions
+        .get_mut(&Function::Transcription)
+        .unwrap()
+        .push(ChainLink::new(LOCAL_ID));
+    let queue = Queue::open_memory().await.unwrap();
+    queue
+        .enqueue(&JobSpec::new("m", mic, None), 0)
+        .await
+        .unwrap();
+    queue
+        .run_once_at(
+            &service(dir.path()),
+            &config,
+            |_, _| async {
+                Ok(Transcription {
+                    text: "Senere svar".into(),
+                    segments: vec![TranscriptSegment {
+                        start: Some(5.0),
+                        end: Some(6.0),
+                        text: "Senere svar".into(),
+                        speaker: None,
+                    }],
+                    ..Default::default()
+                })
+            },
+            |_| {},
+            0,
+        )
+        .await
+        .unwrap();
+    let versions = queue.versions("m").await.unwrap();
+    assert_eq!(versions[0].result["segments"][0]["startMs"], 5000);
+    assert_eq!(versions[0].result["tracks"][0]["providerId"], LOCAL_ID);
 }
 
 #[test]
@@ -240,6 +330,12 @@ fn killed_process_resumes_committed_claim() {
                 |_, _| async {
                     Ok(Transcription {
                         text: "Genoptaget".into(),
+                        segments: vec![TranscriptSegment {
+                            start: Some(0.0),
+                            end: Some(1.0),
+                            text: "Genoptaget".into(),
+                            speaker: None,
+                        }],
                         ..Default::default()
                     })
                 },
@@ -314,7 +410,7 @@ async fn local_adapter_decodes_wav_and_passes_explicit_language() {
             language: Option<String>,
         ) -> Result<TranscriptResult, TranscriptionError> {
             assert_eq!(language.as_deref(), Some("da"));
-            assert_eq!(audio.len(), 16000);
+            assert!(audio.len() < 32000);
             Ok(TranscriptResult {
                 text: "Dansk møde".into(),
                 confidence: None,
@@ -333,7 +429,7 @@ async fn local_adapter_decodes_wav_and_passes_explicit_language() {
     }
     let mut wav = Vec::new();
     wav.extend_from_slice(b"RIFF");
-    wav.extend_from_slice(&(32036_u32).to_le_bytes());
+    wav.extend_from_slice(&(160036_u32).to_le_bytes());
     wav.extend_from_slice(b"WAVEfmt ");
     wav.extend_from_slice(&16_u32.to_le_bytes());
     wav.extend_from_slice(&1_u16.to_le_bytes());
@@ -343,20 +439,83 @@ async fn local_adapter_decodes_wav_and_passes_explicit_language() {
     wav.extend_from_slice(&2_u16.to_le_bytes());
     wav.extend_from_slice(&16_u16.to_le_bytes());
     wav.extend_from_slice(b"data");
-    wav.extend_from_slice(&32000_u32.to_le_bytes());
-    wav.resize(32044, 0);
-    let result = transcribe_local(
+    wav.extend_from_slice(&160000_u32.to_le_bytes());
+    for i in 0..80000 {
+        let sample = if (16000..32000).contains(&i) || (48000..64000).contains(&i) {
+            (10000.0 * (i as f32 * 0.17).sin()) as i16
+        } else {
+            0
+        };
+        wav.extend_from_slice(&sample.to_le_bytes());
+    }
+    let result = super::worker::transcribe_local_with_vad(
         Arc::new(Local),
         crate::providers::TranscriptionRequest {
             wav,
             language: Some("da".into()),
             ..Default::default()
         },
+        crate::vad_trim::TrimConfig {
+            backend: crate::vad_trim::BackendPreference::Energy,
+            ..Default::default()
+        },
     )
     .await
     .unwrap();
-    assert_eq!(result.text, "Dansk møde");
-    assert_eq!(result.segments[0].end, Some(1.0));
+    assert_eq!(result.text, "Dansk møde Dansk møde");
+    assert_eq!(result.segments.len(), 2);
+    assert!(result.segments[0].start.unwrap() > 0.5);
+    assert!(result.segments[0].end.unwrap() < 2.5);
+    assert!(result.segments[1].start.unwrap() > 2.5);
+    let dir = tempfile::tempdir().unwrap();
+    let mic = dir.path().join("mic.wav");
+    std::fs::write(&mic, [1]).unwrap();
+    let queue = Queue::open_memory().await.unwrap();
+    queue
+        .enqueue(&JobSpec::new("m", mic.clone(), Some(mic)), 0)
+        .await
+        .unwrap();
+    queue
+        .run_once_at(
+            &service(dir.path()),
+            &ProvidersConfig::default(),
+            |_, request| {
+                let transcript = if request.diarize {
+                    Transcription {
+                        text: "Først. Igen.".into(),
+                        segments: vec![
+                            TranscriptSegment {
+                                start: Some(0.0),
+                                end: Some(0.5),
+                                text: "Først.".into(),
+                                speaker: None,
+                            },
+                            TranscriptSegment {
+                                start: Some(2.5),
+                                end: Some(2.7),
+                                text: "Igen.".into(),
+                                speaker: None,
+                            },
+                        ],
+                        ..Default::default()
+                    }
+                } else {
+                    result.clone()
+                };
+                async move { Ok(transcript) }
+            },
+            |_| {},
+            0,
+        )
+        .await
+        .unwrap();
+    let versions = queue.versions("m").await.unwrap();
+    let merged = versions[0].result["segments"].as_array().unwrap();
+    let sources: Vec<_> = merged
+        .iter()
+        .map(|s| s["source"].as_str().unwrap())
+        .collect();
+    assert_eq!(sources, ["system", "microphone", "system", "microphone"]);
 }
 
 #[tokio::test]
@@ -386,6 +545,12 @@ async fn rerun_uses_provider_and_language_override_without_replacing_success() {
                     async move {
                         Ok(Transcription {
                             text: language.into(),
+                            segments: vec![TranscriptSegment {
+                                start: Some(0.0),
+                                end: Some(1.0),
+                                text: language.into(),
+                                speaker: None,
+                            }],
                             ..Default::default()
                         })
                     }
