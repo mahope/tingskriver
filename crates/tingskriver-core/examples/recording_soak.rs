@@ -120,9 +120,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "duration {duration}, expected {seconds}"
             );
             assert!(track.offset_samples < RATE as u64 / 2);
-            // The writer aligns track ends; callback arrival times can differ by
-            // a fraction of one block, leaving a short silent tail.
-            let signal_samples = track.samples() / BLOCK * BLOCK;
+            // Completed recordings contain every generated block followed by
+            // alignment silence; callback skew can exceed a whole block.
+            let signal_samples = if mode == "recover" {
+                track.samples() / BLOCK * BLOCK
+            } else {
+                let generated = (seconds * 100.0).round() as u64 * BLOCK;
+                assert!(track.samples() >= generated, "missing generated audio");
+                generated
+            };
             let mut reader = SourceReader::new(track.sources);
             let mut block = Vec::new();
             let mut position = 0;

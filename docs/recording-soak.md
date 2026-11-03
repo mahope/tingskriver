@@ -44,8 +44,9 @@ state; a missing acknowledgment fails after 60 seconds.
 
 Scope: this exercises 48 kHz mono capture, storage, checkpointing, finalization
 and recovery without hardware. The expected microphone samples are generated
-with the same production filters in bounded blocks. Track-end alignment may
-append less than one callback of silence; all earlier samples are checked.
+with the same production filters in bounded blocks. For normal completion,
+the generated block count defines the signal length; any track-end alignment
+tail is checked separately for silence, even when callback skew exceeds 10 ms.
 It does not exercise OS device callbacks, other sample rates/resampling, UI
 startup/recovery dialogs or transcription. It proves process-crash recovery,
 not power-loss
