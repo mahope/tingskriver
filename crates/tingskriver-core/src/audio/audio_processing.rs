@@ -588,10 +588,16 @@ pub fn resample(input: &[f32], from_sample_rate: u32, to_sample_rate: u32) -> Re
     let waves_in = vec![input.to_vec()];
     let waves_out = resampler.process(&waves_in, None)?;
 
-    debug!("Resampling complete: {} samples → {} samples",
-           input.len(), waves_out[0].len());
-
-    Ok(waves_out.into_iter().next().unwrap())
+    let output = waves_out
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("Resampler returned no audio channel"))?;
+    debug!(
+        "Resampling complete: {} samples → {} samples",
+        input.len(),
+        output.len()
+    );
+    Ok(output)
 }
 
 // Alias for compatibility with existing code
@@ -646,7 +652,7 @@ pub fn write_audio_to_file_with_meeting_name(
     let file_path = final_output_path
         .join(format!("{}_{}.mp4", sanitized_device_name, timestamp))
         .to_str()
-        .expect("Failed to create valid path")
+        .ok_or_else(|| anyhow::anyhow!("Audio output path is not valid UTF-8"))?
         .to_string();
     let file_path_clone = file_path.clone();
     // Run FFmpeg in a separate task

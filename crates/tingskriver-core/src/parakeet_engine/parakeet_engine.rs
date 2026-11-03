@@ -1,4 +1,3 @@
-use crate::parakeet_engine::model::ParakeetModel;
 use crate::parakeet_engine::pool::{self, BoxedModel, ModelPool};
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
@@ -472,7 +471,7 @@ impl ParakeetEngine {
                         hook.load_started.notify_one();
                         runtime_handle.block_on(hook.continue_load.notified());
                     }
-                    ParakeetModel::new(&model_path, quantized)
+                    crate::stt::RemoteModel::load(&model_path, quantized)
                         .map(|model| Box::new(model) as BoxedModel)
                         .map_err(|error| error.to_string())
                 })
@@ -490,7 +489,7 @@ impl ParakeetEngine {
 
                 let loader_path = model_info.path.clone();
                 let loader: pool::Loader = Box::new(move || {
-                    ParakeetModel::new(&loader_path, quantized)
+                    crate::stt::RemoteModel::load(&loader_path, quantized)
                         .map(|model| Box::new(model) as BoxedModel)
                         .map_err(|error| error.to_string())
                 });
@@ -574,7 +573,7 @@ impl ParakeetEngine {
             .map_err(|e| anyhow!("Parakeet transcription task failed: {}", e))?
             .map_err(|e| anyhow!("Parakeet transcription failed: {}", e))?;
 
-        log::debug!("Parakeet transcription result: '{}'", text);
+        log::debug!("Parakeet transcription result: {} bytes", text.len());
 
         Ok(text)
     }

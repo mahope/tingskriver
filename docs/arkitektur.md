@@ -68,6 +68,12 @@ registers at startup.
 
 ## Startup, database and logs
 
+- Recording state, the recording manager, audio buffer pools and transcription
+  command locks recover the inner value from `PoisonError`, so a worker panic
+  does not make later recording attempts panic on the same lock. Release builds
+  retain `panic = "unwind"`. The active `audio` module denies Clippy's
+  `unwrap_used` and `expect_used` outside tests; fallible import and conversion
+  paths return errors through the existing command/error-event handling.
 - `tingskriver_core::logging::init(<file>)` installs the logger (stderr and
   a rotating file in `%LOCALAPPDATA%\dk.mahoje.tingskriver\logs`) and a
   panic hook that writes thread, message and backtrace to the log, from any
@@ -134,9 +140,13 @@ webview window, so it can stay on top, be click-through and never take focus.
 
 Meetings and dictation share the Parakeet and Whisper engines in core.
 
-- Inference never runs on a tokio worker or under an engine lock. Whisper
-  clones its context (`Arc`) and runs in `spawn_blocking` with its own state.
-  An ONNX session needs `&mut`, so Parakeet keeps a pool of up to two loaded
+- Native inference and ONNX startup run in `tingskriver-stt`, reached over
+  private stdin/stdout pipes with request IDs and raw f32 PCM. A worker crash
+  fails the current call in Danish; the next call restarts and reloads it.
+  Silero also runs there; failed startup selects energy VAD in core.
+- Inference never runs on an app tokio worker or under an engine lock.
+  Whisper keeps one warm process and lazily starts a second for overlapping
+  calls. An ONNX session needs `&mut`, so Parakeet keeps a pool of up to two loaded
   instances (`parakeet_engine::pool`): a short dictation during a long meeting
   segment borrows the second instance instead of waiting. The second instance
   is loaded the first time two calls overlap and then stays.
@@ -151,6 +161,13 @@ Meetings and dictation share the Parakeet and Whisper engines in core.
   speaks. Dictation logs `model_load=none` when the model was already loaded.
 
 ## Recording: the audio is saved first
+
+On Windows, device changes are handled by `IMMNotificationClient` and the
+stream-health checks in `windows_device_follower`, without the additional
+two-second `AudioDeviceMonitor` polling loop. Other platforms retain that
+monitor. Device enumeration runs on Tokio's blocking pool; stopping the
+monitor waits at most two seconds before aborting its async task. An already
+running driver call cannot be cancelled, but no longer holds up that stop.
 
 A recording captures and saves, nothing else. Transcription, VAD and the
 summary run after the meeting from the saved files, so a crash in a model

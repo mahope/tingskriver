@@ -579,14 +579,18 @@ async fn run_import(
 
         // Transcribe
         let (text, conf) = if use_parakeet {
-            let engine = parakeet_engine.as_ref().unwrap();
+            let engine = parakeet_engine
+                .as_ref()
+                .ok_or_else(|| anyhow!("Parakeet engine is not initialized"))?;
             let text = engine
                 .transcribe_audio(segment.samples.clone())
                 .await
                 .map_err(|e| anyhow!("Parakeet transcription failed on segment {}: {}", i, e))?;
             (text, 0.9f32)
         } else {
-            let engine = whisper_engine.as_ref().unwrap();
+            let engine = whisper_engine
+                .as_ref()
+                .ok_or_else(|| anyhow!("Whisper engine is not initialized"))?;
             let (text, conf, _) = engine
                 .transcribe_audio_with_confidence(segment.samples.clone(), language.clone())
                 .await

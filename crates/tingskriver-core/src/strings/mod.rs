@@ -11,6 +11,38 @@ catalogue! {
     MEETINGS = "Møder";
     DICTATION = "Diktering";
     SETTINGS = "Indstillinger";
+    MEASURE_TITLE = "Måling";
+    MEASURE_HELP = "Sammenlign dansk nøjagtighed på din egen stemme. Importér cirka 60 sekunder som WAV (mono, 16 kHz, PCM16, højst 90 sekunder), og skriv præcis det, du siger.";
+    MEASURE_PATH = "Sti til lydprøve";
+    MEASURE_PATH_HINT = "C:\u{005c}prøver\u{005c}prøve.wav";
+    MEASURE_REFERENCE = "Facit";
+    MEASURE_REFERENCE_HINT = "Skriv de ord, der bliver sagt i prøven.";
+    MEASURE_MODELS = "Vælg udbydere og modeller";
+    MEASURE_PRIVACY = "Ingen modeller er valgt på forhånd. Lyden sendes kun til de tjenester, du vælger. Hver model måles separat uden reserveudbyder. Facit sendes aldrig.";
+    MEASURE_REMOTE = "modtager lyd over netværket";
+    MEASURE_LOCAL = "kun på computeren";
+    MEASURE_RATE = "Din tarif i DKK pr. lydtime (valgfri, uden strøm og hardware)";
+    MEASURE_RATE_HINT = "Fx 12,50. Tomt betyder ukendt pris.";
+    MEASURE_RELOAD = "Genindlæs udbyderindstillinger";
+    MEASURE_SELECT = "Vælg:";
+    MEASURE_SELECTED = "Valgt:";
+    MEASURE_START = "Kør valgte modeller";
+    MEASURE_RUNNING = "Måler … Vent, til alle valgte modeller er kørt.";
+    MEASURE_INTERRUPTED = "Målingen blev afbrudt. Prøv igen.";
+    MEASURE_SAVED = "Målingen er afsluttet. Resultatet er gemt lokalt.";
+    MEASURE_RESULTS = "Resultater";
+    MEASURE_MODEL_LABEL = "{provider}: {model} ({location})";
+    MEASURE_ERRORS = "{value} ordfejl";
+    MEASURE_WER = "WER {value} %";
+    MEASURE_MS = "{value} ms";
+    MEASURE_PRICE = "{value} {currency}/time";
+    MEASURE_RESULT_LINE = "{wer}, {errors}, {latency}, {price}";
+    MEASURE_PRICE_UNKNOWN = "pris ukendt";
+    MEASURE_HISTORY = "Tidligere resultater ligger som JSON i datamappens measurements-mappe. Der gemmes kun måletal, ingen lyd eller facit. Svartid omfatter transskription og netværk, men ikke indlæsning af lokale modeller. Prisen er din angivne tarif, ikke en fakturamåling.";
+    MEASURE_OPEN = "Åbn gemte resultater";
+    MEASURE_NO_FOLDER = "Datamappen kunne ikke findes.";
+    MEASURE_CHOOSE = "Vælg mindst én udbyder og model.";
+    MEASURE_INVALID_RATE = "Angiv timeprisen som et tal, fx 12,50.";
     VERSION = "Version {value}";
     PROBE_LINE = "Skriv fx æøå, é, ü, ê, @ og € her";
     PROBE_TEXT = "Flere linjer: prøv også IME-komposition, fx Windows' emoji-panel (Win+.)";
@@ -53,12 +85,36 @@ macro_rules! parameterized {
     };
 }
 parameterized! {
+    measure_errors => MEASURE_ERRORS;
+    measure_wer => MEASURE_WER;
+    measure_ms => MEASURE_MS;
     version => VERSION;
     special_characters => SPECIAL;
     appearance => APPEARANCE_DETAIL;
     data_dir => DATA_DIR;
     database => DATABASE;
     log_file => LOG_FILE;
+}
+
+pub fn measure_model_label(provider: &str, model: &str, location: &str) -> String {
+    MEASURE_MODEL_LABEL
+        .replace("{provider}", provider)
+        .replace("{model}", model)
+        .replace("{location}", location)
+}
+
+pub fn measure_price(amount: &str, currency: &str) -> String {
+    MEASURE_PRICE
+        .replace("{value}", amount)
+        .replace("{currency}", currency)
+}
+
+pub fn measure_result_line(wer: &str, errors: &str, latency: &str, price: &str) -> String {
+    MEASURE_RESULT_LINE
+        .replace("{wer}", wer)
+        .replace("{errors}", errors)
+        .replace("{latency}", latency)
+        .replace("{price}", price)
 }
 
 #[cfg(test)]

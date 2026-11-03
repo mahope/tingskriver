@@ -226,7 +226,7 @@ impl AudioDeviceMonitor {
                 DeviceMonitorType::Microphone,
             ));
             info!("🔍 Monitoring microphone: '{}' (Bluetooth: {})",
-                  mic.name, monitored_devices.last().unwrap().is_bluetooth);
+                  mic.name, monitored_devices.last().is_some_and(|device| device.is_bluetooth));
         }
 
         if let Some(sys) = system_audio {
@@ -235,11 +235,18 @@ impl AudioDeviceMonitor {
                 DeviceMonitorType::SystemAudio,
             ));
             info!("🔍 Monitoring system audio: '{}' (Bluetooth: {})",
-                  sys.name, monitored_devices.last().unwrap().is_bluetooth);
+                  sys.name, monitored_devices.last().is_some_and(|device| device.is_bluetooth));
         }
 
         if monitored_devices.is_empty() {
             return Err(anyhow::anyhow!("No devices to monitor"));
+        }
+
+        // Windows already follows endpoint notifications and stream health in
+        // windows_device_follower; a second WASAPI polling loop adds blocking work.
+        if cfg!(target_os = "windows") {
+            info!("Device monitoring handled by Windows endpoint notifications");
+            return Ok(());
         }
 
         let event_sender = self.event_sender.clone();
@@ -261,8 +268,14 @@ impl AudioDeviceMonitor {
         info!("Stopping device monitor");
         self.stop_signal.notify_one();
 
-        if let Some(handle) = self.monitor_handle.take() {
-            let _ = handle.await;
+        if let Some(mut handle) = self.monitor_handle.take() {
+            if tokio::time::timeout(Duration::from_secs(2), &mut handle)
+                .await
+                .is_err()
+            {
+                warn!("Device monitor did not stop within 2 seconds; aborting task");
+                handle.abort();
+            }
         }
 
         info!("Device monitor stopped");
@@ -414,6 +427,53 @@ impl Drop for AudioDeviceMonitor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn stop_allows_a_responsive_monitor_to_finish() {
+        let (mut monitor, _receiver) = AudioDeviceMonitor::new();
+        let stop_signal = monitor.stop_signal.clone();
+        let (finished_tx, finished_rx) = tokio::sync::oneshot::channel();
+        monitor.monitor_handle = Some(tokio::spawn(async move {
+            stop_signal.notified().await;
+            let _ = finished_tx.send(());
+        }));
+
+        tokio::time::timeout(Duration::from_millis(500), monitor.stop_monitoring())
+            .await
+            .expect("a responsive monitor should stop without waiting for the deadline");
+        finished_rx
+            .await
+            .expect("the monitor should finish normally");
+    }
+
+    #[tokio::test]
+    async fn stop_aborts_an_unresponsive_monitor_within_three_seconds() {
+        let (mut monitor, _receiver) = AudioDeviceMonitor::new();
+        let handle = tokio::spawn(std::future::pending::<()>());
+        let abort_handle = handle.abort_handle();
+        monitor.monitor_handle = Some(handle);
+
+        tokio::time::timeout(Duration::from_secs(3), monitor.stop_monitoring())
+            .await
+            .expect("stopping must not wait indefinitely for device enumeration");
+        tokio::task::yield_now().await;
+        assert!(abort_handle.is_finished());
+        assert!(monitor.monitor_handle.is_none());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[tokio::test]
+    async fn windows_uses_endpoint_notifications_without_a_polling_task() {
+        let (mut monitor, _receiver) = AudioDeviceMonitor::new();
+        let device = AudioDevice::new(
+            "Bluetooth test microphone".to_string(),
+            super::super::devices::DeviceType::Input,
+        );
+        monitor
+            .start_monitoring(Some(Arc::new(device)), None)
+            .unwrap();
+        assert!(monitor.monitor_handle.is_none());
+    }
 
     #[test]
     fn test_bluetooth_detection() {

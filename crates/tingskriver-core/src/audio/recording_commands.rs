@@ -60,7 +60,7 @@ pub(super) fn session_live(s: &Arc<super::RecordingState>) -> bool {
     recording_live()
         && RECORDING_MANAGER
             .lock()
-            .unwrap()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .as_ref()
             .map_or(false, |m| Arc::ptr_eq(m.get_state(), s))
 }
@@ -367,7 +367,9 @@ pub async fn start_recording_with_meeting_name(
 
     // Store the manager globally to keep it alive
     {
-        let mut global_manager = RECORDING_MANAGER.lock().unwrap();
+        let mut global_manager = RECORDING_MANAGER
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         *global_manager = Some(manager);
     }
 
@@ -485,7 +487,9 @@ pub async fn start_recording_with_devices_and_meeting(
 
     // Store the manager globally to keep it alive
     {
-        let mut global_manager = RECORDING_MANAGER.lock().unwrap();
+        let mut global_manager = RECORDING_MANAGER
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         *global_manager = Some(manager);
     }
 
@@ -760,7 +764,9 @@ pub async fn pause_recording(app: HostHandle) -> Result<(), String> {
     }
 
     // Access the recording manager and pause it
-    let manager_guard = RECORDING_MANAGER.lock().unwrap();
+    let manager_guard = RECORDING_MANAGER
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     if let Some(manager) = manager_guard.as_ref() {
         manager.pause_recording().map_err(|e| e.to_string())?;
 
@@ -793,7 +799,9 @@ pub async fn resume_recording(app: HostHandle) -> Result<(), String> {
     }
 
     // Access the recording manager and resume it
-    let manager_guard = RECORDING_MANAGER.lock().unwrap();
+    let manager_guard = RECORDING_MANAGER
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     if let Some(manager) = manager_guard.as_ref() {
         manager.resume_recording().map_err(|e| e.to_string())?;
 
@@ -818,7 +826,9 @@ pub async fn resume_recording(app: HostHandle) -> Result<(), String> {
 
 /// Check if recording is currently paused
 pub async fn is_recording_paused() -> bool {
-    let manager_guard = RECORDING_MANAGER.lock().unwrap();
+    let manager_guard = RECORDING_MANAGER
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     if let Some(manager) = manager_guard.as_ref() {
         manager.is_paused()
     } else {
@@ -829,7 +839,9 @@ pub async fn is_recording_paused() -> bool {
 /// Get detailed recording state
 pub async fn get_recording_state() -> serde_json::Value {
     let is_recording = IS_RECORDING.load(Ordering::SeqCst);
-    let manager_guard = RECORDING_MANAGER.lock().unwrap();
+    let manager_guard = RECORDING_MANAGER
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
 
     if let Some(manager) = manager_guard.as_ref() {
         serde_json::json!({
@@ -870,7 +882,9 @@ pub fn current_storage_error() -> Option<String> {
 /// Get the meeting folder path for the current recording
 /// Returns the path if a meeting name was set and folder structure initialized
 pub async fn get_meeting_folder_path() -> Result<Option<String>, String> {
-    let manager_guard = RECORDING_MANAGER.lock().unwrap();
+    let manager_guard = RECORDING_MANAGER
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     if let Some(manager) = manager_guard.as_ref() {
         Ok(manager.get_meeting_folder().map(|p| p.to_string_lossy().to_string()))
     } else {
@@ -881,7 +895,7 @@ pub async fn get_meeting_folder_path() -> Result<Option<String>, String> {
 /// Get accumulated transcript segments from current recording session
 /// Used for syncing frontend state after page reload during active recording
 pub async fn get_transcript_history() -> Result<Vec<crate::audio::recording_saver::TranscriptSegment>, String> {
-    let manager_guard = RECORDING_MANAGER.lock().unwrap();
+    let manager_guard = RECORDING_MANAGER.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
 
     if let Some(manager) = manager_guard.as_ref() {
         Ok(manager.get_transcript_segments())
@@ -893,7 +907,9 @@ pub async fn get_transcript_history() -> Result<Vec<crate::audio::recording_save
 /// Get meeting name from current recording session
 /// Used for syncing frontend state after page reload during active recording
 pub async fn get_recording_meeting_name() -> Result<Option<String>, String> {
-    let manager_guard = RECORDING_MANAGER.lock().unwrap();
+    let manager_guard = RECORDING_MANAGER
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
 
     if let Some(manager) = manager_guard.as_ref() {
         Ok(manager.get_meeting_name())
@@ -983,7 +999,7 @@ async fn perform_mic_hot_swap_task(
 async fn do_mic_swap(device_name: &str, session: &Arc<super::RecordingState>) -> Result<(), String> {
     // Phase 1: Lock briefly — verify identity, take old stream OUT (no teardown under lock)
     let old_mic = {
-        let mut guard = RECORDING_MANAGER.lock().unwrap();
+        let mut guard = RECORDING_MANAGER.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let manager = guard.as_mut().ok_or_else(|| "Recording manager not available".to_string())?;
         if !manager.is_recording() {
             return Err("Recording stopped — aborting mic hot-swap".to_string());
@@ -1034,7 +1050,9 @@ async fn do_mic_swap(device_name: &str, session: &Arc<super::RecordingState>) ->
 
     // Phase 3: Lock briefly — install ONLY if still the same session
     {
-        let mut guard = RECORDING_MANAGER.lock().unwrap();
+        let mut guard = RECORDING_MANAGER
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         match guard.as_mut() {
             Some(manager) if Arc::ptr_eq(manager.get_state(), session) => {
                 manager.set_mic_stream_after_swap(new_stream, device_arc, system_name);

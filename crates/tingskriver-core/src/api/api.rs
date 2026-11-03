@@ -9,7 +9,8 @@ use crate::{
         manager::DatabaseManager,
         models::MeetingModel,
         repositories::{
-            meeting::MeetingsRepository, setting::SettingsRepository,
+            meeting::{MeetingsRepository, TranscriptCursor},
+            setting::SettingsRepository,
             transcript::TranscriptsRepository,
         },
     },
@@ -135,6 +136,7 @@ pub struct PaginatedTranscriptsResponse {
     pub transcripts: Vec<MeetingTranscript>,
     pub total_count: i64,
     pub has_more: bool,
+    pub next_cursor: Option<TranscriptCursor>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -589,20 +591,49 @@ pub async fn api_get_meeting_metadata(
 pub async fn api_get_meeting_transcripts(
     meeting_id: String,
     limit: i64,
-    offset: i64,
+    offset: Option<i64>,
+    after: Option<TranscriptCursor>,
     state: &AppState,
 ) -> Result<PaginatedTranscriptsResponse, String> {
-    log_info!(
-        "api_get_meeting_transcripts called for meeting_id: {}, limit: {}, offset: {}",
-        meeting_id,
-        limit,
-        offset
-    );
-
     let pool = state.db_manager.pool();
-
-    match MeetingsRepository::get_meeting_transcripts_paginated(pool, &meeting_id, limit, offset).await {
-        Ok((transcripts, total_count)) => {
+    if limit <= 0
+        || offset.is_some_and(|offset| offset < 0)
+        || (offset.is_some() && after.is_some())
+    {
+        return Err("Invalid transcript pagination parameters".into());
+    }
+    let result = async {
+        // Explicit offsets remain supported for full-copy and summary callers.
+        if let Some(offset) = offset {
+            let (transcripts, total) = MeetingsRepository::get_meeting_transcripts_paginated(
+                pool,
+                &meeting_id,
+                limit,
+                offset,
+            )
+            .await?;
+            let has_more = offset.saturating_add(transcripts.len() as i64) < total;
+            Ok::<_, sqlx::Error>((transcripts, total, has_more, None))
+        } else {
+            let (transcripts, next) = MeetingsRepository::get_meeting_transcripts_page(
+                pool,
+                &meeting_id,
+                after.as_ref(),
+                limit,
+            )
+            .await?;
+            let total: i64 =
+                sqlx::query_scalar("SELECT COUNT(*) FROM transcripts WHERE meeting_id = ?")
+                    .bind(&meeting_id)
+                    .fetch_one(pool)
+                    .await?;
+            let has_more = next.is_some();
+            Ok((transcripts, total, has_more, next))
+        }
+    }
+    .await;
+    match result {
+        Ok((transcripts, total_count, has_more, next_cursor)) => {
             log_info!(
                 "Successfully retrieved {} transcripts for meeting {} (total: {})",
                 transcripts.len(),
@@ -623,16 +654,19 @@ pub async fn api_get_meeting_transcripts(
                 })
                 .collect::<Vec<_>>();
 
-            let has_more = (offset + meeting_transcripts.len() as i64) < total_count;
-
             Ok(PaginatedTranscriptsResponse {
                 transcripts: meeting_transcripts,
                 total_count,
                 has_more,
+                next_cursor,
             })
         }
         Err(e) => {
-            log_error!("Error retrieving transcripts for meeting {}: {}", meeting_id, e);
+            log_error!(
+                "Error retrieving transcripts for meeting {}: {}",
+                meeting_id,
+                e
+            );
             Err(format!("Failed to retrieve transcripts: {}", e))
         }
     }
