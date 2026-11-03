@@ -102,53 +102,6 @@ jobs:
           .github/scripts/annotate-errors.sh cargo test --locked -p tingskriver-host --
           --test-threads=1 --nocapture
 
-      # Linux owns deterministic goldens; DirectWrite and FreeType must not
-      # share references. Windows still exercises the native D3D readback.
-      - name: Capture GPUI screens on Windows
-        if: ${{ !cancelled() }}
-        shell: bash
-        timeout-minutes: 15
-        run: cargo test --locked -p tingskriver-app --features screenshot-tests --test screenshots -- --capture
-
-      - name: Upload Windows GPUI screenshots
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: gpui-screenshots-windows
-          path: target/screenshots/windows
-          if-no-files-found: error
-          retention-days: 30
-
-  gpui-screenshots:
-    name: GPUI golden images (headless Linux)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 45
-    env:
-      LIBGL_ALWAYS_SOFTWARE: '1'
-      WGPU_BACKEND: vulkan
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install headless rendering libraries
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libasound2-dev cmake clang libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libvulkan1 mesa-vulkan-drivers
-      - uses: swatinem/rust-cache@v2
-        with:
-          prefix-key: gpui-screenshots-v1
-      - name: Compare all GPUI screens in light and dark
-        run: cargo test --locked -p tingskriver-app --features screenshot-tests --test screenshots
-      - name: Prove a changed production color fails
-        run: python3 scripts/test-gpui-color-gate.py
-      - name: Upload actual, expected and difference images
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: gpui-screenshots-linux
-          path: target/screenshots
-          if-no-files-found: error
-          retention-days: 30
-
   linux-core:
     name: Core tests and crate boundaries (Linux)
     runs-on: ubuntu-latest

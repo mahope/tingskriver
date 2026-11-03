@@ -1,0 +1,73 @@
+name: GPUI screenshots
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gpui-screenshots-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  linux:
+    name: GPUI golden images (headless Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      LIBGL_ALWAYS_SOFTWARE: '1'
+      WGPU_BACKEND: vulkan
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install headless rendering libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libasound2-dev cmake clang libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libvulkan1 mesa-vulkan-drivers
+      - uses: swatinem/rust-cache@v2
+        with:
+          prefix-key: gpui-screenshots-v1
+          cache-on-failure: true
+      - name: Compare all GPUI screens in light and dark
+        run: cargo test --locked -p tingskriver-app --features screenshot-tests --test screenshots
+      - name: Prove a changed production color fails
+        run: python3 scripts/test-gpui-color-gate.py
+      - name: Upload actual, expected and difference images
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: gpui-screenshots-linux
+          path: target/screenshots
+          if-no-files-found: error
+          retention-days: 30
+
+  windows:
+    name: GPUI screenshots (Windows D3D)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          prefix-key: gpui-screenshots-windows-v1
+          cache-on-failure: true
+      - name: Capture native GPUI screens in light and dark
+        shell: bash
+        timeout-minutes: 20
+        run: cargo test --locked -p tingskriver-app --features screenshot-tests --test screenshots -- --capture
+      - name: Upload native PNGs
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: gpui-screenshots-windows
+          path: target/screenshots/windows
+          if-no-files-found: error
+          retention-days: 30
