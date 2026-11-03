@@ -1,9 +1,9 @@
 //! VisualTestAppContext is macOS-only in GPUI 0.3.10. Drive the native
 //! Windows application and read D3D textures without presenting the windows.
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 use gpui::{point, prelude::*, px, size, Bounds, QuitMode, WindowBounds, WindowOptions};
 use gpui_component::{Root, ThemeMode};
-use std::{cell::RefCell, collections::HashMap, path::PathBuf, rc::Rc};
+use std::{collections::HashMap, path::PathBuf};
 use tingskriver_app::{assets, theme, ui::Shell};
 
 pub fn draw_frame(handle: gpui::AnyWindowHandle, cx: &mut gpui::App) -> Result<()> {
@@ -42,40 +42,32 @@ pub fn run() -> Result<()> {
     // rather than leaving agents waiting for the outer CI job timeout.
     let _watchdog = watchdog(std::time::Duration::from_secs(180));
     println!("Launching native GPUI application");
-    // Keep the runtime alive until GPUI has released the model's handles.
+    // The snapshot executable owns these workers and exits after validation.
     let runtime = tokio::runtime::Runtime::new()?;
     let runtime_handle = runtime.handle().clone();
-    let result = Rc::new(RefCell::new(None));
-    let captured = result.clone();
     gpui_platform::application()
         .with_assets(assets::Assets)
         .with_quit_mode(QuitMode::Explicit)
         .run(move |cx| {
-            // Native resize and quit operations are queued on this executor.
-            // Launching capture synchronously leaves 1×1 render targets and
-            // prevents shutdown messages from being serviced.
+            // Native resize is queued on this executor. Capture must yield
+            // to the event loop instead of reading initial 1×1 targets.
             cx.spawn(async move |cx| {
                 let outcome = capture(cx, runtime_handle).await;
-                *captured.borrow_mut() = Some(outcome);
-                println!("Capture completed; stopping native message loop");
-                // Platform::quit queues another foreground task. Post the
-                // quit message directly on this UI thread after capture.
-                #[cfg(target_os = "windows")]
-                unsafe {
-                    windows::Win32::UI::WindowsAndMessaging::PostQuitMessage(0);
+                match outcome {
+                    Ok(()) => {
+                        println!("All snapshot assertions passed; exiting capture process");
+                        std::process::exit(0);
+                    }
+                    Err(error) => {
+                        eprintln!("Native snapshot failed: {error:#}");
+                        std::process::exit(1);
+                    }
                 }
-                #[cfg(not(target_os = "windows"))]
-                cx.update(|cx| cx.quit());
             })
             .detach();
         });
-    println!("Native message loop stopped");
     runtime.shutdown_timeout(std::time::Duration::from_secs(1));
-    let result = result
-        .borrow_mut()
-        .take()
-        .context("Windows application did not launch")?;
-    result
+    bail!("Native event loop returned without completing snapshot validation")
 }
 
 fn watchdog(timeout: std::time::Duration) -> std::thread::JoinHandle<()> {
@@ -177,6 +169,6 @@ async fn capture(cx: &mut gpui::AsyncApp, runtime: tokio::runtime::Handle) -> Re
         output.join("result.txt"),
         "Capture smoke test passed (no golden comparison)",
     )?;
-    println!("All native PNGs saved; quitting application");
+    println!("All native PNGs and result file saved");
     Ok(())
 }

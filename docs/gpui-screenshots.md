@@ -40,9 +40,11 @@ matching the window's logical size and scale, and reject uninitialized targets.
 The native desktop may clamp the requested dimensions; capture must match the
 actual viewport and exceed the app's minimum window size at that DPI. Linux's
 headless viewport remains fixed for golden comparison.
-After capture the native adapter posts `WM_QUIT` directly on its UI thread;
-the Tokio runtime outlives the GPUI application and its model handles. These
-are test-process lifecycle rules, not changes to the production app's quit path.
+The native snapshot executable exits explicitly after every image, viewport
+and appearance assertion and the result file have been written. Any capture
+error exits with failure. GPUI 0.3.10's event loop did not return from quit on
+the hosted runner, so this disposable process does not exercise graceful app
+shutdown. The production quit path remains a separate manual test.
 
 The Linux harness fixes the logical viewport to 1100×760 (headless GPUI's 2× scale
 produces 2200×1520 PNGs), appearance, frame count and simulated clock. It does
