@@ -46,6 +46,8 @@ pub fn run() -> Result<()> {
             let mut cx = context();
             cx.update(|cx| {
                 gpui_component::init(cx);
+                // AnimationElement uses wall-clock time, not the test scheduler.
+                cx.set_reduce_motion(true);
                 assets::register_fonts(cx);
                 theme::apply(mode, cx);
             });
@@ -70,6 +72,15 @@ pub fn run() -> Result<()> {
             } = cx.update(|cx| crate::native::capture_frame(window.into(), cx))?;
             let name = format!("{scenario}-{appearance}.png");
             actual.save(output.join(&name))?;
+            if scenario == "loading" {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                cx.update(|cx| crate::native::draw_frame(window.into(), cx))?;
+                cx.run_until_parked();
+                let later = cx.update(|cx| crate::native::capture_frame(window.into(), cx))?;
+                if actual != later.image {
+                    bail!("{name}: loading animation changed between frames");
+                }
+            }
             if !pixel_compare::valid_viewport(actual.dimensions(), expected, minimum) {
                 bail!(
                     "{name}: expected full viewport {expected:?}, got {:?}",

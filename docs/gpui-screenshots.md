@@ -47,7 +47,10 @@ the hosted runner, so this disposable process does not exercise graceful app
 shutdown. The production quit path remains a separate manual test.
 
 The Linux harness fixes the logical viewport to 1100×760 (headless GPUI's 2× scale
-produces 2200×1520 PNGs), appearance, frame count and simulated clock. It does
+produces 2200×1520 PNGs), appearance, frame count and simulated clock. Reduced
+motion pins animations to a static frame because GPUI animations use wall-clock
+time independently of the test scheduler. The loading fixture must remain
+pixel-identical after a delayed redraw. It does
 not start production services: no database, credentials, tray, audio, network
 providers or single-instance socket. Fixtures inject empty/first-launch and
 error database states, Danish input text and default provider configuration
