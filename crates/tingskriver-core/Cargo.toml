@@ -82,6 +82,8 @@ windows = { version = "0.61", features = [
     # Install hooks: start with Windows and leftovers of earlier builds (src/install)
     "Win32_System_Registry",
     "Win32_Graphics_Gdi",
+    # Dictation: which field inside a browser or Electron app has focus ("slet det")
+    "Win32_UI_Accessibility",
 ] }
 windows-core = "0.61"
 

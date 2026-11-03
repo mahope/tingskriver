@@ -1,12 +1,22 @@
 //! Dictation settings (stored as JSON in the dictation database).
 
+use std::path::Path;
+
 use serde::{Deserialize, Serialize};
 
 use super::logic::app_style::{self, AppStyleRule};
 use super::logic::cleanup::Style;
 use super::logic::hotkey::Chord;
+use super::logic::modes;
 use super::logic::residency::{self, Policy};
+use super::logic::spoken::SpokenTable;
 use super::modes::{Context, Mode, ModeCollection};
+
+/// The user's changes to the spoken signs and commands, in the app data folder.
+pub const SPOKEN_FILE: &str = "dictation_spoken.json";
+
+/// Default speech language. Never "auto-translate".
+pub const DEFAULT_LANGUAGE: &str = "da";
 
 pub const SYV_DEFAULT_ENDPOINT: &str = "https://platform.syv.ai/v1";
 pub const SYV_DEFAULT_MODEL: &str = "syv-transcribe";
@@ -50,6 +60,9 @@ pub struct DictationSettings {
     pub model_idle_minutes: u64,
     /// Local models that stay loaded however long they are idle.
     pub keep_warm_models: Vec<String>,
+    pub language: String,
+    pub format_numbers: bool,
+    pub format_addresses: bool,
     pub modes: ModeCollection,
 }
 
@@ -80,6 +93,9 @@ impl Default for DictationSettings {
                 .collect(),
             model_idle_minutes: residency::DEFAULT_IDLE_MINUTES,
             keep_warm_models: Vec::new(),
+            language: DEFAULT_LANGUAGE.into(),
+            format_numbers: true,
+            format_addresses: true,
             modes: ModeCollection::default(),
         }
     }
@@ -97,10 +113,15 @@ impl DictationSettings {
 
     pub fn apply_mode(&mut self, mode: &Mode) {
         if let Some(provider) = &mode.provider {
-            self.engine = if provider == "syv" { "auto".into() } else { provider.clone() };
+            if self.engine != "local" {
+                self.engine = if provider == "syv" { "auto".into() } else { provider.clone() };
+            }
         }
         if let Some(model) = &mode.model {
             self.syv_model = model.clone();
+        }
+        if let Some(language) = &mode.language {
+            self.language = language.clone();
         }
         if let Some(polish) = mode.polish {
             self.polish_enabled = polish;
@@ -128,6 +149,11 @@ impl DictationSettings {
 
     /// Validate and normalise user input before saving.
     pub fn normalized(mut self) -> Result<Self, String> {
+        self.language = self.language.trim().to_lowercase();
+        if self.language.is_empty() { self.language = DEFAULT_LANGUAGE.into(); }
+        if !modes::valid_language(&self.language) {
+            return Err(format!("Ukendt sprogkode: {}", self.language));
+        }
         self.modes.validate()?;
         self.shortcut = self.chord()?.label();
         if self.engine != "local" {
@@ -191,5 +217,79 @@ mod mode_tests {
         assert_eq!(settings.modes.modes.len(), 4);
         assert_eq!(settings.engine, "local");
         assert!(settings.polish_enabled);
+    }
+}
+
+/// The spoken signs table: built-in plus `dictation_spoken.json` in `dir`.
+/// A broken file gives the built-in table and the error to show.
+pub fn load_spoken_table(dir: &Path) -> (SpokenTable, Option<String>) {
+    let path = dir.join(SPOKEN_FILE);
+    match std::fs::read_to_string(&path) {
+        Ok(json) => match SpokenTable::with_user(&json) {
+            Ok(table) => (table, None),
+            Err(e) => (
+                SpokenTable::builtin(),
+                Some(format!("{e} ({})", path.display())),
+            ),
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (SpokenTable::builtin(), None),
+        Err(e) => (
+            SpokenTable::builtin(),
+            Some(format!("{} kan ikke læses: {e}", path.display())),
+        ),
+    }
+}
+
+
+#[cfg(test)]
+mod spoken_tests {
+    use super::*;
+    #[test]
+    fn spoken_file_is_optional_and_errors_are_reported() {
+        let dir = tempfile::tempdir().unwrap();
+        let (table, error) = load_spoken_table(dir.path());
+        assert_eq!((table, error), (SpokenTable::builtin(), None));
+
+        std::fs::write(dir.path().join(SPOKEN_FILE), "{ ikke json").unwrap();
+        let (table, error) = load_spoken_table(dir.path());
+        assert_eq!(table, SpokenTable::builtin());
+        assert!(error.is_some());
+
+        let json = r#"{"version":1,"entries":[{"phrases":["pil"],"action":{"type":"symbol","text":"→","spaceBefore":true,"spaceAfter":true}}]}"#;
+        std::fs::write(dir.path().join(SPOKEN_FILE), json).unwrap();
+        let (table, error) = load_spoken_table(dir.path());
+        assert!(error.is_none());
+        assert!(table.action_for("pil").is_some());
+    }
+}
+
+#[cfg(test)]
+mod text_settings_tests {
+    use super::*;
+
+    #[test]
+    fn old_settings_keep_danish_formatting_defaults() {
+        let settings: DictationSettings = serde_json::from_str(r#"{"engine":"local","polishEnabled":true}"#).unwrap();
+        assert_eq!(settings.language, "da");
+        assert!(settings.format_numbers && settings.format_addresses);
+        assert!(settings.polish_enabled);
+        assert_eq!(settings.modes.modes.len(), 4);
+    }
+
+    #[test]
+    fn local_only_wins_over_mode_provider() {
+        let mut settings = DictationSettings { engine: "local".into(), ..Default::default() };
+        let mut mode = settings.modes.modes[0].clone();
+        mode.provider = Some("syv".into());
+        settings.apply_mode(&mode);
+        assert_eq!(settings.engine, "local");
+    }
+
+    #[test]
+    fn language_is_normalized_and_validated() {
+        let mut settings = DictationSettings { language: " EN ".into(), ..Default::default() };
+        assert_eq!(settings.clone().normalized().unwrap().language, "en");
+        settings.language = "dansk".into();
+        assert!(settings.normalized().is_err());
     }
 }
