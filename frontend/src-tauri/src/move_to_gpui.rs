@@ -13,10 +13,11 @@
 //! which the GPUI app uses too) and starts the GPUI app.
 //!
 //! On any failure the Tauri app keeps running as before and tries again at
-//! the next start. A recording is never cut off: the move only starts when
-//! the app is idle (no recording, no audio being encoded, no retranscription
-//! or import) and waits until it is idle again before the app exits. User
-//! data is shared by the two apps and is not touched.
+//! the next start; when the helper cannot uninstall it, the helper starts it
+//! again. A recording is never cut off: the move only starts when the app is
+//! idle (no recording, no audio being encoded, no retranscription or import),
+//! waits until it is idle again and then blocks new recordings until the app
+//! exits. User data is shared by the two apps and is not touched.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -68,6 +69,8 @@ pub const BUSY_POLL_INTERVAL: Duration = Duration::from_secs(30);
 pub struct MovePaths {
     /// The NSIS installation of the Tauri app.
     pub tauri_dir: PathBuf,
+    /// The installed Tauri app.
+    pub tauri_exe: PathBuf,
     /// The NSIS uninstaller.
     pub uninstaller: PathBuf,
     /// The installed GPUI app.
@@ -87,6 +90,7 @@ impl MovePaths {
             .join("Programs");
         MovePaths {
             uninstaller: tauri_dir.join("uninstall.exe"),
+            tauri_exe: tauri_dir.join("tingskriver.exe"),
             tauri_dir,
             gpui_exe: local
                 .join("TingskriverApp")
@@ -216,6 +220,32 @@ pub fn download_is_complete(actual: u64, expected: u64) -> bool {
     actual > 0 && actual == expected
 }
 
+/// One of the two apps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum App {
+    Tauri,
+    Gpui,
+}
+
+/// Which app the helper starts, in order of preference (the next one if a
+/// start fails). When the Tauri app is still installed after a failed
+/// uninstall, it is started again, so it keeps running as before; otherwise
+/// the GPUI app. An app whose exe is missing is left out.
+pub fn apps_to_start(tauri_uninstalled: bool, tauri_exists: bool, gpui_exists: bool) -> Vec<App> {
+    let order = if tauri_uninstalled {
+        [App::Gpui, App::Tauri]
+    } else {
+        [App::Tauri, App::Gpui]
+    };
+    order
+        .into_iter()
+        .filter(|app| match app {
+            App::Tauri => tauri_exists,
+            App::Gpui => gpui_exists,
+        })
+        .collect()
+}
+
 /// The parent process id after [`HELPER_ARG`], when this process is the helper.
 pub fn helper_parent_pid(args: &[String]) -> Option<Option<u32>> {
     let position = args.iter().position(|arg| arg == HELPER_ARG)?;
@@ -264,6 +294,7 @@ mod platform {
     use std::process::{Child, Command};
     use std::time::{Duration, Instant};
 
+    use tingskriver_core::audio::recording_commands::{self, unblock_recordings};
     use tingskriver_core::install::{autostart, uninstall_entry_exists};
 
     use super::*;
@@ -322,9 +353,17 @@ mod platform {
             ))
         })?;
 
-        // Last, so the gap between this check and the exit stays short.
+        // Last, and with new recordings blocked from here to the exit, so
+        // the exit cannot cut off a recording that starts in between.
         let mut waited = false;
-        while is_busy() {
+        loop {
+            if !is_busy() && block_recordings_if_idle() {
+                // A retranscription or import may have started meanwhile.
+                if !is_busy() {
+                    break;
+                }
+                unblock_recordings();
+            }
             if !waited {
                 log::info!("move to GPUI: waiting for the recording and its processing to finish");
                 waited = true;
@@ -337,8 +376,15 @@ mod platform {
             .current_dir(work_dir())
             .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)
             .spawn()
-            .map_err(|e| Some(format!("start {}: {e}", helper.display())))?;
+            .map_err(|e| {
+                unblock_recordings();
+                Some(format!("start {}: {e}", helper.display()))
+            })?;
         Ok(())
+    }
+
+    fn block_recordings_if_idle() -> bool {
+        tauri::async_runtime::block_on(recording_commands::block_recordings_if_idle())
     }
 
     fn download_setup() -> Result<(), String> {
@@ -429,6 +475,9 @@ mod platform {
             if uninstall_entry_exists(GPUI_UNINSTALL_ENTRY) {
                 // Let the installer finish before anything else runs.
                 let status = wait(child, SETUP_ASSET, INSTALL_TIMEOUT)?;
+                if !status.success() {
+                    return Err(format!("{SETUP_ASSET} failed ({status})"));
+                }
                 log::info!("move to GPUI: GPUI app installed ({status})");
                 return Ok(());
             }
@@ -478,9 +527,21 @@ mod platform {
             return;
         };
 
-        match uninstall_tauri(&paths) {
-            Ok(()) => log::info!("move to GPUI: Tauri app uninstalled"),
-            Err(e) => log::error!("move to GPUI: {e}; the Tauri app may still be installed and retries at its next start"),
+        let uninstalled = match uninstall_tauri(&paths) {
+            Ok(()) => {
+                log::info!("move to GPUI: Tauri app uninstalled");
+                true
+            }
+            Err(e) => {
+                log::error!("move to GPUI: {e}");
+                false
+            }
+        };
+        if !uninstalled && paths.tauri_exe.exists() {
+            log::error!("move to GPUI: the Tauri app stays and tries again at its next start");
+            start_first_of(&paths, apps_to_start(false, true, paths.gpui_exe.exists()));
+            remove_work_dir_later();
+            return;
         }
 
         let missing = paths.missing_shortcuts(|path| path.exists());
@@ -488,8 +549,13 @@ mod platform {
             log::warn!("move to GPUI: shortcuts gone after uninstall: {missing:?}; installing the GPUI app once more");
             match Command::new(setup_path()).arg("--silent").spawn() {
                 Ok(child) => match wait(child, SETUP_ASSET, INSTALL_TIMEOUT) {
-                    Ok(status) => log::info!(
+                    Ok(status) if status.success() => log::info!(
                         "move to GPUI: reinstalled ({status}), still missing: {:?}",
+                        paths.missing_shortcuts(|path| path.exists())
+                    ),
+                    // The GPUI app itself is installed; only shortcuts are missing.
+                    Ok(status) => log::error!(
+                        "move to GPUI: reinstall failed ({status}), still missing: {:?}",
                         paths.missing_shortcuts(|path| path.exists())
                     ),
                     Err(e) => log::error!("move to GPUI: reinstall: {e}"),
@@ -510,15 +576,39 @@ mod platform {
             }
         }
 
-        match Command::new(&paths.gpui_exe)
-            .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)
-            .spawn()
-        {
-            Ok(_) => log::info!("move to GPUI: started {}", paths.gpui_exe.display()),
-            Err(e) => log::error!("move to GPUI: start {}: {e}", paths.gpui_exe.display()),
-        }
-
+        start_first_of(
+            &paths,
+            apps_to_start(true, paths.tauri_exe.exists(), paths.gpui_exe.exists()),
+        );
         remove_work_dir_later();
+    }
+
+    /// Start the first of `apps` that starts. A Tauri app started here skips
+    /// the move this time, so a failing uninstall does not repeat every
+    /// minute; its next start tries again.
+    fn start_first_of(paths: &MovePaths, apps: Vec<App>) {
+        for app in apps {
+            let mut command = match app {
+                App::Gpui => Command::new(&paths.gpui_exe),
+                App::Tauri => {
+                    let mut command = Command::new(&paths.tauri_exe);
+                    command.env(NO_MIGRATE_ENV, "1");
+                    command
+                }
+            };
+            let exe = command.get_program().to_owned();
+            match command
+                .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)
+                .spawn()
+            {
+                Ok(_) => {
+                    log::info!("move to GPUI: started {}", Path::new(&exe).display());
+                    return;
+                }
+                Err(e) => log::error!("move to GPUI: start {}: {e}", Path::new(&exe).display()),
+            }
+        }
+        log::error!("move to GPUI: no app could be started");
     }
 
     fn uninstall_tauri(paths: &MovePaths) -> Result<(), String> {
@@ -577,6 +667,17 @@ mod tests {
     }
 
     #[test]
+    fn the_tauri_app_comes_back_when_the_uninstall_fails() {
+        assert_eq!(apps_to_start(false, true, true), [App::Tauri, App::Gpui]);
+        assert_eq!(apps_to_start(true, true, true), [App::Gpui, App::Tauri]);
+        // A failed uninstall that took the exe anyway.
+        assert_eq!(apps_to_start(false, false, true), [App::Gpui]);
+        assert_eq!(apps_to_start(true, false, true), [App::Gpui]);
+        assert_eq!(apps_to_start(true, true, false), [App::Tauri]);
+        assert!(apps_to_start(true, false, false).is_empty());
+    }
+
+    #[test]
     fn paths_follow_the_two_installers() {
         let paths = paths();
         let shown = |path: &Path| normalized(path);
@@ -587,6 +688,10 @@ mod tests {
         assert_eq!(
             shown(&paths.uninstaller),
             r"c:\users\anne sofie\appdata\local\tingskriver\uninstall.exe"
+        );
+        assert_eq!(
+            shown(&paths.tauri_exe),
+            r"c:\users\anne sofie\appdata\local\tingskriver\tingskriver.exe"
         );
         assert_eq!(
             shown(&paths.gpui_exe),
