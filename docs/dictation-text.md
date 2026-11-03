@@ -42,48 +42,16 @@ have not been checked against Sprogrådet's text.
 
 ## Modes
 
-A mode bundles engine, model, language, cleanup style, polishing, prompt,
-output and formatting overrides, plus the rules that select it:
+Modes use the shared versioned collection described in [dictation-modes.md](dictation-modes.md).
+The same collection drives settings, import/export, shortcut selection and the overlay.
+A spoken mode change can re-transcribe when its provider, model or language changes.
+"Kun lokal model" in the global settings always wins over a mode's provider.
 
-```json
-{
-  "format": "tingskriver-modes",
-  "version": 1,
-  "modes": [
-    {
-      "id": "chat",
-      "name": "Chat",
-      "style": "normal",
-      "output": "pasteAndEnter",
-      "enterTriggers": ["send", "send den"],
-      "formatNumbers": null,
-      "rules": [
-        { "type": "program", "value": "slack.exe" },
-        { "type": "titleContains", "value": "Slack" },
-        { "type": "triggerWord", "value": "chatbesked" }
-      ]
-    }
-  ]
-}
-```
-
-Rule types: `program`, `windowClass`, `titleContains` and `triggerWord`
-(said first; removed from the text). Order: trigger word, program, window
-class, title, then Standard. A `shortcut` rule is refused on import until the
-hotkey can start a dictation in a given mode. The older "style per program"
-list in the settings decides for the programs it names: "raw" picks Kode/rå,
-"normal" (or removing a default editor from the list) keeps the program out
-of Kode/rå.
-
-`provider` (`"auto"` or `"local"`), `model` (Syv.ai model) and `language`
-apply to transcription. They come from the mode the window selects, because a
-trigger word is only known once the speech is transcribed, so a trigger word
-changes cleanup and polishing but not the engine or language. "Kun lokal
-model" in the settings always wins over a mode's `"auto"`. The local Parakeet
-model detects the language itself. Kode/rå never polishes, never formats
-numbers or addresses and never presses Enter. `Service::export_modes` and
-`Service::import_modes` read and write this format; a newer `version` is
-refused.
+`formatNumbers` and `formatAddresses` in dictation settings control deterministic
+formatting. A mode's `formatting.numberFormat: "ordret"` disables number formatting
+for that mode. Kode/rå never polishes, formats numbers or addresses, or presses Enter.
+An explicit `insertAndEnter` output removes its final trigger before cleanup;
+Enter requires confirmed insertion into the original window and focused field.
 
 ## Spoken signs file
 

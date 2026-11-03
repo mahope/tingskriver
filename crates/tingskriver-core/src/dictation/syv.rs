@@ -22,6 +22,19 @@ pub async fn transcribe(
     transcribe_in(client, endpoint, api_key, model, "da", wav, prompt).await
 }
 
+/// Compatibility entry point used by the mode-aware dictation service.
+pub async fn transcribe_language(
+    client: &reqwest::Client,
+    endpoint: &str,
+    api_key: &str,
+    model: &str,
+    wav: Vec<u8>,
+    prompt: Option<String>,
+    language: &str,
+) -> Result<String, String> {
+    transcribe_in(client, endpoint, api_key, model, language, wav, prompt).await
+}
+
 /// [`transcribe`] in another speech language ("en"); "" means Danish.
 pub async fn transcribe_in(
     client: &reqwest::Client,

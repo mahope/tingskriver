@@ -7,9 +7,10 @@ use serde::{Deserialize, Serialize};
 use super::logic::app_style::{self, AppStyleRule};
 use super::logic::cleanup::Style;
 use super::logic::hotkey::Chord;
-use super::logic::modes::{self, Mode};
+use super::logic::modes;
 use super::logic::residency::{self, Policy};
 use super::logic::spoken::SpokenTable;
+use super::modes::{Context, Mode, ModeCollection};
 
 /// The user's changes to the spoken signs and commands, in the app data folder.
 pub const SPOKEN_FILE: &str = "dictation_spoken.json";
@@ -55,18 +56,14 @@ pub struct DictationSettings {
     /// the field counts as blocking paste and the text is typed.
     pub paste_timeout_ms: u64,
     pub app_styles: Vec<AppStyleSetting>,
-    /// Speech language ("da"). Modes can override it. Text is never translated.
-    pub language: String,
-    /// Danish number, date, time and amount formatting in layer 1.
-    pub format_numbers: bool,
-    /// E-mail and web addresses from speech ("snabel-a").
-    pub format_addresses: bool,
-    /// Dictation modes; the first one matching the foreground window is used.
-    pub modes: Vec<Mode>,
     /// Unload a local speech model after this many idle minutes (0 = never).
     pub model_idle_minutes: u64,
     /// Local models that stay loaded however long they are idle.
     pub keep_warm_models: Vec<String>,
+    pub language: String,
+    pub format_numbers: bool,
+    pub format_addresses: bool,
+    pub modes: ModeCollection,
 }
 
 impl Default for DictationSettings {
@@ -94,17 +91,43 @@ impl Default for DictationSettings {
                     style: rule.style.as_str().to_string(),
                 })
                 .collect(),
-            language: DEFAULT_LANGUAGE.to_string(),
-            format_numbers: true,
-            format_addresses: true,
-            modes: modes::builtin_modes(),
             model_idle_minutes: residency::DEFAULT_IDLE_MINUTES,
             keep_warm_models: Vec::new(),
+            language: DEFAULT_LANGUAGE.into(),
+            format_numbers: true,
+            format_addresses: true,
+            modes: ModeCollection::default(),
         }
     }
 }
 
 impl DictationSettings {
+    pub fn for_context(&self, context: &Context<'_>) -> (Self, Option<Mode>) {
+        let mode = self.modes.select(context).cloned();
+        let mut settings = self.clone();
+        if let Some(mode) = &mode {
+            settings.apply_mode(mode);
+        }
+        (settings, mode)
+    }
+
+    pub fn apply_mode(&mut self, mode: &Mode) {
+        if let Some(provider) = &mode.provider {
+            if self.engine != "local" {
+                self.engine = if provider == "syv" { "auto".into() } else { provider.clone() };
+            }
+        }
+        if let Some(model) = &mode.model {
+            self.syv_model = model.clone();
+        }
+        if let Some(language) = &mode.language {
+            self.language = language.clone();
+        }
+        if let Some(polish) = mode.polish {
+            self.polish_enabled = polish;
+        }
+    }
+
     pub fn chord(&self) -> Result<Chord, String> {
         Chord::parse(&self.shortcut)
     }
@@ -126,6 +149,12 @@ impl DictationSettings {
 
     /// Validate and normalise user input before saving.
     pub fn normalized(mut self) -> Result<Self, String> {
+        self.language = self.language.trim().to_lowercase();
+        if self.language.is_empty() { self.language = DEFAULT_LANGUAGE.into(); }
+        if !modes::valid_language(&self.language) {
+            return Err(format!("Ukendt sprogkode: {}", self.language));
+        }
+        self.modes.validate()?;
         self.shortcut = self.chord()?.label();
         if self.engine != "local" {
             self.engine = "auto".to_string();
@@ -149,21 +178,6 @@ impl DictationSettings {
             s.style = Style::parse(&s.style).as_str().to_string();
         }
         self.app_styles.retain(|s| !s.process.is_empty());
-        self.language = self.language.trim().to_lowercase();
-        if self.language.is_empty() {
-            self.language = DEFAULT_LANGUAGE.to_string();
-        }
-        if !modes::valid_language(&self.language) {
-            return Err(format!(
-                "Ukendt sprogkode \"{}\" (brug fx da eller en)",
-                self.language
-            ));
-        }
-        self.modes = if self.modes.is_empty() {
-            modes::builtin_modes()
-        } else {
-            modes::validate(self.modes)?
-        };
         self.model_idle_minutes = self.model_idle_minutes.min(24 * 60);
         self.keep_warm_models = self
             .keep_warm_models
@@ -174,17 +188,35 @@ impl DictationSettings {
         self.keep_warm_models.dedup();
         Ok(self)
     }
+}
 
-    /// The settings a mode falls back to.
-    pub fn mode_defaults(&self) -> modes::Defaults {
-        modes::Defaults {
-            engine: self.engine.clone(),
-            model: self.syv_model.clone(),
-            language: self.language.clone(),
-            polish: self.polish_enabled,
-            format_numbers: self.format_numbers,
-            format_addresses: self.format_addresses,
-        }
+#[cfg(test)]
+mod mode_tests {
+    use super::*;
+
+    #[test]
+    fn mode_overrides_leave_global_settings_untouched() {
+        let mut settings = DictationSettings::default();
+        let mode = &mut settings.modes.modes[1];
+        mode.provider = Some("local".into());
+        mode.model = Some("chosen-model".into());
+        mode.language = Some("en".into());
+        mode.polish = Some(true);
+        let (effective, mode) = settings.for_context(&Context { process: Some("Slack.exe"), ..Context::default() });
+        assert_eq!(effective.engine, "local");
+        assert_eq!(effective.syv_model, "chosen-model");
+        assert!(effective.polish_enabled);
+        assert_eq!(mode.unwrap().language.as_deref(), Some("en"));
+        assert_eq!(settings.engine, "auto");
+        assert!(!settings.polish_enabled);
+    }
+
+    #[test]
+    fn old_settings_gain_presets_without_losing_preferences() {
+        let settings: DictationSettings = serde_json::from_str(r#"{"engine":"local","polishEnabled":true}"#).unwrap();
+        assert_eq!(settings.modes.modes.len(), 4);
+        assert_eq!(settings.engine, "local");
+        assert!(settings.polish_enabled);
     }
 }
 
@@ -208,44 +240,10 @@ pub fn load_spoken_table(dir: &Path) -> (SpokenTable, Option<String>) {
     }
 }
 
+
 #[cfg(test)]
-mod tests {
+mod spoken_tests {
     use super::*;
-
-    #[test]
-    fn defaults_are_danish_without_translation() {
-        let s = DictationSettings::default();
-        assert_eq!(s.language, "da");
-        assert!(s.format_numbers && s.format_addresses);
-        assert_eq!(s.modes.len(), 4);
-        // Polishing (the only step that could rewrite words) is off by default.
-        assert!(!s.polish_enabled);
-    }
-
-    #[test]
-    fn old_settings_json_gets_new_defaults() {
-        let old = r#"{"enabled":true,"shortcut":"Ctrl+Win","engine":"auto","appStyles":[{"process":"vim.exe","style":"raw"}]}"#;
-        let s: DictationSettings = serde_json::from_str(old).unwrap();
-        assert_eq!(s.language, "da");
-        assert_eq!(s.modes, modes::builtin_modes());
-        assert_eq!(s.app_styles.len(), 1);
-    }
-
-    #[test]
-    fn language_and_modes_are_validated() {
-        let mut s = DictationSettings {
-            language: " EN ".into(),
-            ..DictationSettings::default()
-        };
-        assert_eq!(s.clone().normalized().unwrap().language, "en");
-        s.language = "dansk".into();
-        assert!(s.clone().normalized().is_err());
-        s.language = String::new();
-        s.modes.clear();
-        let n = s.normalized().unwrap();
-        assert_eq!((n.language.as_str(), n.modes.len()), ("da", 4));
-    }
-
     #[test]
     fn spoken_file_is_optional_and_errors_are_reported() {
         let dir = tempfile::tempdir().unwrap();
@@ -262,5 +260,36 @@ mod tests {
         let (table, error) = load_spoken_table(dir.path());
         assert!(error.is_none());
         assert!(table.action_for("pil").is_some());
+    }
+}
+
+#[cfg(test)]
+mod text_settings_tests {
+    use super::*;
+
+    #[test]
+    fn old_settings_keep_danish_formatting_defaults() {
+        let settings: DictationSettings = serde_json::from_str(r#"{"engine":"local","polishEnabled":true}"#).unwrap();
+        assert_eq!(settings.language, "da");
+        assert!(settings.format_numbers && settings.format_addresses);
+        assert!(settings.polish_enabled);
+        assert_eq!(settings.modes.modes.len(), 4);
+    }
+
+    #[test]
+    fn local_only_wins_over_mode_provider() {
+        let mut settings = DictationSettings { engine: "local".into(), ..Default::default() };
+        let mut mode = settings.modes.modes[0].clone();
+        mode.provider = Some("syv".into());
+        settings.apply_mode(&mode);
+        assert_eq!(settings.engine, "local");
+    }
+
+    #[test]
+    fn language_is_normalized_and_validated() {
+        let mut settings = DictationSettings { language: " EN ".into(), ..Default::default() };
+        assert_eq!(settings.clone().normalized().unwrap().language, "en");
+        settings.language = "dansk".into();
+        assert!(settings.normalized().is_err());
     }
 }

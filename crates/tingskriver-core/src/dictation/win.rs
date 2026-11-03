@@ -75,8 +75,8 @@ fn wide(text: &str) -> Vec<u16> {
 // ---------------------------------------------------------------------------
 
 struct HookShared {
-    tracker: ChordTracker,
-    sender: Sender<(ChordSignal, Instant)>,
+    trackers: Vec<(ChordTracker, Option<String>)>,
+    sender: Sender<(ChordSignal, Instant, Option<String>)>,
 }
 
 static HOOK_STATE: Mutex<Option<HookShared>> = Mutex::new(None);
@@ -114,9 +114,12 @@ pub struct KeyboardHook {
 
 impl KeyboardHook {
     /// Install the hook on its own thread with a message loop.
-    pub fn start(chord: Chord, sender: Sender<(ChordSignal, Instant)>) -> Result<KeyboardHook, String> {
+    pub fn start(chord: Chord, shortcuts: Vec<Chord>, sender: Sender<(ChordSignal, Instant, Option<String>)>) -> Result<KeyboardHook, String> {
+        let mut seen = std::collections::HashSet::new();
+        let trackers = std::iter::once((ChordTracker::new(chord), None))
+            .chain(shortcuts.into_iter().filter(|c| *c != chord && seen.insert(*c)).map(|c| (ChordTracker::new(c), Some(c.label())))).collect();
         *HOOK_STATE.lock().map_err(|_| "hook state poisoned")? = Some(HookShared {
-            tracker: ChordTracker::new(chord),
+            trackers,
             sender,
         });
 
@@ -203,18 +206,23 @@ unsafe fn handle_key(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
             if is_down || is_up {
                 let decision = match HOOK_STATE.try_lock() {
                     Ok(mut guard) => guard.as_mut().map(|state| {
-                        let decision = if is_down {
-                            if let Some(signal) = state.tracker.resync(|vk| key_is_down(VIRTUAL_KEY(vk as u16))) {
-                                let _ = state.sender.send((signal, Instant::now()));
+                        let mut combined = super::logic::hotkey::HookDecision::default();
+                        for (tracker, shortcut) in &mut state.trackers {
+                            let decision = if is_down {
+                                if let Some(signal) = tracker.resync(|vk| key_is_down(VIRTUAL_KEY(vk as u16))) {
+                                    let _ = state.sender.send((signal, Instant::now(), shortcut.clone()));
+                                }
+                                tracker.key_down(kb.vkCode)
+                            } else {
+                                tracker.key_up(kb.vkCode)
+                            };
+                            if let Some(signal) = decision.signal {
+                                let _ = state.sender.send((signal, Instant::now(), shortcut.clone()));
                             }
-                            state.tracker.key_down(kb.vkCode)
-                        } else {
-                            state.tracker.key_up(kb.vkCode)
-                        };
-                        if let Some(signal) = decision.signal {
-                            let _ = state.sender.send((signal, Instant::now()));
+                            combined.swallow |= decision.swallow;
+                            combined.inject_win_release = combined.inject_win_release.or(decision.inject_win_release);
                         }
-                        decision
+                        combined
                     }),
                     Err(_) => None,
                 };
@@ -264,10 +272,17 @@ fn send_masked_win_release(win_vk: u16) {
 // Foreground program
 // ---------------------------------------------------------------------------
 
+pub fn foreground_window() -> usize {
+    unsafe { GetForegroundWindow() }.0 as usize
+}
+
 /// File name of the program owning the foreground window, e.g. "Code.exe".
 pub fn foreground_process() -> Option<String> {
+    process_for(unsafe { GetForegroundWindow() })
+}
+
+fn process_for(hwnd: HWND) -> Option<String> {
     unsafe {
-        let hwnd = GetForegroundWindow();
         if hwnd.0.is_null() {
             return None;
         }
@@ -284,6 +299,19 @@ pub fn foreground_process() -> Option<String> {
         ok.ok()?;
         let path = String::from_utf16_lossy(&buf[..len as usize]);
         path.rsplit('\\').next().map(str::to_string)
+    }
+}
+
+pub fn foreground_context() -> (Option<String>, Option<String>, Option<String>) {
+    use windows::Win32::UI::WindowsAndMessaging::{GetClassNameW, GetWindowTextW};
+    unsafe {
+        let hwnd = GetForegroundWindow();
+        let mut class = [0u16; 256];
+        let mut title = [0u16; 2048];
+        let c = GetClassNameW(hwnd, &mut class).max(0) as usize;
+        let t = GetWindowTextW(hwnd, &mut title).max(0) as usize;
+        (process_for(hwnd), (c > 0).then(|| String::from_utf16_lossy(&class[..c])),
+         (t > 0).then(|| String::from_utf16_lossy(&title[..t])))
     }
 }
 
@@ -827,11 +855,45 @@ fn foreground_integrity_level() -> Option<u32> {
 /// target does not read it within `paste_timeout`, the field blocks paste:
 /// the text is typed with `SendInput`, and the original is restored after
 /// `paste::LATE_READ_GRACE` (a late read in between gets an empty string).
-pub fn insert_text(
-    text: &str,
-    options: &InsertOptions,
-) -> Result<(InsertMethod, Instant, Option<super::logic::spoken::FieldId>), String> {
+pub fn insert_text(text: &str, options: &InsertOptions) -> Result<(InsertMethod, Instant, Option<super::logic::spoken::FieldId>), String> {
+    insert_output(text, options, false)
+}
+
+pub fn insert_output(text: &str, options: &InsertOptions, enter: bool) -> Result<(InsertMethod, Instant, Option<super::logic::spoken::FieldId>), String> {
+    insert_output_at(text, options, enter, foreground_window())
+}
+
+pub fn insert_output_at(text: &str, options: &InsertOptions, enter: bool, target: usize) -> Result<(InsertMethod, Instant, Option<super::logic::spoken::FieldId>), String> {
     let _one_at_a_time = INSERT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    check_target(target)?;
+    let result = insert_text_inner(text, options, enter, target)?;
+    if enter {
+        if [VK_CONTROL, VK_LWIN, VK_RWIN, VK_MENU, VK_SHIFT].iter().any(|vk| key_is_down(*vk)) {
+            return Err("Teksten er indsat; slip genvejstasterne før Enter".into());
+        }
+        if !paste::same_target(target, foreground_window()) || super::logic::app_style::is_code_editor(foreground_process().as_deref()) {
+            return Err("Programmet skiftede før Enter; teksten er indsat".into());
+        }
+        super::logic::spoken::require_field(result.2.as_ref(), super::target_win::focused_field().as_ref())?;
+        if !send_inputs(&[
+            key_input(VK_RETURN.0, 0, KEYBD_EVENT_FLAGS(0)),
+            key_input(VK_RETURN.0, 0, KEYEVENTF_KEYUP),
+        ]) {
+            return Err("Teksten er indsat, men Windows afviste Enter".into());
+        }
+    }
+    Ok(result)
+}
+
+fn check_target(target: usize) -> Result<(), String> {
+    if paste::same_target(target, foreground_window()) {
+        Ok(())
+    } else {
+        Err("Forgrundsvinduet skiftede siden optagelsesstart".into())
+    }
+}
+
+fn insert_text_inner(text: &str, options: &InsertOptions, enter: bool, target: usize) -> Result<(InsertMethod, Instant, Option<super::logic::spoken::FieldId>), String> {
     wait_for_modifiers_released(Duration::from_millis(1500));
     let field = super::target_win::focused_field();
     let typed = |text: &str| {
@@ -842,6 +904,7 @@ pub fn insert_text(
         self::typed(text).map(|(method, at)| (method, at, field.clone()))
     };
 
+    check_target(target)?;
     let own = integrity_level(unsafe { GetCurrentProcess() });
     let access = paste::target_access(own, foreground_integrity_level());
     if access == TargetAccess::Elevated {
@@ -853,20 +916,20 @@ pub fn insert_text(
         Ok(owner) => owner,
         Err(e) => {
             log::warn!("Dictation: no clipboard window ({e}); typing instead");
-            return typed(text);
+            return check_target(target).and_then(|_| typed(text));
         }
     };
     let saved = match save_clipboard(&owner) {
         Ok(saved) => saved,
         Err(e) => {
             log::warn!("Dictation: clipboard not saved ({e}); typing instead");
-            return typed(text);
+            return check_target(target).and_then(|_| typed(text));
         }
     };
     if let Err(e) = owner.offer(text) {
         log::warn!("Dictation: could not set clipboard ({e}); typing instead");
         let _ = restore_clipboard(&owner, &saved);
-        return typed(text);
+        return check_target(target).and_then(|_| typed(text));
     }
 
     // A clipboard monitor that ignores the exclusion format reads right after
@@ -886,6 +949,11 @@ pub fn insert_text(
         return Err(e);
     }
     let sent_at = Instant::now();
+    if let Err(e) = check_target(target) {
+        owner.withdraw();
+        let _ = restore_clipboard(&owner, &saved);
+        return Err(e);
+    }
     let ctrl_v_sent = send_ctrl_v();
     if ctrl_v_sent {
         while sent_at.elapsed() < options.paste_timeout {
@@ -915,19 +983,15 @@ pub fn insert_text(
     // a busy target may handle its queued Ctrl+V late, and must then paste
     // nothing rather than the original clipboard (or the text a second time).
     let result = match outcome {
-        Outcome::Pasted => Ok((
-            InsertMethod::Paste,
-            read_after_paste.unwrap_or(sent_at),
-            field.clone(),
-        )),
-        Outcome::PastedUnconfirmed | Outcome::Replaced { typed: false } => {
-            Ok((InsertMethod::Paste, sent_at, field.clone()))
-        }
+        Outcome::PastedUnconfirmed | Outcome::Replaced { typed: false } if enter =>
+            Err("Indsættelsen kunne ikke bekræftes; Enter blev ikke sendt".into()),
+        Outcome::Pasted => Ok((InsertMethod::Paste, read_after_paste.unwrap_or(sent_at), field.clone())),
+        Outcome::PastedUnconfirmed | Outcome::Replaced { typed: false } => Ok((InsertMethod::Paste, sent_at, field.clone())),
         Outcome::Blocked | Outcome::Replaced { typed: true } => match paste::when_blocked(access) {
             WhenBlocked::Type => {
                 log::info!("Dictation: the field did not take Ctrl+V; typing instead");
                 owner.withdraw();
-                typed(text)
+                check_target(target).and_then(|_| typed(text))
             }
             WhenBlocked::Report => Err(paste::not_received_message(options.app.as_deref())),
         },
