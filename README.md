@@ -43,6 +43,10 @@ Hold `Ctrl+Win`, tal, og slip. Teksten bliver renskrevet og skrevet ind dér, hv
 
 ![Pillen under diktering](docs/screenshots/diktering-pille.png)
 
+### Sammenlign udbydere
+
+GPUI-appens side **Måling** kan importere cirka 60 sekunders WAV-lyd og sammenligne valgte modeller på dansk WER, ordfejl, svartid og din egen timepris. Intet er valgt på forhånd. Manglende nøgler og lokale modeller springes over, og måletallene gemmes lokalt uden lyd eller facit. Se [vejledningen](docs/measurement.md).
+
 ### Skift af mikrofon og mute
 
 Under en optagelse følger Tingskriver Windows' standardenheder. Optagelsen skifter kun mikrofon, når den aktive mikrofon reelt fejler:
