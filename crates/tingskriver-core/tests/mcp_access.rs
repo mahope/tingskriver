@@ -151,3 +151,53 @@ async fn missing_policy_fails_closed_for_reads_and_updates() {
         .await
         .is_err());
 }
+
+#[tokio::test]
+async fn local_sharing_controls_include_private_meetings_and_can_revoke_access() {
+    let pool = fixture().await;
+    let meetings = tingskriver_core::mcp::sharing_meetings(&pool)
+        .await
+        .unwrap();
+    assert_eq!(meetings.len(), 2);
+    assert!(!meetings.iter().find(|m| m.id == "hidden").unwrap().shared);
+    let reader = Reader::new(pool.clone());
+    for shared in [true, false] {
+        tingskriver_core::mcp::set_shared(&pool, "hidden", shared)
+            .await
+            .unwrap();
+        assert_eq!(reader.get_meeting("hidden", &[]).await.is_ok(), shared);
+        let reloaded = tingskriver_core::mcp::sharing_meetings(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            reloaded.iter().find(|m| m.id == "hidden").unwrap().shared,
+            shared
+        );
+    }
+    assert!(tingskriver_core::mcp::set_shared(&pool, "missing", true)
+        .await
+        .is_err());
+}
+
+#[tokio::test]
+async fn meeting_notes_preserve_headings_lists_and_task_status_read_only() {
+    let pool = fixture().await;
+    let doc = tingskriver_core::notes::markdown::parse(
+        "## Plan\n\n- [ ] Ring tilbage\n\n- [x] Send kontrakt\n\n- Punkt\n\n1. Første",
+    )
+    .unwrap();
+    tingskriver_core::notes::NotesStore::new(pool.clone())
+        .save("visible", &doc)
+        .await
+        .unwrap();
+    let expected = tingskriver_core::notes::markdown::serialize(&doc);
+    sqlx::query("PRAGMA query_only=ON")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let result = Reader::new(pool)
+        .get_meeting("visible", &["noter".into()])
+        .await
+        .unwrap();
+    assert_eq!(result["noter"], expected);
+}

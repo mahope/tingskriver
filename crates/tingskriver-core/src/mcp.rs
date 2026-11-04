@@ -17,6 +17,21 @@ pub enum Access {
 const STORAGE: &str = "MCP-data kunne ikke læses. Åbn Tingskriver og prøv igen.";
 const DENIED: &str = "Adgang er slået fra, eller mødet er ikke delt med AI-værktøjer.";
 
+#[derive(Clone, Debug, sqlx::FromRow)]
+pub struct SharingMeeting {
+    pub id: String,
+    pub title: String,
+    pub shared: bool,
+}
+
+/// Local app controls must include private meetings. Never expose this through MCP.
+pub async fn sharing_meetings(pool: &SqlitePool) -> Result<Vec<SharingMeeting>, String> {
+    sqlx::query_as("SELECT id,title,ai_shared AS shared FROM meetings ORDER BY created_at DESC,id")
+        .fetch_all(pool)
+        .await
+        .map_err(|_| STORAGE.into())
+}
+
 pub async fn set_access(pool: &SqlitePool, access: Access) -> Result<(), String> {
     let result = sqlx::query("UPDATE mcp_settings SET access=? WHERE id=1")
         .bind(access_name(access))
@@ -251,14 +266,15 @@ impl Reader {
         }
         if wants("noter") {
             // NotesStore::load migrates legacy documents, so it cannot be used on a read-only connection.
-            let blocks: Vec<String> = sqlx::query_scalar("SELECT text_markdown FROM meeting_note_blocks WHERE meeting_id=? ORDER BY position")
-                .bind(id).fetch_all(&mut *tx).await.map_err(|_| STORAGE)?;
-            let notes = if blocks.is_empty() {
-                sqlx::query_scalar::<_,Option<String>>("SELECT COALESCE(notes_markdown,notes_json) FROM meeting_notes WHERE meeting_id=?")
-                    .bind(id).fetch_optional(&mut *tx).await.map_err(|_| STORAGE)?.flatten().unwrap_or_default()
-            } else {
-                blocks.join("\n\n")
-            };
+            let notes = sqlx::query_scalar::<_, Option<String>>(
+                "SELECT COALESCE(notes_markdown,notes_json) FROM meeting_notes WHERE meeting_id=?",
+            )
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|_| STORAGE)?
+            .flatten()
+            .unwrap_or_default();
             result["noter"] = json!(notes);
         }
         if wants("transskript") {

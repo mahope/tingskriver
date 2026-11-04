@@ -125,8 +125,10 @@ som knappen i appen kopierer; TOML udvider ikke `%LOCALAPPDATA%`:
 command = 'C:\Users\<brugernavn>\AppData\Local\Tingskriver\tingskriver-mcp.exe'
 ```
 
-Standard er **Kun markerede møder**. Mødernes **Må deles med AI-værktøjer**
-er slået fra som standard. **Kun metadata** udelader transskript, referat,
+Standard er **Kun markerede møder**. Deling er slået fra som standard.
+Brug **Del med AI-værktøjer** på GPUI-appens mødeside til at dele et møde,
+og **Stop deling med AI-værktøjer** til at ophæve delingen.
+**Kun metadata** udelader transskript, referat,
 noter og dikteringer; **Fra** giver kun en forklaring. **Alt** giver fuld
 læseadgang, herunder dikteringer. Vælg selv Alt på din egen installation,
 hvis det er den ønskede adgang. Ingen installation opgraderes automatisk til Alt.
@@ -164,13 +166,14 @@ command = 'C:\Users\<username>\AppData\Local\Tingskriver\tingskriver-mcp.exe'
 ```
 
 New installations default to **Marked meetings only**; each meeting starts
-unshared. **Metadata only** excludes transcripts, summaries, notes and
+unshared. Use **Del med AI-værktøjer** on the installed GPUI app's Meetings
+page to share a meeting, or **Stop deling med AI-værktøjer** to revoke it.
+**Metadata only** excludes transcripts, summaries, notes and
 dictation. **Off** returns an explanation without meeting content. **All**
 includes dictation; choose it explicitly if wanted on your own installation.
 Reads work while the app is closed. Actions require the running app and
 produce notifications and log entries. Delivery reuses configured targets
-and respects local-only/private settings. See [MCP details](docs/mcp.md),
-including the GPUI meeting-page limitation.
+and respects local-only/private settings. See [MCP details](docs/mcp.md).
 
 **Privacy:** Content sent to an AI tool leaves your computer through that
 tool's provider. Local MCP transport does not make an external AI client local.

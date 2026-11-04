@@ -12,7 +12,10 @@ catalogue! {
     DICTATION = "Diktering";
     SETTINGS = "Indstillinger";
     MCP_TITLE = "AI-værktøjer (MCP)";
-    MCP_PRIVACY = "Data delt med et AI-værktøj forlader computeren via værktøjets udbyder. Nye installationer deler kun markerede møder. Møder markeres i Tauri-mødesiden, indtil mødesiden er flyttet til denne app.";
+    MCP_PRIVACY = "Data delt med et AI-værktøj forlader computeren via værktøjets udbyder. Nye installationer deler kun markerede møder. Vælg de møder, du vil dele, på mødesiden.";
+    MCP_SHARE = "Del med AI-værktøjer";
+    MCP_UNSHARE = "Stop deling med AI-værktøjer";
+    MCP_REFRESH = "Opdatér mødelisten";
     MCP_MARKED = "Kun markerede møder";
     MCP_METADATA = "Kun metadata";
     MCP_ALL = "Alt";

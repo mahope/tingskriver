@@ -38,6 +38,8 @@ pub struct AppModel {
     pub report_first_frame: bool,
     mcp_access: Option<tingskriver_core::mcp::Access>,
     mcp_message: String,
+    sharing_meetings: Option<Result<Vec<tingskriver_core::mcp::SharingMeeting>, String>>,
+    sharing_pending: bool,
 }
 
 impl AppModel {
@@ -60,6 +62,8 @@ impl AppModel {
             report_first_frame: true,
             mcp_access: None,
             mcp_message: String::new(),
+            sharing_meetings: None,
+            sharing_pending: false,
         }
     }
 
@@ -95,6 +99,7 @@ pub fn load_database(cx: &mut App) {
     let model = model(cx);
     let (runtime, dir) = model.update(cx, |m, cx| {
         m.db = DbState::Loading;
+        m.sharing_meetings = None;
         cx.notify();
         (m.runtime.clone(), m.app_data_dir.clone())
     });
@@ -135,6 +140,20 @@ pub fn load_database(cx: &mut App) {
         } else {
             None
         };
+        let sharing_meetings = if let DbState::Ready(db) = &state {
+            let pool = db.pool().clone();
+            Some(
+                match runtime
+                    .spawn(async move { tingskriver_core::mcp::sharing_meetings(&pool).await })
+                    .await
+                {
+                    Ok(result) => result,
+                    Err(_) => Err(strings::MCP_SAVE_FAILED.into()),
+                },
+            )
+        } else {
+            None
+        };
         model.update(cx, |m, cx| {
             log::info!(
                 "startup: database {outcome} after {} ms ({} ms after process start)",
@@ -143,6 +162,7 @@ pub fn load_database(cx: &mut App) {
             );
             m.db = state;
             m.mcp_access = mcp_access;
+            m.sharing_meetings = sharing_meetings;
             cx.notify();
         });
     })
@@ -397,15 +417,102 @@ impl Shell {
                 strings::FIRST_MEETING,
                 cx,
             ),
-            DbState::Ready(_) => empty_state(
-                IconName::Inbox,
-                strings::NO_MEETINGS_YET,
-                strings::MEETINGS_LATER,
-                cx,
-            ),
+            DbState::Ready(_) => self.meeting_sharing(cx),
             DbState::Failed(_) => div().into_any_element(),
         };
         page(strings::MEETINGS, None, body, cx)
+    }
+
+    fn meeting_sharing(&self, cx: &mut Context<Self>) -> AnyElement {
+        let state = self.model.read(cx);
+        let mut body = v_flex()
+            .gap(space::SM)
+            .child(paragraph(strings::MCP_PRIVACY, cx))
+            .child(
+                Button::new("refresh-meetings")
+                    .label(strings::MCP_REFRESH)
+                    .disabled(state.sharing_pending)
+                    .on_click(|_, _, cx| load_database(cx)),
+            )
+            .child(paragraph(&state.mcp_message, cx));
+        match &state.sharing_meetings {
+            None => body = body.child(loading(strings::LOADING_MEETINGS, cx)),
+            Some(Err(error)) => body = body.child(paragraph(error, cx)),
+            Some(Ok(meetings)) if meetings.is_empty() => {
+                body = body.child(paragraph(strings::NO_MEETINGS, cx));
+            }
+            Some(Ok(meetings)) => {
+                for (index, meeting) in meetings.iter().enumerate() {
+                    let model = self.model.clone();
+                    let id = meeting.id.clone();
+                    let shared = !meeting.shared;
+                    body = body.child(
+                        v_flex()
+                            .gap(space::SM)
+                            .child(paragraph(&meeting.title, cx))
+                            .child(
+                                Button::new(("share-meeting", index))
+                                    .label(if meeting.shared {
+                                        strings::MCP_UNSHARE
+                                    } else {
+                                        strings::MCP_SHARE
+                                    })
+                                    .selected(meeting.shared)
+                                    .disabled(state.sharing_pending)
+                                    .on_click(move |_, _, cx| {
+                                        let model = model.clone();
+                                        let id = id.clone();
+                                        let task = model.update(cx, |state, cx| {
+                                            if state.sharing_pending {
+                                                return None;
+                                            }
+                                            let DbState::Ready(db) = &state.db else {
+                                                return None;
+                                            };
+                                            let pool = db.pool().clone();
+                                            state.sharing_pending = true;
+                                            cx.notify();
+                                            Some(state.runtime.spawn(async move {
+                                                let result = tingskriver_core::mcp::set_shared(
+                                                    &pool, &id, shared,
+                                                )
+                                                .await;
+                                                (id, result)
+                                            }))
+                                        });
+                                        let Some(task) = task else {
+                                            return;
+                                        };
+                                        cx.spawn(async move |cx| {
+                                            let result = task.await;
+                                            model.update(cx, |state, cx| {
+                                                state.sharing_pending = false;
+                                                if let Ok((id, Ok(()))) = result {
+                                                    if let Some(Ok(meetings)) =
+                                                        &mut state.sharing_meetings
+                                                    {
+                                                        if let Some(meeting) =
+                                                            meetings.iter_mut().find(|m| m.id == id)
+                                                        {
+                                                            meeting.shared = shared;
+                                                        }
+                                                    }
+                                                    state.mcp_message = strings::MCP_SAVED.into();
+                                                } else {
+                                                    state.mcp_message =
+                                                        strings::MCP_SAVE_FAILED.into();
+                                                }
+                                                cx.notify();
+                                            });
+                                        })
+                                        .detach();
+                                    }),
+                            ),
+                    );
+                }
+            }
+        }
+        body.into_any_element()
     }
 
     fn dictation_page(&self, cx: &mut Context<Self>) -> AnyElement {

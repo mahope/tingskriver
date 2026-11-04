@@ -29,10 +29,10 @@ Restart the MCP client after installing an update if it holds an older process.
 Recording actions require `all`: stop has no meeting ID, so it must not bypass
 the sharing decision on a hidden recording. New recordings remain unmarked.
 There is no owner detection or automatic `all` setting. The owner can select
-Alt explicitly. Tauri has the per-meeting sharing checkbox. GPUI has access
-and setup controls; its meeting/settings migration is still incomplete, so
-marking a meeting currently uses the Tauri meeting page. This follows the same
-host split as the delivery controls from #70.
+Alt explicitly. The installed GPUI app's Meetings page lists both shared and
+private meetings and lets the owner share or revoke each meeting. Refresh the
+list to pick up meetings created while the app is open. Tauri also has a
+per-meeting sharing checkbox. Both apps persist the same sharing flag.
 
 Each read snapshots policy and data together. Invalid/missing policy or an old
 schema fails closed. Unknown meeting IDs and hidden meetings have the same
