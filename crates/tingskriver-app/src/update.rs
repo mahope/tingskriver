@@ -385,23 +385,30 @@ fn now() -> u64 {
         .as_secs()
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, test))]
 mod platform {
     use std::path::PathBuf;
 
+    #[cfg(windows)]
     use std::sync::atomic::Ordering;
 
     use velopack::sources::{FileSource, GithubSource, HttpSource, NoneSource, UpdateSource};
-    use velopack::{UpdateCheck, UpdateManager, VelopackApp};
+    #[cfg(windows)]
+    use velopack::VelopackApp;
+    use velopack::{UpdateCheck, UpdateManager};
 
-    use super::{set_status, Feed, UpdateStatus, REPO_URL, RESTARTED_AFTER_UPDATE};
+    #[cfg(windows)]
+    use super::RESTARTED_AFTER_UPDATE;
+    use super::{set_status, Feed, UpdateStatus, REPO_URL};
 
+    #[cfg(windows)]
     fn log_report(hook: &str, report: Vec<String>) {
         for line in report {
             log::info!("installer {hook}: {line}");
         }
     }
 
+    #[cfg(windows)]
     pub fn run_velopack_app(exe: PathBuf) {
         let (install_exe, update_exe) = (exe.clone(), exe);
         VelopackApp::build()
@@ -431,6 +438,9 @@ mod platform {
             })
             .run();
     }
+
+    #[cfg(not(windows))]
+    pub fn run_velopack_app(_exe: PathBuf) {}
 
     pub fn apply_pending(args: &[String]) {
         let manager = match UpdateManager::new(NoneSource {}, None, None) {
@@ -539,7 +549,7 @@ mod platform {
         match manager.check_for_updates() {
             Ok(UpdateCheck::UpdateAvailable(update)) => {
                 let state = UpdateStatus::Available(release(&update.TargetFullRelease));
-                *PENDING.lock().unwrap() = Some(update);
+                *PENDING.lock().unwrap() = Some(*update);
                 state
             }
             Ok(UpdateCheck::NoUpdateAvailable) => UpdateStatus::Idle,
@@ -560,7 +570,7 @@ mod platform {
             return UpdateStatus::Error(tingskriver_core::strings::UPDATE_RECHECK.into());
         };
         let info = release(&update.TargetFullRelease);
-        let (tx, rx) = std::sync::mpsc::channel();
+        let (tx, rx) = std::sync::mpsc::channel::<i16>();
         // Velopack sends download progress from its synchronous operation.
         std::thread::scope(|scope| {
             let progress_info = info.clone();
@@ -578,9 +588,78 @@ mod platform {
             }
         })
     }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use std::io::{Read, Write};
+
+        #[test]
+        fn http_feed_omits_the_persistent_installation_identifier() {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let url = format!("http://{}", listener.local_addr().unwrap());
+            let server = std::thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                    .unwrap();
+                let mut request = [0; 4096];
+                let n = stream.read(&mut request).unwrap();
+                let request = String::from_utf8_lossy(&request[..n]);
+                assert!(request.starts_with("GET /releases.win.json HTTP/1.1\r\n"));
+                assert!(!request.contains("private-test-id"));
+                assert!(!request.contains("stagingId"));
+                let body = r#"{"Assets":[]}"#;
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .unwrap();
+            });
+            let source = PrivateHttpSource {
+                inner: HttpSource::new(&url),
+                url,
+            };
+            assert!(source
+                .get_release_feed(
+                    "win",
+                    &velopack::bundle::Manifest::default(),
+                    "private-test-id"
+                )
+                .unwrap()
+                .Assets
+                .is_empty());
+            server.join().unwrap();
+        }
+
+        #[test]
+        fn integrity_disk_and_access_errors_are_safe_and_actionable() {
+            let checksum = failed(velopack::Error::ChecksumInvalid(
+                "private-path".into(),
+                "expected".into(),
+                "actual".into(),
+            ));
+            assert_eq!(
+                checksum.label(),
+                tingskriver_core::strings::UPDATE_VERIFY_FAILED
+            );
+            assert!(!checksum.label().contains("private-path"));
+            let disk = failed(velopack::Error::Io(std::io::Error::from_raw_os_error(112)));
+            assert_eq!(disk.label(), tingskriver_core::strings::UPDATE_DISK_FULL);
+            let denied = failed(velopack::Error::Io(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "private-path",
+            )));
+            assert_eq!(
+                denied.label(),
+                tingskriver_core::strings::UPDATE_ACCESS_DENIED
+            );
+        }
+    }
 }
 
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(test)))]
 mod platform {
     use super::{Feed, UpdateStatus};
 

@@ -45,3 +45,5 @@ velopack = { version = "=1.2.161", features = ["public-utils"] }
 
 [dev-dependencies]
 ttf-parser = "0.25"
+# Type-check the same updater adapter in Linux unit tests as Windows builds.
+velopack = { version = "=1.2.161", features = ["public-utils"] }

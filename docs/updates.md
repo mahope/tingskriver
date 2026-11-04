@@ -56,6 +56,9 @@ Raw errors, URLs, filesystem paths and response bodies are not shown in the UI.
 ## Verification and manual Windows plan
 
 Core policy tests: `cargo test --locked -p tingskriver-core updates:: --lib`.
+App unit tests compile the real Velopack adapter on Linux as well as Windows.
+They exercise a loopback HTTP feed to verify that no persistent installation
+identifier is sent, and check integrity, disk-space and access error messages.
 When comparing a baseline checkout with this branch, use a separate
 `CARGO_TARGET_DIR` for each checkout: sharing outputs between identical path
 packages can leave stale core metadata in app tests.
