@@ -345,3 +345,27 @@ crash_dumps::tests::native_crash_produces_a_minidump -- --ignored --exact`.
 The test registers only its uniquely named child executable, checks the dump
 signature and removes its HKLM key afterward. It is excluded from ordinary
 unit tests because it requires administrator access and the WER service.
+# Network and file I/O
+
+The GPUI shell calls core only through its background executor. Core async
+functions run on the host's Tokio runtime; synchronous disk/CPU APIs must run
+on a `spawn_blocking` worker, never on the UI thread or a Tokio worker.
+Tokio file APIs delegate disk work to the blocking pool. Recording callbacks
+continue to hand audio to their dedicated writer thread.
+
+Core HTTP uses asynchronous reqwest with a total deadline of at most ten
+seconds, including the response body. Provider-specific shorter deadlines
+are preserved. This also bounds model downloads, pulls and remote inference;
+a slow operation returns an error and can be retried. Local inference does
+not use HTTP and retains its existing cancellation and timing policy.
+
+`crates/tingskriver-core/clippy.toml` bans blocking reqwest and synchronous
+filesystem calls. Core denies both `disallowed_methods` and `disallowed_types`.
+Exceptions are scoped to synchronous disk workers and test fixtures; their
+async callers must offload them. `scripts/check-async-io-guard.sh` proves that
+new blocking HTTP and file calls fail Clippy, and runs in Linux CI.
+
+OpenRouter's model list is async in core and in the Tauri wrapper. Its
+single-worker fake-server test covers stalled headers, stalled bodies and
+concurrent core calls. `read_audio_file` has already been removed; playback
+uses the core playback API instead of JSON arrays of audio bytes.

@@ -16,6 +16,7 @@ pub(crate) fn chunk_limit(use_parakeet: bool) -> usize {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct ChunkCheckpoint {
     path: PathBuf,
 }
@@ -30,11 +31,41 @@ struct CompletedChunk {
 }
 
 impl ChunkCheckpoint {
+    pub(crate) async fn load_async(
+        &self,
+        index: usize,
+        start_ms: f64,
+        end_ms: f64,
+    ) -> Result<Option<(String, f32, Vec<TimedWord>)>> {
+        let checkpoint = self.clone();
+        tokio::task::spawn_blocking(move || checkpoint.load(index, start_ms, end_ms)).await?
+    }
+
+    pub(crate) async fn save_async(
+        &self,
+        index: usize,
+        start_ms: f64,
+        end_ms: f64,
+        text: &str,
+        confidence: f32,
+        words: &[TimedWord],
+    ) -> Result<()> {
+        let checkpoint = self.clone();
+        let text = text.to_owned();
+        let words = words.to_vec();
+        tokio::task::spawn_blocking(move || {
+            checkpoint.save(index, start_ms, end_ms, &text, confidence, &words)
+        })
+        .await?
+    }
+
+    #[allow(clippy::disallowed_methods)] // Synchronous checkpoint disk worker.
     pub(crate) fn finish(self) -> Result<()> {
         std::fs::remove_dir_all(self.path)
             .context("Cannot remove completed transcription checkpoints")
     }
 
+    #[allow(clippy::disallowed_methods)] // Synchronous fingerprint and disk worker.
     pub(crate) fn open(
         root: &Path,
         source: &Path,
@@ -69,6 +100,7 @@ impl ChunkCheckpoint {
         Ok(Self { path })
     }
 
+    #[allow(clippy::disallowed_methods)] // Synchronous checkpoint disk worker.
     pub(crate) fn load(
         &self,
         index: usize,
@@ -93,6 +125,7 @@ impl ChunkCheckpoint {
         Ok(Some((chunk.text, chunk.confidence, chunk.words)))
     }
 
+    #[allow(clippy::disallowed_methods)] // Synchronous checkpoint disk worker.
     pub(crate) fn save(
         &self,
         index: usize,
@@ -179,6 +212,7 @@ pub(crate) fn append_chunk(
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
 

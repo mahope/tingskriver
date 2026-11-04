@@ -75,6 +75,7 @@ pub fn trim_with_runtime_probe(
 /// Two streaming passes over little-endian f32 PCM, 16 kHz mono. The input is
 /// never collected; memory holds selected speech plus the segment index only.
 /// Container decoding/resampling belongs to the caller, not the capture loop.
+#[allow(clippy::disallowed_methods)]
 pub fn trim_pcm_file(path: &Path, cfg: &TrimConfig) -> Result<TrimmedAudio> {
     cfg.validate()?;
     let open = || -> Result<PcmSamples> {

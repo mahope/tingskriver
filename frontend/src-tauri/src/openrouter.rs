@@ -4,6 +4,6 @@
 pub use tingskriver_core::openrouter::*;
 
 #[tauri::command]
-pub fn get_openrouter_models() -> Result<Vec<OpenRouterModel>, String> {
-    tingskriver_core::openrouter::get_openrouter_models()
+pub async fn get_openrouter_models() -> Result<Vec<OpenRouterModel>, String> {
+    tingskriver_core::openrouter::get_openrouter_models().await
 }

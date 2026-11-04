@@ -215,11 +215,13 @@ impl TrackManifest {
     }
 }
 
+#[allow(clippy::disallowed_methods)]
 pub fn read_manifest(dir: &Path) -> io::Result<TrackManifest> {
     let text = std::fs::read_to_string(dir.join(MANIFEST_FILE))?;
     serde_json::from_str(&text).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
 }
 
+#[allow(clippy::disallowed_methods)]
 pub fn write_manifest(dir: &Path, manifest: &TrackManifest) -> io::Result<()> {
     let json = serde_json::to_string_pretty(manifest).map_err(io::Error::other)?;
     let tmp = dir.join(".tracks.json.tmp");
@@ -587,6 +589,7 @@ where
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::super::track_writer::tests::{MemoryStorage, DISK_FULL};
     use super::super::track_writer::{inspect_wav, segment_file_name};

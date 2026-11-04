@@ -98,6 +98,7 @@ pub async fn recover_audio_from_checkpoints(
 
 /// Folders from before the track writer: 30 s mp4 checkpoints merged with
 /// FFmpeg's concat demuxer.
+#[allow(clippy::disallowed_methods)]
 fn recover_legacy_mp4_checkpoints(
     folder_path: &Path,
     checkpoints_dir: &Path,
@@ -285,6 +286,7 @@ pub async fn cleanup_checkpoints(meeting_folder: String) -> Result<(), String> {
         return Ok(());
     }
 
+    #[allow(clippy::disallowed_methods)] // Cleanup runs on the blocking pool.
     tokio::task::spawn_blocking(move || {
         let _guard = FolderGuard::acquire(&folder_path)
             .ok_or_else(|| "Lyden samles allerede.".to_string())?;
@@ -301,6 +303,13 @@ pub async fn cleanup_checkpoints(meeting_folder: String) -> Result<(), String> {
 /// Check if a meeting folder has audio to recover: WAV track segments, or
 /// mp4 checkpoints from older versions.
 pub async fn has_audio_checkpoints(meeting_folder: String) -> Result<bool, String> {
+    tokio::task::spawn_blocking(move || has_audio_checkpoints_blocking(meeting_folder))
+        .await
+        .map_err(|e| format!("Checkpoint scan task failed: {e}"))?
+}
+
+#[allow(clippy::disallowed_methods)] // Scan runs on the blocking pool.
+fn has_audio_checkpoints_blocking(meeting_folder: String) -> Result<bool, String> {
     let folder_path = PathBuf::from(&meeting_folder);
     let checkpoints_dir = folder_path.join(RAW_DIR);
 
@@ -324,6 +333,7 @@ pub async fn has_audio_checkpoints(meeting_folder: String) -> Result<bool, Strin
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::super::recording_writer::{spawn_writer, LogObserver};
     use super::super::track_writer::TrackKind;

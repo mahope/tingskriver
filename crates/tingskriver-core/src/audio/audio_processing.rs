@@ -32,6 +32,7 @@ pub fn sanitize_filename(name: &str) -> String {
 /// * `base_path` - Base directory for meetings
 /// * `meeting_name` - Name of the meeting
 /// * `create_checkpoints_dir` - Whether to create .checkpoints/ subdirectory (only needed when auto_save is true)
+#[allow(clippy::disallowed_methods)]
 pub fn create_meeting_folder(
     base_path: &PathBuf,
     meeting_name: &str,
@@ -623,6 +624,7 @@ pub fn write_audio_to_file(
     write_audio_to_file_with_meeting_name(audio, sample_rate, output_path, device, skip_encoding, None)
 }
 
+#[allow(clippy::disallowed_methods)]
 pub fn write_audio_to_file_with_meeting_name(
     audio: &[f32],
     sample_rate: u32,
@@ -668,6 +670,7 @@ pub fn write_audio_to_file_with_meeting_name(
 }
 
 /// Write transcript text to a file alongside the recording (legacy plain text format)
+#[allow(clippy::disallowed_methods)]
 pub fn write_transcript_to_file(
     transcript_text: &str,
     output_path: &PathBuf,
@@ -699,6 +702,7 @@ pub fn write_transcript_to_file(
 }
 
 /// Write structured transcript with timestamps to JSON file
+#[allow(clippy::disallowed_methods)]
 pub fn write_transcript_json_to_file(
     segments: &[super::recording_saver::TranscriptSegment],
     output_path: &PathBuf,

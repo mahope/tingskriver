@@ -83,6 +83,26 @@ fn http() -> reqwest::Client {
     client::http_client()
 }
 
+#[test]
+fn remote_http_deadlines_are_capped_but_shorter_limits_are_preserved() {
+    let mut remote = link("remote", "http://127.0.0.1:1", None);
+    for function in [
+        Function::Dictation,
+        Function::Transcription,
+        Function::Summary,
+        Function::Assistant,
+    ] {
+        remote.function = function;
+        remote.timeout = None;
+        assert!(remote.remote_timeout() <= Duration::from_secs(10));
+        remote.timeout = Some(Duration::from_secs(300));
+        assert_eq!(remote.remote_timeout(), Duration::from_secs(10));
+        assert_eq!(remote.attempt_timeout(), Some(Duration::from_secs(10)));
+        remote.timeout = Some(Duration::from_millis(500));
+        assert_eq!(remote.remote_timeout(), Duration::from_millis(500));
+    }
+}
+
 fn field(request: &str, name: &str, value: &str) -> bool {
     request.contains(&format!("name=\"{name}\"\r\n\r\n{value}\r\n"))
 }

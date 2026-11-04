@@ -274,6 +274,7 @@ pub fn database_files(database_path: &Path) -> [PathBuf; 4] {
 /// Whether the last session left a `-wal` or `-journal` with content behind,
 /// i.e. ended without closing the database (a crash). A clean shutdown
 /// checkpoints the WAL and SQLite removes it.
+#[allow(clippy::disallowed_methods)]
 pub fn has_leftover_journal(database_path: &Path) -> bool {
     let [_, wal, _, journal] = database_files(database_path);
     [wal, journal]
@@ -289,6 +290,7 @@ pub fn backup_database(database_path: &Path, backup_root: &Path) -> io::Result<O
 }
 
 /// [`backup_database`], and whether this call made the copy.
+#[allow(clippy::disallowed_methods)]
 fn copy_database(database_path: &Path, backup_root: &Path) -> io::Result<Option<(PathBuf, bool)>> {
     match fs::metadata(database_path) {
         Ok(_) => (),
@@ -327,6 +329,7 @@ fn copy_database(database_path: &Path, backup_root: &Path) -> io::Result<Option<
 }
 
 /// Total size of the database file and its journals.
+#[allow(clippy::disallowed_methods)]
 fn database_size(database_path: &Path) -> u64 {
     database_files(database_path)
         .iter()
@@ -351,6 +354,7 @@ fn room_for_copy(needed: u64, available: Option<u64>) -> bool {
 
 /// Free bytes on the disk that holds `path`: the disk with the longest
 /// mount point that `path` lies under.
+#[allow(clippy::disallowed_methods)] // Synchronous disk worker.
 fn available_space(path: &Path) -> Option<u64> {
     let path = path.ancestors().find_map(|p| fs::canonicalize(p).ok())?;
     let disks = sysinfo::Disks::new_with_refreshed_list();
@@ -381,6 +385,7 @@ impl SafetyCopy {
 
     /// The database opened: the copy is not needed. Only a copy made by
     /// this start is removed, never an earlier backup.
+    #[allow(clippy::disallowed_methods)] // Synchronous disk worker.
     pub(crate) fn discard(self) {
         if self.created {
             if let Err(e) = fs::remove_dir_all(&self.folder) {
@@ -456,6 +461,7 @@ pub(crate) fn backup_after_failure(error: &mut DbInitError, backup_root: &Path) 
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
 

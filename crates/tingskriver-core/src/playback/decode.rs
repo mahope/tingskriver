@@ -22,6 +22,7 @@ pub(super) struct Track {
     offset: f64,
 }
 impl Track {
+    #[allow(clippy::disallowed_methods)]
     pub fn open(path: &Path) -> Result<Self, PlaybackError> {
         let file = File::open(path).map_err(|_| PlaybackError::Open)?;
         let mut hint = Hint::new();

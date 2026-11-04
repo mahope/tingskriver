@@ -69,6 +69,7 @@ pub(crate) fn create_transcript_segments(transcripts: &[(String, f64, f64)]) -> 
 }
 
 /// Write transcripts.json to a meeting folder (atomic write with temp file)
+#[allow(clippy::disallowed_methods)]
 pub(crate) fn write_transcripts_json(folder: &Path, segments: &[TranscriptSegment]) -> Result<()> {
     let transcript_path = folder.join("transcripts.json");
     let temp_path = folder.join(".transcripts.json.tmp");
@@ -149,6 +150,7 @@ pub(crate) fn split_segment_at_silence(
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
 

@@ -31,6 +31,7 @@ pub mod service;
 #[cfg(test)]
 pub(crate) mod fake_server;
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests;
 
 use std::future::Future;

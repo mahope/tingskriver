@@ -8,7 +8,6 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
 use tokio::fs::{self, OpenOptions};
 use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::sync::RwLock;
@@ -473,8 +472,8 @@ impl ModelManager {
         let client = Client::builder()
             .tcp_nodelay(true) // Disable Nagle's algorithm for faster streaming
             .pool_max_idle_per_host(1) // Keep connection alive
-            .timeout(Duration::from_secs(3600)) // 1 hour timeout for large files
-            .connect_timeout(Duration::from_secs(30))
+            .timeout(crate::http::TIMEOUT)
+            .connect_timeout(crate::http::TIMEOUT)
             .build()
             .map_err(|e| anyhow!("Failed to create HTTP client: {}", e))?;
 
@@ -584,13 +583,13 @@ impl ModelManager {
                 }
             }
 
-            // Add per-chunk timeout (30 seconds) to detect stalled connections
-            let next_result = timeout(Duration::from_secs(30), stream.next()).await;
+            // Add per-chunk timeout (10 seconds) to detect stalled connections
+            let next_result = timeout(crate::http::TIMEOUT, stream.next()).await;
 
             let chunk = match next_result {
-                // Timeout - no data received for 30 seconds
+                // Timeout - no data received for 10 seconds
                 Err(_) => {
-                    log::warn!("Download timeout for {}: no data received for 30 seconds", model_name);
+                    log::warn!("Download timeout for {}: no data received for 10 seconds", model_name);
                     let _ = writer.flush().await;
 
                     // Cleanup: Remove from active downloads
@@ -601,11 +600,11 @@ impl ModelManager {
                     {
                         let mut models = self.available_models.write().await;
                         if let Some(model_info) = models.get_mut(model_name) {
-                            model_info.status = ModelStatus::Error("Download timeout - No data received for 30 seconds".to_string());
+                            model_info.status = ModelStatus::Error("Download timeout - No data received for 10 seconds".to_string());
                         }
                     }
 
-                    return Err(anyhow!("Download timeout - No data received for 30 seconds"));
+                    return Err(anyhow!("Download timeout - No data received for 10 seconds"));
                 },
                 // Stream ended
                 Ok(None) => break,

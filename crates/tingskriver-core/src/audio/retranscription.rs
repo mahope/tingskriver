@@ -139,6 +139,7 @@ pub async fn start_retranscription(
 
 /// Find audio file in meeting folder
 /// Tries common names first, then scans for any file with an audio extension
+#[allow(clippy::disallowed_methods)]
 fn find_audio_file(folder: &Path) -> Result<PathBuf> {
     let candidates = [
         "audio.mp4", "audio.m4a", "audio.wav", "audio.mp3",
@@ -375,7 +376,9 @@ async fn run_retranscription(
         }
 
         // Transcribe this segment
-        let cached = checkpoint.load(i, segment.start_timestamp_ms, segment.end_timestamp_ms)?;
+        let cached = checkpoint
+            .load_async(i, segment.start_timestamp_ms, segment.end_timestamp_ms)
+            .await?;
         let (text, conf, words) = if let Some(result) = cached {
             result
         } else {
@@ -398,7 +401,16 @@ async fn run_retranscription(
                     .map_err(|e| anyhow!("Whisper transcription failed on segment {}: {}", i, e))?;
                 (words.iter().map(|w| w.text.as_str()).collect::<Vec<_>>().join(" "), 0.9f32, words)
             };
-            checkpoint.save(i, segment.start_timestamp_ms, segment.end_timestamp_ms, &result.0, result.1, &result.2)?;
+            checkpoint
+                .save_async(
+                    i,
+                    segment.start_timestamp_ms,
+                    segment.end_timestamp_ms,
+                    &result.0,
+                    result.1,
+                    &result.2,
+                )
+                .await?;
             result
         };
 
@@ -503,7 +515,10 @@ async fn run_retranscription(
         warn!("Failed to update metadata.json: {}", e);
     }
 
-    if checkpoint.finish().is_err() {
+    if tokio::task::spawn_blocking(move || checkpoint.finish())
+        .await?
+        .is_err()
+    {
         warn!("Could not clean up completed transcription checkpoints");
     }
 
@@ -740,6 +755,7 @@ async fn get_configured_parakeet_model(app: &HostHandle) -> Result<String> {
 }
 
 /// Write or update metadata.json for retranscription (preserves existing fields, adds retranscribed_at)
+#[allow(clippy::disallowed_methods)]
 fn write_retranscription_metadata(
     folder: &Path,
     meeting_id: &str,
@@ -850,6 +866,7 @@ pub async fn is_retranscription_in_progress_command() -> bool {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
 

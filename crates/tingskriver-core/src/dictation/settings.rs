@@ -191,6 +191,7 @@ impl DictationSettings {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod mode_tests {
     use super::*;
 
@@ -222,6 +223,7 @@ mod mode_tests {
 
 /// The spoken signs table: built-in plus `dictation_spoken.json` in `dir`.
 /// A broken file gives the built-in table and the error to show.
+#[allow(clippy::disallowed_methods)]
 pub fn load_spoken_table(dir: &Path) -> (SpokenTable, Option<String>) {
     let path = dir.join(SPOKEN_FILE);
     match std::fs::read_to_string(&path) {
@@ -242,6 +244,7 @@ pub fn load_spoken_table(dir: &Path) -> (SpokenTable, Option<String>) {
 
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod spoken_tests {
     use super::*;
     #[test]
@@ -264,6 +267,7 @@ mod spoken_tests {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod text_settings_tests {
     use super::*;
 
