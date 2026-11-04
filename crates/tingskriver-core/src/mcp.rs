@@ -18,12 +18,14 @@ const STORAGE: &str = "MCP-data kunne ikke læses. Åbn Tingskriver og prøv ige
 const DENIED: &str = "Adgang er slået fra, eller mødet er ikke delt med AI-værktøjer.";
 
 pub async fn set_access(pool: &SqlitePool, access: Access) -> Result<(), String> {
-    let value = serde_json::to_value(access).map_err(|_| STORAGE)?;
-    sqlx::query("UPDATE mcp_settings SET access=? WHERE id=1")
-        .bind(value.as_str())
+    let result = sqlx::query("UPDATE mcp_settings SET access=? WHERE id=1")
+        .bind(access_name(access))
         .execute(pool)
         .await
         .map_err(|_| STORAGE)?;
+    if result.rows_affected() != 1 {
+        return Err(STORAGE.into());
+    }
     Ok(())
 }
 

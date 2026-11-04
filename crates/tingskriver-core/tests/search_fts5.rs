@@ -153,15 +153,19 @@ async fn migration_backfills_without_changing_data_and_rebuild_is_idempotent() {
     seed(&pool, "old", "bevaring").await;
     seed(&pool, "older", "bevaring").await;
     let before = source_snapshot(&pool).await;
-    Migrator::new(std::path::Path::new(concat!(
+    let mut migrator = Migrator::new(std::path::Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/migrations"
     )))
     .await
-    .unwrap()
-    .run(&pool)
-    .await
     .unwrap();
+    // This snapshot verifies the FTS migration, not later additive schema changes.
+    migrator.migrations = migrator
+        .iter()
+        .filter(|m| m.version <= 20261101120000)
+        .cloned()
+        .collect();
+    migrator.run(&pool).await.unwrap();
     for _ in 0..2 {
         let hits = search(&pool, "bevaring", &SearchFilters::default())
             .await

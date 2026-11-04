@@ -84,3 +84,36 @@ TypeScript/build/tests are used instead.
   absent, so no additional tool packages were installed. CI exposed an FTS
   migration snapshot comparing later additive columns; the test now scopes
   migration execution to FTS itself, preserving the full data equality check.
+- The full Linux run covered core, overlay, host, MCP and GPUI app (unit,
+  integration and doc tests): 944 passed, 1 failed, 10 ignored by the existing
+  suite. The sole failure was the raw-UI-string guard on new GPUI labels.
+  Moving the copy and command templates into the Danish catalogue fixes all
+  six catalogue tests. The full run passed the FTS migration test and all
+  eleven MCP-specific tests (7 access, 3 app actions, 1 stdio).
+- GPUI test linking initially lacked the development symlink for the already
+  installed libxkbcommon-x11.so.0. A scratch-directory linker alias supplied
+  through LIBRARY_PATH allowed the real app tests to link and run. No system
+  package, source stub or skipped assertion was used for that workaround.
+- Handoff now reads saved summaries independently of transcript_chunks. This
+  supports saved summaries without a processing chunk, and the end-to-end
+  fixture verifies actual folder output through the existing delivery worker.
+  A missing policy row now rejects both reads and access updates.
+
+## Suggested PR (not created)
+
+Title: **Add a local MCP server with privacy controls and app actions**
+
+Add the official rmcp stdio server with five read tools and five app-mediated
+actions. Default sharing to explicitly marked meetings, enforce read-only data
+access, and reuse the delivery queue from #70. Add access/setup controls and
+action notifications to both hosts, sharing controls to the Tauri meeting page,
+Windows packaging and Danish/English privacy documentation.
+
+Validation: fixture and real stdio-process tests, Linux netstat, app type checks,
+frontend production build/TypeScript, isolated frontend tests and UI previews.
+The verification log above records the existing combined-test/lint limitations.
+Windows client/audio checks and the GPUI meeting-page port remain explicitly
+separate; the owner's actual installation has not been changed to All here.
+Review is intentionally left for Mads' PC; no PR has been created.
+
+Fixes #105.

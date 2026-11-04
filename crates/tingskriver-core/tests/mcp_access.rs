@@ -30,6 +30,9 @@ async fn new_installation_only_exposes_explicitly_shared_meetings() {
         .unwrap()
         .to_string()
         .contains("SECRET"));
+    let hits = reader.search("SECRET").await.unwrap();
+    assert!(!hits.is_empty());
+    assert!(hits.iter().all(|hit| hit["id"] == "visible"));
 }
 
 #[tokio::test]
@@ -133,4 +136,18 @@ async fn tasks_include_plain_lists_only_under_task_headings() {
     assert_eq!(tasks.len(), 2);
     assert_eq!(tasks[1]["text"], "Book room");
     assert!(!serde_json::to_string(&tasks).unwrap().contains("SECRET"));
+}
+
+#[tokio::test]
+async fn missing_policy_fails_closed_for_reads_and_updates() {
+    let pool = fixture().await;
+    sqlx::query("DELETE FROM mcp_settings")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let reader = Reader::new(pool.clone());
+    assert!(reader.list_meetings(None, None, None).await.is_err());
+    assert!(tingskriver_core::mcp::set_access(&pool, Access::All)
+        .await
+        .is_err());
 }

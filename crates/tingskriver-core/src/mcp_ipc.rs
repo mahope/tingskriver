@@ -58,14 +58,14 @@ async fn read_frame<S: AsyncRead + Unpin, T: for<'de> Deserialize<'de>>(
     serde_json::from_slice(&data).map_err(|_| "Ugyldig handling".into())
 }
 
-pub async fn call(dir: &Path, action: &Action) -> Result<Value, String> {
+pub async fn call(_dir: &Path, action: &Action) -> Result<Value, String> {
     let request = async {
         #[cfg(windows)]
         let mut stream = tokio::net::windows::named_pipe::ClientOptions::new()
             .open(PIPE)
             .map_err(|_| CLOSED)?;
         #[cfg(unix)]
-        let mut stream = tokio::net::UnixStream::connect(socket_path(dir))
+        let mut stream = tokio::net::UnixStream::connect(socket_path(_dir))
             .await
             .map_err(|_| CLOSED)?;
         write_frame(&mut stream, action).await?;
@@ -221,15 +221,12 @@ async fn perform(host: HostHandle, delivery: &Delivery, action: Action) -> Resul
             Ok(json!({"saved":true}))
         }
         Action::Handoff { id, target } => {
-            let state = crate::state::AppState {
-                db_manager: database.clone(),
-            };
-            let summary =
-                crate::summary::commands::api_get_summary(&state, id.clone(), None).await?;
+            let summary = crate::database::repositories::summary::SummaryProcessesRepository::get_summary_data(database.pool(),&id)
+                .await.map_err(|_| "Referatet kunne ikke læses")?.and_then(|s| s.result).ok_or("Mødet har intet referat")?;
+            let summary: Value =
+                serde_json::from_str(&summary).map_err(|_| "Referatet kunne ikke læses")?;
             let markdown = summary
-                .data
-                .as_ref()
-                .and_then(|v| v.get("markdown"))
+                .get("markdown")
                 .and_then(Value::as_str)
                 .ok_or("Mødet har intet referat")?;
             let bundle = crate::delivery::meeting::snapshot(database.pool(), &id, markdown.into())

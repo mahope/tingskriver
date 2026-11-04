@@ -149,8 +149,10 @@ pub fn run() {
                                 serde_json::from_str::<serde_json::Value>(&event.payload_json)
                             {
                                 if value["status"] == "started" {
-                                    let action =
-                                        value["action"].as_str().unwrap_or("handling").to_string();
+                                    let action = value["action"]
+                                        .as_str()
+                                        .unwrap_or(tingskriver_core::strings::MCP_ACTION_UNKNOWN)
+                                        .to_string();
                                     cx.update(|cx| ui::show_mcp_action(action, cx));
                                 }
                             }

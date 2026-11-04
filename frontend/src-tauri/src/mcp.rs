@@ -70,7 +70,7 @@ pub async fn start(app: AppHandle) {
                     .notification()
                     .builder()
                     .title("AI-værktøj bruger Tingskriver")
-                    .body(format!("Handling: {action}"))
+                    .body(tingskriver_core::strings::mcp_action(action))
                     .show();
             }
         }

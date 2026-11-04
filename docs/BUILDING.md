@@ -424,6 +424,20 @@ The distribution workflows (`build.yml`, `build-windows.yml`, and `build-devtest
 
 </details>
 
+### Local MCP sidecar
+
+Build `cargo build --locked -p tingskriver-mcp` alongside the app. Tauri also
+expects a target-suffixed copy under `frontend/src-tauri/binaries`, like the
+speech worker. For a Windows x64 source build:
+
+```powershell
+cargo build --locked -p tingskriver-mcp
+Copy-Item target/debug/tingskriver-mcp.exe frontend/src-tauri/binaries/tingskriver-mcp-x86_64-pc-windows-msvc.exe
+```
+
+The Windows workflows build and stage this real executable before packaging;
+Velopack includes it beside `tingskriver-app.exe`. See [MCP setup and privacy](mcp.md).
+
 ### Isolated local speech inference
 
 Build the speech worker next to the app executable before running from source:

@@ -174,7 +174,7 @@ pub fn show_mcp_action(action: String, cx: &mut App) {
     if let Some(handle) = cx.global::<Globals>().main_window {
         let _ = handle.update(cx, |_, window, cx| {
             window.push_notification(
-                gpui_component::notification::Notification::info(format!("AI-værktøj: {action}"))
+                gpui_component::notification::Notification::info(strings::mcp_action(&action))
                     .in_app_and_system(),
                 cx,
             );
@@ -525,10 +525,10 @@ impl Shell {
         let current = state.mcp_access;
         let mut controls = h_flex().gap(space::SM).flex_wrap();
         for (index, (access, label)) in [
-            (Access::Marked, "Kun markerede møder"),
-            (Access::Metadata, "Kun metadata"),
-            (Access::All, "Alt"),
-            (Access::Off, "Fra"),
+            (Access::Marked, strings::MCP_MARKED),
+            (Access::Metadata, strings::MCP_METADATA),
+            (Access::All, strings::MCP_ALL),
+            (Access::Off, strings::MCP_OFF),
         ]
         .into_iter()
         .enumerate()
@@ -554,10 +554,9 @@ impl Shell {
                             model.update(cx, |state, cx| {
                                 if matches!(result, Ok(Ok(()))) {
                                     state.mcp_access = Some(access);
-                                    state.mcp_message = "MCP-adgang er gemt.".into();
+                                    state.mcp_message = strings::MCP_SAVED.into();
                                 } else {
-                                    state.mcp_message =
-                                        "MCP-adgang kunne ikke gemmes. Prøv igen.".into();
+                                    state.mcp_message = strings::MCP_SAVE_FAILED.into();
                                 }
                                 cx.notify();
                             });
@@ -566,10 +565,12 @@ impl Shell {
                     }),
             );
         }
-        let mut body = v_flex().gap(space::SM).child(section_title("AI-værktøjer (MCP)"))
-            .child(paragraph("Data delt med et AI-værktøj forlader computeren via værktøjets udbyder. Nye installationer deler kun markerede møder. Møder markeres i Tauri-mødesiden, indtil mødesiden er flyttet til denne app.",cx))
+        let mut body = v_flex()
+            .gap(space::SM)
+            .child(section_title(strings::MCP_TITLE))
+            .child(paragraph(strings::MCP_PRIVACY, cx))
             .child(controls)
-            .child(paragraph(&state.mcp_message,cx));
+            .child(paragraph(&state.mcp_message, cx));
         if let Ok(exe) = std::env::current_exe() {
             if let Some(parent) = exe.parent() {
                 let path = parent.join(if cfg!(windows) {
@@ -580,13 +581,10 @@ impl Shell {
                 if let Ok(quoted) = serde_json::to_string(&path.to_string_lossy()) {
                     for (index, (label, text)) in [
                         (
-                            "Kopiér opsætning til Claude Code",
-                            format!("claude mcp add tingskriver -- \"{}\"", path.display()),
+                            strings::MCP_COPY_CLAUDE,
+                            strings::mcp_claude_command(&path.to_string_lossy()),
                         ),
-                        (
-                            "Kopiér opsætning til Codex",
-                            format!("[mcp_servers.tingskriver]\ncommand = {quoted}\n"),
-                        ),
+                        (strings::MCP_COPY_CODEX, strings::mcp_codex_config(&quoted)),
                     ]
                     .into_iter()
                     .enumerate()
@@ -596,7 +594,7 @@ impl Shell {
                                 cx.write_to_clipboard(gpui::ClipboardItem::new_string(
                                     text.clone(),
                                 ));
-                                window.push_notification("MCP-opsætningen er kopieret.", cx);
+                                window.push_notification(strings::MCP_COPIED, cx);
                             },
                         ));
                     }

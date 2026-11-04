@@ -142,3 +142,72 @@ async fn local_channel_is_private_and_missing_app_has_a_clear_error() {
     server.abort();
     let _ = server.await;
 }
+
+#[tokio::test]
+async fn handoff_uses_the_app_queue_and_obeys_delivery_privacy() {
+    use tingskriver_core::delivery::{Destination, Policy, Target};
+    let dir = tempfile::tempdir().unwrap();
+    let db = DatabaseManager::open_at(
+        &dir.path().join("meeting.sqlite"),
+        &dir.path().join("none"),
+        Duration::from_secs(1),
+    )
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO meetings(id,title,created_at,updated_at,ai_shared) VALUES ('one','Fixture','2026-11-01T10:00:00Z','2026-11-01T10:00:00Z',1)").execute(db.pool()).await.unwrap();
+    sqlx::query("INSERT INTO summary_processes(meeting_id,status,created_at,updated_at,result) VALUES ('one','completed','2026-11-01T10:00:00Z','2026-11-01T10:00:00Z','{\"markdown\":\"Approved summary\"}')").execute(db.pool()).await.unwrap();
+    let host = Arc::new(Host {
+        db,
+        dir: dir.path().into(),
+        events: Mutex::new(vec![]),
+    });
+    let delivery = Delivery::open(dir.path(), Arc::new(MemoryKeyStore::default()))
+        .await
+        .unwrap();
+    let out = dir.path().join("out");
+    delivery
+        .save_target(
+            Target {
+                id: "archive".into(),
+                name: "Archive".into(),
+                destination: Destination::Folder { path: out.clone() },
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    let action = Action::Handoff {
+        id: "one".into(),
+        target: "archive".into(),
+    };
+    assert!(mcp_ipc::execute(host.clone(), &delivery, action.clone())
+        .await
+        .is_err());
+    assert!(delivery.jobs().await.unwrap().is_empty());
+    delivery
+        .set_policy(Policy {
+            local_only: false,
+            private: true,
+        })
+        .await
+        .unwrap();
+    assert!(mcp_ipc::execute(host.clone(), &delivery, action.clone())
+        .await
+        .is_err());
+    delivery
+        .set_policy(Policy {
+            local_only: false,
+            private: false,
+        })
+        .await
+        .unwrap();
+    let result = mcp_ipc::execute(host, &delivery, action).await.unwrap();
+    let job = result["job"].as_str().unwrap();
+    assert!(!out.exists());
+    delivery.run_due().await.unwrap();
+    assert_eq!(
+        std::fs::read_to_string(out.join(job).join("summary.md")).unwrap(),
+        "Approved summary"
+    );
+    assert_eq!(delivery.jobs().await.unwrap()[0].status, "completed");
+}

@@ -11,6 +11,26 @@ catalogue! {
     MEETINGS = "Møder";
     DICTATION = "Diktering";
     SETTINGS = "Indstillinger";
+    MCP_TITLE = "AI-værktøjer (MCP)";
+    MCP_PRIVACY = "Data delt med et AI-værktøj forlader computeren via værktøjets udbyder. Nye installationer deler kun markerede møder. Møder markeres i Tauri-mødesiden, indtil mødesiden er flyttet til denne app.";
+    MCP_MARKED = "Kun markerede møder";
+    MCP_METADATA = "Kun metadata";
+    MCP_ALL = "Alt";
+    MCP_OFF = "Fra";
+    MCP_SAVED = "MCP-adgang er gemt.";
+    MCP_SAVE_FAILED = "MCP-adgang kunne ikke gemmes. Prøv igen.";
+    MCP_COPY_CLAUDE = "Kopiér opsætning til Claude Code";
+    MCP_COPY_CODEX = "Kopiér opsætning til Codex";
+    MCP_COPIED = "MCP-opsætningen er kopieret.";
+    MCP_ACTION = "AI-værktøj: {value}";
+    MCP_ACTION_UNKNOWN = "handling";
+    MCP_START_RECORDING = "Start optagelse";
+    MCP_STOP_RECORDING = "Stop optagelse";
+    MCP_REGENERATE = "Dan referat igen";
+    MCP_HANDOFF = "Aflever referat";
+    MCP_ADD_NOTE = "Tilføj note";
+    MCP_CLAUDE_COMMAND = "claude mcp add tingskriver -- \"{value}\"";
+    MCP_CODEX_CONFIG = "[mcp_servers.tingskriver]\ncommand = {value}\n";
     MEASURE_TITLE = "Måling";
     MEASURE_HELP = "Sammenlign dansk nøjagtighed på din egen stemme. Importér cirka 60 sekunder som WAV (mono, 16 kHz, PCM16, højst 90 sekunder), og skriv præcis det, du siger.";
     MEASURE_PATH = "Sti til lydprøve";
@@ -85,6 +105,8 @@ macro_rules! parameterized {
     };
 }
 parameterized! {
+    mcp_claude_command => MCP_CLAUDE_COMMAND;
+    mcp_codex_config => MCP_CODEX_CONFIG;
     measure_errors => MEASURE_ERRORS;
     measure_wer => MEASURE_WER;
     measure_ms => MEASURE_MS;
@@ -94,6 +116,18 @@ parameterized! {
     data_dir => DATA_DIR;
     database => DATABASE;
     log_file => LOG_FILE;
+}
+
+pub fn mcp_action(action: &str) -> String {
+    let label = match action {
+        "start_recording" => MCP_START_RECORDING,
+        "stop_recording" => MCP_STOP_RECORDING,
+        "regenerate_summary" => MCP_REGENERATE,
+        "handoff" => MCP_HANDOFF,
+        "add_note" => MCP_ADD_NOTE,
+        _ => MCP_ACTION_UNKNOWN,
+    };
+    MCP_ACTION.replace("{value}", label)
 }
 
 pub fn measure_model_label(provider: &str, model: &str, location: &str) -> String {
