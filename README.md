@@ -24,7 +24,15 @@ Skærmbillederne er taget med mock-data af `frontend/scripts/screenshots.cjs`.
 
 1. Hent installationsfilen (`.exe`) fra [den seneste udgivelse](https://github.com/mahope/tingskriver/releases/latest).
 2. Kør filen. Installationsfilen er ikke signeret, så Windows SmartScreen viser en advarsel. Vælg "Flere oplysninger" og derefter "Kør alligevel".
-3. Programmet opdaterer sig selv fra GitHub Releases.
+3. GPUI-udgaven søger efter opdateringer fra GitHub Releases. Vælg **Om → Hent og installér**, når en ny version vises. Vælg derefter **Genstart nu** eller **Genstart senere**. En hentet opdatering installeres ved næste start.
+
+Under **Indstillinger → Opdateringer** kan du slå tjek helt fra eller vælge dagligt
+(standard, højst én gang i døgnet) eller ugentligt tjek. Valget og tidspunktet
+for sidste tjek gemmes lokalt. Når tjek er slået fra, udføres heller ikke manuelle
+feed-kald. Der er ingen telemetri. Hentning og genstart venter, mens du optager
+eller dikterer. En opdatering vises også diskret i tray-menuens Om-punkt.
+Udviklingsbygninger og bærbare kopier viser, at opdateringer ikke er aktiveret.
+Se [opdateringsvejledningen](docs/updates.md) om feed, fejl og Windows-prøven.
 
 Tingskriver understøtter kun Windows 11 (x64). Udgivelserne indeholder ikke macOS- eller Linux-versioner, selvom koden fra det oprindelige projekt stadig ligger i repoet.
 

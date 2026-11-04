@@ -14,7 +14,7 @@ use gpui_component::{
     input::{Input, InputEvent, InputState, Textarea, TextareaState},
     sidebar::{Sidebar, SidebarHeader, SidebarMenu, SidebarMenuItem},
     spinner::Spinner,
-    v_flex, ActiveTheme, Icon, Root,
+    v_flex, ActiveTheme, Disableable, Icon, Root,
 };
 use gpui_kit_assets::IconName;
 use tingskriver_core::strings;
@@ -292,6 +292,7 @@ pub struct Shell {
     state_path: Option<PathBuf>,
     last_saved: Option<window_state::SavedWindow>,
     pending_save: Option<Task<()>>,
+    _update_poll: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -335,7 +336,22 @@ impl Shell {
             true
         });
         let page = model.read(cx).start_page;
+        let executor = cx.background_executor().clone();
+        let update_poll = cx.spawn(async move |this, cx| {
+            let mut last = (crate::update::status(), crate::update::busy());
+            loop {
+                executor.timer(Duration::from_millis(250)).await;
+                let next = (crate::update::status(), crate::update::busy());
+                if next != last {
+                    last = next;
+                    if this.update(cx, |_, cx| cx.notify()).is_err() {
+                        break;
+                    }
+                }
+            }
+        });
         Shell {
+            _update_poll: update_poll,
             focus_handle,
             about_copy_focus: cx.focus_handle(),
             about_document_scroll: crate::about::DOCUMENTS
@@ -488,7 +504,7 @@ impl Shell {
                 .gap(space::LG)
                 .child(paragraph(&crate::about::metadata(), cx))
                 .child(section_title(strings::ABOUT_UPDATES))
-                .child(paragraph(&crate::about::update_status().label(), cx))
+                .child(self.update_panel(cx))
                 .child(
                     Button::new("about-copy")
                         .track_focus(&self.about_copy_focus)
@@ -586,6 +602,132 @@ impl Shell {
         page(strings::ABOUT, None, body.into_any_element(), cx)
     }
 
+    fn update_panel(&self, cx: &mut Context<Self>) -> AnyElement {
+        use tingskriver_core::updates::{Event, State};
+        let state = crate::update::status();
+        let enabled = crate::update::preferences().is_ok_and(|p| p.enabled);
+        let busy = matches!(state, State::Checking | State::Downloading(..));
+        let mut body = v_flex().gap(space::MD).child(
+            div()
+                .id("update-status")
+                .role(gpui::Role::Status)
+                .aria_label(state.label())
+                .child(paragraph(&state.label(), cx)),
+        );
+        if let Some(release) = state.release() {
+            body = body
+                .child(paragraph(
+                    &strings::UPDATE_DETAILS
+                        .replace("{size}", &release.size_label())
+                        .replace("{date}", &release.date_label()),
+                    cx,
+                ))
+                .child(paragraph(
+                    if release.notes.is_empty() {
+                        strings::UPDATE_NO_NOTES
+                    } else {
+                        &release.notes
+                    },
+                    cx,
+                ));
+        }
+        if crate::update::busy() {
+            body = body.child(paragraph(strings::UPDATE_BUSY, cx));
+        }
+        if state != State::Inactive {
+            body = body.child(
+                Button::new("update-check")
+                    .label(strings::UPDATE_CHECK)
+                    .disabled(!enabled || busy || matches!(state, State::Ready(_)))
+                    .on_click(cx.listener(|_, _, _, cx| {
+                        crate::update::request(Event::Check);
+                        cx.notify();
+                    })),
+            );
+            if matches!(state, State::Available(_) | State::Blocked(_, false)) {
+                body = body.child(
+                    Button::new("update-download")
+                        .label(strings::UPDATE_DOWNLOAD)
+                        .disabled(!enabled || crate::update::busy())
+                        .on_click(cx.listener(|_, _, _, cx| {
+                            crate::update::request(Event::Download);
+                            cx.notify();
+                        })),
+                );
+            }
+            if matches!(state, State::Ready(_) | State::Blocked(_, true)) {
+                body = body
+                    .child(
+                        Button::new("update-restart")
+                            .label(strings::UPDATE_RESTART)
+                            .disabled(crate::update::busy())
+                            .on_click(cx.listener(|_, _, _, cx| {
+                                crate::update::request(Event::Restart);
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        Button::new("update-later")
+                            .label(strings::UPDATE_LATER)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.page = Page::Meetings;
+                                cx.notify();
+                            })),
+                    );
+            }
+            if !enabled {
+                body = body.child(paragraph(strings::UPDATE_DISABLED, cx));
+            }
+        }
+        body.into_any_element()
+    }
+
+    fn update_settings(&self, cx: &mut Context<Self>) -> AnyElement {
+        let mut body = v_flex()
+            .gap(space::MD)
+            .child(section_title(strings::ABOUT_UPDATES))
+            .child(paragraph(&crate::update::status().label(), cx));
+        match crate::update::preferences() {
+            Ok(prefs) => {
+                body = body
+                    .child(
+                        Button::new("updates-enabled")
+                            .label(if prefs.enabled {
+                                strings::UPDATE_ENABLED_ON
+                            } else {
+                                strings::UPDATE_ENABLED_OFF
+                            })
+                            .on_click(cx.listener(|_, _, _, cx| {
+                                if let Ok(mut prefs) = crate::update::preferences() {
+                                    prefs.enabled = !prefs.enabled;
+                                    crate::update::save_preferences(&prefs);
+                                }
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        Button::new("updates-frequency")
+                            .label(if prefs.weekly {
+                                strings::UPDATE_WEEKLY
+                            } else {
+                                strings::UPDATE_DAILY
+                            })
+                            .disabled(!prefs.enabled)
+                            .on_click(cx.listener(|_, _, _, cx| {
+                                if let Ok(mut prefs) = crate::update::preferences() {
+                                    prefs.weekly = !prefs.weekly;
+                                    crate::update::save_preferences(&prefs);
+                                }
+                                cx.notify();
+                            })),
+                    );
+            }
+            Err(message) => body = body.child(paragraph(&message, cx)),
+        }
+        body.child(paragraph(strings::UPDATE_PRIVACY, cx))
+            .into_any_element()
+    }
+
     fn settings_page(&self, cx: &mut Context<Self>) -> AnyElement {
         let model = self.model.read(cx);
         let mode = if cx.theme().mode.is_dark() {
@@ -623,6 +765,7 @@ impl Shell {
                     })),
             )
             .child(paragraph(strings::SETTINGS_LATER, cx))
+            .child(self.update_settings(cx))
             .child(setting_group(
                 strings::APPEARANCE,
                 vec![strings::appearance(mode)],

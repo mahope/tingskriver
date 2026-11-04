@@ -9,10 +9,7 @@ pub use crate::update::UpdateStatus;
 
 /// Snapshot only: opening About never starts an update check.
 pub fn update_status() -> UpdateStatus {
-    match crate::update::status() {
-        UpdateStatus::Inactive => UpdateStatus::Unavailable,
-        status => status,
-    }
+    crate::update::status()
 }
 
 pub fn metadata() -> String {
@@ -151,7 +148,7 @@ mod tests {
         assert!(DOCUMENTS.iter().all(|(_, body)| !body.is_empty()));
         assert_eq!(
             UpdateStatus::default().label(),
-            strings::ABOUT_UPDATES_UNAVAILABLE
+            "Opdateringer er ikke aktiveret i denne build"
         );
     }
 }

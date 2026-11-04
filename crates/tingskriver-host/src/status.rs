@@ -2,6 +2,16 @@
 //!
 //! Platform independent; the Windows tray in `win` only copies the result.
 
+static UPDATE_AVAILABLE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_update_available(available: bool) {
+    UPDATE_AVAILABLE.store(available, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn update_available() -> bool {
+    UPDATE_AVAILABLE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// The meeting recording.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Recording {
@@ -30,6 +40,7 @@ pub enum Dictation {
 /// Everything the tray reflects.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TrayStatus {
+    pub update_available: bool,
     pub recording: Recording,
     pub dictation: Dictation,
     /// Problems with the registered shortcuts, as Danish messages.
@@ -155,7 +166,14 @@ impl TrayStatus {
                 _ => label("Diktér", false),
             },
             MenuEntry::Ask => label("Spørg (kommer senere)", false),
-            MenuEntry::About => label(tingskriver_core::strings::ABOUT, true),
+            MenuEntry::About => label(
+                if self.update_available {
+                    "Om Tingskriver · Opdatering klar"
+                } else {
+                    tingskriver_core::strings::ABOUT
+                },
+                true,
+            ),
             MenuEntry::Open => label("Åbn Tingskriver", true),
             MenuEntry::Quit => label("Afslut", true),
         }

@@ -35,6 +35,13 @@ pub const HISTORY_CHANGED_EVENT: &str = "dictation-history-changed";
 
 static SERVICE: OnceLock<Arc<Service>> = OnceLock::new();
 static DICTATING: AtomicBool = AtomicBool::new(false);
+// Serialize microphone starts against the final updater hand-off.
+static UPDATE_GATE: Mutex<()> = Mutex::new(());
+
+pub fn block_for_update() -> Option<std::sync::MutexGuard<'static, ()>> {
+    let guard = UPDATE_GATE.lock().ok()?;
+    if is_dictating() { None } else { Some(guard) }
+}
 
 /// True while the dictation microphone is open. Meeting code can use this to
 /// keep dictation speech out of the meeting's microphone track.
@@ -460,6 +467,7 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant, Optio
         for action in actions {
             match action {
                 GestureAction::Start => {
+                    let Ok(_update_guard) = UPDATE_GATE.lock() else { continue; };
                     if session.is_some() {
                         continue;
                     }

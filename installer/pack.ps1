@@ -82,7 +82,13 @@ $vpkArgs = @(
   "--shortcuts", "Desktop,StartMenuRoot",
   "--noPortable"
 )
-if ($ReleaseNotes) { $vpkArgs += @("--releaseNotes", (Resolve-Path $ReleaseNotes).Path) }
+$notesText = if ($ReleaseNotes) { [IO.File]::ReadAllText((Resolve-Path $ReleaseNotes).Path) } else { "" }
+if ($notesText -notmatch '(?m)^Release-Date: ') {
+  $notesText = "Release-Date: $([DateTime]::UtcNow.ToString('yyyy-MM-dd'))`n$notesText"
+}
+$notesPath = Join-Path $OutputDir "release-notes.md"
+[IO.File]::WriteAllText($notesPath, $notesText, [Text.UTF8Encoding]::new($false))
+$vpkArgs += @("--releaseNotes", $notesPath)
 if ($SkipVeloAppCheck) { $vpkArgs += "--skipVeloAppCheck" }
 
 Write-Host "vpk $($vpkArgs -join ' ')"

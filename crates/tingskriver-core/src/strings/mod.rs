@@ -7,6 +7,40 @@ macro_rules! catalogue {
 }
 
 catalogue! {
+    UPDATE_DETAILS = "Størrelse: {size} · Udgivet: {date}";
+    UPDATE_NETWORK_FAILED = "Ingen forbindelse eller adgang til opdateringsfeedet. Kontrollér netværket og prøv igen.";
+    UPDATE_DISK_FULL = "Der er ikke plads til opdateringen. Frigør diskplads, og prøv igen.";
+    UPDATE_ACCESS_DENIED = "Tingskriver har ikke adgang til at gemme opdateringen. Kontrollér mappens rettigheder.";
+    UPDATE_CHECK = "Søg efter opdateringer";
+    UPDATE_DOWNLOAD = "Hent og installér";
+    UPDATE_RESTART = "Genstart nu";
+    UPDATE_LATER = "Genstart senere";
+    UPDATE_IDLE = "Ingen ny opdatering fundet.";
+    UPDATE_CHECKING = "Søger efter opdateringer …";
+    UPDATE_AVAILABLE = "Version {version} kan hentes.";
+    UPDATE_PROGRESS = "Henter version {version}: {percent} %";
+    UPDATE_READY = "Version {version} er klar til genstart. Installeres ved næste start.";
+    UPDATE_BLOCKED_DOWNLOAD = "Afslut optagelsen eller dikteringen, og vælg Hent og installér igen.";
+    UPDATE_BLOCKED_RESTART = "Afslut optagelsen eller dikteringen, og vælg Genstart nu igen. Opdateringen er gemt.";
+    UPDATE_DISABLED = "Opdateringstjek er slået fra i Indstillinger.";
+    UPDATE_ENABLED_ON = "Automatisk opdateringstjek: Til";
+    UPDATE_ENABLED_OFF = "Automatisk opdateringstjek: Fra";
+    UPDATE_WEEKLY = "Hyppighed: Én gang om ugen";
+    UPDATE_DAILY = "Hyppighed: Højst én gang i døgnet";
+    UPDATE_PRIVACY = "Tjekker udgivelsesfeedet. Ingen telemetri. Hentning kræver dit valg på Om-siden.";
+    UPDATE_BUSY = "Optagelse eller diktering er i gang. Hentning og genstart venter.";
+    UPDATE_NO_NOTES = "Ingen ændringslog i feedet.";
+    UPDATE_NO_DATE = "Dato ikke oplyst i feedet";
+    UPDATE_SETTINGS_UNAVAILABLE = "Opdateringsindstillinger er ikke tilgængelige.";
+    UPDATE_SETTINGS_INVALID = "Kunne ikke læse opdateringsindstillinger. Intet tjek udføres.";
+    UPDATE_SETTINGS_FAILED = "Kunne ikke gemme opdateringsindstillinger.";
+    UPDATE_SETTINGS_MISSING = "Indstillinger er ikke tilgængelige.";
+    UPDATE_TIMESTAMP_FAILED = "Kunne ikke gemme tidspunkt for opdateringstjek. Intet tjek udføres.";
+    UPDATE_START_FAILED = "Kunne ikke starte opdateringstjek.";
+    UPDATE_VERIFY_FAILED = "Opdateringen kunne ikke verificeres. Hent den igen, eller kontakt support.";
+    UPDATE_FEED_EMPTY = "Feedet indeholder ingen opdateringer til denne build. Prøv igen senere.";
+    UPDATE_RECHECK = "Søg efter opdateringer igen.";
+    UPDATE_FAILED = "Kunne ikke hente opdateringen. Kontrollér netværk, adgang til feedet og ledig diskplads, og prøv igen.";
     ABOUT = "Om";
     ABOUT_BUILD = "Byggedato";
     ABOUT_CHANNEL = "Kanal";

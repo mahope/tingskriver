@@ -41,7 +41,7 @@ windows = { version = "0.61", features = [
 ] }
 # Installer hooks and updates from GitHub Releases (src/update.rs). Keep the
 # version equal to the vpk tool in .github/workflows/app-release.yml.
-velopack = "=1.2.161"
+velopack = { version = "=1.2.161", features = ["public-utils"] }
 
 [dev-dependencies]
 ttf-parser = "0.25"

@@ -47,7 +47,23 @@ A working upstream Meetily installation (exe and uninstaller still there) is lef
 
 ## Updates
 
-The app checks GitHub Releases 60 s after start and then every 6 hours (`update::start_background_checks`, only in an installed copy, only in the primary instance). The feed is the `releases.win.json` asset of each of the ten newest releases in the repo, joined; Velopack's GitHub source asks for ten (`per_page=10`) and only then drops pre-releases for a release build. A few Tauri releases in between do no harm, but if the newest Velopack release is not among the ten newest releases of any kind (or, for a release build, the newest stable Velopack release is not among them), the app cannot see it: it logs a warning and `update::status()` says `NoReleaseFound`, not "up to date". So keep fewer than ten Tauri or pre-releases between two Velopack releases until the move below, after which only Velopack releases are published. A fixed feed (a `releases.win.json` at a stable URL) would remove the limit and is worth it if the two release tracks keep running side by side. A newer version is downloaded in the background, as a delta package when the release has one for the installed version, otherwise as the full package. It is installed the next time the app starts as the only instance (`update::apply_pending_update`, after the single-instance check: Velopack's updater waits for the process to exit, installs and restarts the app with the same arguments, so a `--hidden` start stays hidden). A second launch, such as opening the window from the Start menu while the app runs in the tray, only hands over to the running instance and never applies the update, so a recording is never cut off. `update::status()` tells where it is, with a Danish label for a settings page.
+The installed primary instance checks GitHub Releases 60 seconds after startup
+and thereafter according to the persisted preference: daily by default (at most
+one automatic attempt per 24 hours), or weekly. Checks can be disabled entirely,
+including manual checks. Downloads require **Om → Hent og installér**; About
+shows progress and offers **Genstart nu** / **Genstart senere**. Settings and the
+tray About entry reflect update availability. Recording/dictation block download
+and restart actions; next-start application still happens before recording can
+start, after the single-instance check. Portable/development builds never check.
+See [the update guide](../docs/updates.md) for preferences, release-note metadata,
+privacy and the installed-Windows verification plan.
+
+The GitHub feed still joins `releases.win.json` from the ten newest repository
+releases. Stable builds filter pre-releases after that window. Keep fewer than
+ten Tauri or pre-releases between Velopack releases; an empty feed is an error,
+not “up to date”. Existing Velopack delta selection, package verification and
+next-start application are reused. A second launch hands over to the running
+instance and cannot apply an update while that instance records.
 
 Builds with a version suffix (`0.5.1-dev.1`) also see pre-releases; release builds only see releases. Auto-update only ever moves to a higher version.
 
@@ -76,7 +92,7 @@ Updates without publishing a release: build two versions (bump the workspace ver
 
 1. Run `Tingskriver-Setup.exe` of the older version as a normal user. No UAC prompt should appear. Check: `%LOCALAPPDATA%\TingskriverApp\current\tingskriver-app.exe` exists, Start menu and Desktop have "Tingskriver", `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` has `Tingskriver` with `--hidden`, and the log `%LOCALAPPDATA%\dk.mahoje.tingskriver\logs\tingskriver-app.log` has `installer install:` lines.
 2. Sign out and in: the app runs hidden (no window, process in Task Manager); starting it from the Start menu shows the window.
-3. Copy the newer version's `*-full.nupkg`, `*-delta.nupkg` and `releases.win.json` into `C:\feed` (with only the newer release's feed in the folder; the older full package is not needed). Set `setx TINGSKRIVER_UPDATE_FEED C:\feed`, start the app and wait a minute: the log shows `update: downloading <version> (delta)` and then `ReadyAtRestart`. Quit the app and start it again: it starts the new version (`Tingskriver <version> (GPUI) starting` in the log), and meetings and settings are still there. Remove the variable again with `reg delete HKCU\Environment /v TINGSKRIVER_UPDATE_FEED /f`.
+3. Copy the newer version's `*-full.nupkg`, `*-delta.nupkg` and `releases.win.json` into `C:\feed` (with only the newer release's feed in the folder; the older full package is not needed). Set `setx TINGSKRIVER_UPDATE_FEED C:\feed`, start the app, open About, choose **Søg efter opdateringer**, then **Hent og installér**: the log shows `update: downloading <version> (delta)` and then `Ready`. Quit the app and start it again: it starts the new version (`Tingskriver <version> (GPUI) starting` in the log), and meetings and settings are still there. Remove the variable again with `reg delete HKCU\Environment /v TINGSKRIVER_UPDATE_FEED /f`.
 4. Uninstall from Settings → Apps. `%LOCALAPPDATA%\TingskriverApp` and the Run value are gone; `%APPDATA%\dk.mahoje.tingskriver` and the `Tingskriver/…` entries in Credential Manager are still there.
 5. Leftovers: on a machine with the old Tauri 0.5.0-dev.0 install updated to a later Tauri build (`%LOCALAPPDATA%\Tingskriver\meetily.exe` next to `tingskriver.exe`), installing removes `meetily.exe` and shortcuts that pointed to it; the log lists each removal.
 

@@ -53,6 +53,7 @@ impl Shared {
 /// Current status from `probe` and `shared`.
 pub async fn read_status<P: Probe>(probe: &P, shared: &Shared) -> TrayStatus {
     TrayStatus {
+        update_available: crate::status::update_available(),
         recording: probe.recording().await,
         dictation: probe.dictation(),
         shortcut_problems: shared

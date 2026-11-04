@@ -9,7 +9,7 @@
 //! instance that is still running (and perhaps recording).
 //!
 //! [`start_background_checks`] looks for a newer release on GitHub shortly
-//! after start and then every few hours, and downloads it in the background
+//! after start according to persisted user preferences. Downloads require consent
 //! (a delta package when one exists). Nothing happens outside an installed
 //! copy: `cargo run` and portable copies never update themselves.
 
@@ -29,18 +29,14 @@ pub const FEED_ENV: &str = "TINGSKRIVER_UPDATE_FEED";
 /// The first check waits until startup is long done.
 pub const FIRST_CHECK_DELAY: Duration = Duration::from_secs(60);
 
-/// Between checks while the app runs (it often runs for days in the tray).
-pub const CHECK_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
-
-/// After a failed check (offline, GitHub rate limit).
-pub const RETRY_DELAY: Duration = Duration::from_secs(60 * 60);
-
 /// Where updates come from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Feed {
     /// GitHub Releases of [`REPO_URL`]; pre-releases only for builds that
     /// are pre-releases themselves (`0.5.1-dev.1`).
-    GitHub { prerelease: bool },
+    GitHub {
+        prerelease: bool,
+    },
     Folder(PathBuf),
     Http(String),
     Off,
@@ -73,73 +69,140 @@ pub fn is_installed_layout(exe: &Path, exists: impl Fn(&Path) -> bool) -> bool {
     let Some(current) = exe.parent() else {
         return false;
     };
-    let named_current = current.file_name().is_some_and(|name| name.eq_ignore_ascii_case("current"));
-    named_current && current.parent().is_some_and(|root| exists(&root.join("Update.exe")))
+    let named_current = current
+        .file_name()
+        .is_some_and(|name| name.eq_ignore_ascii_case("current"));
+    named_current
+        && current
+            .parent()
+            .is_some_and(|root| exists(&root.join("Update.exe")))
 }
 
-/// Where the updater is.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub enum UpdateStatus {
-    /// Reserved About-page slot until the update UI is connected (#170).
-    #[default]
-    Unavailable,
-    /// Not an installed copy, or updates are off.
-    Inactive,
-    Checking,
-    UpToDate,
-    /// The feed had no release of this app. On GitHub that also happens when
-    /// more than ten newer releases of other kinds (Tauri, pre-releases for
-    /// a release build) hide it (`installer/README.md`, "Updates").
-    NoReleaseFound,
-    Downloading { version: String },
-    /// Downloaded; installs at the next start.
-    ReadyAtRestart { version: String },
-    Failed { detail: String },
-}
-
-impl UpdateStatus {
-    /// Danish text for a settings or about page.
-    pub fn label(&self) -> String {
-        match self {
-            UpdateStatus::Unavailable => tingskriver_core::strings::ABOUT_UPDATES_UNAVAILABLE.to_string(),
-            UpdateStatus::Inactive => "Automatisk opdatering er slået fra for denne kopi.".to_string(),
-            UpdateStatus::Checking => "Søger efter opdateringer …".to_string(),
-            UpdateStatus::UpToDate => "Du har den nyeste version.".to_string(),
-            UpdateStatus::NoReleaseFound => {
-                "Fandt ingen udgivelser at opdatere fra. Tingskriver prøver igen senere.".to_string()
-            }
-            UpdateStatus::Downloading { version } => format!("Henter version {version} …"),
-            UpdateStatus::ReadyAtRestart { version } => {
-                format!("Version {version} er klar og installeres, næste gang Tingskriver starter.")
-            }
-            UpdateStatus::Failed { .. } => {
-                "Kunne ikke søge efter opdateringer. Tingskriver prøver igen senere.".to_string()
-            }
-        }
-    }
-
-    /// How long until the next check after this result.
-    pub fn next_check(&self) -> Option<Duration> {
-        match self {
-            UpdateStatus::Unavailable | UpdateStatus::Inactive | UpdateStatus::ReadyAtRestart { .. } => None,
-            UpdateStatus::Failed { .. } => Some(RETRY_DELAY),
-            _ => Some(CHECK_INTERVAL),
-        }
-    }
-}
+use std::sync::mpsc::{self, Sender};
+use std::sync::{Arc, OnceLock};
+use tingskriver_core::host::AppHost;
+pub use tingskriver_core::updates::State as UpdateStatus;
+use tingskriver_core::updates::{Effect, Event, Preferences};
+use tingskriver_host::Bridge;
 
 static STATUS: Mutex<UpdateStatus> = Mutex::new(UpdateStatus::Inactive);
+static BUSY: AtomicBool = AtomicBool::new(false);
 
-/// The updater's state now.
-pub fn status() -> UpdateStatus {
-    STATUS.lock().map(|s| s.clone()).unwrap_or(UpdateStatus::Inactive)
+pub fn busy() -> bool {
+    BUSY.load(Ordering::Relaxed)
 }
 
-#[cfg_attr(not(windows), allow(dead_code))]
+static BRIDGE: OnceLock<Arc<Bridge>> = OnceLock::new();
+static COMMANDS: OnceLock<Sender<Event>> = OnceLock::new();
+const STORE: &str = "updates.json";
+const KEY: &str = "preferences";
+
+pub fn status() -> UpdateStatus {
+    #[cfg(debug_assertions)]
+    if let Ok(name) = std::env::var("TINGSKRIVER_MOCK_UPDATE") {
+        if let Some(state) = mock_state(&name) {
+            return state;
+        }
+    }
+    STATUS.lock().map(|s| s.clone()).unwrap_or_default()
+}
+
 fn set_status(status: UpdateStatus) {
+    tingskriver_host::status::set_update_available(matches!(
+        status,
+        UpdateStatus::Available(_) | UpdateStatus::Ready(_)
+    ));
     if let Ok(mut current) = STATUS.lock() {
         *current = status;
     }
+}
+
+pub fn preferences() -> Result<Preferences, String> {
+    let bridge = BRIDGE
+        .get()
+        .ok_or(tingskriver_core::strings::UPDATE_SETTINGS_UNAVAILABLE)?;
+    match bridge.read_setting(STORE, KEY)? {
+        Some(value) => serde_json::from_value(value)
+            .map_err(|_| tingskriver_core::strings::UPDATE_SETTINGS_INVALID.into()),
+        None => Ok(Preferences::default()),
+    }
+}
+
+static SETTINGS_LOCK: Mutex<()> = Mutex::new(());
+
+pub fn save_preferences(prefs: &Preferences) {
+    let _guard = SETTINGS_LOCK.lock().unwrap();
+    let result = preferences().and_then(|current| {
+        write_preferences(&Preferences {
+            last_check: current.last_check,
+            ..prefs.clone()
+        })
+    });
+    if result.is_err() {
+        set_status(UpdateStatus::Error(
+            tingskriver_core::strings::UPDATE_SETTINGS_FAILED.into(),
+        ));
+    }
+}
+
+fn write_preferences(prefs: &Preferences) -> Result<(), String> {
+    BRIDGE
+        .get()
+        .ok_or(tingskriver_core::strings::UPDATE_SETTINGS_MISSING.to_string())?
+        .write_setting(
+            STORE,
+            KEY,
+            serde_json::to_value(prefs).map_err(|e| e.to_string())?,
+        )
+}
+
+fn record_check() -> bool {
+    let _guard = SETTINGS_LOCK.lock().unwrap();
+    let result = preferences().and_then(|mut prefs| {
+        if !prefs.enabled {
+            return Ok(false);
+        }
+        prefs.last_check = Some(now());
+        write_preferences(&prefs)?;
+        Ok(true)
+    });
+    match result {
+        Ok(allowed) => allowed,
+        Err(_) => {
+            set_status(UpdateStatus::Error(
+                tingskriver_core::strings::UPDATE_TIMESTAMP_FAILED.into(),
+            ));
+            false
+        }
+    }
+}
+
+pub fn request(event: Event) {
+    if let Some(tx) = COMMANDS.get() {
+        let _ = tx.send(event);
+    }
+}
+
+pub fn mock_state(name: &str) -> Option<UpdateStatus> {
+    use tingskriver_core::updates::Release;
+    let release = Release {
+        version: "0.5.1".into(),
+        bytes: 41900000,
+        notes: "Bedre lyd og tydeligere opdateringer.".into(),
+        published: Some("2026-11-04".into()),
+    };
+    Some(match name {
+        "idle" => UpdateStatus::Idle,
+        "checking" => UpdateStatus::Checking,
+        "available" => UpdateStatus::Available(release),
+        "downloading" => UpdateStatus::Downloading(release, 42),
+        "ready" => UpdateStatus::Ready(release),
+        "error" => {
+            UpdateStatus::Error("Ingen forbindelse. Kontrollér netværket, og prøv igen.".into())
+        }
+        "blocked" => UpdateStatus::Blocked(release, false),
+        _ => return None,
+    })
 }
 
 fn installed_exe() -> Option<PathBuf> {
@@ -149,7 +212,8 @@ fn installed_exe() -> Option<PathBuf> {
 
 /// Is this start a Velopack hook (`--veloapp-install 0.5.1` and so on)?
 pub fn is_hook_invocation(args: &[String]) -> bool {
-    args.first().is_some_and(|arg| arg.to_ascii_lowercase().starts_with("--veloapp-"))
+    args.first()
+        .is_some_and(|arg| arg.to_ascii_lowercase().starts_with("--veloapp-"))
 }
 
 /// Set when Velopack restarted the app right after applying an update.
@@ -204,37 +268,114 @@ pub fn apply_pending_update(primary: bool) {
 }
 
 /// Look for updates in the background while the app runs.
-pub fn start_background_checks() {
-    if installed_exe().is_none() {
-        log::info!("update: not an installed copy; automatic updates are off");
+pub fn start_background_checks(bridge: Arc<Bridge>, runtime: tokio::runtime::Handle) {
+    let _ = BRIDGE.set(bridge);
+    runtime.spawn(async {
+        loop {
+            BUSY.store(
+                tingskriver_core::audio::recording_commands::is_recording().await
+                    || tingskriver_core::dictation::is_dictating(),
+                Ordering::Relaxed,
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    });
+    if installed_exe().is_none() || !cfg!(windows) {
         return;
     }
-    let env = std::env::var(FEED_ENV).ok();
-    let feed = Feed::choose(env.as_deref(), crate::about::VERSION);
+    let feed = Feed::choose(
+        std::env::var(FEED_ENV).ok().as_deref(),
+        crate::about::VERSION,
+    );
     if feed == Feed::Off {
-        log::info!("update: turned off by {FEED_ENV}");
         return;
     }
-    log::info!("update: checking {feed:?}");
+    set_status(UpdateStatus::Idle);
+    let (tx, rx) = mpsc::channel();
+    let _ = COMMANDS.set(tx);
     let spawned = std::thread::Builder::new()
-        .name("tingskriver-update".to_string())
+        .name("tingskriver-update".into())
         .spawn(move || {
-            let mut delay = FIRST_CHECK_DELAY;
+            let mut first = true;
             loop {
-                std::thread::sleep(delay);
-                let status = platform::check_and_download(&feed);
-                log::info!("update: {status:?}");
-                let next = status.next_check();
-                set_status(status);
-                match next {
-                    Some(next) => delay = next,
-                    None => break,
+                let event = match rx.recv_timeout(if first {
+                    FIRST_CHECK_DELAY
+                } else {
+                    Duration::from_secs(60)
+                }) {
+                    Ok(event) => event,
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        first = false;
+                        match preferences() {
+                            Ok(prefs) if prefs.due(now()) => Event::Check,
+                            Ok(_) => continue,
+                            Err(message) => {
+                                set_status(UpdateStatus::Error(message));
+                                continue;
+                            }
+                        }
+                    }
+                    Err(_) => break,
+                };
+                let prefs = match preferences() {
+                    Ok(prefs) => prefs,
+                    Err(message) => {
+                        set_status(UpdateStatus::Error(message));
+                        continue;
+                    }
+                };
+                let busy = runtime
+                    .block_on(tingskriver_core::audio::recording_commands::is_recording())
+                    || tingskriver_core::dictation::is_dictating();
+                let (next, effect) =
+                    tingskriver_core::updates::transition(&status(), event, prefs.enabled, busy);
+                set_status(next);
+                match effect {
+                    Effect::Check => {
+                        if record_check() {
+                            set_status(platform::check(&feed));
+                        }
+                    }
+                    Effect::Download => set_status(platform::download(&feed)),
+                    Effect::Restart => {
+                        // Block new meeting starts under core's lifecycle lock.
+                        if runtime.block_on(
+                            tingskriver_core::audio::recording_commands::block_recordings_if_idle(),
+                        ) {
+                            if let Some(_guard) =
+                                tingskriver_core::dictation::service::block_for_update()
+                            {
+                                platform::apply_pending(
+                                    &std::env::args().skip(1).collect::<Vec<_>>(),
+                                );
+                            } else {
+                                if let Some(r) = status().release() {
+                                    set_status(UpdateStatus::Blocked(r.clone(), true));
+                                }
+                            }
+                            tingskriver_core::audio::recording_commands::unblock_recordings();
+                        } else {
+                            if let Some(r) = status().release() {
+                                set_status(UpdateStatus::Blocked(r.clone(), true));
+                            }
+                        }
+                    }
+                    Effect::None => {}
                 }
             }
         });
-    if let Err(e) = spawned {
-        log::warn!("update: could not start the update thread: {e}");
+    if spawned.is_err() {
+        set_status(UpdateStatus::Error(
+            tingskriver_core::strings::UPDATE_START_FAILED.into(),
+        ));
     }
+}
+
+fn now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 #[cfg(windows)]
@@ -243,7 +384,7 @@ mod platform {
 
     use std::sync::atomic::Ordering;
 
-    use velopack::sources::{FileSource, GithubSource, HttpSource, NoneSource};
+    use velopack::sources::{FileSource, GithubSource, HttpSource, NoneSource, UpdateSource};
     use velopack::{UpdateCheck, UpdateManager, VelopackApp};
 
     use super::{set_status, Feed, UpdateStatus, REPO_URL, RESTARTED_AFTER_UPDATE};
@@ -261,11 +402,17 @@ mod platform {
             .set_auto_apply_on_startup(false)
             .on_after_install_fast_callback(move |version| {
                 log::info!("installer: installed {version}");
-                log_report("install", tingskriver_core::install::after_install(&install_exe));
+                log_report(
+                    "install",
+                    tingskriver_core::install::after_install(&install_exe),
+                );
             })
             .on_after_update_fast_callback(move |version| {
                 log::info!("installer: updated to {version}");
-                log_report("update", tingskriver_core::install::after_update(&update_exe));
+                log_report(
+                    "update",
+                    tingskriver_core::install::after_update(&update_exe),
+                );
             })
             .on_before_uninstall_fast_callback(|version| {
                 log::info!("installer: uninstalling {version}");
@@ -293,49 +440,136 @@ mod platform {
         // Exits the process when the updater starts.
         if let Err(e) = manager.apply_updates_and_restart_with_args(&pending, args) {
             log::warn!("update: could not apply {}: {e}", pending.Version);
+            set_status(failed(e));
+        }
+    }
+
+    #[derive(Clone)]
+    struct PrivateHttpSource {
+        inner: HttpSource,
+        url: String,
+    }
+
+    impl UpdateSource for PrivateHttpSource {
+        fn get_release_feed(
+            &self,
+            channel: &str,
+            _app: &velopack::bundle::Manifest,
+            _staged_user_id: &str,
+        ) -> Result<velopack::VelopackAssetFeed, velopack::Error> {
+            // The standard HTTP source adds a persistent installation identifier.
+            let url = format!("{}/releases.{channel}.json", self.url.trim_end_matches('/'));
+            let json = velopack::download::download_url_as_string(&url, None)?;
+            Ok(serde_json::from_str(&json)?)
+        }
+
+        fn download_release_entry(
+            &self,
+            asset: &velopack::VelopackAsset,
+            path: &std::path::Path,
+            progress: Option<std::sync::mpsc::Sender<i16>>,
+        ) -> Result<(), velopack::Error> {
+            self.inner.download_release_entry(asset, path, progress)
         }
     }
 
     fn manager(feed: &Feed) -> Result<UpdateManager, velopack::Error> {
         match feed {
-            Feed::GitHub { prerelease } => UpdateManager::new(GithubSource::new(REPO_URL, None, *prerelease), None, None),
+            Feed::GitHub { prerelease } => {
+                UpdateManager::new(GithubSource::new(REPO_URL, None, *prerelease), None, None)
+            }
             Feed::Folder(dir) => UpdateManager::new(FileSource::new(dir), None, None),
-            Feed::Http(url) => UpdateManager::new(HttpSource::new(url), None, None),
+            Feed::Http(url) => UpdateManager::new(
+                PrivateHttpSource {
+                    inner: HttpSource::new(url),
+                    url: url.clone(),
+                },
+                None,
+                None,
+            ),
             Feed::Off => Err(velopack::Error::Other("updates are off".to_string())),
         }
     }
 
-    pub fn check_and_download(feed: &Feed) -> UpdateStatus {
-        let failed = |e: velopack::Error| UpdateStatus::Failed { detail: e.to_string() };
+    static PENDING: std::sync::Mutex<Option<velopack::UpdateInfo>> = std::sync::Mutex::new(None);
+
+    fn failed(error: velopack::Error) -> UpdateStatus {
+        // Do not put feed URLs, paths or response bodies into the UI.
+        let detail = match &error {
+            velopack::Error::Network(_) => tingskriver_core::strings::UPDATE_NETWORK_FAILED,
+            velopack::Error::Io(e) if matches!(e.raw_os_error(), Some(112 | 28)) => {
+                tingskriver_core::strings::UPDATE_DISK_FULL
+            }
+            velopack::Error::Io(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                tingskriver_core::strings::UPDATE_ACCESS_DENIED
+            }
+            velopack::Error::SizeInvalid(..) | velopack::Error::ChecksumInvalid(..) => {
+                tingskriver_core::strings::UPDATE_VERIFY_FAILED
+            }
+            _ => tingskriver_core::strings::UPDATE_FAILED,
+        };
+        UpdateStatus::Error(detail.into())
+    }
+
+    fn release(asset: &velopack::VelopackAsset) -> tingskriver_core::updates::Release {
+        let (notes, published) = tingskriver_core::updates::release_notes(&asset.NotesMarkdown);
+        tingskriver_core::updates::Release {
+            version: asset.Version.clone(),
+            bytes: asset.Size,
+            notes,
+            published,
+        }
+    }
+
+    pub fn check(feed: &Feed) -> UpdateStatus {
         let manager = match manager(feed) {
-            Ok(manager) => manager,
+            Ok(m) => m,
             Err(e) => return failed(e),
         };
         if let Some(pending) = manager.get_update_pending_restart() {
-            return UpdateStatus::ReadyAtRestart {
-                version: pending.Version,
-            };
+            return UpdateStatus::Ready(release(&pending));
         }
-        set_status(UpdateStatus::Checking);
-        let update = match manager.check_for_updates() {
-            Ok(UpdateCheck::UpdateAvailable(update)) => update,
-            Ok(UpdateCheck::NoUpdateAvailable) => return UpdateStatus::UpToDate,
-            Ok(UpdateCheck::RemoteIsEmpty) => {
-                log::warn!("update: the feed has no release of this app; newer releases of other kinds may hide it");
-                return UpdateStatus::NoReleaseFound;
+        match manager.check_for_updates() {
+            Ok(UpdateCheck::UpdateAvailable(update)) => {
+                let state = UpdateStatus::Available(release(&update.TargetFullRelease));
+                *PENDING.lock().unwrap() = Some(update);
+                state
             }
-            Err(e) => return failed(e),
-        };
-        let version = update.TargetFullRelease.Version.clone();
-        let kind = if update.DeltasToTarget.is_empty() { "full" } else { "delta" };
-        log::info!("update: downloading {version} ({kind})");
-        set_status(UpdateStatus::Downloading {
-            version: version.clone(),
-        });
-        match manager.download_updates(&update, None) {
-            Ok(()) => UpdateStatus::ReadyAtRestart { version },
+            Ok(UpdateCheck::NoUpdateAvailable) => UpdateStatus::Idle,
+            Ok(UpdateCheck::RemoteIsEmpty) => {
+                UpdateStatus::Error(tingskriver_core::strings::UPDATE_FEED_EMPTY.into())
+            }
             Err(e) => failed(e),
         }
+    }
+
+    pub fn download(feed: &Feed) -> UpdateStatus {
+        let manager = match manager(feed) {
+            Ok(m) => m,
+            Err(e) => return failed(e),
+        };
+        let pending = PENDING.lock().unwrap().clone();
+        let Some(update) = pending else {
+            return UpdateStatus::Error(tingskriver_core::strings::UPDATE_RECHECK.into());
+        };
+        let info = release(&update.TargetFullRelease);
+        let (tx, rx) = std::sync::mpsc::channel();
+        // Velopack sends download progress from its synchronous operation.
+        std::thread::scope(|scope| {
+            let progress_info = info.clone();
+            scope.spawn(move || {
+                for percent in rx {
+                    set_status(UpdateStatus::Downloading(
+                        progress_info.clone(),
+                        percent.clamp(0i16, 100) as u8,
+                    ));
+                }
+            });
+            match manager.download_updates(&update, Some(tx)) {
+                Ok(()) => UpdateStatus::Ready(info),
+                Err(e) => failed(e),
+            }
+        })
     }
 }
 
@@ -347,8 +581,11 @@ mod platform {
 
     pub fn apply_pending(_args: &[String]) {}
 
-    pub fn check_and_download(_feed: &Feed) -> UpdateStatus {
+    pub fn check(_feed: &Feed) -> UpdateStatus {
         UpdateStatus::Inactive
+    }
+    pub fn download(feed: &Feed) -> UpdateStatus {
+        check(feed)
     }
 }
 
@@ -362,8 +599,14 @@ mod tests {
             Feed::choose(None, "0.5.1-dev.1"),
             Feed::GitHub { prerelease: true }
         );
-        assert_eq!(Feed::choose(None, "0.5.1"), Feed::GitHub { prerelease: false });
-        assert_eq!(Feed::choose(Some("  "), "0.5.1"), Feed::GitHub { prerelease: false });
+        assert_eq!(
+            Feed::choose(None, "0.5.1"),
+            Feed::GitHub { prerelease: false }
+        );
+        assert_eq!(
+            Feed::choose(Some("  "), "0.5.1"),
+            Feed::GitHub { prerelease: false }
+        );
         assert!(!is_prerelease("0.5.1+build-7"));
     }
 
@@ -388,9 +631,14 @@ mod tests {
         let installed = root.join("current").join("tingskriver-app.exe");
         assert!(is_installed_layout(&installed, |p| p == update_exe));
         assert!(!is_installed_layout(&installed, |_| false));
-        let dev = PathBuf::from("target").join("release").join("tingskriver-app.exe");
+        let dev = PathBuf::from("target")
+            .join("release")
+            .join("tingskriver-app.exe");
         assert!(!is_installed_layout(&dev, |_| true));
-        assert!(!is_installed_layout(Path::new("tingskriver-app.exe"), |_| true));
+        assert!(!is_installed_layout(
+            Path::new("tingskriver-app.exe"),
+            |_| true
+        ));
     }
 
     #[test]
@@ -409,23 +657,5 @@ mod tests {
         assert!(!should_apply_pending(true, false, false));
         assert!(!should_apply_pending(false, true, false));
         assert!(!should_apply_pending(true, true, true));
-    }
-
-    #[test]
-    fn checks_stop_once_an_update_waits_for_restart() {
-        let ready = UpdateStatus::ReadyAtRestart {
-            version: "0.5.2".to_string(),
-        };
-        assert_eq!(ready.next_check(), None);
-        assert_eq!(UpdateStatus::Inactive.next_check(), None);
-        assert_eq!(UpdateStatus::UpToDate.next_check(), Some(CHECK_INTERVAL));
-        assert_eq!(UpdateStatus::NoReleaseFound.next_check(), Some(CHECK_INTERVAL));
-        assert_ne!(UpdateStatus::NoReleaseFound.label(), UpdateStatus::UpToDate.label());
-        assert_eq!(
-            UpdateStatus::Failed { detail: "offline".into() }.next_check(),
-            Some(RETRY_DELAY)
-        );
-        assert!(ready.label().contains("0.5.2"));
-        assert!(UpdateStatus::Failed { detail: "x".into() }.label().starts_with("Kunne ikke"));
     }
 }

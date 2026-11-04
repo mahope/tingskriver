@@ -90,7 +90,6 @@ pub fn run() {
     };
     // Only the sole instance may replace the installed files.
     update::apply_pending_update(messages.is_some());
-    update::start_background_checks();
 
     // Tray, shortcuts and dictation, on their own threads. Normally only the
     // first instance gets here, so there is one keyboard hook per user; if
@@ -108,6 +107,11 @@ pub fn run() {
         }
     };
     let bridge = host.as_ref().map(|h| h.bridge().clone());
+    if let Some(bridge) = &bridge {
+        if messages.is_some() {
+            update::start_background_checks(bridge.clone(), runtime.handle().clone());
+        }
+    }
     // With a tray icon, closing the window hides the app to the tray.
     let keep_running = host.as_ref().is_some_and(Host::has_tray);
 

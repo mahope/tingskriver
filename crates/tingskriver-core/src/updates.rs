@@ -36,6 +36,24 @@ pub struct Release {
     pub published: Option<String>,
 }
 
+impl Release {
+    pub fn size_label(&self) -> String {
+        format!("{:.1} MB", self.bytes as f64 / 1_000_000.).replace('.', ",")
+    }
+
+    pub fn date_label(&self) -> String {
+        let Some(date) = &self.published else {
+            return crate::strings::UPDATE_NO_DATE.into();
+        };
+        let parts: Vec<_> = date.split('-').collect();
+        if parts.len() == 3 && parts[0].len() == 4 && parts[1].len() == 2 && parts[2].len() == 2 {
+            format!("{}.{}.{}", parts[2], parts[1], parts[0])
+        } else {
+            date.clone()
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum State {
     #[default]
@@ -46,7 +64,7 @@ pub enum State {
     Downloading(Release, u8),
     Ready(Release),
     Error(String),
-    Blocked(Release),
+    Blocked(Release, bool),
 }
 
 #[derive(Clone, Debug)]
@@ -81,9 +99,9 @@ pub fn transition(state: &State, event: Event, enabled: bool, busy: bool) -> (St
         }
         (S::Checking, Event::Found(Some(release))) => (S::Available(release), E::None),
         (S::Checking, Event::Found(None)) => (S::Idle, E::None),
-        (S::Available(r) | S::Blocked(r), Event::Download) if enabled => {
+        (S::Available(r) | S::Blocked(r, false), Event::Download) if enabled => {
             if busy {
-                (S::Blocked(r.clone()), E::None)
+                (S::Blocked(r.clone(), false), E::None)
             } else {
                 (S::Downloading(r.clone(), 0), E::Download)
             }
@@ -92,9 +110,9 @@ pub fn transition(state: &State, event: Event, enabled: bool, busy: bool) -> (St
             (S::Downloading(r.clone(), n.min(100)), E::None)
         }
         (S::Downloading(r, _), Event::Downloaded) => (S::Ready(r.clone()), E::None),
-        (S::Ready(r), Event::Restart) => {
+        (S::Ready(r) | S::Blocked(r, true), Event::Restart) => {
             if busy {
-                (S::Ready(r.clone()), E::None)
+                (S::Blocked(r.clone(), true), E::None)
             } else {
                 (state.clone(), E::Restart)
             }
@@ -107,25 +125,23 @@ pub fn transition(state: &State, event: Event, enabled: bool, busy: bool) -> (St
 impl State {
     pub fn label(&self) -> String {
         match self {
-            Self::Inactive => "Opdateringer er ikke aktiveret i denne build".into(),
-            Self::Idle => "Ingen ny opdatering fundet.".into(),
-            Self::Checking => "Søger efter opdateringer …".into(),
-            Self::Available(r) => format!("Version {} kan hentes.", r.version),
-            Self::Downloading(r, n) => format!("Henter version {}: {n} %", r.version),
-            Self::Ready(r) => format!(
-                "Version {} er klar til genstart. Installeres ved næste start.",
-                r.version
-            ),
-            Self::Blocked(_) => {
-                "Afslut optagelsen eller dikteringen, og vælg Hent og installér igen.".into()
-            }
+            Self::Inactive => crate::strings::ABOUT_UPDATES_UNAVAILABLE.into(),
+            Self::Idle => crate::strings::UPDATE_IDLE.into(),
+            Self::Checking => crate::strings::UPDATE_CHECKING.into(),
+            Self::Available(r) => crate::strings::UPDATE_AVAILABLE.replace("{version}", &r.version),
+            Self::Downloading(r, n) => crate::strings::UPDATE_PROGRESS
+                .replace("{version}", &r.version)
+                .replace("{percent}", &n.to_string()),
+            Self::Ready(r) => crate::strings::UPDATE_READY.replace("{version}", &r.version),
+            Self::Blocked(_, true) => crate::strings::UPDATE_BLOCKED_RESTART.into(),
+            Self::Blocked(_, false) => crate::strings::UPDATE_BLOCKED_DOWNLOAD.into(),
             Self::Error(message) => message.clone(),
         }
     }
 
     pub fn release(&self) -> Option<&Release> {
         match self {
-            Self::Available(r) | Self::Downloading(r, _) | Self::Ready(r) | Self::Blocked(r) => {
+            Self::Available(r) | Self::Downloading(r, _) | Self::Ready(r) | Self::Blocked(r, _) => {
                 Some(r)
             }
             _ => None,
@@ -216,7 +232,7 @@ mod tests {
             let busy = recording || dictating;
             assert_eq!(
                 transition(&State::Available(r.clone()), Event::Download, true, busy),
-                (State::Blocked(r.clone()), Effect::None)
+                (State::Blocked(r.clone(), false), Effect::None)
             );
             assert_eq!(
                 transition(&State::Ready(r.clone()), Event::Restart, true, busy).1,
@@ -224,7 +240,13 @@ mod tests {
             );
         }
         assert_eq!(
-            transition(&State::Blocked(r.clone()), Event::Download, true, false).1,
+            transition(
+                &State::Blocked(r.clone(), false),
+                Event::Download,
+                true,
+                false
+            )
+            .1,
             Effect::Download
         );
         assert_eq!(
