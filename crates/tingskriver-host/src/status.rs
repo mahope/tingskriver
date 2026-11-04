@@ -54,16 +54,30 @@ pub enum MenuEntry {
     Dictate,
     Ask,
     Open,
+    About,
     Quit,
 }
 
 impl MenuEntry {
+    /// Stable native menu identity, checked on every platform.
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::NewRecording => "tingskriver.new-recording",
+            Self::Dictate => "tingskriver.dictate",
+            Self::Ask => "tingskriver.ask",
+            Self::Open => "tingskriver.open",
+            Self::About => "tingskriver.about",
+            Self::Quit => "tingskriver.quit",
+        }
+    }
+
     /// Menu order; a separator goes before `Open`.
-    pub const ALL: [MenuEntry; 5] = [
+    pub const ALL: [MenuEntry; 6] = [
         MenuEntry::NewRecording,
         MenuEntry::Dictate,
         MenuEntry::Ask,
         MenuEntry::Open,
+        MenuEntry::About,
         MenuEntry::Quit,
     ];
 }
@@ -141,6 +155,7 @@ impl TrayStatus {
                 _ => label("Diktér", false),
             },
             MenuEntry::Ask => label("Spørg (kommer senere)", false),
+            MenuEntry::About => label(tingskriver_core::strings::ABOUT, true),
             MenuEntry::Open => label("Åbn Tingskriver", true),
             MenuEntry::Quit => label("Afslut", true),
         }
@@ -160,6 +175,14 @@ fn truncate(text: &str, max_chars: usize) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn native_menu_ids_are_unique_and_include_about() {
+        let ids: std::collections::HashSet<_> =
+            MenuEntry::ALL.iter().map(|entry| entry.id()).collect();
+        assert_eq!(ids.len(), MenuEntry::ALL.len());
+        assert!(ids.contains("tingskriver.about"));
+    }
+
     fn ready() -> TrayStatus {
         TrayStatus {
             dictation: Dictation::Ready("Ctrl+Win".into()),
@@ -176,6 +199,11 @@ mod tests {
         assert!(s.menu(MenuEntry::Dictate).enabled);
         assert!(!s.menu(MenuEntry::Ask).enabled);
         assert_eq!(s.menu(MenuEntry::Open).text, "Åbn Tingskriver");
+        assert_eq!(
+            s.menu(MenuEntry::About).text,
+            tingskriver_core::strings::ABOUT
+        );
+        assert!(s.menu(MenuEntry::About).enabled);
         assert_eq!(s.menu(MenuEntry::Quit).text, "Afslut");
     }
 

@@ -7,6 +7,27 @@ macro_rules! catalogue {
 }
 
 catalogue! {
+    ABOUT = "Om";
+    ABOUT_BUILD = "Byggedato";
+    ABOUT_CHANNEL = "Kanal";
+    ABOUT_STABLE = "stabil";
+    ABOUT_BETA = "beta";
+    ABOUT_PLATFORM = "Platform";
+    ABOUT_UPDATES = "Opdateringer";
+    ABOUT_UPDATES_UNAVAILABLE = "Opdateringer er ikke aktiveret i denne build";
+    ABOUT_COPYING = "Kopierer diagnoseoplysninger …";
+    ABOUT_COPIED = "Diagnoseoplysningerne er kopieret.";
+    ABOUT_COPY_FAILED = "Kunne ikke kopiere diagnoseoplysninger. Prøv igen.";
+    ABOUT_COPY = "Kopiér diagnoseoplysninger";
+    ABOUT_GPU = "GPU-status";
+    ABOUT_COMMIT = "Commit";
+    ABOUT_MODELS = "Whisper: {whisper}\nParakeet: {parakeet}";
+    ABOUT_MODEL_NOT_LOADED = "ikke indlæst";
+    ABOUT_LICENSE = "Licens";
+    ABOUT_THIRD_PARTY = "Tredjepartslicenser";
+    ABOUT_NOTICE = "Tredjepartsattribution";
+    ABOUT_PRIVACY = "Privatlivspolitik";
+    ABOUT_CONTACT = "Kontakt: Mahope (mahoje.dk)";
     APP_NAME = "Tingskriver";
     MEETINGS = "Møder";
     DICTATION = "Diktering";
@@ -94,6 +115,12 @@ parameterized! {
     data_dir => DATA_DIR;
     database => DATABASE;
     log_file => LOG_FILE;
+}
+
+pub fn about_models(whisper: &str, parakeet: &str) -> String {
+    ABOUT_MODELS
+        .replace("{whisper}", whisper)
+        .replace("{parakeet}", parakeet)
 }
 
 pub fn measure_model_label(provider: &str, model: &str, location: &str) -> String {

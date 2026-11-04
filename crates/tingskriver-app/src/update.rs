@@ -78,8 +78,11 @@ pub fn is_installed_layout(exe: &Path, exists: impl Fn(&Path) -> bool) -> bool {
 }
 
 /// Where the updater is.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum UpdateStatus {
+    /// Reserved About-page slot until the update UI is connected (#170).
+    #[default]
+    Unavailable,
     /// Not an installed copy, or updates are off.
     Inactive,
     Checking,
@@ -98,6 +101,7 @@ impl UpdateStatus {
     /// Danish text for a settings or about page.
     pub fn label(&self) -> String {
         match self {
+            UpdateStatus::Unavailable => tingskriver_core::strings::ABOUT_UPDATES_UNAVAILABLE.to_string(),
             UpdateStatus::Inactive => "Automatisk opdatering er slået fra for denne kopi.".to_string(),
             UpdateStatus::Checking => "Søger efter opdateringer …".to_string(),
             UpdateStatus::UpToDate => "Du har den nyeste version.".to_string(),
@@ -117,7 +121,7 @@ impl UpdateStatus {
     /// How long until the next check after this result.
     pub fn next_check(&self) -> Option<Duration> {
         match self {
-            UpdateStatus::Inactive | UpdateStatus::ReadyAtRestart { .. } => None,
+            UpdateStatus::Unavailable | UpdateStatus::Inactive | UpdateStatus::ReadyAtRestart { .. } => None,
             UpdateStatus::Failed { .. } => Some(RETRY_DELAY),
             _ => Some(CHECK_INTERVAL),
         }
@@ -206,7 +210,7 @@ pub fn start_background_checks() {
         return;
     }
     let env = std::env::var(FEED_ENV).ok();
-    let feed = Feed::choose(env.as_deref(), env!("CARGO_PKG_VERSION"));
+    let feed = Feed::choose(env.as_deref(), crate::about::VERSION);
     if feed == Feed::Off {
         log::info!("update: turned off by {FEED_ENV}");
         return;

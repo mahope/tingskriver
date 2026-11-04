@@ -10,6 +10,7 @@
 //! `tingskriver-host`, outside GPUI's event loop; the app only answers its
 //! requests (show the window, quit).
 
+pub mod about;
 pub mod args;
 pub mod assets;
 pub mod crash;
@@ -42,7 +43,7 @@ pub fn run() {
     let args = StartupArgs::from_env();
     log::info!(
         "Tingskriver {} (GPUI) starting{}; log file: {}",
-        env!("CARGO_PKG_VERSION"),
+        about::VERSION,
         if args.hidden { " hidden" } else { "" },
         log_path
             .as_ref()
@@ -168,6 +169,7 @@ pub fn run() {
                 cx.spawn(async move |cx| {
                     while let Some(request) = requests.recv().await {
                         match request {
+                            Request::ShowAbout => cx.update(ui::show_about),
                             Request::ShowWindow => cx.update(ui::show_main_window),
                             // Meetings and the assistant have no GPUI page
                             // yet; open the window where they will be.
