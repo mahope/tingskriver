@@ -6,6 +6,8 @@
 #![deny(clippy::disallowed_types)]
 #![deny(clippy::disallowed_methods)]
 
+pub mod updates;
+
 // Performance optimization: Conditional logging macros for hot paths
 #[cfg(debug_assertions)]
 macro_rules! perf_debug {
