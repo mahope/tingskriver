@@ -40,6 +40,7 @@ pub mod calendar;
 pub mod config;
 pub mod crash_dumps;
 pub mod database;
+pub mod delivery;
 pub mod diagnose;
 pub mod dictation;
 pub mod fake_device;

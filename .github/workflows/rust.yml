@@ -116,7 +116,7 @@ jobs:
       - name: Install system libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libasound2-dev cmake clang ffmpeg
+          sudo apt-get install -y --no-install-recommends libasound2-dev cmake clang ffmpeg python3-jsonschema
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
@@ -142,6 +142,9 @@ jobs:
 
       - name: Test tingskriver-core
         run: .github/scripts/annotate-errors.sh cargo test --locked -p tingskriver-core
+
+      - name: Validate published delivery schema
+        run: /usr/bin/python3 scripts/tests/test_delivery_schema.py
 
       - name: Test recording soak verifier
         run: .github/scripts/annotate-errors.sh cargo test --locked -p tingskriver-core --example recording_soak
