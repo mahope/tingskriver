@@ -174,16 +174,6 @@ thread_local! {
     static STATE: RefCell<Option<State>> = const { RefCell::new(None) };
 }
 
-fn menu_id(entry: MenuEntry) -> &'static str {
-    match entry {
-        MenuEntry::NewRecording => "tingskriver.new-recording",
-        MenuEntry::Dictate => "tingskriver.dictate",
-        MenuEntry::Ask => "tingskriver.ask",
-        MenuEntry::Open => "tingskriver.open",
-        MenuEntry::Quit => "tingskriver.quit",
-    }
-}
-
 fn tray_icon(state: IconState) -> Option<Icon> {
     match Icon::from_rgba(icon::rgba(state), icon::SIZE, icon::SIZE) {
         Ok(icon) => Some(icon),
@@ -213,7 +203,7 @@ fn host_thread(
         MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
             if let Some(entry) = MenuEntry::ALL
                 .into_iter()
-                .find(|e| event.id.0 == menu_id(*e))
+                .find(|e| event.id.0 == e.id())
             {
                 menu_sink(Trigger::Menu(entry));
             }
@@ -239,7 +229,7 @@ fn host_thread(
             let _ = menu.append(&PredefinedMenuItem::separator());
         }
         let label = status.menu(entry);
-        let item = MenuItem::with_id(menu_id(entry), &label.text, label.enabled, None);
+        let item = MenuItem::with_id(entry.id(), &label.text, label.enabled, None);
         let _ = menu.append(&item);
         items.push((entry, item));
     }

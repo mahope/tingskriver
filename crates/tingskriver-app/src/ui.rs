@@ -471,80 +471,83 @@ impl Shell {
     }
 
     fn about_page(&self, cx: &mut Context<Self>) -> AnyElement {
-        let body = v_flex()
-            .gap(space::LG)
-            .child(paragraph(&crate::about::metadata(), cx))
-            .child(section_title(strings::ABOUT_UPDATES))
-            .child(paragraph(&crate::about::update_status().label(), cx))
-            .child(
-                Button::new("about-copy")
-                    .label(strings::ABOUT_COPY)
-                    .loading(self.diagnosis_status == Some(strings::ABOUT_COPYING))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.diagnosis_status = Some(strings::ABOUT_COPYING);
-                        cx.notify();
-                        let task = this
-                            .model
-                            .read(cx)
-                            .runtime
-                            .spawn(crate::about::diagnostics());
-                        cx.spawn(async move |this, cx| {
-                            let status = match task.await {
-                                Ok(report) => {
-                                    cx.update(|cx| {
-                                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(
-                                            report,
-                                        ))
-                                    });
-                                    strings::ABOUT_COPIED
-                                }
-                                Err(_) => strings::ABOUT_COPY_FAILED,
-                            };
-                            let _ = this.update(cx, |this, cx| {
-                                this.diagnosis_status = Some(status);
-                                cx.notify();
-                            });
-                        })
-                        .detach();
-                    })),
-            )
-            .when_some(self.diagnosis_status, |body, status| {
-                body.child(
-                    div()
-                        .id("about-copy-status")
-                        .role(gpui::Role::Status)
-                        .child(status),
+        let body =
+            v_flex()
+                .gap(space::LG)
+                .child(paragraph(&crate::about::metadata(), cx))
+                .child(section_title(strings::ABOUT_UPDATES))
+                .child(paragraph(&crate::about::update_status().label(), cx))
+                .child(
+                    Button::new("about-copy")
+                        .label(strings::ABOUT_COPY)
+                        .loading(self.diagnosis_status == Some(strings::ABOUT_COPYING))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.diagnosis_status = Some(strings::ABOUT_COPYING);
+                            cx.notify();
+                            let task = this
+                                .model
+                                .read(cx)
+                                .runtime
+                                .spawn(crate::about::diagnostics());
+                            cx.spawn(async move |this, cx| {
+                                let status = match task.await {
+                                    Ok(report) => {
+                                        cx.update(|cx| {
+                                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                                report,
+                                            ))
+                                        });
+                                        strings::ABOUT_COPIED
+                                    }
+                                    Err(_) => strings::ABOUT_COPY_FAILED,
+                                };
+                                let _ = this.update(cx, |this, cx| {
+                                    this.diagnosis_status = Some(status);
+                                    cx.notify();
+                                });
+                            })
+                            .detach();
+                        })),
                 )
-            })
-            .child(
-                Button::new("about-privacy")
-                    .label(strings::ABOUT_PRIVACY)
-                    .on_click(|_, _, cx| {
-                        cx.open_url(
-                            "https://github.com/mahope/tingskriver/blob/main/PRIVACY_POLICY.md",
-                        );
-                    }),
-            )
-            .child(
-                Button::new("about-contact")
-                    .label(strings::ABOUT_CONTACT)
-                    .on_click(|_, _, cx| {
-                        cx.open_url("https://mahoje.dk");
-                    }),
-            )
-            .children(crate::about::DOCUMENTS.iter().map(|(title, text)| {
-                v_flex().gap(space::SM).child(section_title(title)).child(
-                    div()
-                        .id(SharedString::from(format!("about-{title}")))
-                        .h(gpui::px(240.))
-                        .flex_shrink_0()
-                        .overflow_y_scroll()
-                        .tab_index(0)
-                        .role(gpui::Role::Document)
-                        .aria_label(*title)
-                        .child(paragraph(text, cx)),
+                .when_some(self.diagnosis_status, |body, status| {
+                    body.child(
+                        div()
+                            .id("about-copy-status")
+                            .role(gpui::Role::Status)
+                            .child(status),
+                    )
+                })
+                .child(
+                    Button::new("about-privacy")
+                        .label(strings::ABOUT_PRIVACY)
+                        .on_click(|_, _, cx| {
+                            cx.open_url(
+                                "https://github.com/mahope/tingskriver/blob/main/PRIVACY_POLICY.md",
+                            );
+                        }),
                 )
-            }));
+                .child(
+                    Button::new("about-contact")
+                        .label(strings::ABOUT_CONTACT)
+                        .on_click(|_, _, cx| {
+                            cx.open_url("https://mahoje.dk");
+                        }),
+                )
+                .children(crate::about::DOCUMENTS.iter().enumerate().map(
+                    |(index, (title, text))| {
+                        v_flex().gap(space::SM).child(section_title(title)).child(
+                            div()
+                                .id(("about-document", index))
+                                .h(gpui::px(240.))
+                                .flex_shrink_0()
+                                .overflow_y_scroll()
+                                .tab_index(0)
+                                .role(gpui::Role::Document)
+                                .aria_label(*title)
+                                .child(paragraph(text, cx)),
+                        )
+                    },
+                ));
         page(strings::ABOUT, None, body.into_any_element(), cx)
     }
 

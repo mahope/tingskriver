@@ -45,10 +45,12 @@ pub async fn diagnostics() -> String {
     let whisper = whisper_get_current_model().await.ok().flatten();
     let parakeet = parakeet_get_current_model().await.ok().flatten();
     format!(
-        "{}\nWhisper: {}\nParakeet: {}",
+        "{}\n{}",
         diagnostics_for(Some(HardwareProfile::detect().gpu_type)),
-        safe_model(whisper.as_deref()),
-        safe_model(parakeet.as_deref())
+        strings::about_models(
+            safe_model(whisper.as_deref()),
+            safe_model(parakeet.as_deref())
+        )
     )
 }
 

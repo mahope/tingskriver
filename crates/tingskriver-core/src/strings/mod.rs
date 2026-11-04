@@ -21,6 +21,7 @@ catalogue! {
     ABOUT_COPY = "Kopiér diagnoseoplysninger";
     ABOUT_GPU = "GPU-status";
     ABOUT_COMMIT = "Commit";
+    ABOUT_MODELS = "Whisper: {whisper}\nParakeet: {parakeet}";
     ABOUT_MODEL_NOT_LOADED = "ikke indlæst";
     ABOUT_LICENSE = "Licens";
     ABOUT_THIRD_PARTY = "Tredjepartslicenser";
@@ -114,6 +115,12 @@ parameterized! {
     data_dir => DATA_DIR;
     database => DATABASE;
     log_file => LOG_FILE;
+}
+
+pub fn about_models(whisper: &str, parakeet: &str) -> String {
+    ABOUT_MODELS
+        .replace("{whisper}", whisper)
+        .replace("{parakeet}", parakeet)
 }
 
 pub fn measure_model_label(provider: &str, model: &str, location: &str) -> String {

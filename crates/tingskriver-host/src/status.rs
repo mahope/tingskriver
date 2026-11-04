@@ -59,6 +59,18 @@ pub enum MenuEntry {
 }
 
 impl MenuEntry {
+    /// Stable native menu identity, checked on every platform.
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::NewRecording => "tingskriver.new-recording",
+            Self::Dictate => "tingskriver.dictate",
+            Self::Ask => "tingskriver.ask",
+            Self::Open => "tingskriver.open",
+            Self::About => "tingskriver.about",
+            Self::Quit => "tingskriver.quit",
+        }
+    }
+
     /// Menu order; a separator goes before `Open`.
     pub const ALL: [MenuEntry; 6] = [
         MenuEntry::NewRecording,
@@ -162,6 +174,14 @@ fn truncate(text: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_menu_ids_are_unique_and_include_about() {
+        let ids: std::collections::HashSet<_> =
+            MenuEntry::ALL.iter().map(|entry| entry.id()).collect();
+        assert_eq!(ids.len(), MenuEntry::ALL.len());
+        assert!(ids.contains("tingskriver.about"));
+    }
 
     fn ready() -> TrayStatus {
         TrayStatus {
