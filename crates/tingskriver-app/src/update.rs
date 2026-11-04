@@ -592,7 +592,7 @@ mod platform {
     #[cfg(test)]
     mod tests {
         use super::*;
-        use std::io::{Read, Write};
+        use std::io::{BufRead, Write};
 
         #[test]
         fn http_feed_omits_the_persistent_installation_identifier() {
@@ -603,9 +603,17 @@ mod platform {
                 stream
                     .set_read_timeout(Some(std::time::Duration::from_secs(5)))
                     .unwrap();
-                let mut request = [0; 4096];
-                let n = stream.read(&mut request).unwrap();
-                let request = String::from_utf8_lossy(&request[..n]);
+                let mut request = String::new();
+                let mut reader = std::io::BufReader::new(&mut stream);
+                loop {
+                    let mut line = String::new();
+                    assert!(reader.read_line(&mut line).unwrap() > 0);
+                    request.push_str(&line);
+                    if line == "\r\n" {
+                        break;
+                    }
+                }
+                drop(reader);
                 assert!(request.starts_with("GET /releases.win.json HTTP/1.1\r\n"));
                 assert!(!request.contains("private-test-id"));
                 assert!(!request.contains("stagingId"));
