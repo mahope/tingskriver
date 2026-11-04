@@ -89,6 +89,10 @@ static STATUS: Mutex<UpdateStatus> = Mutex::new(UpdateStatus::Inactive);
 static BUSY: AtomicBool = AtomicBool::new(false);
 
 pub fn busy() -> bool {
+    #[cfg(debug_assertions)]
+    if std::env::var("TINGSKRIVER_MOCK_UPDATE").is_ok_and(|state| state == "blocked") {
+        return true;
+    }
     BUSY.load(Ordering::Relaxed)
 }
 
@@ -110,7 +114,7 @@ pub fn status() -> UpdateStatus {
 fn set_status(status: UpdateStatus) {
     tingskriver_host::status::set_update_available(matches!(
         status,
-        UpdateStatus::Available(_) | UpdateStatus::Ready(_)
+        UpdateStatus::Available(_) | UpdateStatus::Ready(_) | UpdateStatus::Blocked(..)
     ));
     if let Ok(mut current) = STATUS.lock() {
         *current = status;
@@ -121,7 +125,10 @@ pub fn preferences() -> Result<Preferences, String> {
     let bridge = BRIDGE
         .get()
         .ok_or(tingskriver_core::strings::UPDATE_SETTINGS_UNAVAILABLE)?;
-    match bridge.read_setting(STORE, KEY)? {
+    match bridge
+        .read_setting(STORE, KEY)
+        .map_err(|_| tingskriver_core::strings::UPDATE_SETTINGS_INVALID.to_string())?
+    {
         Some(value) => serde_json::from_value(value)
             .map_err(|_| tingskriver_core::strings::UPDATE_SETTINGS_INVALID.into()),
         None => Ok(Preferences::default()),

@@ -7,6 +7,7 @@ macro_rules! catalogue {
 }
 
 catalogue! {
+    UPDATE_TRAY = "Om Tingskriver · Opdatering klar";
     UPDATE_DETAILS = "Størrelse: {size} · Udgivet: {date}";
     UPDATE_NETWORK_FAILED = "Ingen forbindelse eller adgang til opdateringsfeedet. Kontrollér netværket og prøv igen.";
     UPDATE_DISK_FULL = "Der er ikke plads til opdateringen. Frigør diskplads, og prøv igen.";

@@ -40,7 +40,11 @@ static UPDATE_GATE: Mutex<()> = Mutex::new(());
 
 pub fn block_for_update() -> Option<std::sync::MutexGuard<'static, ()>> {
     let guard = UPDATE_GATE.lock().ok()?;
-    if is_dictating() { None } else { Some(guard) }
+    if is_dictating() {
+        None
+    } else {
+        Some(guard)
+    }
 }
 
 /// True while the dictation microphone is open. Meeting code can use this to
@@ -467,7 +471,9 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant, Optio
         for action in actions {
             match action {
                 GestureAction::Start => {
-                    let Ok(_update_guard) = UPDATE_GATE.lock() else { continue; };
+                    let Ok(_update_guard) = UPDATE_GATE.lock() else {
+                        continue;
+                    };
                     if session.is_some() {
                         continue;
                     }
@@ -1118,6 +1124,20 @@ fn cleanup_options<'a>(
 #[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn updater_gate_refuses_active_dictation_and_serializes_starts() {
+        {
+            let _start = UPDATE_GATE.lock().unwrap();
+            DICTATING.store(true, Ordering::Relaxed);
+        }
+        assert!(block_for_update().is_none());
+        DICTATING.store(false, Ordering::Relaxed);
+        let update = block_for_update().unwrap();
+        assert!(UPDATE_GATE.try_lock().is_err());
+        drop(update);
+        assert!(UPDATE_GATE.try_lock().is_ok());
+    }
 
     #[test]
     fn service_raw_cleanup_preserves_numbers_and_addresses() {

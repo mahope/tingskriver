@@ -276,6 +276,35 @@ mod tests {
     }
 
     #[test]
+    fn update_preferences_survive_a_new_host() {
+        use tingskriver_core::updates::Preferences;
+        let dir = temp_dir("updates");
+        let original = Preferences {
+            enabled: false,
+            weekly: true,
+            last_check: Some(123456),
+        };
+        Bridge::new(dir.clone())
+            .write_setting(
+                "updates.json",
+                "preferences",
+                serde_json::to_value(&original).unwrap(),
+            )
+            .unwrap();
+        let restarted = Bridge::new(dir.clone());
+        let restored: Preferences = serde_json::from_value(
+            restarted
+                .read_setting("updates.json", "preferences")
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(restored, original);
+        assert!(!restored.due(u64::MAX));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn broken_or_foreign_store_names_are_errors() {
         let dir = temp_dir("broken");
         std::fs::create_dir_all(&dir).unwrap();

@@ -168,7 +168,7 @@ impl TrayStatus {
             MenuEntry::Ask => label("Spørg (kommer senere)", false),
             MenuEntry::About => label(
                 if self.update_available {
-                    "Om Tingskriver · Opdatering klar"
+                    tingskriver_core::strings::UPDATE_TRAY
                 } else {
                     tingskriver_core::strings::ABOUT
                 },

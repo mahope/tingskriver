@@ -7,6 +7,7 @@ use tingskriver_core::strings;
 
 // Exact path + literal exemptions: technical strings and ownership-limited baseline.
 const ALLOW: &[(&str, &str)] = &[
+    ("update.rs", "{}/releases.{channel}.json"), // Velopack feed URL, never UI copy
     ("ui.rs", "database task stopped: {error}"), // diagnostic fed into DbFailure
     ("ui.rs", "page-{title}"),                   // GPUI element identity
     (

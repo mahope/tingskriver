@@ -5,6 +5,7 @@ Usage: python3 scripts/screenshot-updates.py target/debug/tingskriver-app /tmp/u
 Requires Xvfb, xdotool, ImageMagick and a debug build; no downloads.
 """
 import os
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -62,13 +63,47 @@ def capture(binary, destination):
                             except subprocess.TimeoutExpired:
                                 app.kill()
                                 app.wait(timeout=10)
+                    settings_dir = Path(temporary) / (theme + "-settings")
+                    env.pop("TINGSKRIVER_MOCK_UPDATE")
+                    env["TINGSKRIVER_DATA_DIR"] = str(settings_dir)
+                    for restart in (False, True):
+                        app = subprocess.Popen([str(binary), "--page", "settings"], env=env,
+                                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        try:
+                            window = subprocess.check_output(
+                                ["xdotool", "search", "--sync", "--onlyvisible", "--name", "^Tingskriver$"],
+                                env=env, timeout=30).decode().splitlines()[0]
+                            subprocess.run(["xdotool", "windowfocus", "--sync", window], env=env, check=True, timeout=10)
+                            time.sleep(1)
+                            # Sidebar About -> Settings About -> updates toggle.
+                            subprocess.run(["xdotool", "key", "--delay", "200", "Tab", "Tab", "Tab", "Return"],
+                                           env=env, check=True, timeout=10)
+                            time.sleep(0.5)
+                            saved = json.loads((settings_dir / "updates.json").read_text())["preferences"]
+                            assert saved["enabled"] == restart, "Keyboard toggle or persistence failed"
+                            if restart:
+                                subprocess.run(["xdotool", "key", "--delay", "200", "Tab", "Return"],
+                                               env=env, check=True, timeout=10)
+                                time.sleep(0.5)
+                                saved = json.loads((settings_dir / "updates.json").read_text())["preferences"]
+                                assert saved["weekly"], "Frequency control did not respond to keyboard"
+                            subprocess.run(["import", "-window", window,
+                                            str(destination / (theme + "-settings-" + str(restart) + ".png"))],
+                                           env=env, check=True, timeout=10)
+                        finally:
+                            app.terminate()
+                            try:
+                                app.wait(timeout=10)
+                            except subprocess.TimeoutExpired:
+                                app.kill()
+                                app.wait(timeout=10)
             finally:
                 display.terminate()
                 display.wait(timeout=10)
     for theme in ("light", "dark"):
         pictures = [(destination / (theme + "-" + state + ".png")).read_bytes() for state in STATES]
         assert len(set(pictures)) == len(STATES), "Update states rendered identically"
-    print("Captured 14 distinct update screenshots (seven states, light and dark)")
+    print("Captured 14 distinct update screenshots; keyboard settings survive restart in both themes")
 
 
 if __name__ == "__main__":

@@ -56,10 +56,16 @@ Raw errors, URLs, filesystem paths and response bodies are not shown in the UI.
 ## Verification and manual Windows plan
 
 Core policy tests: `cargo test --locked -p tingskriver-core updates:: --lib`.
+When comparing a baseline checkout with this branch, use a separate
+`CARGO_TARGET_DIR` for each checkout: sharing outputs between identical path
+packages can leave stale core metadata in app tests.
 The real GPUI renderer has seven offline fixtures in both themes:
 `python3 scripts/screenshot-updates.py target/debug/tingskriver-app /tmp/update-shots`.
 Fixtures require a debug build; release builds ignore the mock environment
 variable. Images exercise rendering, not a real installer or UIA screen reader.
+The [fixture gallery](screenshots/updates/README.md) contains all fourteen images.
+The script also uses Tab/Enter to change settings, restarts the app and verifies
+that on/off and frequency are persisted in both themes.
 
 On a disposable Windows VM with two real Velopack builds and a local test feed:
 

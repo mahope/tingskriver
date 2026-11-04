@@ -22,7 +22,7 @@ impl Default for Preferences {
 impl Preferences {
     pub fn due(&self, now: u64) -> bool {
         self.enabled
-            && self.last_check.is_none_or(|last| {
+            && self.last_check.map_or(true, |last| {
                 now.saturating_sub(last) >= if self.weekly { 604800 } else { 86400 }
             })
     }
@@ -290,5 +290,12 @@ mod tests {
             ("Dansk".into(), Some("2026-11-04".into()))
         );
         assert_eq!(release_notes("## en\nEnglish").0, "English");
+        let r = Release {
+            bytes: 41_900_000,
+            published: Some("2026-11-04".into()),
+            ..release()
+        };
+        assert_eq!(r.size_label(), "41,9 MB");
+        assert_eq!(r.date_label(), "04.11.2026");
     }
 }
