@@ -193,9 +193,17 @@ Run `cargo test --locked -p tingskriver-core recover::tests` for complete, trunc
 
 Open **Indstillinger → Om**, **Om** in the sidebar, or **Om** in the Windows
 tray menu. The page shows the Cargo workspace version (also used by the GPUI
-Velopack installer), build date, commit, channel and platform. Licenses,
+Velopack and Tauri NSIS installers), build date, commit, channel and platform. Licenses,
 third-party notices and the privacy policy are bundled for offline reading.
-**Kopiér diagnoseoplysninger** copies only fixed build information; unavailable
-GPU and model information is explicitly marked. Opening this page makes no
+**Kopiér diagnoseoplysninger** copies build information, the detected GPU backend and
+allowlisted identifiers of loaded Whisper/Parakeet models. Unknown model
+identifiers are redacted; unloaded models are explicitly marked. Opening this page makes no
 network requests. The contact button opens the project website only on request.
 The **Opdateringer** section is reserved for the update status integration (#170).
+
+For a repeatable GPUI keyboard/screenshot smoke test with isolated empty data,
+run `python3 scripts/screenshot-about.py target/debug/tingskriver-app /tmp/about-shots`
+after building the app. It opens About with Tab/Enter, copies diagnostics with
+Tab/Enter, checks the safe fields and captures light/dark PNGs. It requires
+Xvfb, xdotool, xclip and ImageMagick; it does not install packages. These are
+smoke captures rather than pixel-perfect golden comparisons.

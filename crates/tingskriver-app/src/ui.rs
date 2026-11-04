@@ -70,7 +70,7 @@ impl AppModel {
 struct Globals {
     model: Entity<AppModel>,
     main_window: Option<WindowHandle<Root>>,
-    shell: Option<Entity<Shell>>,
+    shell: Option<gpui::WeakEntity<Shell>>,
 }
 
 impl Global for Globals {}
@@ -136,13 +136,18 @@ pub fn load_database(cx: &mut App) {
     .detach();
 }
 
-/// Show the main window, opening it if needed.
+/// Navigate to About in an existing or newly opened window.
 pub fn show_about(cx: &mut App) {
     model(cx).update(cx, |model, cx| {
         model.start_page = Page::About;
         cx.notify();
     });
-    if let Some(shell) = cx.global::<Globals>().shell.clone() {
+    if let Some(shell) = cx
+        .global::<Globals>()
+        .shell
+        .as_ref()
+        .and_then(|shell| shell.upgrade())
+    {
         shell.update(cx, |shell, cx| {
             shell.page = Page::About;
             cx.notify();
@@ -151,6 +156,7 @@ pub fn show_about(cx: &mut App) {
     show_main_window(cx);
 }
 
+/// Show the main window, opening it if needed.
 pub fn show_main_window(cx: &mut App) {
     if let Some(handle) = cx.global::<Globals>().main_window {
         let shown = handle.update(cx, |_, window, _| window.activate_window());
@@ -200,7 +206,7 @@ fn open_main_window(cx: &mut App) -> anyhow::Result<WindowHandle<Root>> {
         move |window, cx| {
             theme::sync_with_window(window, cx);
             let shell = cx.new(|cx| Shell::new(state_path, window, cx));
-            cx.global_mut::<Globals>().shell = Some(shell.clone());
+            cx.global_mut::<Globals>().shell = Some(shell.downgrade());
             let model = model(cx);
             window.on_next_frame(move |_, cx| {
                 model.update(cx, |m, _| {
@@ -269,9 +275,10 @@ impl Page {
 }
 
 pub struct Shell {
+    focus_handle: gpui::FocusHandle,
+    diagnosis_status: Option<&'static str>,
     model: Entity<AppModel>,
     page: Page,
-    update_status: crate::about::UpdateStatus,
     measurement: Entity<crate::measurement::MeasurementView>,
     probe_line: Entity<InputState>,
     probe_text: Entity<TextareaState>,
@@ -284,6 +291,8 @@ pub struct Shell {
 impl Shell {
     fn new(state_path: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let model = model(cx);
+        let focus_handle = cx.focus_handle().tab_stop(false);
+        focus_handle.focus(window, cx);
         let probe_line = cx.new(|cx| InputState::new(window, cx).placeholder(strings::PROBE_LINE));
         let probe_text = cx.new(|cx| {
             TextareaState::new(window, cx)
@@ -320,9 +329,10 @@ impl Shell {
         });
         let page = model.read(cx).start_page;
         Shell {
+            focus_handle,
+            diagnosis_status: None,
             model,
             page,
-            update_status: crate::about::UpdateStatus::default(),
             measurement,
             probe_line,
             probe_text,
@@ -366,15 +376,22 @@ impl Shell {
                         .child(strings::APP_NAME),
                 ),
             )
-            .child(SidebarMenu::new().children(Page::ALL.map(|page| {
-                SidebarMenuItem::new(page.label())
-                    .icon(page.icon())
-                    .active(self.page == page)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.page = page;
-                        cx.notify();
-                    }))
-            })))
+            .child(
+                SidebarMenu::new().children(
+                    Page::ALL
+                        .into_iter()
+                        .filter(|page| *page != Page::About)
+                        .map(|page| {
+                            SidebarMenuItem::new(page.label())
+                                .icon(page.icon())
+                                .active(self.page == page)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.page = page;
+                                    cx.notify();
+                                }))
+                        }),
+                ),
+            )
             .footer(
                 v_flex()
                     .child(
@@ -458,25 +475,55 @@ impl Shell {
             .gap(space::LG)
             .child(paragraph(&crate::about::metadata(), cx))
             .child(section_title(strings::ABOUT_UPDATES))
-            .child(paragraph(&self.update_status.label(), cx))
+            .child(paragraph(&crate::about::update_status().label(), cx))
             .child(
                 Button::new("about-copy")
                     .label(strings::ABOUT_COPY)
+                    .loading(self.diagnosis_status == Some(strings::ABOUT_COPYING))
                     .on_click(cx.listener(|this, _, _, cx| {
+                        this.diagnosis_status = Some(strings::ABOUT_COPYING);
+                        cx.notify();
                         let task = this
                             .model
                             .read(cx)
                             .runtime
                             .spawn(crate::about::diagnostics());
-                        cx.spawn(async move |_, cx| {
-                            if let Ok(report) = task.await {
-                                cx.update(|cx| {
-                                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(report))
-                                });
-                            }
+                        cx.spawn(async move |this, cx| {
+                            let status = match task.await {
+                                Ok(report) => {
+                                    cx.update(|cx| {
+                                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                            report,
+                                        ))
+                                    });
+                                    strings::ABOUT_COPIED
+                                }
+                                Err(_) => strings::ABOUT_COPY_FAILED,
+                            };
+                            let _ = this.update(cx, |this, cx| {
+                                this.diagnosis_status = Some(status);
+                                cx.notify();
+                            });
                         })
                         .detach();
                     })),
+            )
+            .when_some(self.diagnosis_status, |body, status| {
+                body.child(
+                    div()
+                        .id("about-copy-status")
+                        .role(gpui::Role::Status)
+                        .child(status),
+                )
+            })
+            .child(
+                Button::new("about-privacy")
+                    .label(strings::ABOUT_PRIVACY)
+                    .on_click(|_, _, cx| {
+                        cx.open_url(
+                            "https://github.com/mahope/tingskriver/blob/main/PRIVACY_POLICY.md",
+                        );
+                    }),
             )
             .child(
                 Button::new("about-contact")
@@ -663,6 +710,7 @@ impl Render for Shell {
             (None, Page::Measurement) => self.measurement.clone().into_any_element(),
         };
         h_flex()
+            .track_focus(&self.focus_handle)
             .size_full()
             .bg(palette.background)
             .text_color(palette.foreground)
@@ -796,6 +844,8 @@ mod tests {
     #[test]
     fn pages_can_be_named_on_the_command_line() {
         assert_eq!(Page::from_arg("settings"), Some(Page::Settings));
+        assert_eq!(Page::from_arg("about"), Some(Page::About));
+        assert_eq!(Page::from_arg("Om"), Some(Page::About));
         assert_eq!(Page::from_arg("Diktering"), Some(Page::Dictation));
         assert_eq!(Page::from_arg("møder"), Some(Page::Meetings));
         assert_eq!(Page::from_arg("assistent"), None);

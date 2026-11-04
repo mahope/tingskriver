@@ -15,6 +15,9 @@ catalogue! {
     ABOUT_PLATFORM = "Platform";
     ABOUT_UPDATES = "Opdateringer";
     ABOUT_UPDATES_UNAVAILABLE = "Opdateringer er ikke aktiveret i denne build";
+    ABOUT_COPYING = "Kopierer diagnoseoplysninger …";
+    ABOUT_COPIED = "Diagnoseoplysningerne er kopieret.";
+    ABOUT_COPY_FAILED = "Kunne ikke kopiere diagnoseoplysninger. Prøv igen.";
     ABOUT_COPY = "Kopiér diagnoseoplysninger";
     ABOUT_GPU = "GPU-status";
     ABOUT_COMMIT = "Commit";

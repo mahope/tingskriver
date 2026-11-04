@@ -7,6 +7,14 @@ pub const BUILD_DATE: &str = env!("TINGSKRIVER_BUILD_DATE");
 
 pub use crate::update::UpdateStatus;
 
+/// Snapshot only: opening About never starts an update check.
+pub fn update_status() -> UpdateStatus {
+    match crate::update::status() {
+        UpdateStatus::Inactive => UpdateStatus::Unavailable,
+        status => status,
+    }
+}
+
 pub fn metadata() -> String {
     format!(
         "{} {}\n{}: {}\n{}: {}\n{}: {}\n{}: {} / {}",
@@ -99,6 +107,9 @@ mod tests {
         assert!(metadata().contains(VERSION));
         let release = include_str!("../../../.github/workflows/app-release.yml");
         assert!(release.contains("cargo metadata --no-deps --format-version 1 --locked"));
+        let nsis = include_str!("../../../.github/workflows/windows-build.yml");
+        assert!(nsis.contains("cargo metadata --no-deps --format-version 1 --locked"));
+        assert!(nsis.contains("c.version=process.argv[1]"));
         assert!(release.contains("-Version \"${{ steps.version.outputs.version }}\""));
     }
     #[test]

@@ -179,6 +179,11 @@ mod tests {
         assert!(s.menu(MenuEntry::Dictate).enabled);
         assert!(!s.menu(MenuEntry::Ask).enabled);
         assert_eq!(s.menu(MenuEntry::Open).text, "Åbn Tingskriver");
+        assert_eq!(
+            s.menu(MenuEntry::About).text,
+            tingskriver_core::strings::ABOUT
+        );
+        assert!(s.menu(MenuEntry::About).enabled);
         assert_eq!(s.menu(MenuEntry::Quit).text, "Afslut");
     }
 

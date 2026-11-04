@@ -439,6 +439,10 @@ mod tests {
             run(Trigger::Shortcut(ShortcutAction::OpenWindow)),
             Some(Request::ShowWindow)
         );
+        assert_eq!(
+            run(Trigger::Menu(MenuEntry::About)),
+            Some(Request::ShowAbout)
+        );
         assert_eq!(run(Trigger::Menu(MenuEntry::Quit)), Some(Request::Quit));
         assert_eq!(run(Trigger::Menu(MenuEntry::Ask)), Some(Request::Ask));
         assert_eq!(
