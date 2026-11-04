@@ -15,3 +15,9 @@ Plan:
 5. Run targeted tests, full core suite, boundary/license/Windows checks; commit
    and push milestones. PR creation/review is reserved for Mads' PC by the
    task's agent-worker instructions. Observe public CI and report exact gaps.
+
+Implemented: versioned schema, all three transports, durable retries, fail-closed
+privacy checked between each attempt, Tauri configuration/test/status/approval,
+and integration documentation. Regression tests also cover policy changes while
+a request is in flight and settings changes on the same meeting page.
+The restricted OpenSSH-server acceptance remains a manual test with Mads.

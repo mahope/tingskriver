@@ -76,6 +76,8 @@ The default policy is local-only. `test_target()` queues synthetic data.
 meeting and an enabled policy. Call `run_due()` periodically and on startup;
 `jobs()` returns safe status metadata; `retry(job_id)` restarts a pending/failed
 job. Every actual attempt reads current policy, not a stale approval-time copy.
+A privacy change waits for the one request already in flight, then prevents
+the next attempt, including other jobs in the same batch.
 
 `Bundle` holds the documents and a `Sidecar` with `kilde: "tingskriver"`,
 `skemaversion: 1`, `titel`, RFC 3339 `tid`, `talere`, and `opgaver` (`tekst`,

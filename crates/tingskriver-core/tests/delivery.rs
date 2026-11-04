@@ -453,3 +453,93 @@ async fn meeting_adapter_exports_saved_notes_and_the_approved_summary() {
         .await
         .is_err());
 }
+
+#[tokio::test]
+async fn privacy_change_between_attempts_stops_the_rest_of_the_batch() {
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+        sync::oneshot,
+        time::{timeout, Duration},
+    };
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let service = Delivery::open(dir.path(), Arc::new(MemoryKeyStore::default()))
+        .await
+        .unwrap();
+    service
+        .set_policy(Policy {
+            local_only: false,
+            private: false,
+        })
+        .await
+        .unwrap();
+    service
+        .save_target(
+            Target {
+                id: "hook".into(),
+                name: "Webhook".into(),
+                destination: Destination::Webhook {
+                    format: WebhookFormat::Json,
+                },
+            },
+            Some(format!(
+                "http://{}/synthetic",
+                listener.local_addr().unwrap()
+            )),
+        )
+        .await
+        .unwrap();
+    service.test_target("hook").await.unwrap();
+    service.test_target("hook").await.unwrap();
+    let (seen, started) = oneshot::channel();
+    let (waiting, queued) = oneshot::channel();
+    let receiver = async {
+        let (mut first, _) = listener.accept().await.unwrap();
+        let mut buf = [0; 8192];
+        let received = first.read(&mut buf).await.unwrap();
+        assert!(received > 0);
+        seen.send(()).unwrap();
+        queued.await.unwrap();
+        first
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        drop(first);
+        if let Ok(Ok((mut second, _))) =
+            timeout(Duration::from_millis(200), listener.accept()).await
+        {
+            let received = second.read(&mut buf).await.unwrap();
+            assert!(received > 0);
+            second
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .await
+                .unwrap();
+        }
+    };
+    let policy = async {
+        started.await.unwrap();
+        let setting = service.set_policy(Policy {
+            local_only: false,
+            private: true,
+        });
+        tokio::pin!(setting);
+        tokio::select! {
+            biased;
+            _ = &mut setting => panic!("policy must wait for the in-flight request"),
+            _ = tokio::task::yield_now() => {}
+        }
+        waiting.send(()).unwrap();
+        setting.await.unwrap();
+    };
+    let (sent, _, _) = tokio::join!(service.run_due(), receiver, policy);
+    sent.unwrap();
+    let jobs = service.jobs().await.unwrap();
+    assert_eq!(jobs.iter().filter(|j| j.status == "completed").count(), 1);
+    assert_eq!(
+        jobs.iter()
+            .filter(|j| j.status == "pending" && j.attempts == 0)
+            .count(),
+        1
+    );
+}

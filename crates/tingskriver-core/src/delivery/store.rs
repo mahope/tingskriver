@@ -209,13 +209,16 @@ impl Delivery {
 
     /// Called at startup and periodically by the host; blocked jobs stay queued.
     pub async fn run_due(&self) -> Result<(), Error> {
-        let _guard = self.gate.lock().await;
-        if self.policy().await?.check().is_err() {
-            return Ok(());
-        }
-        let rows = sqlx::query("SELECT id, target_id, bundle, attempts FROM delivery_jobs WHERE status = 'pending' AND next_attempt <= ? ORDER BY rowid LIMIT 20")
-            .bind(Utc::now().timestamp()).fetch_all(&self.pool).await.map_err(|_| Error::Storage)?;
-        for row in rows {
+        for _ in 0..20 {
+            let _guard = self.gate.lock().await;
+            if self.policy().await?.check().is_err() {
+                return Ok(());
+            }
+            let row = sqlx::query("SELECT id, target_id, bundle, attempts FROM delivery_jobs WHERE status = 'pending' AND next_attempt <= ? ORDER BY rowid LIMIT 1")
+                .bind(Utc::now().timestamp()).fetch_optional(&self.pool).await.map_err(|_| Error::Storage)?;
+            let Some(row) = row else {
+                break;
+            };
             let id: String = row.get(0);
             let target_id: String = row.get(1);
             let raw: String = row.get(2);

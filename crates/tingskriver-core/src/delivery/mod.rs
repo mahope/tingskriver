@@ -126,24 +126,22 @@ impl Target {
                 user,
                 key_path,
                 remote_dir,
-            } => {
-                if host.is_empty()
-                    || host.starts_with('-')
-                    || !host
-                        .bytes()
-                        .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'-' | b':'))
-                    || !safe_id(user)
-                    || user.starts_with('-')
-                    || *port == 0
-                    || !key_path.is_absolute()
-                    || !remote_dir.starts_with('/')
-                    || remote_dir.split('/').any(|s| s == "..")
-                    || !remote_dir.bytes().all(|c| {
-                        c.is_ascii_alphanumeric() || matches!(c, b'/' | b'_' | b'-' | b'.')
-                    })
-                {
-                    return Err(Error::Invalid);
-                }
+            } if host.is_empty()
+                || host.starts_with('-')
+                || !host
+                    .bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'-' | b':'))
+                || !safe_id(user)
+                || user.starts_with('-')
+                || *port == 0
+                || !key_path.is_absolute()
+                || !remote_dir.starts_with('/')
+                || remote_dir.split('/').any(|s| s == "..")
+                || !remote_dir.bytes().all(|c| {
+                    c.is_ascii_alphanumeric() || matches!(c, b'/' | b'_' | b'-' | b'.')
+                }) =>
+            {
+                return Err(Error::Invalid)
             }
             _ => {}
         }
