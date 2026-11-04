@@ -46,3 +46,23 @@ test('only an explicit approval queues the visible summary to the selected targe
   expect(JSON.stringify(renderer!.toJSON())).toContain('lagt i afleveringskøen');
   await act(async () => { renderer!.unmount(); });
 });
+
+test('approval reloads privacy and targets after settings change on the same meeting', async () => {
+  const previousWindow = globalThis.window;
+  const events = new EventTarget();
+  globalThis.window = events as unknown as Window & typeof globalThis;
+  let localOnly = true;
+  const request = async <T,>(): Promise<T> => ({ policy: { local_only: localOnly, private: false }, targets: [{ id: 'one', name: 'Arkiv' }], jobs: [] } as T);
+  let renderer: ReturnType<typeof create> | undefined;
+  try {
+    await act(async () => { renderer = create(<DeliveryApproval meetingId="meeting-a" disabled={false} getSummary={async () => 'Referat'} request={request} />); });
+    await act(async () => { renderer!.root.findByType('input').props.onChange({ target: { checked: true } }); });
+    expect(renderer!.root.findByType('button').props.disabled).toBe(true);
+    localOnly = false;
+    await act(async () => { events.dispatchEvent(new Event('delivery-settings-changed')); });
+    expect(renderer!.root.findByType('button').props.disabled).toBe(false);
+  } finally {
+    await act(async () => { renderer?.unmount(); });
+    globalThis.window = previousWindow;
+  }
+});

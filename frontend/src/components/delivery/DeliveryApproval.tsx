@@ -17,9 +17,23 @@ export function DeliveryApproval({ meetingId, getSummary, disabled, request = in
   useEffect(() => {
     let active = true;
     setConsent(false); setMessage(''); setError('');
-    request<Status>('delivery_status').then(s => { if (active) { setStatus(s); setTarget(s.targets[0]?.id ?? ''); } })
-      .catch(() => { if (active) setError('Afleveringsmål kunne ikke læses. Kontrollér indstillingerne.'); });
-    return () => { active = false; };
+    const load = () => {
+      void request<Status>('delivery_status').then(s => {
+        if (active) { setStatus(s); setTarget(current => s.targets.some(t => t.id === current) ? current : s.targets[0]?.id ?? ''); setError(''); }
+      }).catch(() => { if (active) setError('Afleveringsmål kunne ikke læses. Kontrollér indstillingerne.'); });
+    };
+    load();
+    if (typeof window !== 'undefined') {
+      window.addEventListener('delivery-settings-changed', load);
+      window.addEventListener('focus', load);
+    }
+    return () => {
+      active = false;
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('delivery-settings-changed', load);
+        window.removeEventListener('focus', load);
+      }
+    };
   }, [meetingId, request]);
 
   async function approve() {

@@ -26,7 +26,10 @@ export function DeliverySettings({ request = invoke }: { request?: Request }) {
 
   async function action(work: () => Promise<unknown>, done = '') {
     setBusy(true); setError(''); setMessage('');
-    try { await work(); await refresh(); setMessage(done); }
+    try {
+      await work(); await refresh(); setMessage(done);
+      if (typeof window !== 'undefined') window.dispatchEvent(new Event('delivery-settings-changed'));
+    }
     catch { setError('Handlingen mislykkedes. Kontrollér mål, adgang og privatindstillinger, og prøv igen.'); }
     finally { setBusy(false); }
   }
