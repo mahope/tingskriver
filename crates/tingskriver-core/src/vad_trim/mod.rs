@@ -10,4 +10,5 @@ pub use config::*;
 pub use provider::*;
 pub use trim::*;
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests;

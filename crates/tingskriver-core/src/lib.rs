@@ -3,6 +3,9 @@
 //! later) calls into this crate and receives events through
 //! [`events::EventSink`].
 
+#![deny(clippy::disallowed_types)]
+#![deny(clippy::disallowed_methods)]
+
 // Performance optimization: Conditional logging macros for hot paths
 #[cfg(debug_assertions)]
 macro_rules! perf_debug {
@@ -47,6 +50,7 @@ pub mod fake_device;
 pub mod format_da;
 pub mod groq;
 pub mod host;
+mod http;
 pub mod install;
 pub mod logging;
 pub mod measurement;

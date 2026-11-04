@@ -57,6 +57,7 @@ pub fn relative_file(root: &Path, name: &str) -> Result<PathBuf> {
 }
 
 /// Strict metadata and file validation; empty datasets cannot silently pass CI.
+#[allow(clippy::disallowed_methods)]
 pub fn load(path: &Path) -> Result<Manifest> {
     let bytes = std::fs::read(path).context("Cannot read WER manifest")?;
     // Do not forward serde's error: it can contain reference text.

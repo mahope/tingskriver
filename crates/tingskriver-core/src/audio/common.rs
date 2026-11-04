@@ -10,6 +10,39 @@ use uuid::Uuid;
 static ENGINE_LIFECYCLE_LOCK: Lazy<Arc<AsyncMutex<()>>> =
     Lazy::new(|| Arc::new(AsyncMutex::new(())));
 
+#[cfg(test)]
+pub(crate) fn assert_uses_blocking_pool<F: std::future::Future>(future: F) -> F::Output {
+    use std::task::Poll;
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .max_blocking_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    let (release, wait) = std::sync::mpsc::channel();
+    let (started, ready) = std::sync::mpsc::channel();
+    let blocker = runtime.spawn_blocking(move || {
+        started.send(()).unwrap();
+        wait.recv().unwrap();
+    });
+    ready.recv().unwrap();
+    runtime.block_on(async {
+        let mut future = std::pin::pin!(future);
+        let pending = std::future::poll_fn(|cx| {
+            Poll::Ready(matches!(future.as_mut().poll(cx), Poll::Pending))
+        })
+        .await;
+        release.send(()).unwrap();
+        assert!(
+            pending,
+            "disk operation completed outside the blocking pool"
+        );
+        let result = future.await;
+        blocker.await.unwrap();
+        result
+    })
+}
+
 pub(crate) async fn acquire_engine_lifecycle_lock() -> OwnedMutexGuard<()> {
     ENGINE_LIFECYCLE_LOCK.clone().lock_owned().await
 }
@@ -69,37 +102,48 @@ pub(crate) fn create_transcript_segments(transcripts: &[(String, f64, f64)]) -> 
 }
 
 /// Write transcripts.json to a meeting folder (atomic write with temp file)
-pub(crate) fn write_transcripts_json(folder: &Path, segments: &[TranscriptSegment]) -> Result<()> {
-    let transcript_path = folder.join("transcripts.json");
-    let temp_path = folder.join(".transcripts.json.tmp");
+pub(crate) async fn write_transcripts_json(
+    folder: &Path,
+    segments: Vec<TranscriptSegment>,
+) -> Result<()> {
+    let folder = folder.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        #[allow(clippy::disallowed_methods)]
+        fn blocking(folder: &Path, segments: &[TranscriptSegment]) -> Result<()> {
+            let transcript_path = folder.join("transcripts.json");
+            let temp_path = folder.join(".transcripts.json.tmp");
 
-    let json = serde_json::json!({
-        "version": "1.0",
-        "last_updated": chrono::Utc::now().to_rfc3339(),
-        "total_segments": segments.len(),
-        "segments": segments.iter().enumerate().map(|(i, s)| {
-            serde_json::json!({
-                "id": s.id,
-                "text": s.text,
-                "timestamp": s.timestamp,
-                "audio_start_time": s.audio_start_time,
-                "audio_end_time": s.audio_end_time,
-                "duration": s.duration,
-                "sequence_id": i
-            })
-        }).collect::<Vec<_>>()
-    });
+            let json = serde_json::json!({
+                "version": "1.0",
+                "last_updated": chrono::Utc::now().to_rfc3339(),
+                "total_segments": segments.len(),
+                "segments": segments.iter().enumerate().map(|(i, s)| {
+                    serde_json::json!({
+                        "id": s.id,
+                        "text": s.text,
+                        "timestamp": s.timestamp,
+                        "audio_start_time": s.audio_start_time,
+                        "audio_end_time": s.audio_end_time,
+                        "duration": s.duration,
+                        "sequence_id": i
+                    })
+                }).collect::<Vec<_>>()
+            });
 
-    let json_string = serde_json::to_string_pretty(&json)?;
-    std::fs::write(&temp_path, &json_string)?;
-    std::fs::rename(&temp_path, &transcript_path)?;
+            let json_string = serde_json::to_string_pretty(&json)?;
+            std::fs::write(&temp_path, &json_string)?;
+            std::fs::rename(&temp_path, &transcript_path)?;
 
-    info!(
-        "Wrote transcripts.json with {} segments to {}",
-        segments.len(),
-        transcript_path.display()
-    );
-    Ok(())
+            info!(
+                "Wrote transcripts.json with {} segments to {}",
+                segments.len(),
+                transcript_path.display()
+            );
+            Ok(())
+        }
+        blocking(&folder, &segments)
+    })
+    .await?
 }
 
 /// Split near quiet windows, retaining one second of shared boundary context.
@@ -149,6 +193,7 @@ pub(crate) fn split_segment_at_silence(
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
 

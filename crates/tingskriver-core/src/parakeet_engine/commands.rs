@@ -12,6 +12,7 @@ static MODELS_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
 
 /// Initialize the models directory path using app_data_dir
 /// This should be called during app setup before parakeet_init
+#[allow(clippy::disallowed_methods)]
 pub fn set_models_directory(app: &HostHandle) {
     let app_data_dir = app.app_data_dir()
         .expect("Failed to get app data dir");
@@ -43,17 +44,21 @@ fn get_models_directory() -> Option<PathBuf> {
 }
 
 pub async fn parakeet_init() -> Result<(), String> {
-    let mut guard = PARAKEET_ENGINE
+    if PARAKEET_ENGINE
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if guard.is_some() {
+        .unwrap_or_else(|p| p.into_inner())
+        .is_some()
+    {
         return Ok(());
     }
-
     let models_dir = get_models_directory();
-    let engine = ParakeetEngine::new_with_models_dir(models_dir)
-        .map_err(|e| format!("Failed to initialize Parakeet engine: {}", e))?;
-    *guard = Some(Arc::new(engine));
+    let engine =
+        tokio::task::spawn_blocking(move || ParakeetEngine::new_with_models_dir(models_dir))
+            .await
+            .map_err(|e| format!("Model initialization task failed: {e}"))?
+            .map_err(|e| format!("Failed to initialize Parakeet engine: {e}"))?;
+    let mut guard = PARAKEET_ENGINE.lock().unwrap_or_else(|p| p.into_inner());
+    guard.get_or_insert_with(|| Arc::new(engine));
     Ok(())
 }
 
@@ -557,7 +562,8 @@ pub async fn open_parakeet_models_folder() -> Result<(), String> {
 
     // Ensure directory exists before trying to open it
     if !models_dir.exists() {
-        std::fs::create_dir_all(&models_dir)
+        tokio::fs::create_dir_all(&models_dir)
+            .await
             .map_err(|e| format!("Failed to create directory: {}", e))?;
     }
 

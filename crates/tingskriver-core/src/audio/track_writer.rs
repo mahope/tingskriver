@@ -169,6 +169,7 @@ impl WavSegmentStorage {
         }
     }
 
+    #[allow(clippy::disallowed_methods)] // Synchronous disk worker.
     fn open_next(&mut self) -> io::Result<()> {
         // The finished segment goes to the disk before the next one starts.
         if let Some(previous) = self.current.as_mut() {
@@ -338,6 +339,7 @@ impl WavInspection {
 
 /// Read the header of a segment written by [`WavSegmentStorage`]. Errors for
 /// anything that is not a mono 16-bit PCM WAV with the 44-byte layout.
+#[allow(clippy::disallowed_methods)]
 pub fn inspect_wav(path: &Path) -> io::Result<WavInspection> {
     let mut file = File::open(path)?;
     let len = file.metadata()?.len();
@@ -854,6 +856,7 @@ pub fn f32_to_i16(x: f32) -> i16 {
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
+#[allow(clippy::disallowed_methods)]
 pub(crate) mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};

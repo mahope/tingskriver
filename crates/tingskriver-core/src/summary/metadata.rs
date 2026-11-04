@@ -36,6 +36,7 @@ pub fn write_detected_summary_language_to_metadata(
     write_language_field_to_metadata(folder, DETECTED_SUMMARY_LANGUAGE_FIELD, summary_language)
 }
 
+#[allow(clippy::disallowed_methods)]
 fn read_language_field_from_metadata(folder: &Path, field: &str) -> Result<Option<String>> {
     let metadata_path = metadata_path(folder);
     if !metadata_path.exists() {
@@ -56,6 +57,7 @@ fn read_language_field_from_metadata(folder: &Path, field: &str) -> Result<Optio
     }
 }
 
+#[allow(clippy::disallowed_methods)]
 fn write_language_field_to_metadata(
     folder: &Path,
     field: &str,
@@ -137,6 +139,7 @@ fn normalise_supported_summary_language(raw: &str) -> Result<String> {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
     use serde_json::json;

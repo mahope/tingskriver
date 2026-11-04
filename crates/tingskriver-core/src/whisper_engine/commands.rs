@@ -12,6 +12,7 @@ static MODELS_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
 
 /// Initialize the models directory path using app_data_dir
 /// This should be called during app setup before whisper_init
+#[allow(clippy::disallowed_methods)]
 pub fn set_models_directory(app: &HostHandle) {
     let app_data_dir = app.app_data_dir()
         .expect("Failed to get app data dir");
@@ -43,17 +44,21 @@ fn get_models_directory() -> Option<PathBuf> {
 }
 
 pub async fn whisper_init() -> Result<(), String> {
-    let mut guard = WHISPER_ENGINE
+    if WHISPER_ENGINE
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if guard.is_some() {
+        .unwrap_or_else(|p| p.into_inner())
+        .is_some()
+    {
         return Ok(());
     }
-
     let models_dir = get_models_directory();
-    let engine = WhisperEngine::new_with_models_dir(models_dir)
-        .map_err(|e| format!("Failed to initialize whisper engine: {}", e))?;
-    *guard = Some(Arc::new(engine));
+    let engine =
+        tokio::task::spawn_blocking(move || WhisperEngine::new_with_models_dir(models_dir))
+            .await
+            .map_err(|e| format!("Model initialization task failed: {e}"))?
+            .map_err(|e| format!("Failed to initialize whisper engine: {e}"))?;
+    let mut guard = WHISPER_ENGINE.lock().unwrap_or_else(|p| p.into_inner());
+    guard.get_or_insert_with(|| Arc::new(engine));
     Ok(())
 }
 
@@ -73,12 +78,15 @@ pub async fn whisper_get_available_models() -> Result<Vec<ModelInfo>, String> {
     } else {
         // Fallback: scan models directory directly without initialized engine
         log::info!("Whisper engine not initialized, scanning models directory directly");
-        discover_models_standalone()
+        tokio::task::spawn_blocking(discover_models_standalone)
+            .await
+            .map_err(|e| format!("Model discovery task failed: {e}"))?
     }
 }
 
 /// Discover Whisper models by scanning the models directory directly
 /// Used when the Whisper engine isn't initialized (e.g., when using Parakeet for live transcription)
+#[allow(clippy::disallowed_methods)]
 fn discover_models_standalone() -> Result<Vec<ModelInfo>, String> {
     use crate::whisper_engine::ModelStatus;
 
@@ -547,7 +555,8 @@ pub async fn open_models_folder() -> Result<(), String> {
 
     // Ensure directory exists before trying to open it
     if !models_dir.exists() {
-        std::fs::create_dir_all(&models_dir)
+        tokio::fs::create_dir_all(&models_dir)
+            .await
             .map_err(|e| format!("Failed to create directory: {}", e))?;
     }
 

@@ -9,4 +9,5 @@ pub use distance::{score, Score};
 pub use normalize::normalize;
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests;

@@ -28,6 +28,7 @@ pub fn startup_recordings() -> Vec<Recording> {
 }
 
 /// Blocking, metadata/header-only scan. Does not repair or delete anything.
+#[allow(clippy::disallowed_methods)] // Metadata scan runs in a blocking worker.
 pub fn scan(root: &Path) -> anyhow::Result<Vec<Recording>> {
     let entries = match std::fs::read_dir(root) {
         Ok(entries) => entries,
@@ -155,7 +156,7 @@ pub async fn restore(
         .unwrap_or_else(|| format!("recovered-{id}"));
     // If DB persistence fails after encoding, startup must still offer recovery.
     let pending = folder.join(RAW_DIR).join(PENDING);
-    std::fs::write(&pending, b"")?;
+    tokio::fs::write(&pending, b"").await?;
     let folder_for_encode = folder.clone();
     let ffmpeg = ffmpeg.map(Path::to_path_buf);
     let audio = tokio::task::spawn_blocking(move || {
@@ -175,7 +176,7 @@ pub async fn restore(
         Path::new(&saved_folder).canonicalize()? == folder,
         "Recovery ID belongs to another recording"
     );
-    std::fs::remove_file(pending)?;
+    tokio::fs::remove_file(pending).await?;
     // Keep originals available until the caller acknowledges the restored meeting.
     Ok(Restored { meeting_id, audio })
 }
@@ -240,4 +241,5 @@ async fn transcription_settings(
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests;

@@ -143,6 +143,9 @@ jobs:
       - name: Test tingskriver-core
         run: .github/scripts/annotate-errors.sh cargo test --locked -p tingskriver-core
 
+      - name: Verify core I/O lint rejects blocking calls
+        run: bash scripts/check-async-io-guard.sh
+
       - name: Validate published delivery schema
         run: /usr/bin/python3 scripts/tests/test_delivery_schema.py
 

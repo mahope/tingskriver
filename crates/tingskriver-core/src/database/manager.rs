@@ -1,6 +1,5 @@
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::{Result, Sqlite, SqlitePool, Transaction};
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -52,7 +51,9 @@ impl DatabaseManager {
         };
 
         if let Some(parent_dir) = database_path.parent() {
-            fs::create_dir_all(parent_dir).map_err(|e| fail(kind_from_io(&e), e.to_string()))?;
+            tokio::fs::create_dir_all(parent_dir)
+                .await
+                .map_err(|e| fail(kind_from_io(&e), e.to_string()))?;
         }
 
         let exists = database_path.exists();
@@ -62,7 +63,8 @@ impl DatabaseManager {
                 legacy_path.display(),
                 database_path.display()
             );
-            fs::copy(legacy_path, database_path)
+            tokio::fs::copy(legacy_path, database_path)
+                .await
                 .map_err(|e| fail(kind_from_io(&e), e.to_string()))?;
         } else if !exists {
             log::info!("Creating database at {}", database_path.display());
@@ -103,12 +105,28 @@ impl DatabaseManager {
         let legacy_path = app_data_dir.join(LEGACY_DATABASE_FILE);
         log::info!("Database path: {}", database_path.display());
         let backup_dir = Self::backup_dir(app_data_dir);
-        let safety_copy = backup_before_open(&database_path, &backup_dir);
+        let backup_database_path = database_path.clone();
+        let backup_root = backup_dir.clone();
+        let safety_copy = tokio::task::spawn_blocking(move || {
+            backup_before_open(&backup_database_path, &backup_root)
+        })
+        .await
+        .map_err(|e| {
+            DbInitError::new(
+                DbFailureKind::Other,
+                DbFailureInfo {
+                    detail: e.to_string(),
+                    database_path: database_path.clone(),
+                    backup_path: None,
+                    log_path: crate::logging::log_file(),
+                },
+            )
+        })?;
 
         match Self::open_at(&database_path, &legacy_path, BUSY_TIMEOUT).await {
             Ok(db) => {
                 if let Some(copy) = safety_copy {
-                    copy.discard();
+                    let _ = tokio::task::spawn_blocking(move || copy.discard()).await;
                 }
                 log::info!("Database opened in {} ms", started.elapsed().as_millis());
                 Ok(db)
@@ -118,7 +136,24 @@ impl DatabaseManager {
                 match safety_copy {
                     // The files as they were before SQLite touched them.
                     Some(copy) => error.set_backup_path(Some(copy.folder().to_path_buf())),
-                    None => backup_after_failure(&mut error, &backup_dir),
+                    None => {
+                        error = tokio::task::spawn_blocking(move || {
+                            backup_after_failure(&mut error, &backup_dir);
+                            error
+                        })
+                        .await
+                        .map_err(|e| {
+                            DbInitError::new(
+                                DbFailureKind::Other,
+                                DbFailureInfo {
+                                    detail: e.to_string(),
+                                    database_path: database_path.clone(),
+                                    backup_path: None,
+                                    log_path: crate::logging::log_file(),
+                                },
+                            )
+                        })?;
+                    }
                 }
                 Err(error)
             }
@@ -164,7 +199,9 @@ impl DatabaseManager {
                 },
             )
         };
-        fs::create_dir_all(app_data_dir).map_err(fail)?;
+        tokio::fs::create_dir_all(app_data_dir)
+            .await
+            .map_err(fail)?;
 
         // Copy legacy database to app data directory as meeting_minutes.db
         let target_legacy_path = app_data_dir.join("meeting_minutes.db");
@@ -174,7 +211,9 @@ impl DatabaseManager {
             target_legacy_path.display()
         );
 
-        fs::copy(legacy_db_path, &target_legacy_path).map_err(fail)?;
+        tokio::fs::copy(legacy_db_path, &target_legacy_path)
+            .await
+            .map_err(fail)?;
 
         // Now use the standard initialization which will detect and migrate the legacy db
         Self::new_from_app_data_dir(app_data_dir).await

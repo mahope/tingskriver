@@ -18,7 +18,7 @@ use crate::dictation::settings::DictationSettings;
 use crate::host::HostHandle;
 
 pub const CONFIG_FILE: &str = "providers.json";
-const TEST_TIMEOUT: Duration = Duration::from_secs(15);
+const TEST_TIMEOUT: Duration = crate::http::TIMEOUT;
 
 /// One migration at a time, so two first calls do not both migrate.
 static MIGRATION_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -61,6 +61,7 @@ impl ProviderService {
 
     /// `Ok(None)` when there is no file yet. A file that cannot be read is an
     /// error, never silently replaced by defaults.
+    #[allow(clippy::disallowed_methods)]
     pub fn load(&self) -> Result<Option<ProvidersConfig>, String> {
         let path = self.path();
         let text = match std::fs::read_to_string(&path) {
@@ -84,6 +85,7 @@ impl ProviderService {
     }
 
     /// Validate and write atomically.
+    #[allow(clippy::disallowed_methods)]
     pub fn save(&self, config: &ProvidersConfig) -> Result<(), String> {
         config.validate()?;
         let json = serde_json::to_string_pretty(config).map_err(|e| e.to_string())?;
@@ -96,6 +98,13 @@ impl ProviderService {
             .map_err(|e| format!("Udbyderindstillingerne kunne ikke gemmes: {e}"))
     }
 
+    async fn load_async(&self) -> Result<Option<ProvidersConfig>, String> {
+        let service = self.clone();
+        tokio::task::spawn_blocking(move || service.load())
+            .await
+            .map_err(|e| format!("Provider settings task failed: {e}"))?
+    }
+
     /// The saved configuration, or on first use the migrated old settings.
     /// Without a database (before onboarding) the defaults are returned and
     /// nothing is written, so the migration still runs once it exists.
@@ -104,11 +113,11 @@ impl ProviderService {
         pool: Option<&SqlitePool>,
         dictation: Option<&DictationSettings>,
     ) -> Result<ProvidersConfig, String> {
-        if let Some(config) = self.load()? {
+        if let Some(config) = self.load_async().await? {
             return Ok(config);
         }
         let _guard = MIGRATION_LOCK.lock().await;
-        if let Some(config) = self.load()? {
+        if let Some(config) = self.load_async().await? {
             return Ok(config);
         }
         let Some(pool) = pool else {
@@ -137,7 +146,11 @@ impl ProviderService {
             log::warn!("Providers: migration postponed: {e}");
             return Ok(plan.config);
         }
-        self.save(&plan.config)?;
+        let service = self.clone();
+        let config = plan.config.clone();
+        tokio::task::spawn_blocking(move || service.save(&config))
+            .await
+            .map_err(|e| format!("Provider settings task failed: {e}"))??;
         log::info!(
             "Providers: migrated old settings ({} provider(s), {} key(s) moved to Credential Manager)",
             plan.config.providers.len(),
@@ -152,7 +165,7 @@ impl ProviderService {
     /// Like [`ProviderService::load_or_migrate`] with the host's database and
     /// dictation settings.
     pub async fn load_for_host(&self, host: &HostHandle) -> Result<ProvidersConfig, String> {
-        if let Some(config) = self.load()? {
+        if let Some(config) = self.load_async().await? {
             return Ok(config);
         }
         let Some(database) = host.database() else {
