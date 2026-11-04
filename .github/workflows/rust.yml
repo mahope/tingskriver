@@ -143,6 +143,9 @@ jobs:
       - name: Test tingskriver-core
         run: .github/scripts/annotate-errors.sh cargo test --locked -p tingskriver-core
 
+      - name: Test recording soak verifier
+        run: .github/scripts/annotate-errors.sh cargo test --locked -p tingskriver-core --example recording_soak
+
       # The overlay's state model, layout and renderer are platform independent.
       - name: Test tingskriver-overlay
         run: .github/scripts/annotate-errors.sh cargo test --locked -p tingskriver-overlay

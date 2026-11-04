@@ -146,12 +146,12 @@ fn backlog_preserves_capture_time_and_mute_instead_of_worker_time() {
         },
     );
     let mut data = [0.0; 8];
-    let (len, stamp) = output.pop_into(&mut data).unwrap();
+    let (len, stamp, _) = output.pop_into(&mut data).unwrap();
     assert_eq!(len, 2);
     assert_eq!(&data[..len], &[1.0, 2.0]);
     assert_eq!(stamp.position, Duration::from_secs(3));
     assert!(stamp.muted);
-    let (_, stamp) = output.pop_into(&mut data).unwrap();
+    let (_, stamp, _) = output.pop_into(&mut data).unwrap();
     assert_eq!(stamp.position, Duration::from_secs(10));
     assert!(!stamp.muted);
 }
@@ -164,7 +164,7 @@ fn concurrent_consumer_drains_every_published_buffer_in_order() {
         let mut data = [0; 64];
         for expected in 0..10000 {
             loop {
-                if let Some((len, _)) = output.pop_into(&mut data) {
+                if let Some((len, _, _)) = output.pop_into(&mut data) {
                     assert_eq!(len, 2);
                     assert_eq!(&data[..2], &[expected; 2]);
                     break;
@@ -217,4 +217,22 @@ fn partial_frames_are_never_queued() {
     let (mut input, mut output) = queue::<f32>(8, 2);
     assert!(!input.copy_from(&[1.0, 2.0, 3.0], CaptureStamp::default()));
     assert!(output.pop_into(&mut [0.0; 8]).is_none());
+}
+
+#[test]
+fn overflow_loss_follows_queued_audio_and_survives_stop() {
+    let (mut input, mut output) = queue::<f32>(500, 2);
+    let mut buffer = [0.0; 500];
+    assert!(input.copy_from(&[0.2; 500], CaptureStamp::default()));
+    assert!(!input.copy_from(&[0.4; 100], CaptureStamp::default()));
+    assert_eq!(output.pop_into(&mut buffer).unwrap().2, 0);
+    assert!(input.copy_from(&[0.6; 100], CaptureStamp::default()));
+    assert_eq!(output.pop_into(&mut buffer).unwrap().2, 100);
+    assert_eq!(buffer[0], 0.6);
+    assert!(input.copy_from(&[0.8; 500], CaptureStamp::default()));
+    assert!(!input.copy_from(&[1.0; 100], CaptureStamp::default()));
+    assert_eq!(output.pop_into(&mut buffer).unwrap().2, 0);
+    drop(input);
+    assert_eq!(output.take_trailing_loss(), 100);
+    assert_eq!(output.take_trailing_loss(), 0);
 }

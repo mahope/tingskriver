@@ -10,6 +10,25 @@ import wave
 
 @unittest.skipUnless(os.environ.get('RECORDING_SOAK_BINARY'), 'build recording_soak and set RECORDING_SOAK_BINARY')
 class SampleVerifier(unittest.TestCase):
+    def test_accepts_staggered_track_ends(self):
+        binary = str(Path(os.environ['RECORDING_SOAK_BINARY']).resolve())
+        with tempfile.TemporaryDirectory() as directory:
+            subprocess.run([binary, 'record', directory, '4'], check=True)
+            segment = next((Path(directory) / '.checkpoints').glob('system_*.wav'))
+            # Simulate a crash with two whole callbacks missing on one track.
+            audio = bytearray(segment.read_bytes()[:-960 * 2])
+            audio[4:8] = (len(audio) - 8).to_bytes(4, 'little')
+            audio[40:44] = (len(audio) - 44).to_bytes(4, 'little')
+            segment.write_bytes(audio)
+            manifest_path = segment.parent / 'tracks.json'
+            manifest = json.loads(manifest_path.read_text())
+            manifest['complete'] = False
+            for track in manifest['tracks']:
+                if track['kind'] == 'system':
+                    track['recorded_samples'] = (len(audio) - 44) // 2
+            manifest_path.write_text(json.dumps(manifest))
+            subprocess.run([binary, 'recover', directory, '4'], check=True)
+
     def test_accepts_alignment_tail_and_rejects_corruption(self):
         binary = str(Path(os.environ['RECORDING_SOAK_BINARY']).resolve())
         with tempfile.TemporaryDirectory() as directory:

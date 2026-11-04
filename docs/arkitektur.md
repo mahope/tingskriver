@@ -184,6 +184,12 @@ transcription leaves the saved meeting available and reports the error.
   through `RecordingState::send_audio_chunk`. That uses a bounded channel
   with `try_send`: capture never blocks; a full queue drops the chunk and the
   writer reports it.
+- The CPAL callback queue carries a cumulative loss count with each accepted
+  buffer. The DSP worker inserts the missing duration as silence before the
+  next buffer (or at stop for trailing loss), through the same resampler.
+  Loss is converted from interleaved device samples to 48 kHz mono and added
+  to the writer's persistent dropped-sample count, so even gaps below the
+  clock-gap threshold keep their position and finalize reports partial audio.
 - The writer (`audio::recording_writer`) is one thread. It writes the
   microphone and system tracks separately (`audio::track_writer`) as 16-bit
   WAV segments of 10 minutes in `<meeting>/.checkpoints/`
@@ -225,9 +231,10 @@ transcription leaves the saved meeting available and reports the error.
   `ok`; otherwise the message is "Lyden kunne ikke samles. Originalen er
   gemt."
 - After a crash, `recover_audio_from_checkpoints` runs the same finalize:
-  headers that lag their data are repaired, a truncated last segment is
-  skipped, as is an unreadable one (silence keeps later segments
-  in place), and any of these gives `delvis` with the other pieces. Recovery
+  headers that lag their data are repaired, whole PCM samples in truncated
+  segments are salvaged, and unreadable segments are skipped (silence keeps
+  later segments in place). Truncated headers stay unchanged so retries still
+  report `delvis` and keep the originals. Recovery
   keeps the raw tracks until the frontend saves the meeting to the database
   and calls `cleanup_checkpoints`, allowing retries after a failed save.
   Cleanup decodes all final files again and checks their durations before
@@ -237,6 +244,22 @@ transcription leaves the saved meeting available and reports the error.
   Every recovery attempt invalidates earlier verification, even with no
   chunks left. Recovery and cleanup share a lock on the canonical folder
   path; verification and deletion both run on a blocking worker.
+
+### Disk recovery regression (#54)
+
+PR #146 tested recovery against a scanner that retained readable samples from
+truncated segments. Main also received `f910177` through #26, which skipped a
+truncated final segment entirely. After merging #146, the truncated fixture
+(three seconds declared, two seconds plus one byte present) therefore disappeared
+from `scan`, and `restore` reported no audio. This was a merge interaction, not
+a dependency or test-order difference.
+
+Recovery retains the complete 16-bit PCM samples, ignores an incomplete trailing
+byte, and keeps the truncated header and original file unchanged. Verification
+still reports partial audio, so repeated recovery cannot authorize deletion of
+the damaged originals. The recovery fixtures cover scanning without UI storage,
+verified restore, database and encoder failures, retries, empty folders, and a
+terminated writer with both tracks and at most two seconds of loss.
 
 ## AI providers: one model, a chain per function
 

@@ -20,15 +20,16 @@ pub struct Input<T: Copy> {
     producer: HeapProd<T>,
     channels: usize,
     dropped: Arc<AtomicU64>,
-    stamps: HeapProd<(usize, CaptureStamp)>,
+    stamps: HeapProd<(usize, CaptureStamp, u64)>,
     #[cfg(debug_assertions)]
     timings: Arc<[AtomicU64; 32]>,
 }
 
 pub struct Output<T: Copy> {
     consumer: HeapCons<T>,
+    delivered_loss: u64,
     dropped: Arc<AtomicU64>,
-    stamps: HeapCons<(usize, CaptureStamp)>,
+    stamps: HeapCons<(usize, CaptureStamp, u64)>,
     #[cfg(debug_assertions)]
     timings: Arc<[AtomicU64; 32]>,
 }
@@ -51,6 +52,7 @@ pub fn queue<T: Copy>(capacity: usize, channels: usize) -> (Input<T>, Output<T>)
         },
         Output {
             consumer,
+            delivered_loss: 0,
             dropped,
             stamps: stamp_output,
             #[cfg(debug_assertions)]
@@ -81,7 +83,9 @@ impl<T: Copy> Input<T> {
         self.producer.push_slice(data);
         // Publish metadata after samples: observing a stamp guarantees its
         // entire buffer is ready, even when the consumer runs concurrently.
-        let _ = self.stamps.try_push((data.len(), stamp));
+        let _ = self
+            .stamps
+            .try_push((data.len(), stamp, self.dropped.load(Ordering::Relaxed)));
         true
     }
 }
@@ -111,12 +115,23 @@ impl<T: Copy> Output<T> {
         1u64 << 31
     }
 
-    pub fn pop_into(&mut self, data: &mut [T]) -> Option<(usize, CaptureStamp)> {
-        let &(len, stamp) = self.stamps.first()?;
+    /// Loss preceding this buffer, never loss after audio still in the queue.
+    pub fn pop_into(&mut self, data: &mut [T]) -> Option<(usize, CaptureStamp, u64)> {
+        let &(len, stamp, dropped) = self.stamps.first()?;
         assert!(len <= data.len());
         self.consumer.pop_slice(&mut data[..len]);
         let _ = self.stamps.try_pop();
-        Some((len, stamp))
+        let loss = dropped - self.delivered_loss;
+        self.delivered_loss = dropped;
+        Some((len, stamp, loss))
+    }
+
+    /// Only call after the producer has stopped and all queued buffers drained.
+    pub fn take_trailing_loss(&mut self) -> u64 {
+        let dropped = self.dropped_samples();
+        let loss = dropped - self.delivered_loss;
+        self.delivered_loss = dropped;
+        loss
     }
 
     pub fn dropped_samples(&self) -> u64 {

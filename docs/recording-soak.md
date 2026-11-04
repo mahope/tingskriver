@@ -47,6 +47,11 @@ and recovery without hardware. The expected microphone samples are generated
 with the same production filters in bounded blocks. For normal completion,
 the generated block count defines the signal length; any track-end alignment
 tail is checked separately for silence, even when callback skew exceeds 10 ms.
+After a crash, the scanner can append whole callbacks of silence to align
+unequal track ends. The verifier derives the signal boundary from the file
+sources before that padding; all earlier samples are checked. The loss limit
+uses each track's last file endpoint plus its recording offset, excluding
+scanner padding, so a longer track cannot hide loss on the shorter track.
 It does not exercise OS device callbacks, other sample rates/resampling, UI
 startup/recovery dialogs or transcription. It proves process-crash recovery,
 not power-loss
