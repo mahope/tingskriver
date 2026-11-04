@@ -282,6 +282,7 @@ impl Page {
 pub struct Shell {
     focus_handle: gpui::FocusHandle,
     about_copy_focus: gpui::FocusHandle,
+    about_document_scroll: Vec<gpui::ScrollHandle>,
     diagnosis_status: Option<&'static str>,
     model: Entity<AppModel>,
     page: Page,
@@ -337,6 +338,10 @@ impl Shell {
         Shell {
             focus_handle,
             about_copy_focus: cx.focus_handle(),
+            about_document_scroll: crate::about::DOCUMENTS
+                .iter()
+                .map(|_| gpui::ScrollHandle::new())
+                .collect(),
             diagnosis_status: None,
             model,
             page,
@@ -549,6 +554,28 @@ impl Shell {
                                 .h(gpui::px(240.))
                                 .flex_shrink_0()
                                 .overflow_y_scroll()
+                                .track_scroll(&self.about_document_scroll[index])
+                                .on_key_down(cx.listener(
+                                    move |this, event: &gpui::KeyDownEvent, _, cx| {
+                                        let scroll = &this.about_document_scroll[index];
+                                        let mut offset = scroll.offset();
+                                        let page = scroll.bounds().size.height;
+                                        offset.y = match event.keystroke.key.as_str() {
+                                            "down" => offset.y - gpui::px(32.),
+                                            "up" => offset.y + gpui::px(32.),
+                                            "pagedown" => offset.y - page,
+                                            "pageup" => offset.y + page,
+                                            "home" => gpui::px(0.),
+                                            "end" => -scroll.max_offset().y,
+                                            _ => return,
+                                        };
+                                        offset.y =
+                                            offset.y.clamp(-scroll.max_offset().y, gpui::px(0.));
+                                        scroll.set_offset(offset);
+                                        cx.stop_propagation();
+                                        cx.notify();
+                                    },
+                                ))
                                 .tab_index(0)
                                 .role(gpui::Role::Document)
                                 .aria_label(*title)

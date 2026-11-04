@@ -204,6 +204,8 @@ The **Opdateringer** section is reserved for the update status integration (#170
 For a repeatable GPUI keyboard/screenshot smoke test with isolated empty data,
 run `python3 scripts/screenshot-about.py target/debug/tingskriver-app /tmp/about-shots`
 after building the app. It opens About with Tab/Enter, copies diagnostics with
-Tab/Enter, checks the safe fields and captures light/dark PNGs. It requires
+Tab/Enter, checks the safe fields, verifies keyboard scrolling in each embedded
+document and captures light/dark PNGs. Documents support arrow keys, Page Up/Down
+and Home/End. It requires
 Xvfb, xdotool, xclip and ImageMagick; it does not install packages. These are
 smoke captures rather than pixel-perfect golden comparisons.

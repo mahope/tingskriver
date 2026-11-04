@@ -17,7 +17,7 @@ def capture(binary, destination):
     with tempfile.TemporaryDirectory(prefix="tingskriver-about-") as temporary:
         with tempfile.TemporaryFile() as display_file:
             display = subprocess.Popen(
-                ["Xvfb", "-displayfd", str(display_file.fileno()), "-screen", "0", "1280x1000x24"],
+                ["Xvfb", "-displayfd", str(display_file.fileno()), "-screen", "0", "1280x2200x24"],
                 pass_fds=(display_file.fileno(),), stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
@@ -48,6 +48,8 @@ def capture(binary, destination):
                                 env=env, timeout=30).decode().splitlines()[0]
                             time.sleep(3)
                             subprocess.run(["xdotool", "windowfocus", "--sync", window], env=env, check=True, timeout=10)
+                            subprocess.run(["xdotool", "windowsize", "--sync", window, "1200", "2100"],
+                                           env=env, check=True, timeout=10)
                             # Exercise both independent entry points from Settings.
                             open_keys = ["Tab", "Return"] if route == "sidebar" else ["Tab", "Tab", "Return"]
                             copy_keys = ["Tab", "Return"] if route == "sidebar" else ["Return"]
@@ -56,10 +58,41 @@ def capture(binary, destination):
                             # Settings transfers focus to Copy when its own button unmounts.
                             subprocess.run(["xdotool", "key", "--delay", "200", *copy_keys], env=env, check=True, timeout=10)
                             time.sleep(0.5)
-                            report = subprocess.check_output(["xclip", "-selection", "clipboard", "-o"], env=env, timeout=5).decode()
+                            deadline = time.monotonic() + 10
+                            report = ""
+                            while not report and time.monotonic() < deadline:
+                                clipboard = subprocess.run(["xclip", "-selection", "clipboard", "-o"],
+                                                           env=env, timeout=5, capture_output=True)
+                                if clipboard.returncode == 0:
+                                    report = clipboard.stdout.decode()
+                                else:
+                                    time.sleep(0.1)
                             assert report.startswith("Tingskriver "), "Keyboard navigation or copy failed"
                             assert "GPU-status:" in report and "Whisper:" in report and "Parakeet:" in report
                             assert "@" not in report and "/home/" not in report and "C:\\Users" not in report
+                            # Copy -> privacy -> contact -> first embedded document.
+                            subprocess.run(["xdotool", "key", "--delay", "200", "Tab", "Tab", "Tab"],
+                                           env=env, check=True, timeout=10)
+                            def document_frame():
+                                time.sleep(0.3)
+                                return subprocess.check_output(
+                                    ["import", "-window", window, "rgb:-"], env=env, timeout=10)
+
+                            for document in range(4):
+                                top = document_frame()
+                                for key in ("Down", "Next", "End"):
+                                    subprocess.run(["xdotool", "key", key], env=env, check=True, timeout=10)
+                                    assert document_frame() != top, f"Document {document}: {key} did not scroll"
+                                    subprocess.run(["xdotool", "key", "Home"], env=env, check=True, timeout=10)
+                                    assert document_frame() == top, f"Document {document}: Home did not restore top"
+                                subprocess.run(["xdotool", "key", "End"], env=env, check=True, timeout=10)
+                                bottom = document_frame()
+                                for key in ("Up", "Prior"):
+                                    subprocess.run(["xdotool", "key", key], env=env, check=True, timeout=10)
+                                    assert document_frame() != bottom, f"Document {document}: {key} did not scroll up"
+                                    subprocess.run(["xdotool", "key", "End"], env=env, check=True, timeout=10)
+                                    assert document_frame() == bottom, f"Document {document}: End did not restore bottom"
+                                subprocess.run(["xdotool", "key", "Tab"], env=env, check=True, timeout=10)
                             if app.poll() is not None:
                                 raise RuntimeError("App exited before capture")
                             subprocess.run(["import", "-window", window,
