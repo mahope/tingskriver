@@ -4,6 +4,14 @@ Revisionen for #169 er skrevet med 62 funktionsrækker, en konkret rækkefølge 
 
 ## Resultat og kontrol
 
+### Rettelse efter review
+
+Reviewets ene P2-fund er bekræftet mod det registrerede MCP-tip `c319a36808a9c88e63a42faabd2852797acf564b`: `ui.rs::meeting_sharing()` og grenens `docs/mcp.md` har allerede GPUI-deling pr. møde. Grenoversigt, matrix, rækkefølge og joboverdragelse er rettet til at bevare og verificere mødeliste, opdatering, begge delingsretninger, asynkron lagring og bevaret værdi ved gemmefejl. Funktionen mangler på main; #56/#51 er ikke en forudsætning for grenens kontrol. Ingen fund er afvist eller efterladt; reviewet indeholder ingen P1- eller P3-fund.
+
+Målrettet dokumentkontrol består: MCP-status og afhængigheder, gyldig JSON, præcist match mellem alle tre issue-udkast og JSON samt `git diff --check`. Den fulde `cargo test --workspace --locked --no-fail-fast` er forsøgt og fejler under Tauri-build med manglende Linux-sidecar til `llama-helper`. Samme kommando fejler med samme manglende sidecar på den undersøgte main-base `afcf736` i en separat arbejdskopi. Workspace-suiten er derfor ikke grøn. `cargo test --locked -p tingskriver-core` består separat (exit 0): 720 unit-tests bestået, 5 ignoreret; integrations- og dokumentationstests består også med deres eksisterende ignorerede tests. Ingen produktkode eller afhængigheder er ændret.
+
+### Oprindelig aflevering
+
 - `docs/plans/feature-synlighed-audit.md` skelner main, fire åbne PR-grene og planlagte funktioner. Alle 171 eksisterende issues/PR'er fra åbne/lukkede API-snapshot er indekseret med titel og status.
 - De eksisterende UI-issues genbruges. #134 og #139 er Android-opgaver; desktop-modeldownload er et særskilt hul. #70 er lukket med core/Tauri, men GPUI-aflevering mangler. #36 er lukket og async-arbejde findes på main, selv om den ældre PR #151 stadig står åben.
 - Tre Markdown-udkast matcher JSON-felterne præcist. `jq -e` godkender listen og felttyperne. Alle labels findes blandt repoets eksisterende issue-labels; alle issuehenvisninger findes i de hentede snapshots.
