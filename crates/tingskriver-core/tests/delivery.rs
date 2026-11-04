@@ -273,3 +273,183 @@ async fn failed_delivery_survives_reopen_and_retries_without_losing_payload() {
         "Referat"
     );
 }
+
+async fn database(dir: &std::path::Path) -> sqlx::SqlitePool {
+    sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new().filename(dir.join("delivery.sqlite")),
+        )
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn interrupted_jobs_recover_and_exhausted_jobs_stay_visible_until_manual_retry() {
+    let dir = tempfile::tempdir().unwrap();
+    let keys = Arc::new(MemoryKeyStore::default());
+    let service = Delivery::open(dir.path(), keys.clone()).await.unwrap();
+    service
+        .set_policy(Policy {
+            local_only: false,
+            private: false,
+        })
+        .await
+        .unwrap();
+    let out = dir.path().join("not-directory");
+    std::fs::write(&out, "blocked").unwrap();
+    service
+        .save_target(
+            Target {
+                id: "folder".into(),
+                name: "Mappe".into(),
+                destination: Destination::Folder { path: out.clone() },
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    let id = service.test_target("folder").await.unwrap();
+    let pool = database(dir.path()).await;
+    sqlx::query("UPDATE delivery_jobs SET status = 'running', attempts = 4")
+        .execute(&pool)
+        .await
+        .unwrap();
+    drop(service);
+    let service = Delivery::open(dir.path(), keys).await.unwrap();
+    assert_eq!(service.jobs().await.unwrap()[0].status, "pending");
+    service.run_due().await.unwrap();
+    assert_eq!(service.jobs().await.unwrap()[0].status, "failed");
+    assert_eq!(service.jobs().await.unwrap()[0].attempts, 5);
+    service.run_due().await.unwrap();
+    assert_eq!(service.jobs().await.unwrap()[0].attempts, 5);
+    let payload: String = sqlx::query_scalar("SELECT bundle FROM delivery_jobs")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(payload.contains("Test fra Tingskriver"));
+    std::fs::remove_file(&out).unwrap();
+    service.retry(&id).await.unwrap();
+    service.run_due().await.unwrap();
+    assert_eq!(service.jobs().await.unwrap()[0].status, "completed");
+    assert!(service.retry(&id).await.is_err());
+}
+
+#[tokio::test]
+async fn pending_approval_cannot_be_redirected_by_editing_the_target_or_its_secret() {
+    use tingskriver_core::providers::secrets::KeyStore;
+    let dir = tempfile::tempdir().unwrap();
+    let keys = Arc::new(MemoryKeyStore::default());
+    let service = Delivery::open(dir.path(), keys.clone()).await.unwrap();
+    service
+        .set_policy(Policy {
+            local_only: false,
+            private: false,
+        })
+        .await
+        .unwrap();
+    let target = Target {
+        id: "hook".into(),
+        name: "Webhook".into(),
+        destination: Destination::Webhook {
+            format: WebhookFormat::Json,
+        },
+    };
+    service
+        .save_target(
+            target.clone(),
+            Some("https://example.invalid/original-synthetic-token".into()),
+        )
+        .await
+        .unwrap();
+    service.test_target("hook").await.unwrap();
+    assert!(service
+        .save_target(
+            target,
+            Some("https://example.invalid/replacement-synthetic-token".into())
+        )
+        .await
+        .is_err());
+    assert_eq!(
+        keys.get("Tingskriver/delivery/hook")
+            .unwrap()
+            .unwrap()
+            .expose(),
+        "https://example.invalid/original-synthetic-token"
+    );
+    service.delete_target("hook").await.unwrap();
+    service.run_due().await.unwrap();
+    assert_eq!(service.jobs().await.unwrap()[0].status, "pending");
+    assert!(service.jobs().await.unwrap()[0].error.is_some());
+}
+
+#[test]
+fn ssh_options_and_batch_injection_are_rejected() {
+    for (host, user, remote_dir) in [
+        ("-oProxyCommand=oops", "upload", "/upload"),
+        ("host", "-bad", "/upload"),
+        ("host", "upload", "/upload\n!command"),
+        ("host", "upload", "/upload/../elsewhere"),
+        ("host", "upload", "relative"),
+    ] {
+        let target = Target {
+            id: "ssh".into(),
+            name: "SSH".into(),
+            destination: Destination::Ssh {
+                host: host.into(),
+                port: 22,
+                user: user.into(),
+                key_path: std::env::temp_dir().join("id_ed25519"),
+                remote_dir: remote_dir.into(),
+            },
+        };
+        assert!(target.validate().is_err());
+    }
+}
+
+#[tokio::test]
+async fn corrupted_policy_fails_closed() {
+    let dir = tempfile::tempdir().unwrap();
+    let service = Delivery::open(dir.path(), Arc::new(MemoryKeyStore::default()))
+        .await
+        .unwrap();
+    let pool = database(dir.path()).await;
+    sqlx::query("INSERT INTO delivery_settings VALUES ('policy', '{}')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(service.policy().await.is_err());
+    assert!(service.run_due().await.is_err());
+    assert!(service.test_target("any").await.is_err());
+}
+
+#[tokio::test]
+async fn meeting_adapter_exports_saved_notes_and_the_approved_summary() {
+    use tingskriver_core::notes::{markdown, NotesStore};
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    sqlx::query("INSERT INTO meetings (id, title, created_at, updated_at) VALUES ('meeting', 'Ugemøde', '2026-11-04T10:00:00Z', '2026-11-04T10:00:00Z')").execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO transcripts (id, meeting_id, transcript, timestamp) VALUES ('first', 'meeting', 'Syntetisk transskript', '10:01')").execute(&pool).await.unwrap();
+    NotesStore::new(pool.clone())
+        .save("meeting", &markdown::parse("Syntetiske noter").unwrap())
+        .await
+        .unwrap();
+    let b = meeting::snapshot(&pool, "meeting", "Netop godkendt referat".into())
+        .await
+        .unwrap();
+    assert_eq!(b.summary, "Netop godkendt referat");
+    assert!(b.transcript.contains("Syntetisk transskript"));
+    assert!(b.notes.contains("Syntetiske noter"));
+    assert_eq!(b.sidecar.titel, "Ugemøde");
+    assert_eq!(b.sidecar.tid.to_rfc3339(), "2026-11-04T10:00:00+00:00");
+    assert!(meeting::snapshot(&pool, "missing", "Referat".into())
+        .await
+        .is_err());
+    assert!(meeting::snapshot(&pool, "meeting", " ".into())
+        .await
+        .is_err());
+}

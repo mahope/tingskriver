@@ -1,4 +1,5 @@
 //! Explicitly approved, durable exports. No transport runs during configuration.
+pub mod meeting;
 mod store;
 mod transport;
 
@@ -132,6 +133,7 @@ impl Target {
                         .bytes()
                         .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'-' | b':'))
                     || !safe_id(user)
+                    || user.starts_with('-')
                     || *port == 0
                     || !key_path.is_absolute()
                     || !remote_dir.starts_with('/')
@@ -189,7 +191,7 @@ pub enum Error {
     Storage,
     #[error("Webhook-adressen kunne ikke læses eller gemmes i nøglelageret")]
     Credential,
-    #[error("Aflevering mislykkedes. Kontrollér mål og adgang; køen forsøger igen")]
+    #[error("Aflevering mislykkedes. Kontrollér mål og adgang")]
     Transport,
 }
 

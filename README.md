@@ -8,6 +8,9 @@ Tingskriver optager og transskriberer møder på din Windows-computer, og alt k�
 
 Projektside: <https://tingskriver.mahoje.dk>
 
+Godkendte referater kan afleveres til en mappe, webhook eller et SSH-mål.
+Opsætning, privatliv, kø og API er beskrevet i [afleveringsvejledningen](docs/delivery.md).
+
 ![Mødeside i lyst udseende](docs/screenshots/moedeside-lys.png)
 
 | | |
