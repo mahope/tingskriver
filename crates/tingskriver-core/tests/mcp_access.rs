@@ -66,3 +66,71 @@ async fn policy_changes_apply_to_an_existing_reader() {
         .unwrap();
     assert!(reader.list_meetings(None, None, None).await.is_err());
 }
+
+#[tokio::test]
+async fn tasks_are_filtered_and_never_include_the_surrounding_summary() {
+    let pool = fixture().await;
+    sqlx::query("UPDATE summary_processes SET result=?")
+        .bind(
+            r#"{"markdown":"SECRET surrounding summary\n- [ ] Call supplier\n- [x] Already done"}"#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+    let reader = Reader::new(pool.clone());
+    let tasks = reader.list_tasks(true).await.unwrap();
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0]["text"], "Call supplier");
+    assert!(!serde_json::to_string(&tasks).unwrap().contains("SECRET"));
+    assert_eq!(reader.list_tasks(false).await.unwrap().len(), 2);
+    tingskriver_core::mcp::set_access(&pool, Access::Metadata)
+        .await
+        .unwrap();
+    assert_eq!(reader.list_tasks(true).await.unwrap().len(), 2);
+    tingskriver_core::mcp::set_access(&pool, Access::Off)
+        .await
+        .unwrap();
+    assert!(reader.list_tasks(true).await.is_err());
+}
+
+#[tokio::test]
+async fn dictation_needs_all_access_and_reads_only_allowlisted_fields() {
+    let pool = fixture().await;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("dictation.sqlite");
+    let store = SqlitePool::connect_with(
+        sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(&path)
+            .create_if_missing(true),
+    )
+    .await
+    .unwrap();
+    sqlx::raw_sql("CREATE TABLE dictation_history(id INTEGER, text TEXT,app TEXT,created_at INTEGER,audio_path TEXT); INSERT INTO dictation_history VALUES (1,'dictated','Editor',123,'SECRET path');")
+        .execute(&store).await.unwrap();
+    let reader = Reader::new(pool.clone());
+    for access in [Access::Marked, Access::Metadata, Access::Off] {
+        tingskriver_core::mcp::set_access(&pool, access)
+            .await
+            .unwrap();
+        assert!(reader.recent_dictations(&path, 10).await.is_err());
+    }
+    tingskriver_core::mcp::set_access(&pool, Access::All)
+        .await
+        .unwrap();
+    let values = reader.recent_dictations(&path, 10).await.unwrap();
+    assert_eq!(values[0]["text"], "dictated");
+    assert!(!serde_json::to_string(&values).unwrap().contains("SECRET"));
+    assert!(reader.recent_dictations(&path, 0).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn tasks_include_plain_lists_only_under_task_headings() {
+    let pool = fixture().await;
+    sqlx::query("UPDATE summary_processes SET result=?")
+        .bind(r###"{"markdown":"## Resumé\n- SECRET\n## Opgaver\n- Call supplier\n1. Book room\n## Beslutninger\n- SECRET decision"}"###)
+        .execute(&pool).await.unwrap();
+    let tasks = Reader::new(pool).list_tasks(true).await.unwrap();
+    assert_eq!(tasks.len(), 2);
+    assert_eq!(tasks[1]["text"], "Book room");
+    assert!(!serde_json::to_string(&tasks).unwrap().contains("SECRET"));
+}

@@ -46,3 +46,14 @@ install-script bypass or minimum-release-age override is used.
   unresolved MCP imports (red).
 - After the reader/migration: 3 tests pass. Existing core warnings: unused mut
   in recording_preferences, dead Windows Vulkan loader and built-in templates.
+- Stdio test initially failed at initialization (EOF from the placeholder main).
+  After rmcp implementation it initializes and lists ten tools, lists/gets a
+  fixture, applies a live metadata policy change and reports the closed app.
+- Six access fixtures and two app-action fixtures pass. Plain task-list fixture
+  initially returned zero tasks, then passed after recognizing task headings.
+- Linux `netstat -anp` during the live stdio test finds no TCP/UDP socket owned
+  by the MCP subprocess. Windows netstat and actual Claude/Codex use remain
+  release verification, not claimed by the Linux test.
+- Frontend tests initially failed on the missing component; after implementation
+  two tests pass (explicit access save, exact setup copy, failed sharing write).
+  `pnpm exec tsc --noEmit` passes.

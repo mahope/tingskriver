@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/tingskriver-mcp",
     "crates/tingskriver-core",
     "crates/tingskriver-app",
     "crates/tingskriver-host",

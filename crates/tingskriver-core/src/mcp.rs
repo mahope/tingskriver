@@ -82,6 +82,99 @@ impl Reader {
         visible(&mut tx, access, id).await
     }
 
+    pub async fn list_tasks(&self, open_only: bool) -> Result<Vec<Value>, String> {
+        let (mut tx, access) = self.snapshot().await?;
+        let rows = sqlx::query("SELECT s.meeting_id,s.result FROM summary_processes s JOIN meetings m ON m.id=s.meeting_id WHERE (? != 'marked' OR m.ai_shared=1) AND s.result IS NOT NULL ORDER BY m.created_at DESC LIMIT 500")
+            .bind(access_name(access)).fetch_all(&mut *tx).await.map_err(|_| STORAGE)?;
+        let mut tasks = vec![];
+        for row in rows {
+            let id: String = row.try_get("meeting_id").map_err(|_| STORAGE)?;
+            let result: String = row.try_get("result").map_err(|_| STORAGE)?;
+            let value: Value = serde_json::from_str(&result).unwrap_or(Value::Null);
+            // Current summaries store Markdown, not the future structured task schema.
+            let mut in_tasks = false;
+            for line in value
+                .get("markdown")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .lines()
+            {
+                let line = line.trim();
+                if line.starts_with('#') {
+                    let heading = line
+                        .trim_start_matches('#')
+                        .trim()
+                        .trim_end_matches(':')
+                        .to_lowercase();
+                    in_tasks = [
+                        "opgaver",
+                        "handlingspunkter",
+                        "action items",
+                        "tasks",
+                        "next steps",
+                        "næste skridt",
+                    ]
+                    .contains(&heading.as_str());
+                    continue;
+                }
+                let task = line
+                    .strip_prefix("- [ ] ")
+                    .map(|s| (s, false))
+                    .or_else(|| line.strip_prefix("- [x] ").map(|s| (s, true)))
+                    .or_else(|| line.strip_prefix("- [X] ").map(|s| (s, true)));
+                let task = task.or_else(|| {
+                    if !in_tasks {
+                        return None;
+                    }
+                    line.strip_prefix("- ")
+                        .or_else(|| line.strip_prefix("* "))
+                        .or_else(|| {
+                            line.split_once(". ")
+                                .filter(|(number, _)| {
+                                    !number.is_empty() && number.chars().all(|c| c.is_ascii_digit())
+                                })
+                                .map(|(_, text)| text)
+                        })
+                        .map(|text| (text, false))
+                });
+                if let Some((text, done)) = task {
+                    if !open_only || !done {
+                        tasks.push(json!({"id":id,"text":text,"done":done}));
+                    }
+                }
+            }
+        }
+        Ok(tasks)
+    }
+
+    pub async fn recent_dictations(&self, path: &Path, n: u32) -> Result<Vec<Value>, String> {
+        let (_tx, access) = self.snapshot().await?;
+        if access != Access::All {
+            return Err("Dikteringer kræver adgangsniveauet Alt.".into());
+        }
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(
+                sqlx::sqlite::SqliteConnectOptions::new()
+                    .filename(path)
+                    .read_only(true),
+            )
+            .await
+            .map_err(|_| STORAGE)?;
+        let rows = sqlx::query("SELECT text,app,created_at FROM dictation_history ORDER BY created_at DESC,id DESC LIMIT ?")
+            .bind(n.min(500)).fetch_all(&pool).await.map_err(|_| STORAGE)?;
+        let mut values = vec![];
+        for row in rows {
+            values.push(
+                json!({"text":row.try_get::<String,_>("text").map_err(|_| STORAGE)?,
+                "app":row.try_get::<Option<String>,_>("app").map_err(|_| STORAGE)?,
+                "time":row.try_get::<i64,_>("created_at").map_err(|_| STORAGE)?}),
+            );
+        }
+        pool.close().await;
+        Ok(values)
+    }
+
     pub async fn list_meetings(
         &self,
         from: Option<&str>,
