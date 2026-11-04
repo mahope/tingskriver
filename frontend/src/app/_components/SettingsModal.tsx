@@ -1,5 +1,6 @@
 import { ModelConfig } from "@/components/ModelSettingsModal";
 import { PreferenceSettings } from "@/components/PreferenceSettings";
+import { DeliverySettings } from "@/components/delivery/DeliverySettings";
 import { DeviceSelection } from "@/components/DeviceSelection";
 import { LanguageSelection } from "@/components/LanguageSelection";
 import { TranscriptSettings } from "@/components/TranscriptSettings";
@@ -67,6 +68,7 @@ export function SettingsModals({
         footer={<PrimaryButton onClick={() => onClose('modelSettings')}>Færdig</PrimaryButton>}>
         <div className="space-y-8">
           <PreferenceSettings />
+          <DeliverySettings />
 
           <div className="border-t border-border pt-8">
             <h4 className="font-serif text-lg font-semibold text-foreground mb-4">AI-model til opsummeringer</h4>

@@ -1,0 +1,8 @@
+{
+  "kilde": "tingskriver",
+  "skemaversion": 1,
+  "titel": "Ugemøde",
+  "tid": "2026-11-04T10:00:00Z",
+  "talere": ["Taler 1"],
+  "opgaver": [{"tekst": "Følg op", "ansvarlig": null}]
+}

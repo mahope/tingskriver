@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mahope/tingskriver/blob/main/docs/schemas/delivery-v1.schema.json",
+  "title": "Tingskriver delivery sidecar v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kilde", "skemaversion", "titel", "tid", "talere", "opgaver"],
+  "properties": {
+    "kilde": {"const": "tingskriver"},
+    "skemaversion": {"const": 1},
+    "titel": {"type": "string", "minLength": 1, "pattern": "\\S"},
+    "tid": {"type": "string", "format": "date-time"},
+    "talere": {"type": "array", "items": {"type": "string"}},
+    "opgaver": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["tekst", "ansvarlig"],
+        "properties": {"tekst": {"type": "string"}, "ansvarlig": {"type": ["string", "null"]}}
+      }
+    }
+  }
+}

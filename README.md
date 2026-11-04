@@ -4,9 +4,12 @@
 
 ## Dansk
 
-Tingskriver optager og transskriberer møder på din Windows-computer, og alt kører lokalt. Lyd, transskription og resuméer forlader ikke maskinen, medmindre du selv vælger en ekstern AI-tjeneste. Programmet er lavet til danske brugere, er gratis og open source, og der er ingen Pro-version eller betalingsmur.
+Tingskriver optager og transskriberer møder på din Windows-computer, og alt kører lokalt. Mødeindhold forlader kun maskinen, hvis du selv vælger en ekstern AI-tjeneste eller godkender aflevering til et mål, du har sat op. Programmet er lavet til danske brugere, er gratis og open source, og der er ingen Pro-version eller betalingsmur.
 
 Projektside: <https://tingskriver.mahoje.dk>
+
+Godkendte referater kan afleveres til en mappe, webhook eller et SSH-mål.
+Opsætning, privatliv, kø og API er beskrevet i [afleveringsvejledningen](docs/delivery.md).
 
 ![Mødeside i lyst udseende](docs/screenshots/moedeside-lys.png)
 
@@ -106,7 +109,7 @@ VAD energidetektion. Se [bygning og test af sidecaren](docs/BUILDING.md#isolated
 
 ## English
 
-Tingskriver is a privacy-first meeting recorder and transcriber for Windows that runs locally. Audio, transcripts and summaries stay on your machine unless you choose an external AI service yourself. It is made for Danish users, is free and open source, and has no Pro version or paywall.
+Tingskriver is a privacy-first meeting recorder and transcriber for Windows that runs locally. Meeting content only leaves your machine if you choose an external AI service or approve delivery to a target you configured. It is made for Danish users, is free and open source, and has no Pro version or paywall.
 
 Project page: <https://tingskriver.mahoje.dk>
 
