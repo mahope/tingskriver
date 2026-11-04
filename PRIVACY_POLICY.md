@@ -62,6 +62,19 @@ When enabled, analytics helps us with:
 - **Location**: Data processed in accordance with PostHog's privacy policy
 - **Access Control**: Strictly limited to core development team members
 
+## User-Approved Delivery
+
+If you explicitly configure a delivery target and approve a meeting export,
+Tingskriver can send the transcript, approved summary, notes and structured
+metadata to your chosen folder, webhook or SSH/SFTP server. Channel webhooks
+receive an abbreviated summary. Audio is not included in these exports.
+Delivery is disabled by default. Delivery's local-only and private settings
+block tests, new exports and queued retries, including folder exports.
+Webhook addresses are stored in the system credential store; SSH private keys
+remain in their key files. Failed exports remain in the local queue until they
+succeed; completed payloads are removed from that queue. See
+[delivery documentation](docs/delivery.md) for consent and retry behavior.
+
 ## Logs and Crash Dumps
 
 Tingskriver keeps a log file and, after a crash, a crash dump on your own computer. Neither is uploaded or sent anywhere; you decide whether to send one to the developer.
