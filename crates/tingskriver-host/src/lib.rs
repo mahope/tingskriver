@@ -47,6 +47,7 @@ use watch::{Probe, Shared, Wanted};
 pub enum Request {
     /// Show and focus the main window (tray click, "Åbn", shortcut).
     ShowWindow,
+    ShowAbout,
     /// Start a meeting recording ("Ny optagelse").
     NewRecording,
     /// Open the assistant ("Spørg").
@@ -265,6 +266,7 @@ fn handle_trigger(
         Trigger::Menu(MenuEntry::Ask) | Trigger::Shortcut(ShortcutAction::Ask) => {
             Some(Request::Ask)
         }
+        Trigger::Menu(MenuEntry::About) => Some(Request::ShowAbout),
         Trigger::Menu(MenuEntry::Quit) => Some(Request::Quit),
     };
     if let Some(request) = request {

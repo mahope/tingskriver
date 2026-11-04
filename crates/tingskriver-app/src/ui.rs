@@ -70,6 +70,7 @@ impl AppModel {
 struct Globals {
     model: Entity<AppModel>,
     main_window: Option<WindowHandle<Root>>,
+    shell: Option<Entity<Shell>>,
 }
 
 impl Global for Globals {}
@@ -78,6 +79,7 @@ pub fn init(model: Entity<AppModel>, cx: &mut App) {
     cx.set_global(Globals {
         model,
         main_window: None,
+        shell: None,
     });
 }
 
@@ -135,6 +137,20 @@ pub fn load_database(cx: &mut App) {
 }
 
 /// Show the main window, opening it if needed.
+pub fn show_about(cx: &mut App) {
+    model(cx).update(cx, |model, cx| {
+        model.start_page = Page::About;
+        cx.notify();
+    });
+    if let Some(shell) = cx.global::<Globals>().shell.clone() {
+        shell.update(cx, |shell, cx| {
+            shell.page = Page::About;
+            cx.notify();
+        });
+    }
+    show_main_window(cx);
+}
+
 pub fn show_main_window(cx: &mut App) {
     if let Some(handle) = cx.global::<Globals>().main_window {
         let shown = handle.update(cx, |_, window, _| window.activate_window());
@@ -184,6 +200,7 @@ fn open_main_window(cx: &mut App) -> anyhow::Result<WindowHandle<Root>> {
         move |window, cx| {
             theme::sync_with_window(window, cx);
             let shell = cx.new(|cx| Shell::new(state_path, window, cx));
+            cx.global_mut::<Globals>().shell = Some(shell.clone());
             let model = model(cx);
             window.on_next_frame(move |_, cx| {
                 model.update(cx, |m, _| {
@@ -205,15 +222,17 @@ pub enum Page {
     Meetings,
     Dictation,
     Settings,
+    About,
     Measurement,
 }
 
 impl Page {
-    pub const ALL: [Page; 4] = [
+    pub const ALL: [Page; 5] = [
         Page::Meetings,
         Page::Dictation,
         Page::Measurement,
         Page::Settings,
+        Page::About,
     ];
 
     /// The page for a `--page` argument (English or Danish name).
@@ -221,6 +240,7 @@ impl Page {
         match name.to_lowercase().as_str() {
             "meetings" | "møder" => Some(Page::Meetings),
             "dictation" | "diktering" => Some(Page::Dictation),
+            "about" | "om" => Some(Page::About),
             "settings" | "indstillinger" => Some(Page::Settings),
             "measurement" | "måling" => Some(Page::Measurement),
             _ => None,
@@ -231,6 +251,7 @@ impl Page {
         match self {
             Page::Meetings => strings::MEETINGS,
             Page::Dictation => strings::DICTATION,
+            Page::About => strings::ABOUT,
             Page::Settings => strings::SETTINGS,
             Page::Measurement => strings::MEASURE_TITLE,
         }
@@ -240,6 +261,7 @@ impl Page {
         match self {
             Page::Meetings => IconName::Calendar,
             Page::Dictation => IconName::Mic,
+            Page::About => IconName::Info,
             Page::Settings => IconName::Settings,
             Page::Measurement => IconName::Mic,
         }
@@ -249,6 +271,7 @@ impl Page {
 pub struct Shell {
     model: Entity<AppModel>,
     page: Page,
+    update_status: crate::about::UpdateStatus,
     measurement: Entity<crate::measurement::MeasurementView>,
     probe_line: Entity<InputState>,
     probe_text: Entity<TextareaState>,
@@ -299,6 +322,7 @@ impl Shell {
         Shell {
             model,
             page,
+            update_status: crate::about::UpdateStatus::default(),
             measurement,
             probe_line,
             probe_text,
@@ -352,11 +376,19 @@ impl Shell {
                     }))
             })))
             .footer(
-                div()
+                v_flex()
+                    .child(
+                        Button::new("nav-about")
+                            .label(strings::ABOUT)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.page = Page::About;
+                                cx.notify();
+                            })),
+                    )
                     .px(space::SM)
                     .text_size(typography::XS)
                     .text_color(palette.muted_foreground)
-                    .child(strings::version(env!("CARGO_PKG_VERSION"))),
+                    .child(strings::version(crate::about::VERSION)),
             )
     }
 
@@ -421,6 +453,54 @@ impl Shell {
         page(strings::DICTATION, None, body.into_any_element(), cx)
     }
 
+    fn about_page(&self, cx: &mut Context<Self>) -> AnyElement {
+        let body = v_flex()
+            .gap(space::LG)
+            .child(paragraph(&crate::about::metadata(), cx))
+            .child(section_title(strings::ABOUT_UPDATES))
+            .child(paragraph(&self.update_status.label(), cx))
+            .child(
+                Button::new("about-copy")
+                    .label(strings::ABOUT_COPY)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        let task = this
+                            .model
+                            .read(cx)
+                            .runtime
+                            .spawn(crate::about::diagnostics());
+                        cx.spawn(async move |_, cx| {
+                            if let Ok(report) = task.await {
+                                cx.update(|cx| {
+                                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(report))
+                                });
+                            }
+                        })
+                        .detach();
+                    })),
+            )
+            .child(
+                Button::new("about-contact")
+                    .label(strings::ABOUT_CONTACT)
+                    .on_click(|_, _, cx| {
+                        cx.open_url("https://mahoje.dk");
+                    }),
+            )
+            .children(crate::about::DOCUMENTS.iter().map(|(title, text)| {
+                v_flex().gap(space::SM).child(section_title(title)).child(
+                    div()
+                        .id(SharedString::from(format!("about-{title}")))
+                        .h(gpui::px(240.))
+                        .flex_shrink_0()
+                        .overflow_y_scroll()
+                        .tab_index(0)
+                        .role(gpui::Role::Document)
+                        .aria_label(*title)
+                        .child(paragraph(text, cx)),
+                )
+            }));
+        page(strings::ABOUT, None, body.into_any_element(), cx)
+    }
+
     fn settings_page(&self, cx: &mut Context<Self>) -> AnyElement {
         let model = self.model.read(cx);
         let mode = if cx.theme().mode.is_dark() {
@@ -448,6 +528,14 @@ impl Shell {
 
         let body = v_flex()
             .gap(space::XL)
+            .child(
+                Button::new("settings-about")
+                    .label(strings::ABOUT)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.page = Page::About;
+                        cx.notify();
+                    })),
+            )
             .child(paragraph(strings::SETTINGS_LATER, cx))
             .child(setting_group(
                 strings::APPEARANCE,
@@ -567,6 +655,7 @@ impl Render for Shell {
             _ => None,
         };
         let content = match (&failure, self.page) {
+            (_, Page::About) => self.about_page(cx),
             (Some(failure), _) => self.database_error_page(failure, cx),
             (None, Page::Meetings) => self.meetings_page(cx),
             (None, Page::Dictation) => self.dictation_page(cx),
@@ -698,7 +787,10 @@ mod tests {
     #[test]
     fn navigation_is_danish_and_ordered() {
         let labels: Vec<_> = Page::ALL.iter().map(|p| p.label()).collect();
-        assert_eq!(labels, ["Møder", "Diktering", "Måling", "Indstillinger"]);
+        assert_eq!(
+            labels,
+            ["Møder", "Diktering", "Måling", "Indstillinger", "Om"]
+        );
     }
 
     #[test]

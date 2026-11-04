@@ -54,16 +54,18 @@ pub enum MenuEntry {
     Dictate,
     Ask,
     Open,
+    About,
     Quit,
 }
 
 impl MenuEntry {
     /// Menu order; a separator goes before `Open`.
-    pub const ALL: [MenuEntry; 5] = [
+    pub const ALL: [MenuEntry; 6] = [
         MenuEntry::NewRecording,
         MenuEntry::Dictate,
         MenuEntry::Ask,
         MenuEntry::Open,
+        MenuEntry::About,
         MenuEntry::Quit,
     ];
 }
@@ -141,6 +143,7 @@ impl TrayStatus {
                 _ => label("Diktér", false),
             },
             MenuEntry::Ask => label("Spørg (kommer senere)", false),
+            MenuEntry::About => label(tingskriver_core::strings::ABOUT, true),
             MenuEntry::Open => label("Åbn Tingskriver", true),
             MenuEntry::Quit => label("Afslut", true),
         }

@@ -188,3 +188,14 @@ On startup both desktop hosts scan the recordings folder independently of webvie
 `recover::restore(root, id, pool, ffmpeg)` repairs and verifies the audio before registering the meeting in SQLite. Retries reuse the meeting ID; raw tracks remain available until acknowledged through the existing verified cleanup API. If database persistence fails after encoding, a disk marker keeps the recording discoverable. `restore_and_transcribe(host, id)` then uses the normal saved-file transcription path. Recovery uses the configured transcription provider and model, and matches existing meeting folders by canonical path (including Windows verbatim paths). The recovery offer itself belongs to the meeting-list UI.
 
 Run `cargo test --locked -p tingskriver-core recover::tests` for complete, truncated, empty, persistence-failure, and killed-writer fixtures (encoding tests skip without FFmpeg; Linux CI installs it). The killed-writer test terminates a separate process recording both tracks and restores into a fresh database, with a maximum two-second loss assertion.
+
+### About the GPUI app
+
+Open **Indstillinger → Om**, **Om** in the sidebar, or **Om** in the Windows
+tray menu. The page shows the Cargo workspace version (also used by the GPUI
+Velopack installer), build date, commit, channel and platform. Licenses,
+third-party notices and the privacy policy are bundled for offline reading.
+**Kopiér diagnoseoplysninger** copies only fixed build information; unavailable
+GPU and model information is explicitly marked. Opening this page makes no
+network requests. The contact button opens the project website only on request.
+The **Opdateringer** section is reserved for the update status integration (#170).
