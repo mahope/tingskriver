@@ -40,7 +40,7 @@ static UPDATE_GATE: Mutex<()> = Mutex::new(());
 
 pub fn block_for_update() -> Option<std::sync::MutexGuard<'static, ()>> {
     let guard = UPDATE_GATE.lock().ok()?;
-    if is_dictating() {
+    if update_is_busy() {
         None
     } else {
         Some(guard)
@@ -51,6 +51,16 @@ pub fn block_for_update() -> Option<std::sync::MutexGuard<'static, ()>> {
 /// keep dictation speech out of the meeting's microphone track.
 pub fn is_dictating() -> bool {
     DICTATING.load(Ordering::Relaxed)
+}
+
+/// Updates must also wait for transcription and ordered text insertion.
+pub fn update_is_busy() -> bool {
+    is_dictating()
+        || SERVICE.get().is_some_and(|service| {
+            service.order.lock()
+                .map(|order| order.has_pending(service.next_ticket.load(Ordering::SeqCst)))
+                .unwrap_or(true)
+        })
 }
 
 pub fn get() -> Result<Arc<Service>, String> {
@@ -521,14 +531,17 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant, Optio
                     }
                 }
                 GestureAction::Stop => {
+                    let Ok(_update_guard) = UPDATE_GATE.lock() else {
+                        continue;
+                    };
                     if let Some(s) = session.take() {
                         let samples = s.recorder.stop();
+                        let ticket = service.next_ticket.fetch_add(1, Ordering::SeqCst);
                         DICTATING.store(false, Ordering::Relaxed);
                         service.overlay.set(OverlayState::Processing);
                         let service = service.clone();
                         let target_app = s.target_app;
                         let start_ms = s.start_ms;
-                        let ticket = service.next_ticket.fetch_add(1, Ordering::SeqCst);
                         crate::runtime::spawn(async move {
                             let turn = Turn {
                                 service: service.clone(),

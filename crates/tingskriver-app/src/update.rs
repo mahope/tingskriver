@@ -281,7 +281,7 @@ pub fn start_background_checks(bridge: Arc<Bridge>, runtime: tokio::runtime::Han
         loop {
             BUSY.store(
                 tingskriver_core::audio::recording_commands::is_recording().await
-                    || tingskriver_core::dictation::is_dictating(),
+                    || tingskriver_core::dictation::service::update_is_busy(),
                 Ordering::Relaxed,
             );
             tokio::time::sleep(Duration::from_millis(100)).await;
@@ -333,7 +333,7 @@ pub fn start_background_checks(bridge: Arc<Bridge>, runtime: tokio::runtime::Han
                 };
                 let busy = runtime
                     .block_on(tingskriver_core::audio::recording_commands::is_recording())
-                    || tingskriver_core::dictation::is_dictating();
+                    || tingskriver_core::dictation::service::update_is_busy();
                 let (next, effect) =
                     tingskriver_core::updates::transition(&status(), event, prefs.enabled, busy);
                 set_status(next);

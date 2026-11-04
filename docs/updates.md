@@ -24,6 +24,8 @@ dictation state is active. An action racing a recording is refused, with an
 inline message and an explicit retry after recording ends. The final restart
 hand-off blocks new recordings under the recording lifecycle lock and new
 dictation starts under a shared gate. No recording is stopped by the updater.
+Dictation remains busy after the microphone closes until every issued ticket
+has finished transcription and text insertion, including out-of-order work.
 
 The tray's About entry indicates an available or downloaded update. Settings
 also show the current status. Controls use the existing GPUI keyboard buttons
@@ -78,7 +80,7 @@ On a disposable Windows VM with two real Velopack builds and a local test feed:
 2. Enable checks, select the local folder/HTTP feed, and check manually. Verify
    version, size, Danish notes (then English fallback), date, and tray indicator.
    Use Tab/Enter and Narrator to exercise About and the settings controls.
-3. During a meeting, a paused meeting and dictation, verify download/restart are
+3. During a meeting, a paused meeting and dictation (including text processing), verify download/restart are
    disabled. Stop recording, download, observe progress, choose Later, restart
    and verify the newer version and retained meetings/settings. Repeat with Now.
 4. Repeat offline, with a denied/missing feed, a truncated/tampered package and

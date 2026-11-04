@@ -19,6 +19,10 @@ impl Order {
         self.next
     }
 
+    pub fn has_pending(&self, issued: u64) -> bool {
+        self.next < issued
+    }
+
     /// Mark `ticket` finished. Returns the new lowest unfinished ticket.
     pub fn finish(&mut self, ticket: u64) -> u64 {
         if ticket >= self.next {
@@ -39,6 +43,27 @@ impl Order {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn updates_wait_for_all_issued_dictations_even_out_of_order() {
+        use crate::updates::{transition, Effect, Event, Release, State};
+        let ready = State::Ready(Release::default());
+        let mut order = Order::default();
+        assert!(!order.has_pending(0));
+        assert!(order.has_pending(2));
+        order.finish(1);
+        assert!(order.has_pending(2));
+        assert_eq!(
+            transition(&ready, Event::Restart, true, order.has_pending(2)).1,
+            Effect::None
+        );
+        order.finish(0);
+        assert!(!order.has_pending(2));
+        assert_eq!(
+            transition(&ready, Event::Restart, true, order.has_pending(2)).1,
+            Effect::Restart
+        );
+    }
 
     #[test]
     fn in_order_finishes_advance_one_by_one() {
