@@ -59,7 +59,7 @@ Builds with a version suffix (`0.5.1-dev.1`) also see pre-releases; release buil
 2. Tag and push: `git tag app-v0.5.1-dev.1 && git push origin app-v0.5.1-dev.1`. The workflow fails if the tag and the workspace version differ.
 3. `app-release.yml` builds the app with the same portable CPU baseline as the Tauri installer, downloads the previous Velopack release's full package so vpk can build a delta, packs, and publishes a GitHub Release with `Tingskriver-Setup.exe`, `TingskriverApp-<version>-full.nupkg`, `TingskriverApp-<version>-delta.nupkg` (from the second release on) and `releases.win.json`. Versions with a suffix become pre-releases. The release is never marked latest (see the move below).
 
-Branch pushes that touch the installer files, and manual runs (`workflow_dispatch`), build the same files (delta against the newest published release) as the artifact `tingskriver-app-velopack-<version>-<sha>` without publishing.
+Branch pushes that touch the installer files, and manual runs (`workflow_dispatch`) on branches, build a full package as the artifact `tingskriver-app-velopack-<version>-<sha>` without publishing or downloading previous releases. This also works when the workspace version has already been published. Only tag releases build deltas against the newest published release.
 
 Locally on Windows (the vpk version must equal the `velopack` crate in `crates/tingskriver-app/Cargo.toml`):
 
@@ -72,7 +72,7 @@ pwsh installer/pack.ps1 -Version 0.5.1-dev.1 -Exe target/release/tingskriver-app
 
 ## Testing on a clean Windows VM
 
-Updates without publishing a release: build two versions (bump the workspace version, push the branch, download both artifacts) and point the installed app at a folder with the newer one's files. Every build, branch builds included, makes its delta against the newest published Velopack release, so a delta update needs the older version to be that release (publish it as an `app-v…-dev.N` pre-release first); between two unpublished branch builds the update is a full package.
+Updates without publishing a release: build two versions (bump the workspace version, push the branch, download both artifacts) and point the installed app at a folder with the newer one's files. Branch builds produce full packages only. To test a delta update, publish both versions as `app-v…-dev.N` pre-releases instead.
 
 1. Run `Tingskriver-Setup.exe` of the older version as a normal user. No UAC prompt should appear. Check: `%LOCALAPPDATA%\TingskriverApp\current\tingskriver-app.exe` exists, Start menu and Desktop have "Tingskriver", `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` has `Tingskriver` with `--hidden`, and the log `%LOCALAPPDATA%\dk.mahoje.tingskriver\logs\tingskriver-app.log` has `installer install:` lines.
 2. Sign out and in: the app runs hidden (no window, process in Task Manager); starting it from the Start menu shows the window.

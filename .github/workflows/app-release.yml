@@ -122,10 +122,11 @@ jobs:
         shell: bash
         run: dotnet tool install -g vpk --version "$VPK_VERSION"
 
-      # The newest published version's full package lets vpk build a delta
-      # (branch builds too, so their artifacts can be tested as an update).
+      # Only releases build deltas; unpublished builds may have the same or
+      # an older version than the newest published package, which vpk rejects.
       # Before the first release there is none; then only the full package.
       - name: Download previous release
+        if: steps.version.outputs.publish == 'true'
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
