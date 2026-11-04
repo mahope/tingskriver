@@ -142,18 +142,23 @@ pub fn show_about(cx: &mut App) {
         model.start_page = Page::About;
         cx.notify();
     });
-    if let Some(shell) = cx
-        .global::<Globals>()
-        .shell
-        .as_ref()
-        .and_then(|shell| shell.upgrade())
-    {
-        shell.update(cx, |shell, cx| {
-            shell.page = Page::About;
-            cx.notify();
+    show_main_window(cx);
+    if let Some(handle) = cx.global::<Globals>().main_window {
+        let shell = cx
+            .global::<Globals>()
+            .shell
+            .as_ref()
+            .and_then(|shell| shell.upgrade());
+        let _ = handle.update(cx, |_, window, cx| {
+            if let Some(shell) = shell {
+                shell.update(cx, |shell, cx| {
+                    shell.page = Page::About;
+                    shell.about_copy_focus.focus(window, cx);
+                    cx.notify();
+                });
+            }
         });
     }
-    show_main_window(cx);
 }
 
 /// Show the main window, opening it if needed.
@@ -276,6 +281,7 @@ impl Page {
 
 pub struct Shell {
     focus_handle: gpui::FocusHandle,
+    about_copy_focus: gpui::FocusHandle,
     diagnosis_status: Option<&'static str>,
     model: Entity<AppModel>,
     page: Page,
@@ -330,6 +336,7 @@ impl Shell {
         let page = model.read(cx).start_page;
         Shell {
             focus_handle,
+            about_copy_focus: cx.focus_handle(),
             diagnosis_status: None,
             model,
             page,
@@ -479,6 +486,7 @@ impl Shell {
                 .child(paragraph(&crate::about::update_status().label(), cx))
                 .child(
                     Button::new("about-copy")
+                        .track_focus(&self.about_copy_focus)
                         .label(strings::ABOUT_COPY)
                         .loading(self.diagnosis_status == Some(strings::ABOUT_COPYING))
                         .on_click(cx.listener(|this, _, _, cx| {
@@ -581,8 +589,9 @@ impl Shell {
             .child(
                 Button::new("settings-about")
                     .label(strings::ABOUT)
-                    .on_click(cx.listener(|this, _, _, cx| {
+                    .on_click(cx.listener(|this, _, window, cx| {
                         this.page = Page::About;
+                        this.about_copy_focus.focus(window, cx);
                         cx.notify();
                     })),
             )
