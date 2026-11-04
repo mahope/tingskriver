@@ -14,7 +14,7 @@ use gpui_component::{
     input::{Input, InputEvent, InputState, Textarea, TextareaState},
     sidebar::{Sidebar, SidebarHeader, SidebarMenu, SidebarMenuItem},
     spinner::Spinner,
-    v_flex, ActiveTheme, Icon, Root,
+    v_flex, ActiveTheme, Disableable, Icon, Root, Selectable, WindowExt,
 };
 use gpui_kit_assets::IconName;
 use tingskriver_core::strings;
@@ -36,6 +36,8 @@ pub struct AppModel {
     /// Whether the first-frame time is still to be reported. Off for
     /// `--hidden`, where the window opens long after process start.
     pub report_first_frame: bool,
+    mcp_access: Option<tingskriver_core::mcp::Access>,
+    mcp_message: String,
 }
 
 impl AppModel {
@@ -56,6 +58,8 @@ impl AppModel {
             clock,
             start_page: Page::Meetings,
             report_first_frame: true,
+            mcp_access: None,
+            mcp_message: String::new(),
         }
     }
 
@@ -121,6 +125,16 @@ pub fn load_database(cx: &mut App) {
             DbState::Failed(_) => "failed",
             DbState::Loading => "loading",
         };
+        let mcp_access = if let DbState::Ready(db) = &state {
+            let reader = tingskriver_core::mcp::Reader::new(db.pool().clone());
+            runtime
+                .spawn(async move { reader.access().await })
+                .await
+                .ok()
+                .and_then(Result::ok)
+        } else {
+            None
+        };
         model.update(cx, |m, cx| {
             log::info!(
                 "startup: database {outcome} after {} ms ({} ms after process start)",
@@ -128,6 +142,7 @@ pub fn load_database(cx: &mut App) {
                 m.clock.elapsed().as_millis()
             );
             m.db = state;
+            m.mcp_access = mcp_access;
             cx.notify();
         });
     })
@@ -151,6 +166,19 @@ pub fn show_main_window(cx: &mut App) {
             let log_path = model(cx).read(cx).log_path.clone();
             crate::crash::window_failed(&error, log_path.as_deref())
         }
+    }
+}
+
+pub fn show_mcp_action(action: String, cx: &mut App) {
+    show_main_window(cx);
+    if let Some(handle) = cx.global::<Globals>().main_window {
+        let _ = handle.update(cx, |_, window, cx| {
+            window.push_notification(
+                gpui_component::notification::Notification::info(format!("AI-værktøj: {action}"))
+                    .in_app_and_system(),
+                cx,
+            );
+        });
     }
 }
 
@@ -449,6 +477,7 @@ impl Shell {
         let body = v_flex()
             .gap(space::XL)
             .child(paragraph(strings::SETTINGS_LATER, cx))
+            .child(self.mcp_settings(cx))
             .child(setting_group(
                 strings::APPEARANCE,
                 vec![strings::appearance(mode)],
@@ -488,6 +517,93 @@ impl Shell {
                     ),
             );
         page(strings::SETTINGS, None, body.into_any_element(), cx)
+    }
+
+    fn mcp_settings(&self, cx: &mut Context<Self>) -> AnyElement {
+        use tingskriver_core::mcp::Access;
+        let state = self.model.read(cx);
+        let current = state.mcp_access;
+        let mut controls = h_flex().gap(space::SM).flex_wrap();
+        for (index, (access, label)) in [
+            (Access::Marked, "Kun markerede møder"),
+            (Access::Metadata, "Kun metadata"),
+            (Access::All, "Alt"),
+            (Access::Off, "Fra"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let model = self.model.clone();
+            controls = controls.child(
+                Button::new(("mcp-access", index))
+                    .label(label)
+                    .selected(current == Some(access))
+                    .disabled(current.is_none())
+                    .on_click(move |_, _, cx| {
+                        let model = model.clone();
+                        let state = model.read(cx);
+                        let DbState::Ready(db) = &state.db else {
+                            return;
+                        };
+                        let pool = db.pool().clone();
+                        let task = state.runtime.spawn(async move {
+                            tingskriver_core::mcp::set_access(&pool, access).await
+                        });
+                        cx.spawn(async move |cx| {
+                            let result = task.await;
+                            model.update(cx, |state, cx| {
+                                if matches!(result, Ok(Ok(()))) {
+                                    state.mcp_access = Some(access);
+                                    state.mcp_message = "MCP-adgang er gemt.".into();
+                                } else {
+                                    state.mcp_message =
+                                        "MCP-adgang kunne ikke gemmes. Prøv igen.".into();
+                                }
+                                cx.notify();
+                            });
+                        })
+                        .detach();
+                    }),
+            );
+        }
+        let mut body = v_flex().gap(space::SM).child(section_title("AI-værktøjer (MCP)"))
+            .child(paragraph("Data delt med et AI-værktøj forlader computeren via værktøjets udbyder. Nye installationer deler kun markerede møder. Møder markeres i Tauri-mødesiden, indtil mødesiden er flyttet til denne app.",cx))
+            .child(controls)
+            .child(paragraph(&state.mcp_message,cx));
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(parent) = exe.parent() {
+                let path = parent.join(if cfg!(windows) {
+                    "tingskriver-mcp.exe"
+                } else {
+                    "tingskriver-mcp"
+                });
+                if let Ok(quoted) = serde_json::to_string(&path.to_string_lossy()) {
+                    for (index, (label, text)) in [
+                        (
+                            "Kopiér opsætning til Claude Code",
+                            format!("claude mcp add tingskriver -- \"{}\"", path.display()),
+                        ),
+                        (
+                            "Kopiér opsætning til Codex",
+                            format!("[mcp_servers.tingskriver]\ncommand = {quoted}\n"),
+                        ),
+                    ]
+                    .into_iter()
+                    .enumerate()
+                    {
+                        body = body.child(Button::new(("mcp-copy", index)).label(label).on_click(
+                            move |_, window, cx| {
+                                cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                    text.clone(),
+                                ));
+                                window.push_notification("MCP-opsætningen er kopieret.", cx);
+                            },
+                        ));
+                    }
+                }
+            }
+        }
+        body.into_any_element()
     }
 
     fn database_error_page(&self, failure: &DbFailure, cx: &mut Context<Self>) -> AnyElement {

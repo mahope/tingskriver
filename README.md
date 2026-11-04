@@ -107,11 +107,74 @@ modelnedbrud ikke lukker optagelse, genvej eller tray. Det berørte kald fejler;
 næste kald genstarter processen. Kan ONNX Runtime ikke starte, bruger automatisk
 VAD energidetektion. Se [bygning og test af sidecaren](docs/BUILDING.md#isolated-local-speech-inference).
 
+### MCP til Claude Code og Codex
+
+Installeren indeholder `tingskriver-mcp.exe`, en lokal stdio-server uden netværksport.
+Åbn **Indstillinger → AI-værktøjer (MCP)**, og kopiér opsætningen til din klient.
+For en Tauri-installation i standardmappen kan du køre dette i `cmd.exe`:
+
+```bat
+claude mcp add tingskriver -- "%LOCALAPPDATA%\Tingskriver\tingskriver-mcp.exe"
+```
+
+Codex bruger samme program i `config.toml`. Brug den faktiske absolutte sti,
+som knappen i appen kopierer; TOML udvider ikke `%LOCALAPPDATA%`:
+
+```toml
+[mcp_servers.tingskriver]
+command = 'C:\Users\<brugernavn>\AppData\Local\Tingskriver\tingskriver-mcp.exe'
+```
+
+Standard er **Kun markerede møder**. Mødernes **Må deles med AI-værktøjer**
+er slået fra som standard. **Kun metadata** udelader transskript, referat,
+noter og dikteringer; **Fra** giver kun en forklaring. **Alt** giver fuld
+læseadgang, herunder dikteringer. Vælg selv Alt på din egen installation,
+hvis det er den ønskede adgang. Ingen installation opgraderes automatisk til Alt.
+Læseværktøjer virker uden appen. Handlinger går gennem den åbne app og viser
+en notifikation og en logpost. Aflevering bruger de eksisterende mål og
+respekterer Kun lokal og Privat tilstand. Se [detaljer og begrænsninger](docs/mcp.md).
+
+**Privatliv:** Data sendt til et AI-værktøj forlader computeren via det
+værktøjs udbyder. Lokal MCP-transport gør ikke en ekstern AI-klient lokal.
+Læs udbyderens datavilkår, før du giver adgang.
+
 ## English
 
 Tingskriver is a privacy-first meeting recorder and transcriber for Windows that runs locally. Meeting content only leaves your machine if you choose an external AI service or approve delivery to a target you configured. It is made for Danish users, is free and open source, and has no Pro version or paywall.
 
 Project page: <https://tingskriver.mahoje.dk>
+
+### MCP for Claude Code and Codex
+
+The installer includes `tingskriver-mcp.exe`, a local stdio server with no
+network listener. Open **Settings → AI-værktøjer (MCP)** and copy the exact
+Claude Code command or Codex TOML configuration. For a standard Tauri install,
+run this in `cmd.exe`:
+
+```bat
+claude mcp add tingskriver -- "%LOCALAPPDATA%\Tingskriver\tingskriver-mcp.exe"
+```
+
+Codex uses the same executable. Paste the actual absolute path from the app;
+TOML does not expand `%LOCALAPPDATA%`:
+
+```toml
+[mcp_servers.tingskriver]
+command = 'C:\Users\<username>\AppData\Local\Tingskriver\tingskriver-mcp.exe'
+```
+
+New installations default to **Marked meetings only**; each meeting starts
+unshared. **Metadata only** excludes transcripts, summaries, notes and
+dictation. **Off** returns an explanation without meeting content. **All**
+includes dictation; choose it explicitly if wanted on your own installation.
+Reads work while the app is closed. Actions require the running app and
+produce notifications and log entries. Delivery reuses configured targets
+and respects local-only/private settings. See [MCP details](docs/mcp.md),
+including the GPUI meeting-page limitation.
+
+**Privacy:** Content sent to an AI tool leaves your computer through that
+tool's provider. Local MCP transport does not make an external AI client local.
+Review the provider's data terms before granting access.
 
 ![Meeting page, light theme](docs/screenshots/moedeside-lys.png)
 

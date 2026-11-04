@@ -141,6 +141,23 @@ pub fn run() {
                 model
             });
             if let Some(bridge) = bridge {
+                let mut events = bridge.subscribe();
+                cx.spawn(async move |cx| {
+                    while let Some(event) = events.recv().await {
+                        if event.name == "mcp-action" {
+                            if let Ok(value) =
+                                serde_json::from_str::<serde_json::Value>(&event.payload_json)
+                            {
+                                if value["status"] == "started" {
+                                    let action =
+                                        value["action"].as_str().unwrap_or("handling").to_string();
+                                    cx.update(|cx| ui::show_mcp_action(action, cx));
+                                }
+                            }
+                        }
+                    }
+                })
+                .detach();
                 // Core features that need the database get it once it is open.
                 cx.observe(&model, move |model, cx| {
                     if let startup::DbState::Ready(db) = &model.read(cx).db {

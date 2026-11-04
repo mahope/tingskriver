@@ -40,6 +40,15 @@ and the official GitHub release API were accessible.
 Conclusion: **installér**. Neither package is younger than three days; no
 install-script bypass or minimum-release-age override is used.
 
+Optional React Doctor check: registry metadata on 2026-11-04 reports
+react-doctor 0.9.22, published 2026-11-02 (under three days). Maintainer:
+millionco/react-doctor, releases since February 2026. It declares 19 direct
+dependencies including native parsers, playwright-core and @sentry/node.
+No install lifecycle script is declared. Runtime behavior and the full new
+transitive graph were not audited because the publication-age stop rule already
+applies. Conclusion: **lad være**. It was not installed or executed; existing
+TypeScript/build/tests are used instead.
+
 ## Verification log
 
 - Initial `cargo test --locked -p tingskriver-core --test mcp_access`: fails with
@@ -57,3 +66,21 @@ install-script bypass or minimum-release-age override is used.
 - Frontend tests initially failed on the missing component; after implementation
   two tests pass (explicit access save, exact setup copy, failed sharing write).
   `pnpm exec tsc --noEmit` passes.
+- Both app hosts pass Linux `cargo check`; Tauri was checked with real local
+  MCP/STT sidecars, system FFmpeg and the same llama-helper placeholder used
+  for type-checking in CI. No placeholder is used for an installer.
+- Production frontend build passes. The combined `bun test` has the same
+  pre-existing failures as an archived origin/main (48 pass/3 fail on base,
+  50 pass/3 fail with MCP). Existing tests install incompatible global window
+  mocks. Per-file processes pass all 55 Bun tests; the assertion-based onboarding
+  .mjs file also passes under Node. No assertions were removed or skipped.
+- `pnpm lint` and the identical command on origin/main both exit 1 at Next's
+  interactive ESLint setup prompt. No new lint dependency/config was added.
+- Eight before/after screenshots of the real web controls with synthetic data
+  were produced at 375 and 1440 px, light/dark, using sandboxed Chrome Stable.
+  Outputs: `/tmp/tingskriver-105-screenshots/`. These inspect the components,
+  not a live native app or native GPUI rendering.
+- CI on checkpoint f03af4b passed Windows xwin and cargo-deny. Local tools are
+  absent, so no additional tool packages were installed. CI exposed an FTS
+  migration snapshot comparing later additive columns; the test now scopes
+  migration execution to FTS itself, preserving the full data equality check.

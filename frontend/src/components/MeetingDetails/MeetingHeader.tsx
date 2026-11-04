@@ -5,6 +5,7 @@ import { Pencil } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { toast } from 'sonner';
 import { formatDate, formatTime } from '@/lib/format';
+import { MeetingSharing } from '@/components/mcp/McpSettings';
 
 interface MeetingHeaderProps {
   meetingId: string;
@@ -94,6 +95,7 @@ export function MeetingHeader({ meetingId, title, createdAt, onTitleSaved, actio
           {formatDate(created)} kl. {formatTime(created)}
         </p>
       )}
+      <MeetingSharing key={meetingId} id={meetingId} />
       {actions && <div className="mt-4">{actions}</div>}
     </header>
   );
