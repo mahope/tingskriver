@@ -353,6 +353,11 @@ on a `spawn_blocking` worker, never on the UI thread or a Tokio worker.
 Tokio file APIs delegate disk work to the blocking pool. Recording callbacks
 continue to hand audio to their dedicated writer thread.
 
+Import and retranscription serialize and atomically write transcripts and
+metadata on the blocking pool. Dictation also loads and parses spoken rules
+there during initialization and reload. Tests hold the blocking pool busy
+to verify that these operations yield until a disk worker is available.
+
 Core HTTP uses asynchronous reqwest with a total deadline of at most ten
 seconds, including the response body. Provider-specific shorter deadlines
 are preserved. This also bounds model downloads, pulls and remote inference;

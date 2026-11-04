@@ -99,7 +99,7 @@ async fn init_inner(app: HostHandle, overlay: Arc<dyn Overlay>) -> Result<(), St
     let store = Store::open(&app_data_dir.join("dictation.sqlite")).await?;
     let settings = store.settings().await?;
     let mut rules = store.rules().await?;
-    let (spoken, spoken_error) = settings::load_spoken_table(&app_data_dir);
+    let (spoken, spoken_error) = settings::load_spoken_table(&app_data_dir).await;
     rules.spoken = spoken;
     let timings = Timings::open(store.pool()).await?;
     super::warm::set_policy(settings.residency_policy());
@@ -193,7 +193,7 @@ impl Service {
 
     pub async fn reload_rules(&self) -> Result<(), String> {
         let mut rules = self.store.rules().await?;
-        let (spoken, spoken_error) = settings::load_spoken_table(&self.app_data_dir);
+        let (spoken, spoken_error) = settings::load_spoken_table(&self.app_data_dir).await;
         rules.spoken = spoken;
         if let Some(e) = spoken_error {
             log::warn!("Dictation: {e}");

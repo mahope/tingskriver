@@ -674,7 +674,8 @@ async fn run_import(
     // Write transcripts.json and metadata.json to the meeting folder
     emit_progress(&app, "saving", 90, "Writing transcript files...");
 
-    if let Err(e) = write_transcripts_json(&meeting_folder, &segments) {
+    let segments_count = segments.len();
+    if let Err(e) = write_transcripts_json(&meeting_folder, segments).await {
         warn!("Failed to write transcripts.json: {}", e);
     }
 
@@ -685,7 +686,9 @@ async fn run_import(
         duration_seconds,
         &dest_filename,
         "import",
-    ) {
+    )
+    .await
+    {
         warn!("Failed to write metadata.json: {}", e);
     }
 
@@ -701,7 +704,7 @@ async fn run_import(
     Ok(ImportResult {
         meeting_id,
         title,
-        segments_count: segments.len(),
+        segments_count,
         duration_seconds,
     })
 }
@@ -909,8 +912,7 @@ async fn get_configured_model(app: &HostHandle, provider_type: &str) -> Result<S
 }
 
 /// Write metadata.json to a meeting folder (atomic write with temp file)
-#[allow(clippy::disallowed_methods)]
-fn write_import_metadata(
+async fn write_import_metadata(
     folder: &Path,
     meeting_id: &str,
     title: &str,
@@ -918,29 +920,55 @@ fn write_import_metadata(
     audio_filename: &str,
     source: &str,
 ) -> Result<()> {
-    let metadata_path = folder.join("metadata.json");
-    let temp_path = folder.join(".metadata.json.tmp");
-    let now = chrono::Utc::now().to_rfc3339();
+    let folder = folder.to_path_buf();
+    let meeting_id = meeting_id.to_owned();
+    let title = title.to_owned();
+    let audio_filename = audio_filename.to_owned();
+    let source = source.to_owned();
+    tokio::task::spawn_blocking(move || {
+        #[allow(clippy::disallowed_methods)]
+        fn blocking(
+            folder: &Path,
+            meeting_id: &str,
+            title: &str,
+            duration_seconds: f64,
+            audio_filename: &str,
+            source: &str,
+        ) -> Result<()> {
+            let metadata_path = folder.join("metadata.json");
+            let temp_path = folder.join(".metadata.json.tmp");
+            let now = chrono::Utc::now().to_rfc3339();
 
-    let json = serde_json::json!({
-        "version": "1.0",
-        "meeting_id": meeting_id,
-        "meeting_name": title,
-        "created_at": now,
-        "completed_at": now,
-        "duration_seconds": duration_seconds,
-        "audio_file": audio_filename,
-        "transcript_file": "transcripts.json",
-        "status": "completed",
-        "source": source
-    });
+            let json = serde_json::json!({
+                "version": "1.0",
+                "meeting_id": meeting_id,
+                "meeting_name": title,
+                "created_at": now,
+                "completed_at": now,
+                "duration_seconds": duration_seconds,
+                "audio_file": audio_filename,
+                "transcript_file": "transcripts.json",
+                "status": "completed",
+                "source": source
+            });
 
-    let json_string = serde_json::to_string_pretty(&json)?;
-    std::fs::write(&temp_path, &json_string)?;
-    std::fs::rename(&temp_path, &metadata_path)?;
+            let json_string = serde_json::to_string_pretty(&json)?;
+            std::fs::write(&temp_path, &json_string)?;
+            std::fs::rename(&temp_path, &metadata_path)?;
 
-    info!("Wrote metadata.json to {}", metadata_path.display());
-    Ok(())
+            info!("Wrote metadata.json to {}", metadata_path.display());
+            Ok(())
+        }
+        blocking(
+            &folder,
+            &meeting_id,
+            &title,
+            duration_seconds,
+            &audio_filename,
+            &source,
+        )
+    })
+    .await?
 }
 
 // ============================================================================
@@ -1186,8 +1214,15 @@ mod tests {
             },
         ];
 
-        let result = write_transcripts_json(dir.path(), &segments);
-        assert!(result.is_ok(), "write_transcripts_json failed: {:?}", result);
+        let result = crate::audio::common::assert_uses_blocking_pool(write_transcripts_json(
+            dir.path(),
+            segments,
+        ));
+        assert!(
+            result.is_ok(),
+            "write_transcripts_json failed: {:?}",
+            result
+        );
 
         // Verify file exists and is valid JSON
         let path = dir.path().join("transcripts.json");
@@ -1210,14 +1245,14 @@ mod tests {
     fn test_write_import_metadata() {
         let dir = tempfile::tempdir().unwrap();
 
-        let result = write_import_metadata(
+        let result = crate::audio::common::assert_uses_blocking_pool(write_import_metadata(
             dir.path(),
             "meeting-123",
             "Test Meeting",
             1800.0,
             "audio.mp4",
             "import",
-        );
+        ));
         assert!(result.is_ok(), "write_import_metadata failed: {:?}", result);
 
         let path = dir.path().join("metadata.json");
