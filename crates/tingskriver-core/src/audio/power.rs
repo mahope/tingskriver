@@ -79,10 +79,8 @@ impl InterruptCause {
     /// Plain Danish text for the user, also the stop reason of the event.
     pub fn message(self) -> &'static str {
         match self {
-            InterruptCause::Sleep => "Mødet blev afsluttet, fordi computeren gik i dvale.",
-            InterruptCause::Logoff => {
-                "Mødet blev afsluttet, fordi Windows blev logget af eller lukket ned."
-            }
+            InterruptCause::Sleep => crate::strings::INTERRUPTED_BY_SLEEP,
+            InterruptCause::Logoff => crate::strings::INTERRUPTED_BY_LOGOFF,
         }
     }
 
@@ -137,6 +135,24 @@ pub struct InterruptNotice {
 pub const NOTICE_FILE: &str = "interrupted-recording.json";
 
 impl InterruptNotice {
+    /// The lines the UI shows: why, when, what happened to the audio, and
+    /// that nothing starts by itself.
+    pub fn lines(&self) -> Vec<String> {
+        use crate::strings;
+        let audio = match self.audio_status.as_deref() {
+            Some("ok") => strings::INTERRUPTED_AUDIO_OK,
+            Some("delvis") => strings::INTERRUPTED_AUDIO_PARTIAL,
+            Some("fejlet") => strings::INTERRUPTED_AUDIO_FAILED,
+            _ => strings::INTERRUPTED_AUDIO_UNKNOWN,
+        };
+        vec![
+            self.message.clone(),
+            strings::interrupted_when(&self.at),
+            audio.to_string(),
+            strings::INTERRUPTED_NO_RESTART.to_string(),
+        ]
+    }
+
     pub fn path(app_data_dir: &Path) -> PathBuf {
         app_data_dir.join(NOTICE_FILE)
     }
@@ -459,6 +475,34 @@ mod tests {
         assert!(controller.session.recording_active());
         controller.handle(PowerEvent::EndSession { ending: true });
         assert_eq!(*calls.lock().unwrap(), ["finish:logoff", "database"]);
+    }
+
+    #[test]
+    fn the_notice_says_why_when_and_what_happened_to_the_audio() {
+        use crate::strings;
+        let mut notice = InterruptNotice {
+            cause: InterruptCause::Sleep,
+            at: "2026-11-05T10:00:00+01:00".into(),
+            meeting_folder: None,
+            audio_status: Some("ok".into()),
+            message: InterruptCause::Sleep.message().into(),
+        };
+        let lines = notice.lines();
+        assert_eq!(
+            lines[0],
+            "Mødet blev afsluttet, fordi computeren gik i dvale."
+        );
+        assert_eq!(lines[1], "Tidspunkt: 2026-11-05T10:00:00+01:00");
+        assert_eq!(lines[2], strings::INTERRUPTED_AUDIO_OK);
+        assert_eq!(lines[3], strings::INTERRUPTED_NO_RESTART);
+        for (status, expected) in [
+            (Some("delvis"), strings::INTERRUPTED_AUDIO_PARTIAL),
+            (Some("fejlet"), strings::INTERRUPTED_AUDIO_FAILED),
+            (None, strings::INTERRUPTED_AUDIO_UNKNOWN),
+        ] {
+            notice.audio_status = status.map(String::from);
+            assert_eq!(notice.lines()[2], expected);
+        }
     }
 
     #[test]
