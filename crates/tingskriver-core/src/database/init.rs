@@ -268,10 +268,9 @@ pub async fn unknown_applied_migrations(database_path: &Path, known: &[i64]) -> 
     // Bytes 18 and 19 of the header are 2 for a database in WAL mode.
     let mut header = [0u8; 20];
     {
-        use std::io::Read;
-        #[allow(clippy::disallowed_methods)]
-        let mut file = fs::File::open(database_path).ok()?;
-        file.read_exact(&mut header).ok()?;
+        use tokio::io::AsyncReadExt;
+        let mut file = tokio::fs::File::open(database_path).await.ok()?;
+        file.read_exact(&mut header).await.ok()?;
     }
     let mode = if header[18] == 2 {
         SqliteJournalMode::Wal
@@ -283,7 +282,10 @@ pub async fn unknown_applied_migrations(database_path: &Path, known: &[i64]) -> 
     // `-wal` next to it. With either present the file is opened normally
     // (read-only) so the committed data in them is seen.
     let [_, wal, _, journal] = database_files(database_path);
-    let closed_cleanly = !wal.exists() && !journal.exists();
+    // A failed check counts as "present": the safe, non-immutable way.
+    let wal_present = tokio::fs::try_exists(&wal).await.unwrap_or(true);
+    let journal_present = tokio::fs::try_exists(&journal).await.unwrap_or(true);
+    let closed_cleanly = !wal_present && !journal_present;
     let options = SqliteConnectOptions::new()
         .filename(database_path)
         .read_only(true)
@@ -621,6 +623,17 @@ mod tests {
         assert_eq!(json["kind"], "newer_database");
         let missing = sqlx::migrate::MigrateError::VersionMissing(1);
         assert_eq!(kind_from_migrate(&missing), DbFailureKind::NewerDatabase);
+    }
+
+    /// The GPUI app recognizes this refusal from the error text in the
+    /// detail (`DbFailure::from_error`); keep the two in step.
+    #[test]
+    fn newer_database_error_text_is_what_the_app_matches() {
+        let error = DbInitError::new(DbFailureKind::NewerDatabase, info("x"));
+        assert!(error
+            .to_string()
+            .to_lowercase()
+            .contains("created by a newer version"));
     }
 
     #[test]

@@ -16,7 +16,10 @@ kender, returnerer `open` `DbInitError::NewerDatabase`:
 - Tekst i appen: "Databasen er oprettet af en nyere Tingskriver. Opdatér
   Tingskriver." Rådet siger, at mødernes data er urørte.
 - Databasefilen ændres ikke (testet byte for byte), der tages ingen
-  sikkerhedskopi (`wants_backup()` er falsk, for filen er uændret), og appen
+  sikkerhedskopi efter afvisningen (`wants_backup()` er falsk, for filen er
+  uændret). Lå der en `-wal` eller `-journal` fra en session, der ikke blev
+  lukket, tager den almindelige sikkerhedskopi før åbning dem stadig med, som
+  for enhver anden database. Appen
   viser fejlsiden i stedet for at gå ned i en løkke.
 - `kind_from_migrate` mapper også sqlx' `VersionMissing` hertil, hvis
   forhåndskontrollen skulle blive overhalet af et løb.
