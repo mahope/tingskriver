@@ -44,16 +44,31 @@ impl LlmBriefer {
     }
 }
 
+/// Strip one list marker ("- ", "* ", "• ", "1. ", "1) ") and nothing else, so
+/// a point that starts with a number ("2026-budgettet…") keeps it.
+fn strip_marker(line: &str) -> &str {
+    let line = line.trim();
+    for m in ["- ", "* ", "• "] {
+        if let Some(rest) = line.strip_prefix(m) {
+            return rest.trim();
+        }
+    }
+    let digits = line.chars().take_while(char::is_ascii_digit).count();
+    if digits > 0 && digits <= 2 {
+        let rest = &line[digits..];
+        for m in [". ", ") "] {
+            if let Some(rest) = rest.strip_prefix(m) {
+                return rest.trim();
+            }
+        }
+    }
+    line
+}
+
 pub(super) fn parse_points(text: &str) -> Vec<String> {
     text.lines()
-        .map(|l| {
-            l.trim()
-                .trim_start_matches(|c: char| {
-                    matches!(c, '-' | '*' | '•' | '.' | ')') || c.is_ascii_digit()
-                })
-                .trim()
-        })
-        .filter(|l| !l.is_empty())
+        .map(strip_marker)
+        .filter(|l| !l.is_empty() && !matches!(*l, "-" | "*" | "•"))
         .take(MAX_POINTS)
         .map(str::to_string)
         .collect()
@@ -97,5 +112,11 @@ mod tests {
     fn parses_bullets_and_caps_at_three() {
         let p = parse_points("- Et\n* To\n1. Tre\n\n- Fire");
         assert_eq!(p, ["Et", "To", "Tre"]);
+    }
+
+    #[test]
+    fn keeps_numbers_that_start_a_point() {
+        let p = parse_points("- 2026-budgettet er godkendt\n3 nye kunder\n2) Tredje");
+        assert_eq!(p, ["2026-budgettet er godkendt", "3 nye kunder", "Tredje"]);
     }
 }
