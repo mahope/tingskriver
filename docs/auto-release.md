@@ -8,7 +8,11 @@ All of these must hold, otherwise the run ends without a release and the reason 
 
 1. **Changes:** `main` has commits after the newest `app-v*` tag, not counting our own `Release <version>` commits.
 2. **Green CI:** every push workflow of the commit under the release commit has finished without failure or cancellation, and the `Rust` workflow succeeded. A run that is still going is awaited for up to 90 minutes. Scheduled workflows (the 3-hour soak, benchmarks) are not part of the verdict. If `main` moves while CI is awaited, the run ends quietly and the next run starts over.
-3. **Nothing stuck:** if the newest tag has no published release (the build failed) and nothing has been merged since, the run **fails** instead of burning another version for the same content. Look at the failed `app-release.yml` run for that tag, fix the cause, and run that workflow on the tag again (Actions, GPUI app release, Run workflow, pick the tag), or merge a change to get a new version. Nothing is moved or deleted.
+3. **Nothing stuck:** changes are counted after the latest release attempt, which is the newest `app-v*` tag or a newer `Release` commit. If that attempt has no published release and nothing has been merged since, the run **fails** instead of burning another version for the same content:
+   - the tag exists but the build failed (`last-attempt-failed`): look at the failed `app-release.yml` run for the tag, fix the cause, and run that workflow on the tag again (Actions, GPUI app release, Run workflow, pick the tag), or merge a change to get a new version;
+   - the `Release` commit is on `main` but its tag was never pushed (`bump-without-tag`): tag that commit by hand (`git tag -a app-v<version> <commit>`, push the tag) and run `app-release.yml` on it.
+   Nothing is moved or deleted. A release that is still being built, or was pulled back to a draft, ends the run quietly (`release-building`, `release-is-draft`).
+4. **No stable release in the making:** if `Cargo.toml` holds a stable version whose `app-v<version>` tag does not exist yet (a manual release waiting for its sign-off), the run skips (`stable-pending`).
 
 ## Version
 

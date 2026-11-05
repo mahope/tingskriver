@@ -115,6 +115,78 @@ class DecideTests(unittest.TestCase):
         self.assertEqual((action, version), ("release", "0.5.1-dev.1"))
 
 
+    def test_bump_pushed_but_tag_missing_does_not_loop(self):
+        action, reason, *_ = ar.decide(self.TAGS, "0.5.0-dev.4", ["app-v0.5.0-dev.3"], 0, stray_bump=True)
+        self.assertEqual((action, reason), ("fail", "bump-without-tag"))
+
+    def test_changes_after_a_stray_bump_get_a_new_version(self):
+        action, _, version, *_ = ar.decide(self.TAGS, "0.5.0-dev.4", ["app-v0.5.0-dev.3"], 1, stray_bump=True)
+        self.assertEqual((action, version), ("release", "0.5.0-dev.5"))
+
+    def test_manual_stable_in_the_making_is_not_overtaken(self):
+        # Cargo.toml says 0.5.1 (stable) but app-v0.5.1 is not tagged yet: the sign-off may be pending.
+        action, reason, *_ = ar.decide(self.TAGS, "0.5.1", ["app-v0.5.0-dev.3"], 3)
+        self.assertEqual((action, reason), ("skip", "stable-pending"))
+
+    def test_a_pulled_release_is_not_reported_as_a_failed_build(self):
+        action, reason, *_ = ar.decide(self.TAGS, "0.5.0-dev.3", [], 0, drafts=["app-v0.5.0-dev.3"])
+        self.assertEqual((action, reason), ("skip", "release-is-draft"))
+
+
+def git(cwd, *args, **env):
+    import os
+    import subprocess
+    subprocess.run(["git", "-c", "commit.gpgsign=false", "-c", "user.name=x", "-c", "user.email=x@example.com",
+                    "-c", "tag.gpgsign=false", *args], cwd=cwd, check=True, capture_output=True,
+                   env={**os.environ, **env})
+
+
+class GitHistoryTests(unittest.TestCase):
+    """The history parsing against a real repository (no network)."""
+
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.repo = self.tmp.name
+        git(self.repo, "init", "-q", "-b", "main")
+
+    def commit(self, subject, email="dev@example.com"):
+        git(self.repo, "commit", "-q", "--allow-empty", "-m", subject,
+            GIT_AUTHOR_NAME="x", GIT_AUTHOR_EMAIL=email, GIT_COMMITTER_NAME="x", GIT_COMMITTER_EMAIL=email)
+
+    def test_a_tab_in_a_subject_is_fine(self):
+        self.commit("Fix\tthing (#5)")
+        commits = ar.log_commits("HEAD", cwd=self.repo)
+        self.assertEqual([c[1] for c in commits], ["Fix\tthing (#5)"])
+
+    def test_changes_stop_at_the_tag_and_ignore_nothing_else(self):
+        self.commit("Merge pull request #1 from o/a")
+        git(self.repo, "tag", "-a", "app-v0.5.0-dev.3", "-m", "t")
+        self.commit("Fix\tthing (#5)")
+        self.commit("Release v0.4.1")  # a person's commit with a similar subject still counts
+        changes, stray = ar.changes_since_last_attempt("app-v0.5.0-dev.3", cwd=self.repo)
+        self.assertEqual(len(changes), 2)
+        self.assertFalse(stray)
+
+    def test_a_bump_commit_without_its_tag_is_found(self):
+        self.commit("Merge pull request #1 from o/a")
+        git(self.repo, "tag", "-a", "app-v0.5.0-dev.3", "-m", "t")
+        self.commit("Merge pull request #2 from o/b")
+        self.commit("Release 0.5.0-dev.4", email=ar.BOT_EMAIL)  # pushed, tag push failed
+        changes, stray = ar.changes_since_last_attempt("app-v0.5.0-dev.3", cwd=self.repo)
+        self.assertEqual((len(changes), stray), (0, True))
+        self.commit("Merge pull request #3 from o/c")
+        changes, stray = ar.changes_since_last_attempt("app-v0.5.0-dev.3", cwd=self.repo)
+        self.assertEqual((len(changes), stray), (1, True))
+
+    def test_a_released_tag_on_the_bump_commit_is_quiet(self):
+        self.commit("Merge pull request #1 from o/a")
+        self.commit("Release 0.5.0-dev.4", email=ar.BOT_EMAIL)
+        git(self.repo, "tag", "-a", "app-v0.5.0-dev.4", "-m", "t")
+        self.assertEqual(ar.changes_since_last_attempt("app-v0.5.0-dev.4", cwd=self.repo), ([], False))
+
+
 class BumpCommitTests(unittest.TestCase):
     def test_only_the_bots_release_commit_counts(self):
         self.assertTrue(ar.is_bump_commit("Release 0.5.0-dev.4", ar.BOT_EMAIL))
