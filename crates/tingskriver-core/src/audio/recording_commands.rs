@@ -579,6 +579,13 @@ pub async fn stop_recording_for_power(
     cause: super::power::InterruptCause,
 ) -> Result<Option<SaveResult>, String> {
     let at = chrono::Local::now().to_rfc3339();
+    // The user may already be stopping (Stop and the lid in the same second).
+    // Then that stop owns the writer; wait for it, so the machine does not
+    // sleep before the audio is on disk. The caller's budget cuts this off.
+    let deadline = std::time::Instant::now() + cause.budget();
+    while IS_RECORDING_STOPPING.load(Ordering::SeqCst) && std::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
     stop_recording_with_reason(app, Some(cause.message().to_string()), Some((cause, at))).await
 }
 

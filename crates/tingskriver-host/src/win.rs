@@ -18,7 +18,8 @@ use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::Foundation::{
-    GetLastError, ERROR_HOTKEY_ALREADY_REGISTERED, HWND, LPARAM, LRESULT, WPARAM,
+    GetLastError, ERROR_CLASS_ALREADY_EXISTS, ERROR_HOTKEY_ALREADY_REGISTERED, HWND, LPARAM,
+    LRESULT, WPARAM,
 };
 use windows_sys::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
@@ -396,13 +397,20 @@ fn create_hidden_window(class_name: &str, parent: HWND, proc: WNDPROC) -> Result
     // SAFETY: the class name outlives the calls; `proc` has the right signature.
     unsafe {
         let instance = GetModuleHandleW(null());
-        // A second window of the same class finds it registered, which is fine.
         let mut wc: WNDCLASSEXW = std::mem::zeroed();
         wc.cbSize = std::mem::size_of::<WNDCLASSEXW>() as u32;
         wc.lpfnWndProc = proc;
         wc.hInstance = instance;
         wc.lpszClassName = class.as_ptr();
-        RegisterClassExW(&wc);
+        // A second window of the same class finds it registered, which is
+        // fine; any other failure is real and would only show up later as a
+        // window that cannot be created.
+        if RegisterClassExW(&wc) == 0 {
+            let error = GetLastError();
+            if error != ERROR_CLASS_ALREADY_EXISTS {
+                return Err(format!("RegisterClassExW failed: error {error}"));
+            }
+        }
         let hwnd = CreateWindowExW(
             0,
             class.as_ptr(),

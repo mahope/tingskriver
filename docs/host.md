@@ -174,7 +174,7 @@ recording is saved before the machine sleeps.
 | `WM_ENDSESSION`, `wParam` 1 | `EndSession { ending: true }` | Stop, save, mark `ended_by: "logoff"`, flush the database. Budget 4.5 s. |
 | `WM_ENDSESSION`, `wParam` 0 | `EndSession { ending: false }` | Log only: the logoff was cancelled and the recording goes on. |
 | `WTS_SESSION_LOCK` / `UNLOCK` | `Lock` / `Unlock` | Log only. A locked screen is an ordinary meeting. |
-| `PBT_APMRESUMEAUTOMATIC` | `Resume` | Tell the user once that the meeting ended (event `recording-interrupted`). **Never starts a recording.** |
+| `PBT_APMRESUMEAUTOMATIC` or `PBT_APMRESUMESUSPEND` | `Resume` | Tell the user once that the meeting ended (event `recording-interrupted`). **Never starts a recording.** |
 
 The stop is the normal one (`stop_recording_for_power`): capture stops, the
 writer drains and commits, so the raw tracks (`.checkpoints/`, committed every
@@ -185,8 +185,14 @@ gets `ended_by` (`sleep` or `logoff`) and `ended_at` in the same write that sets
 sleeps first, they go on after it wakes. If the process is ended by a logoff,
 `finalize_pending_at_startup` finishes them at the next start; the raw tracks
 stay until the check says `ok`. If saving does not finish inside the budget,
-the log says so and saving goes on in the background; a hard cut still costs
+the log says so, the user is still told on resume (audio "not confirmed") and saving goes on in the background; the stop and the database flush share one budget; a hard cut still costs
 only the seconds since the last checkpoint (#6).
+
+Known limit: the flush (`wal_checkpoint`) covers what is already committed.
+The meeting row is written by the UI listener of `recording-stopped`, a moment
+later, so a logoff can end the process before it exists. The meeting folder
+with `metadata.json` and the audio is kept either way and is found again by
+the recovery at the next start.
 
 The user sees it in the app: the **Møder** page shows a card "Et møde blev
 afsluttet af systemet" with the cause, the time, what happened to the audio

@@ -131,6 +131,27 @@ pub struct InterruptNotice {
     pub message: String,
 }
 
+/// "5. nov. 2026 kl. 10.00" for an RFC 3339 time; the text as it is when it
+/// cannot be read.
+pub fn format_when(at: &str) -> String {
+    use chrono::{Datelike, Timelike};
+    const MONTHS: [&str; 12] = [
+        "jan.", "feb.", "mar.", "apr.", "maj", "jun.", "jul.", "aug.", "sep.", "okt.", "nov.",
+        "dec.",
+    ];
+    match chrono::DateTime::parse_from_rfc3339(at) {
+        Ok(t) => format!(
+            "{}. {} {} kl. {:02}.{:02}",
+            t.day(),
+            MONTHS[t.month0() as usize],
+            t.year(),
+            t.hour(),
+            t.minute()
+        ),
+        Err(_) => at.to_string(),
+    }
+}
+
 /// File name of the notice, in the app data folder.
 pub const NOTICE_FILE: &str = "interrupted-recording.json";
 
@@ -147,7 +168,7 @@ impl InterruptNotice {
         };
         vec![
             self.message.clone(),
-            strings::interrupted_when(&self.at),
+            strings::interrupted_when(&format_when(&self.at)),
             audio.to_string(),
             strings::INTERRUPTED_NO_RESTART.to_string(),
         ]
@@ -188,10 +209,11 @@ pub trait PowerSession: Send + Sync {
     fn recording_active(&self) -> bool;
     /// Stop the recording, wait until the audio is on disk (at most
     /// `cause.budget()`), mark the meeting and save the notice. `None` when
-    /// nothing was recording.
+    /// nothing was recording. When the budget runs out first, the notice
+    /// has no `audio_status` (saving goes on in the background).
     fn finish_recording(&self, cause: InterruptCause, at: &str) -> Option<InterruptNotice>;
-    /// Flush the database to disk.
-    fn save_database(&self);
+    /// Flush the database to disk, waiting at most `budget`.
+    fn save_database(&self, budget: std::time::Duration);
     /// Tell the UI (event `recording-interrupted`).
     fn announce(&self, notice: &InterruptNotice);
 }
@@ -213,6 +235,7 @@ impl<S: PowerSession> PowerController<S> {
     /// Handle one event; returns when it is safe for Windows to go on. One
     /// log line per event, with the time.
     pub fn handle(&self, event: PowerEvent) {
+        let started = std::time::Instant::now();
         let at = chrono::Local::now().to_rfc3339();
         let recording = self.session.recording_active();
         let decision = decide(event, recording);
@@ -234,7 +257,10 @@ impl<S: PowerSession> PowerController<S> {
                     }
                     None => log::warn!("power: no recording to finish at {at}"),
                 }
-                self.session.save_database();
+                // One budget for both steps: Windows waits for the handler
+                // as a whole, not for each part.
+                self.session
+                    .save_database(cause.budget().saturating_sub(started.elapsed()));
             }
             PowerDecision::AnnounceResume => {
                 let pending = self
@@ -319,15 +345,23 @@ impl PowerSession for CoreSession {
             Ok(notice) => notice,
             Err(_) => {
                 log::warn!(
-                    "power: the recording was not saved within {} ms; saving goes on in the background",
+                    "power: the recording was not confirmed within {} ms; saving goes on in the background",
                     cause.budget().as_millis()
                 );
-                None
+                // Still a cut recording: the user is told on resume, and the
+                // background task replaces the notice with the real status.
+                Some(InterruptNotice {
+                    cause,
+                    at: at.to_string(),
+                    meeting_folder: None,
+                    audio_status: None,
+                    message: cause.message().to_string(),
+                })
             }
         }
     }
 
-    fn save_database(&self) {
+    fn save_database(&self, budget: std::time::Duration) {
         let Some(db) = self.host.database() else {
             return;
         };
@@ -335,7 +369,7 @@ impl PowerSession for CoreSession {
         self.runtime.spawn(async move {
             let _ = tx.send(db.checkpoint().await);
         });
-        match rx.recv_timeout(std::time::Duration::from_millis(1000)) {
+        match rx.recv_timeout(budget) {
             Ok(Ok(())) => log::info!("power: database flushed to disk"),
             Ok(Err(e)) => log::warn!("power: database flush failed: {e}"),
             Err(_) => log::warn!("power: database flush still running; going on"),
@@ -390,7 +424,7 @@ mod tests {
                 message: cause.message().into(),
             })
         }
-        fn save_database(&self) {
+        fn save_database(&self, _budget: std::time::Duration) {
             self.calls.lock().unwrap().push("database".into());
         }
         fn announce(&self, notice: &InterruptNotice) {
@@ -467,6 +501,41 @@ mod tests {
     }
 
     #[test]
+    fn a_recording_not_confirmed_in_time_is_still_announced() {
+        struct Slow(Mutex<Vec<String>>);
+        impl PowerSession for Slow {
+            fn recording_active(&self) -> bool {
+                true
+            }
+            fn finish_recording(&self, cause: InterruptCause, at: &str) -> Option<InterruptNotice> {
+                // Budget ran out: no status, but a cut recording all the same.
+                Some(InterruptNotice {
+                    cause,
+                    at: at.to_string(),
+                    meeting_folder: None,
+                    audio_status: None,
+                    message: cause.message().into(),
+                })
+            }
+            fn save_database(&self, budget: std::time::Duration) {
+                assert!(budget <= InterruptCause::Sleep.budget());
+                self.0.lock().unwrap().push("database".into());
+            }
+            fn announce(&self, notice: &InterruptNotice) {
+                assert_eq!(notice.audio_status, None);
+                self.0.lock().unwrap().push("announce".into());
+            }
+        }
+        let controller = PowerController::new(Slow(Mutex::new(Vec::new())));
+        controller.handle(PowerEvent::Suspend);
+        controller.handle(PowerEvent::Resume);
+        assert_eq!(
+            *controller.session.0.lock().unwrap(),
+            ["database", "announce"]
+        );
+    }
+
+    #[test]
     fn a_vetoed_logoff_keeps_recording() {
         let (fake, calls) = Fake::recording();
         let controller = PowerController::new(fake);
@@ -494,7 +563,8 @@ mod tests {
             lines[0],
             "Mødet blev afsluttet, fordi computeren gik i dvale."
         );
-        assert_eq!(lines[1], "Tidspunkt: 2026-11-05T10:00:00+01:00");
+        assert_eq!(lines[1], "Tidspunkt: 5. nov. 2026 kl. 10.00");
+        assert_eq!(format_when("not a time"), "not a time");
         assert_eq!(lines[2], strings::INTERRUPTED_AUDIO_OK);
         assert_eq!(lines[3], strings::INTERRUPTED_NO_RESTART);
         for (status, expected) in [

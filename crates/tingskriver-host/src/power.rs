@@ -20,20 +20,23 @@ pub const WM_POWERBROADCAST: u32 = 0x0218;
 pub const WM_WTSSESSION_CHANGE: u32 = 0x02B1;
 pub const PBT_APMSUSPEND: usize = 4;
 pub const PBT_APMRESUMEAUTOMATIC: usize = 18;
+pub const PBT_APMRESUMESUSPEND: usize = 7;
 pub const WTS_SESSION_LOCK: usize = 7;
 pub const WTS_SESSION_UNLOCK: usize = 8;
 
 /// What the host does with an event.
 pub type PowerSink = Arc<dyn Fn(PowerEvent) + Send + Sync>;
 
-/// The event a window message means, if it is one we handle. `PBT_APMRESUMESUSPEND`
-/// (resume after a user action) always follows `PBT_APMRESUMEAUTOMATIC` or
-/// comes alone; a recording never survives suspend, so only the automatic
-/// one announces.
+/// The event a window message means, if it is one we handle. Both resume
+/// messages announce: `PBT_APMRESUMESUSPEND` (resume after a user action)
+/// can come alone, and after `PBT_APMRESUMEAUTOMATIC` it finds nothing
+/// pending, so the user is told once.
 pub fn event_from_message(msg: u32, wparam: usize) -> Option<PowerEvent> {
     match (msg, wparam) {
         (WM_POWERBROADCAST, PBT_APMSUSPEND) => Some(PowerEvent::Suspend),
-        (WM_POWERBROADCAST, PBT_APMRESUMEAUTOMATIC) => Some(PowerEvent::Resume),
+        (WM_POWERBROADCAST, PBT_APMRESUMEAUTOMATIC | PBT_APMRESUMESUSPEND) => {
+            Some(PowerEvent::Resume)
+        }
         (WM_QUERYENDSESSION, _) => Some(PowerEvent::QueryEndSession),
         (WM_ENDSESSION, ending) => Some(PowerEvent::EndSession {
             ending: ending != 0,
@@ -91,6 +94,11 @@ mod tests {
             event_from_message(WM_POWERBROADCAST, PBT_APMRESUMEAUTOMATIC),
             Some(PowerEvent::Resume)
         );
+        // A wake-up by the user can come without the automatic one.
+        assert_eq!(
+            event_from_message(WM_POWERBROADCAST, PBT_APMRESUMESUSPEND),
+            Some(PowerEvent::Resume)
+        );
         assert_eq!(
             event_from_message(WM_QUERYENDSESSION, 0),
             Some(PowerEvent::QueryEndSession)
@@ -138,7 +146,7 @@ mod tests {
                 message: cause.message().into(),
             })
         }
-        fn save_database(&self) {
+        fn save_database(&self, _budget: std::time::Duration) {
             self.log.lock().unwrap().push("database saved");
         }
         fn announce(&self, _: &InterruptNotice) {
