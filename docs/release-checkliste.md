@@ -30,6 +30,31 @@ PowerShell 5.1.
 - [ ] Mads godkender reference-resultatet før udgivelse. Mere end 20 % forværring
   af blot én fælles måling stopper releasen. Præcis 20 % accepteres.
 
+## Kanalisolation før hver release
+
+Pilottone-testen (#189) finder mute- og routingfejl mellem mikrofon- og systemsporet,
+som et lydniveau ikke ser. Tærsklerne står kun i
+[`kanalisolation-graenser.json`](kanalisolation-graenser.json); værktøjet læser filen,
+og checklisten henviser til den i stedet for at gentage tallene.
+
+- [ ] Optag på Mads' pc med en pilottone på mikrofonen (523 Hz) og en på systemet
+  (997 Hz): først begge i 10 sekunder, så kun mikrofonen i 10 sekunder, så kun
+  systemet i 10 sekunder. Brug høretelefoner eller en loopback-kabel, så højttalerne
+  ikke selv lækker lyd ind i mikrofonen. Kun syntetisk lyd, aldrig rigtige stemmer.
+  Kør værktøjet på de to gemte spor og vedhæft rapporten (exit 0 = bestået):
+
+  ```powershell
+  cargo run --release --locked -p tingskriver-core --example kanalisolation -- `
+    microphone.wav system.wav docs\kanalisolation-graenser.json `
+    both:0:10 mic:10:20 system:20:30
+  ```
+
+  Exit 1 betyder lækage, manglende pilot (kanal mutet eller forkert routet), klipning
+  eller for stor forskel i varighed. Exit 2 betyder ubrugeligt input. Releasen må ikke
+  fortsætte ved exit 1 eller 2.
+- [ ] Den automatiske del kører på hver push i CI (`recording_soak isolation` på den
+  syntetiske enhed) og i den natlige soak. Den erstatter ikke optagelsen fra Mads' pc.
+
 ## Første baseline og fejl
 
 `docs/ydeevne-baseline.json` har indtil første måling `status: "ikke_maalt"` og

@@ -1,0 +1,12 @@
+{
+  "mic_hz": 523.0,
+  "system_hz": 997.0,
+  "phase_guard_s": 0.25,
+  "both_mic_db": 12.0,
+  "both_system_db": 15.0,
+  "mic_only_db": 18.0,
+  "system_only_db": 18.0,
+  "min_pilot_dbfs": -40.0,
+  "max_clipped_share": 0.001,
+  "max_duration_diff_s": 0.15
+}
