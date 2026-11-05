@@ -152,18 +152,23 @@ impl State {
 
 /// Optional packaging metadata, followed by language sections in Markdown.
 pub fn release_notes(markdown: &str) -> (String, Option<String>) {
+    let normalized = markdown.replace("\r\n", "\n");
+    let markdown = normalized.as_str();
     let published = markdown
         .lines()
         .find_map(|line| line.strip_prefix("Release-Date: "))
         .map(str::to_string);
     let section = |heading: &str| {
-        markdown.split_once(heading).map(|(_, text)| {
-            text.split("\n## ")
-                .next()
-                .unwrap_or(text)
-                .trim()
-                .to_string()
-        })
+        markdown
+            .split_once(heading)
+            .map(|(_, text)| {
+                text.split("\n## ")
+                    .next()
+                    .unwrap_or(text)
+                    .trim()
+                    .to_string()
+            })
+            .filter(|text| !text.is_empty())
     };
     let notes = section("## da\n")
         .or_else(|| section("## en\n"))
@@ -299,6 +304,11 @@ mod tests {
             ("Dansk".into(), Some("2026-11-04".into()))
         );
         assert_eq!(release_notes("## en\nEnglish").0, "English");
+        assert_eq!(
+            release_notes("## en\r\nEnglish\r\n## da\r\nDansk æøå").0,
+            "Dansk æøå"
+        );
+        assert_eq!(release_notes("## da\n\n## en\nEnglish").0, "English");
         let r = Release {
             bytes: 41_900_000,
             published: Some("2026-11-04".into()),
