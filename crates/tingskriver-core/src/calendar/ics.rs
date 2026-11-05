@@ -194,11 +194,39 @@ impl RawEvent {
                 p.params
                     .get("PARTSTAT")
                     .is_some_and(|s| s.eq_ignore_ascii_case("DECLINED"))
-                    && config
-                        .own_addresses
-                        .iter()
-                        .any(|own| email(&p.value).eq_ignore_ascii_case(own.trim()))
+                    && Self::is_own(&p.value, config)
             })
+    }
+    /// ATTENDEE lines, plus an ORGANIZER that is not the user and not listed
+    /// as an ATTENDEE (Outlook invitations often leave the organizer out).
+    fn attendees(&self, config: &CalendarConfig) -> Vec<Attendee> {
+        let mut out: Vec<Attendee> = self
+            .props
+            .iter()
+            .filter(|p| p.name == "ATTENDEE")
+            .map(|p| Attendee {
+                name: p.params.get("CN").map(|s| text(s)),
+                email: email(&p.value).into(),
+                declined: p
+                    .params
+                    .get("PARTSTAT")
+                    .is_some_and(|v| v.eq_ignore_ascii_case("DECLINED")),
+                is_self: Self::is_own(&p.value, config),
+            })
+            .collect();
+        if let Some(org) = self.get("ORGANIZER") {
+            let addr = email(&org.value);
+            let listed = out.iter().any(|a| a.email.eq_ignore_ascii_case(addr));
+            if !listed && !addr.is_empty() && !Self::is_own(&org.value, config) {
+                out.push(Attendee {
+                    name: org.params.get("CN").map(|s| text(s)),
+                    email: addr.into(),
+                    declined: false,
+                    is_self: false,
+                });
+            }
+        }
+        out
     }
     fn is_own(address: &str, config: &CalendarConfig) -> bool {
         config
@@ -296,20 +324,7 @@ impl RawEvent {
                 .get("SUMMARY")
                 .map(|p| text(&p.value))
                 .unwrap_or_default(),
-            attendees: self
-                .props
-                .iter()
-                .filter(|p| p.name == "ATTENDEE")
-                .map(|p| Attendee {
-                    name: p.params.get("CN").map(|s| text(s)),
-                    email: email(&p.value).into(),
-                    declined: p
-                        .params
-                        .get("PARTSTAT")
-                        .is_some_and(|v| v.eq_ignore_ascii_case("DECLINED")),
-                    is_self: Self::is_own(&p.value, config),
-                })
-                .collect(),
+            attendees: self.attendees(config),
             start: begin,
             end,
             all_day: start.date,

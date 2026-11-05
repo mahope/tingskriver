@@ -197,14 +197,16 @@ fn ignored_event_and_series_stop_start_and_reminder() {
         AutoRecordMode::Ask,
         &e,
         at("2026-03-02T09:57:00Z"),
-        &ignored
+        &ignored,
+        false
     ));
     ignored.ignore_event(&e);
     assert!(!should_remind(
         AutoRecordMode::Ask,
         &e,
         at("2026-03-02T09:57:00Z"),
-        &ignored
+        &ignored,
+        false
     ));
     assert!(
         should_auto_start(&e, at("2026-03-02T10:00:00Z"), &[], &ignored)
@@ -218,7 +220,8 @@ fn ignored_event_and_series_stop_start_and_reminder() {
         AutoRecordMode::Ask,
         &next,
         at("2026-03-09T09:57:00Z"),
-        &ignored
+        &ignored,
+        false
     ));
     assert!(
         should_auto_start(&next, at("2026-03-09T10:00:00Z"), &[], &ignored)
@@ -246,25 +249,29 @@ fn reminder_window_and_off() {
         AutoRecordMode::Ask,
         &e,
         at("2026-03-02T09:55:00Z"),
-        &none
+        &none,
+        false
     ));
     assert!(!should_remind(
         AutoRecordMode::Ask,
         &e,
         at("2026-03-02T09:54:59Z"),
-        &none
+        &none,
+        false
     ));
     assert!(!should_remind(
         AutoRecordMode::Ask,
         &e,
         at("2026-03-02T10:00:00Z"),
-        &none
+        &none,
+        false
     ));
     assert!(!should_remind(
         AutoRecordMode::Off,
         &e,
         at("2026-03-02T09:57:00Z"),
-        &none
+        &none,
+        false
     ));
     let mut linkless = e.clone();
     linkless.meeting_link = None;
@@ -272,7 +279,8 @@ fn reminder_window_and_off() {
         AutoRecordMode::Ask,
         &linkless,
         at("2026-03-02T09:57:00Z"),
-        &none
+        &none,
+        false
     ));
 }
 
@@ -489,4 +497,51 @@ fn regression_changed_uid_is_a_new_event_without_leftovers() {
     let mut ignored = IgnoredEvents::new();
     ignored.ignore_series(&old[0]);
     assert!(!ignored.is_ignored(&new[0]));
+}
+
+#[test]
+fn organizer_missing_from_attendees_counts_as_another_participant() {
+    let feed = ics(
+        "BEGIN:VEVENT\r\nUID:org@t\r\nDTSTART:20260302T100000Z\r\nDTEND:20260302T110000Z\r\n\
+ORGANIZER;CN=Anna:mailto:anna@example.test\r\n\
+ATTENDEE;PARTSTAT=ACCEPTED:mailto:me@example.test\r\n\
+URL:https://teams.microsoft.com/l/meetup-join/x\r\nEND:VEVENT\r\n",
+    );
+    let e = events(&feed);
+    assert_eq!(e[0].attendees.iter().filter(|a| !a.is_self).count(), 1);
+    assert!(matches!(
+        should_auto_start(
+            &e[0],
+            at("2026-03-02T10:01:00Z"),
+            &[],
+            &IgnoredEvents::new()
+        ),
+        StartDecision::Start { .. }
+    ));
+}
+
+#[test]
+fn reminder_is_not_shown_during_a_recording() {
+    let e = meeting("a", "2026-03-02T10:00:00Z", "2026-03-02T11:00:00Z");
+    assert!(!should_remind(
+        AutoRecordMode::Ask,
+        &e,
+        at("2026-03-02T09:57:00Z"),
+        &IgnoredEvents::new(),
+        true
+    ));
+}
+
+#[test]
+fn full_ignore_list_reports_failure() {
+    let mut list = IgnoredEvents::new();
+    let mut e = meeting("a", "2026-03-02T10:00:00Z", "2026-03-02T11:00:00Z");
+    for i in 0..10_000 {
+        e.uid = format!("u{i}");
+        assert!(list.ignore_series(&e));
+    }
+    e.uid = "extra".into();
+    assert!(!list.ignore_series(&e));
+    e.uid = "u1".into();
+    assert!(list.ignore_series(&e));
 }

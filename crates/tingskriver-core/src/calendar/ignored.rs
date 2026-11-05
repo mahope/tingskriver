@@ -53,17 +53,28 @@ impl IgnoredEvents {
     pub fn is_ignored(&self, event: &Event) -> bool {
         self.is_event_ignored(event) || self.is_series_ignored(event)
     }
-    pub fn ignore_event(&mut self, event: &Event) {
-        if self.events.len() < MAX_ENTRIES {
-            self.events.insert(occurrence(event));
+    /// `false` if the list is full and the event was not added.
+    pub fn ignore_event(&mut self, event: &Event) -> bool {
+        let occ = occurrence(event);
+        if self.events.contains(&occ) {
+            return true;
         }
+        if self.events.len() >= MAX_ENTRIES {
+            return false;
+        }
+        self.events.insert(occ)
     }
     /// Ignores every occurrence with this UID, also later ones. For an event
     /// that does not recur it is the same as ignoring the event.
-    pub fn ignore_series(&mut self, event: &Event) {
-        if self.series.len() < MAX_ENTRIES {
-            self.series.insert(event.uid.clone());
+    /// `false` if the list is full and the series was not added.
+    pub fn ignore_series(&mut self, event: &Event) -> bool {
+        if self.series.contains(&event.uid) {
+            return true;
         }
+        if self.series.len() >= MAX_ENTRIES {
+            return false;
+        }
+        self.series.insert(event.uid.clone())
     }
     pub fn unignore_event(&mut self, event: &Event) {
         self.events.remove(&occurrence(event));

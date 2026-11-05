@@ -143,8 +143,10 @@ pub fn should_remind(
     event: &Event,
     now: DateTime<Utc>,
     ignored: &IgnoredEvents,
+    recording_active: bool,
 ) -> bool {
     mode != AutoRecordMode::Off
+        && !recording_active
         && eligibility(event, ignored).is_none()
         && now < event.start
         && now >= event.start - REMINDER_LEAD
