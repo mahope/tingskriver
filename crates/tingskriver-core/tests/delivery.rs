@@ -640,3 +640,175 @@ async fn privacy_change_between_attempts_stops_the_rest_of_the_batch() {
         1
     );
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn signed_webhook_carries_verifiable_headers_and_secret_stays_in_keystore() {
+    use tingskriver_core::delivery::signing;
+    use tingskriver_core::providers::secrets::KeyStore;
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+    };
+
+    const SECRET: &str = "whsec_synthetic_signing_secret";
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let keys = Arc::new(MemoryKeyStore::default());
+    let service = Delivery::open(&dir.path().join("queue"), keys.clone())
+        .await
+        .unwrap();
+    service
+        .set_policy(Policy {
+            local_only: false,
+            private: false,
+        })
+        .await
+        .unwrap();
+    let target = Target {
+        id: "hook".into(),
+        name: "Webhook".into(),
+        destination: Destination::Webhook {
+            format: WebhookFormat::Json,
+        },
+    };
+    service
+        .save_target(
+            target,
+            Some(format!(
+                "http://{}/synthetic",
+                listener.local_addr().unwrap()
+            )),
+        )
+        .await
+        .unwrap();
+    assert!(!service.has_signing_secret("hook").await.unwrap());
+    service
+        .set_signing_secret("hook", Some(SECRET.into()))
+        .await
+        .unwrap();
+    assert!(service.has_signing_secret("hook").await.unwrap());
+    service.test_target("hook").await.unwrap();
+
+    let receive = async {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut request = Vec::new();
+        let mut chunk = vec![0; 65536];
+        let split = loop {
+            let n = stream.read(&mut chunk).await.unwrap();
+            request.extend_from_slice(&chunk[..n]);
+            if let Some(i) = request.windows(4).position(|w| w == b"\r\n\r\n") {
+                break i + 4;
+            }
+        };
+        let head = String::from_utf8_lossy(&request[..split]).to_string();
+        let length: usize = head
+            .lines()
+            .find_map(|l| {
+                l.to_ascii_lowercase()
+                    .strip_prefix("content-length:")
+                    .map(|v| v.trim().parse().unwrap())
+            })
+            .unwrap();
+        while request.len() < split + length {
+            let n = stream.read(&mut chunk).await.unwrap();
+            request.extend_from_slice(&chunk[..n]);
+        }
+        stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        let header = |name: &str| {
+            head.lines()
+                .find_map(|l| {
+                    let (k, v) = l.split_once(':')?;
+                    k.eq_ignore_ascii_case(name).then(|| v.trim().to_string())
+                })
+                .unwrap()
+        };
+        (
+            header(signing::TIMESTAMP_HEADER),
+            header(signing::SIGNATURE_HEADER),
+            request[split..split + length].to_vec(),
+        )
+    };
+    let (sent, (timestamp, signature, body)) = tokio::join!(service.run_due(), receive);
+    sent.unwrap();
+    let timestamp: i64 = timestamp.parse().unwrap();
+    let now = chrono::Utc::now().timestamp();
+    assert_eq!(
+        signing::verify(SECRET.as_bytes(), timestamp, &body, &signature, now, 300),
+        Ok(())
+    );
+    let mut tampered = body.clone();
+    tampered.push(b' ');
+    assert!(signing::verify(
+        SECRET.as_bytes(),
+        timestamp,
+        &tampered,
+        &signature,
+        now,
+        300
+    )
+    .is_err());
+    assert!(signing::verify(
+        SECRET.as_bytes(),
+        timestamp,
+        &body,
+        &signature,
+        now + 3600,
+        300
+    )
+    .is_err());
+
+    // The secret is in the key store only: not in the queue database or status.
+    assert!(keys.targets().iter().any(|t| t.ends_with("/signing")));
+    assert!(keys
+        .get("Tingskriver/delivery/hook/signing")
+        .unwrap()
+        .is_some());
+    let status = format!("{:?}", service.jobs().await.unwrap());
+    assert!(!status.contains(SECRET));
+    for entry in std::fs::read_dir(dir.path().join("queue")).unwrap() {
+        let bytes = std::fs::read(entry.unwrap().path()).unwrap();
+        assert!(!bytes.windows(SECRET.len()).any(|w| w == SECRET.as_bytes()));
+    }
+
+    // Clearing the secret removes it from the key store; deleting the target too.
+    service.set_signing_secret("hook", None).await.unwrap();
+    assert!(!service.has_signing_secret("hook").await.unwrap());
+    assert!(keys
+        .get("Tingskriver/delivery/hook/signing")
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn signing_secret_requires_webhook_target_and_no_pending_jobs() {
+    let dir = tempfile::tempdir().unwrap();
+    let service = Delivery::open(
+        &dir.path().join("queue"),
+        Arc::new(MemoryKeyStore::default()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        service
+            .set_signing_secret("missing", Some("abc".into()))
+            .await,
+        Err(Error::Missing)
+    );
+    let folder = Target {
+        id: "folder".into(),
+        name: "Mappe".into(),
+        destination: Destination::Folder {
+            path: dir.path().join("out"),
+        },
+    };
+    service.save_target(folder, None).await.unwrap();
+    assert_eq!(
+        service
+            .set_signing_secret("folder", Some("abc".into()))
+            .await,
+        Err(Error::Invalid)
+    );
+}

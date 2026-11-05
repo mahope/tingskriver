@@ -29,6 +29,11 @@ fn credential(id: &str) -> String {
     format!("Tingskriver/delivery/{id}")
 }
 
+/// Ids never contain `/`, so this cannot collide with another target's URL.
+fn signing_credential(id: &str) -> String {
+    format!("Tingskriver/delivery/{id}/signing")
+}
+
 impl Delivery {
     pub async fn open(dir: &Path, keys: Arc<dyn KeyStore>) -> Result<Self, Error> {
         tokio::fs::create_dir_all(dir)
@@ -48,6 +53,7 @@ impl Delivery {
             .map_err(|_| Error::Storage)?;
         sqlx::raw_sql("CREATE TABLE IF NOT EXISTS delivery_settings (id TEXT PRIMARY KEY, value TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS delivery_targets (id TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS delivery_signing (id TEXT PRIMARY KEY);
             CREATE TABLE IF NOT EXISTS delivery_jobs (
                 id TEXT PRIMARY KEY, target_id TEXT NOT NULL, bundle TEXT NOT NULL,
                 status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
@@ -138,13 +144,97 @@ impl Delivery {
         Ok(())
     }
 
+    /// Whether a signing secret is set. Only a flag is kept in the database;
+    /// the secret itself lives in the key store and is never read back.
+    pub async fn has_signing_secret(&self, id: &str) -> Result<bool, Error> {
+        let flag: Option<String> =
+            sqlx::query_scalar("SELECT id FROM delivery_signing WHERE id = ?")
+                .bind(id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|_| Error::Storage)?;
+        Ok(flag.is_some())
+    }
+
+    /// Write-only optional HMAC key for a webhook target. `None` removes it.
+    /// Like the address, it cannot change while the target has unfinished jobs.
+    pub async fn set_signing_secret(&self, id: &str, secret: Option<String>) -> Result<(), Error> {
+        let _guard = self.gate.lock().await;
+        let target = self.target(id).await?;
+        if !matches!(target.destination, Destination::Webhook { .. }) {
+            return Err(Error::Invalid);
+        }
+        let pending: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM delivery_jobs WHERE target_id = ? AND status != 'completed'",
+        )
+        .bind(id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|_| Error::Storage)?;
+        if pending > 0 {
+            return Err(Error::Invalid);
+        }
+        let keys = self.keys.clone();
+        let name = signing_credential(id);
+        match secret {
+            Some(secret) => {
+                let key = ApiKey::new(secret).ok_or(Error::Invalid)?;
+                tokio::task::spawn_blocking(move || keys.set(&name, &key))
+                    .await
+                    .map_err(|_| Error::Credential)?
+                    .map_err(|_| Error::Credential)?;
+                sqlx::query("INSERT OR IGNORE INTO delivery_signing VALUES (?)")
+            }
+            None => {
+                tokio::task::spawn_blocking(move || keys.delete(&name))
+                    .await
+                    .map_err(|_| Error::Credential)?
+                    .map_err(|_| Error::Credential)?;
+                sqlx::query("DELETE FROM delivery_signing WHERE id = ?")
+            }
+        }
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(|_| Error::Storage)?;
+        Ok(())
+    }
+
+    async fn signing_key(&self, id: &str) -> Result<Option<ApiKey>, Error> {
+        if !self.has_signing_secret(id).await? {
+            return Ok(None);
+        }
+        let keys = self.keys.clone();
+        let name = signing_credential(id);
+        let key = tokio::task::spawn_blocking(move || keys.get(&name))
+            .await
+            .map_err(|_| Error::Credential)?
+            .map_err(|_| Error::Credential)?;
+        // A flagged target whose secret has vanished must not send unsigned.
+        key.map(Some).ok_or(Error::Credential)
+    }
+
     pub async fn delete_target(&self, id: &str) -> Result<(), Error> {
         let _guard = self.gate.lock().await;
+        let signed = self.has_signing_secret(id).await?;
         sqlx::query("DELETE FROM delivery_targets WHERE id = ?")
             .bind(id)
             .execute(&self.pool)
             .await
             .map_err(|_| Error::Storage)?;
+        if signed {
+            let keys = self.keys.clone();
+            let name = signing_credential(id);
+            tokio::task::spawn_blocking(move || keys.delete(&name))
+                .await
+                .map_err(|_| Error::Credential)?
+                .map_err(|_| Error::Credential)?;
+            sqlx::query("DELETE FROM delivery_signing WHERE id = ?")
+                .bind(id)
+                .execute(&self.pool)
+                .await
+                .map_err(|_| Error::Storage)?;
+        }
         let keys = self.keys.clone();
         let name = credential(id);
         tokio::task::spawn_blocking(move || keys.delete(&name))
@@ -255,7 +345,19 @@ impl Delivery {
                 } else {
                     None
                 };
-                super::transport::send(&target.destination, &bundle, &id, url.as_ref()).await
+                let signing = if url.is_some() {
+                    self.signing_key(&target_id).await?
+                } else {
+                    None
+                };
+                super::transport::send(
+                    &target.destination,
+                    &bundle,
+                    &id,
+                    url.as_ref(),
+                    signing.as_ref(),
+                )
+                .await
             }
             .await;
             let (status, error) = match result {

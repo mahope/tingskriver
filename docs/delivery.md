@@ -45,7 +45,74 @@ The settings do not read them back. On platforms without a credential-store
 implementation, saving a webhook fails closed. Folder/SSH still work. SSH key
 material stays in OpenSSH key files, not the database. Errors are fixed Danish
 messages, never URLs, HTTP response bodies or SSH stderr. No runtime dependency
-was added.
+was added besides the already locked RustCrypto `hmac` and `sha2` (used only for signing).
+
+## Signed webhooks
+
+A generic or channel webhook target can have an optional signing secret
+(`Delivery::set_signing_secret`, write-only; `has_signing_secret` reports only
+whether one is set). Like the address it lives in the key store, never in
+`delivery.sqlite` (which keeps a flag only), the logs, status responses or
+`sidecar.json`. It cannot be changed while the target has unfinished jobs, and a
+target flagged as signed never sends unsigned if the secret is missing.
+Without a secret, requests are unsigned as before.
+
+Each attempt adds two headers:
+
+- `X-Tingskriver-Timestamp`: Unix time in seconds when the attempt was made.
+- `X-Tingskriver-Signature`: `sha256=` plus lowercase hex of
+  HMAC-SHA256(secret, `<timestamp>.<raw body>`).
+
+Verify against the **raw request bytes**, before any JSON parsing or
+re-serialisation, compare in constant time, and reject timestamps more than
+5 minutes from your clock (replay protection). A retry gets a fresh timestamp
+and signature but the same `Idempotency-Key`, so also deduplicate on that.
+Test vector: secret `whsec_test_secret`, timestamp `1700000000`, body
+`{"hello":"world"}` gives
+`sha256=86748dbec9cc87a9219f8a96632da703271bf5e85aa0afa2b310c37ba059d514`.
+
+Python:
+
+```python
+import hashlib, hmac, time
+
+def verify(secret: bytes, headers, raw_body: bytes, tolerance=300) -> bool:
+    try:
+        timestamp = int(headers["X-Tingskriver-Timestamp"])
+    except (KeyError, ValueError):
+        return False
+    if abs(time.time() - timestamp) > tolerance:
+        return False  # too old (or from the future): possible replay
+    expected = "sha256=" + hmac.new(
+        secret, str(timestamp).encode() + b"." + raw_body, hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(expected, headers.get("X-Tingskriver-Signature", ""))
+```
+
+Node.js (use the raw body, e.g. `express.raw({ type: "application/json" })`):
+
+```js
+const crypto = require("node:crypto");
+
+function verify(secret, headers, rawBody, toleranceSeconds = 300) {
+  const timestamp = Number(headers["x-tingskriver-timestamp"]);
+  if (!Number.isInteger(timestamp)) return false;
+  if (Math.abs(Date.now() / 1000 - timestamp) > toleranceSeconds) return false;
+  const expected = "sha256=" + crypto
+    .createHmac("sha256", secret)
+    .update(`${timestamp}.`)
+    .update(rawBody)
+    .digest("hex");
+  const given = Buffer.from(headers["x-tingskriver-signature"] ?? "");
+  const wanted = Buffer.from(expected);
+  return given.length === wanted.length && crypto.timingSafeEqual(given, wanted);
+}
+```
+
+Rust receivers can use `tingskriver_core::delivery::signing::verify`. The GPUI
+settings page does not exist on `main` yet; the signing-secret field (write-only,
+with a "set / not set" state and a clear action) must be added there and in
+Tauri's `delivery_*` commands.
 
 ## Queue and consent
 
