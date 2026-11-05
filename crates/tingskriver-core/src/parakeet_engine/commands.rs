@@ -593,6 +593,6 @@ pub async fn open_parakeet_models_folder() -> Result<(), String> {
             .map_err(|e| format!("Failed to open folder: {}", e))?;
     }
 
-    log::info!("Opened Parakeet models folder: {}", folder_path);
+    log::info!("Opened Parakeet models folder");
     Ok(())
 }

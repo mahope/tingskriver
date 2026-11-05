@@ -586,6 +586,6 @@ pub async fn open_models_folder() -> Result<(), String> {
             .map_err(|e| format!("Failed to open folder: {}", e))?;
     }
 
-    log::info!("Opened models folder: {}", folder_path);
+    log::info!("Opened models folder");
     Ok(())
 }

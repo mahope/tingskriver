@@ -326,8 +326,8 @@ async fn run_import(
     }
 
     info!(
-        "Starting import for '{}' from {} with language {:?}, model {:?}, provider {:?}",
-        title, source_path, language, model, provider
+        "Starting import with language {:?}, model {:?}, provider {:?}",
+        language, model, provider
     );
 
     // Determine which provider to use (default to whisper)
