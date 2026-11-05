@@ -18,9 +18,14 @@ import android.widget.Button
 import android.widget.TextView
 import dk.tingskriver.android.audio.AndroidPcmSource
 import dk.tingskriver.android.audio.RecordingSession
+import dk.tingskriver.android.speech.StubSpeechToText
 
 class TingskriverInputMethodService : InputMethodService() {
     private val session = RecordingSession { AndroidPcmSource(this) }
+    private val insertion = InsertionSession()
+    private val speech = StubSpeechToText()
+    private var insertionToken: InsertionSession.Session? = null
+    private var insertionStatus: Int? = null
     private val handler = Handler(Looper.getMainLooper())
     private var worker: Thread? = null
     private var inputView: View? = null
@@ -32,6 +37,8 @@ class TingskriverInputMethodService : InputMethodService() {
     private val monitor = object : Runnable {
         override fun run() {
             if (session.state != RecordingSession.State.RECORDING) {
+                insertion.invalidate()
+                insertionToken = null
                 renderStatus()
                 return
             }
@@ -56,6 +63,17 @@ class TingskriverInputMethodService : InputMethodService() {
             if (session.state == RecordingSession.State.RECORDING) stopRecording()
             else if (canRecord()) {
                 finishWorker()
+                val connection = currentInputConnection
+                insertionStatus = null
+                insertionToken = insertion.start(
+                    currentInputEditorInfo?.inputType ?: 0,
+                    connection?.let { original -> { text -> original.commitText(text, 1) } }
+                )
+                if (insertionToken == null) {
+                    insertionStatus = R.string.insertion_failed
+                    renderStatus()
+                    return@setOnClickListener
+                }
                 val token = session.start(hasPermission())
                 if (token != null) {
                     deadline = SystemClock.elapsedRealtime() + 30_000
@@ -67,6 +85,9 @@ class TingskriverInputMethodService : InputMethodService() {
                         }
                     }, "tingskriver-pcm").also { it.start() }
                     handler.post(monitor)
+                } else {
+                    insertion.invalidate()
+                    insertionToken = null
                 }
             }
             renderStatus()
@@ -121,8 +142,20 @@ class TingskriverInputMethodService : InputMethodService() {
     private fun stopRecording() {
         session.stop()
         finishWorker()
+        val token = insertionToken ?: return
+        insertionToken = null
+        // Only the stub is enabled. Real STT must run on a worker and complete on main.
+        insertionStatus = when (insertion.complete(token, speech.transcribe(shortArrayOf(), 16_000))) {
+            InsertionOutcome.ConnectionError -> R.string.insertion_failed
+            InsertionOutcome.SpeechError -> R.string.speech_failed
+            else -> null
+        }
+        renderStatus()
     }
     private fun cancelRecording() {
+        insertion.invalidate()
+        insertionToken = null
+        insertionStatus = null
         session.cancel()
         finishWorker()
     }
@@ -143,6 +176,7 @@ class TingskriverInputMethodService : InputMethodService() {
         inputView?.findViewById<TextView>(R.id.status)?.setText(when {
             !dictationAllowed -> R.string.unsupported_field
             !hasPermission() -> R.string.permission_needed
+            insertionStatus != null -> insertionStatus!!
             recording -> R.string.recording_status
             session.state == RecordingSession.State.ERROR -> R.string.recording_error
             session.state == RecordingSession.State.STOPPED -> R.string.stopped_status

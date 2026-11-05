@@ -4,6 +4,8 @@
     <string name="microphone">Mikrofon</string>
     <string name="switch_keyboard">Skift tastatur</string>
     <string name="unsupported_field">Diktering er slået fra i dette felt.</string>
+    <string name="insertion_failed">Teksten kunne ikke indsættes i det oprindelige felt. Prøv igen.</string>
+    <string name="speech_failed">Talegenkendelsen mislykkedes. Prøv igen.</string>
     <string name="settings_title">Tingskriver til Android</string>
     <string name="settings_intro">Optag højst 30 sekunder i hukommelsen. Lyden kasseres ved stop. Talegenkendelse er ikke tilsluttet. Ingen lyd eller tekst gemmes eller sendes. Aktivér tastaturet i Androids indstillinger, og vælg det derefter i et tekstfelt.</string>
     <string name="enable_keyboard">Åbn tastaturindstillinger</string>
