@@ -493,3 +493,43 @@ impl Default for RecordingSaver {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn metadata(ended: Option<(&str, &str)>) -> MeetingMetadata {
+        MeetingMetadata {
+            version: "1.0".into(),
+            meeting_id: None,
+            meeting_name: Some("Syntetisk møde".into()),
+            created_at: "2026-11-05T09:00:00Z".into(),
+            completed_at: None,
+            duration_seconds: None,
+            devices: DeviceInfo {
+                microphone: None,
+                system_audio: None,
+            },
+            audio_file: MIXED_FILE.into(),
+            transcript_file: "transcripts.json".into(),
+            sample_rate: RECORDING_SAMPLE_RATE,
+            status: "completed".into(),
+            audio_status: None,
+            ended_by: ended.map(|(cause, _)| cause.to_string()),
+            ended_at: ended.map(|(_, at)| at.to_string()),
+        }
+    }
+
+    #[test]
+    fn a_meeting_ended_by_sleep_says_so_in_its_metadata() {
+        let json =
+            serde_json::to_value(metadata(Some(("sleep", "2026-11-05T10:00:00+01:00")))).unwrap();
+        assert_eq!(json["ended_by"], "sleep");
+        assert_eq!(json["ended_at"], "2026-11-05T10:00:00+01:00");
+        // An ordinary stop leaves the keys out, and old files without them still load.
+        let plain = serde_json::to_value(metadata(None)).unwrap();
+        assert!(plain.get("ended_by").is_none() && plain.get("ended_at").is_none());
+        let back: MeetingMetadata = serde_json::from_value(plain).unwrap();
+        assert_eq!(back.ended_by, None);
+    }
+}
