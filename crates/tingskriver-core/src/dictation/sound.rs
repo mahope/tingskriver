@@ -54,7 +54,9 @@ pub fn play(sound: Sound, volume: u32) {
 }
 
 fn play_blocking(sound: Sound, volume: u32) -> Result<(), String> {
-    let device = cpal::default_host().default_output_device().ok_or("no output device")?;
+    let device = cpal::default_host()
+        .default_output_device()
+        .ok_or("no output device")?;
     let config = device.default_output_config().map_err(|e| e.to_string())?;
     let rate = config.sample_rate().0;
     let channels = config.channels() as usize;
@@ -113,13 +115,20 @@ mod tests {
             assert!(samples.iter().any(|s| s.abs() > 0.3));
             assert!(samples[0].abs() < 0.01 && samples[samples.len() - 1].abs() < 0.01);
         }
-        assert_ne!(tone(Sound::Start, 100, 48_000), tone(Sound::Stop, 100, 48_000));
+        assert_ne!(
+            tone(Sound::Start, 100, 48_000),
+            tone(Sound::Stop, 100, 48_000)
+        );
     }
 
     #[test]
     fn volume_scales_the_tone_and_zero_is_silent() {
-        let loud = tone(Sound::Start, 100, 16_000).iter().fold(0.0f32, |m, s| m.max(s.abs()));
-        let soft = tone(Sound::Start, 25, 16_000).iter().fold(0.0f32, |m, s| m.max(s.abs()));
+        let loud = tone(Sound::Start, 100, 16_000)
+            .iter()
+            .fold(0.0f32, |m, s| m.max(s.abs()));
+        let soft = tone(Sound::Start, 25, 16_000)
+            .iter()
+            .fold(0.0f32, |m, s| m.max(s.abs()));
         assert!((soft * 4.0 - loud).abs() < 0.01);
         assert!(tone(Sound::Start, 0, 16_000).iter().all(|s| *s == 0.0));
     }

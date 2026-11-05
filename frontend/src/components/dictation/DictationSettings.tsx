@@ -66,6 +66,9 @@ export function DictationSettings() {
   const [words, setWords] = useState<DictionaryWord[]>([]);
   const [snippets, setSnippets] = useState<SnippetRow[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [microphones, setMicrophones] = useState<string[]>([]);
+  const [hookFolder, setHookFolder] = useState('');
+  const [hookScripts, setHookScripts] = useState<string[]>([]);
 
   const [shortcut, setShortcut] = useState('');
   const [syvKey, setSyvKey] = useState('');
@@ -98,7 +101,17 @@ export function DictationSettings() {
       setLoadError(null);
     } catch (error) {
       setLoadError(errorText(error));
+      return;
     }
+    // Lists for the microphone and hook choices; the page works without them.
+    dictationApi.listMicrophones().then(setMicrophones).catch(() => setMicrophones([]));
+    dictationApi
+      .listHookScripts()
+      .then((hooks) => {
+        setHookFolder(hooks.folder);
+        setHookScripts(hooks.scripts);
+      })
+      .catch(() => setHookScripts([]));
   }, []);
 
   useEffect(() => {
@@ -267,6 +280,80 @@ export function DictationSettings() {
       </Section>
 
       <Section
+        title="Mikrofon og lyd"
+        description="Gælder kun diktering. Møder bruger deres egen mikrofon."
+      >
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-1">
+            <label htmlFor="dict-mic" className="text-sm font-medium text-foreground">Mikrofon</label>
+            <select
+              id="dict-mic"
+              className={`${selectClass} w-full`}
+              value={settings.microphone}
+              onChange={(e) => save({ microphone: e.target.value })}
+            >
+              <option value="">Windows' standardmikrofon</option>
+              {settings.microphone && !microphones.includes(settings.microphone) && (
+                <option value={settings.microphone}>{settings.microphone} (ikke tilsluttet)</option>
+              )}
+              {microphones.map((name) => (
+                <option key={name} value={name}>{name}</option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-1">
+            <label htmlFor="dict-channel" className="text-sm font-medium text-foreground">Kanal</label>
+            <select
+              id="dict-channel"
+              className={`${selectClass} w-full`}
+              value={settings.channel}
+              onChange={(e) => save({ channel: e.target.value as Settings['channel'] })}
+            >
+              <option value="mix">Alle kanaler blandet</option>
+              <option value="left">Venstre</option>
+              <option value="right">Højre</option>
+            </select>
+          </div>
+        </div>
+        <p className="text-sm text-muted-foreground">
+          Findes den valgte mikrofon ikke, bruges standardmikrofonen. Kommer der ingen lyd inden for 1 sekund, får du besked.
+        </p>
+        <ToggleRow
+          id="dict-keep-open"
+          label="Hold mikrofonen åben"
+          hint="Dikteringen starter hurtigere, men Windows viser mikrofonindikatoren hele tiden, mens Tingskriver kører."
+          checked={settings.keepMicOpen}
+          onChange={(keepMicOpen) => save({ keepMicOpen })}
+        />
+        <ToggleRow
+          id="dict-sound"
+          label="Lyd ved start og stop"
+          hint="Et kort bip, når mikrofonen er klar, og et, når du slipper. Der spilles intet, hvis mikrofonen ikke giver lyd."
+          checked={settings.soundEnabled}
+          onChange={(soundEnabled) => save({ soundEnabled })}
+        />
+        {settings.soundEnabled && (
+          <div className="flex items-center gap-3">
+            <label htmlFor="dict-volume" className="text-sm text-foreground">Lydstyrke</label>
+            <input
+              id="dict-volume"
+              type="range"
+              min={0}
+              max={100}
+              step={5}
+              value={settings.soundVolume}
+              aria-valuetext={`${settings.soundVolume} procent`}
+              onChange={(e) => setSettings({ ...settings, soundVolume: Number(e.target.value) })}
+              onMouseUp={(e) => save({ soundVolume: Number((e.target as HTMLInputElement).value) })}
+              onKeyUp={(e) => save({ soundVolume: Number((e.target as HTMLInputElement).value) })}
+              className="w-48"
+            />
+            <span className="text-sm text-muted-foreground tabular-nums">{settings.soundVolume} %</span>
+          </div>
+        )}
+      </Section>
+
+      <Section
         title="Transskription"
         description="Med en Syv.ai-nøgle bruges Syv.ai. Svarer Syv.ai ikke hurtigt nok, eller fejler det, bruges den lokale model automatisk."
       >
@@ -348,6 +435,13 @@ export function DictationSettings() {
           )}
         </div>
         <ToggleRow
+          id="dict-stutters"
+          label="Saml gentagelser"
+          hint="Tre eller flere ens ord i træk bliver til ét: &quot;nej nej nej&quot; bliver &quot;nej&quot;. To ens ord og tal bevares, og det samme gælder ord fra din ordbog."
+          checked={settings.collapseStutters}
+          onChange={(collapseStutters) => save({ collapseStutters })}
+        />
+        <ToggleRow
           id="dict-polish"
           label="Polering med sprogmodel"
           hint="Retter grammatik og selvrettelser. Tager den mere end 2 sekunder, indsættes teksten uden polering. En lokal model er ofte for langsom."
@@ -390,6 +484,43 @@ export function DictationSettings() {
             )}
           </div>
         )}
+      </Section>
+
+      <Section
+        title="Tekst-hook"
+        description="Avanceret: send den færdige tekst til et script, du selv har lagt i hook-mappen, og indsæt det, scriptet skriver."
+      >
+        <ToggleRow
+          id="dict-hook"
+          label="Kør et script på teksten"
+          hint="Scriptet kører med dine rettigheder. Teksten sendes kun på stdin, ikke som argument og ikke gennem en kommandolinje. Fejler scriptet eller tager det over 30 sekunder, indsættes den oprindelige tekst. Teksten skrives aldrig i loggen."
+          checked={settings.textHookEnabled}
+          onChange={(textHookEnabled) => save({ textHookEnabled })}
+        />
+        <div className="space-y-1">
+          <label htmlFor="dict-hook-script" className="text-sm font-medium text-foreground">Script</label>
+          <select
+            id="dict-hook-script"
+            className={`${selectClass} w-full max-w-xs`}
+            value={settings.textHookScript}
+            onChange={(e) => save({ textHookScript: e.target.value })}
+          >
+            <option value="">Intet script valgt</option>
+            {settings.textHookScript && !hookScripts.includes(settings.textHookScript) && (
+              <option value={settings.textHookScript}>{settings.textHookScript} (findes ikke)</option>
+            )}
+            {hookScripts.map((name) => (
+              <option key={name} value={name}>{name}</option>
+            ))}
+          </select>
+          <p className="text-sm text-muted-foreground">
+            {hookScripts.length === 0
+              ? 'Der er ingen scripts endnu. Læg en .cmd- eller .ps1-fil i mappen '
+              : 'Scripts (.cmd og .ps1) ligger i mappen '}
+            <code className="break-all">{hookFolder || 'dictation_hooks i appens datamappe'}</code>
+            {'. Hent listen igen ved at åbne siden på ny.'}
+          </p>
+        </div>
       </Section>
 
       <Section

@@ -722,6 +722,8 @@ pub fn run() {
             dictation::commands::dictation_get_settings,
             dictation::commands::dictation_save_settings,
             dictation::commands::dictation_get_status,
+            dictation::commands::dictation_list_microphones,
+            dictation::commands::dictation_list_hook_scripts,
             dictation::commands::dictation_set_syv_key,
             dictation::commands::dictation_delete_syv_key,
             dictation::commands::dictation_test_syv,

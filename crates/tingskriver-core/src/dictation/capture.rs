@@ -65,7 +65,8 @@ impl Shared {
         if !self.armed.load(Ordering::Acquire) || mono.is_empty() {
             return;
         }
-        self.level.store(audio::level(&mono).to_bits(), Ordering::Relaxed);
+        self.level
+            .store(audio::level(&mono).to_bits(), Ordering::Relaxed);
         if let Ok(mut buf) = self.buffer.lock() {
             buf.extend_from_slice(&mono);
         }
@@ -128,7 +129,12 @@ impl StreamHandle {
             })
             .map_err(|e| format!("could not start capture thread: {e}"))?;
 
-        let mut handle = StreamHandle { stop_tx, thread: Some(thread), shared, sample_rate: 0 };
+        let mut handle = StreamHandle {
+            stop_tx,
+            thread: Some(thread),
+            shared,
+            sample_rate: 0,
+        };
         match ready_rx.recv_timeout(Duration::from_secs(5)) {
             Ok(Ok(rate)) => {
                 handle.sample_rate = rate;
@@ -191,7 +197,10 @@ fn ensure_kept(slot: &mut Option<Kept>, options: &CaptureOptions) -> Result<(), 
         // Close the old stream first: two streams on one device can conflict.
         slot.take();
         let handle = StreamHandle::open(options, false)?;
-        *slot = Some(Kept { options: options.clone(), handle });
+        *slot = Some(Kept {
+            options: options.clone(),
+            handle,
+        });
     }
     Ok(())
 }
@@ -296,10 +305,14 @@ fn pick_device(host: &cpal::Host, name: &str) -> Result<cpal::Device, String> {
             None => log::warn!("Dictation microphone not found, using the default"),
         }
     }
-    host.default_input_device().ok_or_else(|| "Ingen mikrofon fundet".to_string())
+    host.default_input_device()
+        .ok_or_else(|| "Ingen mikrofon fundet".to_string())
 }
 
-fn open_stream(options: &CaptureOptions, shared: Arc<Shared>) -> Result<(cpal::Stream, u32), String> {
+fn open_stream(
+    options: &CaptureOptions,
+    shared: Arc<Shared>,
+) -> Result<(cpal::Stream, u32), String> {
     let host = cpal::default_host();
     let device = pick_device(&host, &options.microphone)?;
     let config = device
@@ -321,7 +334,9 @@ fn open_stream(options: &CaptureOptions, shared: Arc<Shared>) -> Result<(cpal::S
     let stream = match sample_format {
         cpal::SampleFormat::F32 => device.build_input_stream(
             &stream_config,
-            move |data: &[f32], _: &cpal::InputCallbackInfo| push(audio::pick_channel(data, channels, channel)),
+            move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                push(audio::pick_channel(data, channels, channel))
+            },
             on_error,
             None,
         ),
@@ -346,17 +361,26 @@ fn open_stream(options: &CaptureOptions, shared: Arc<Shared>) -> Result<(cpal::S
         cpal::SampleFormat::U16 => device.build_input_stream(
             &stream_config,
             move |data: &[u16], _: &cpal::InputCallbackInfo| {
-                let f: Vec<f32> = data.iter().map(|&s| (s as f32 - 32768.0) / 32768.0).collect();
+                let f: Vec<f32> = data
+                    .iter()
+                    .map(|&s| (s as f32 - 32768.0) / 32768.0)
+                    .collect();
                 push(audio::pick_channel(&f, channels, channel))
             },
             on_error,
             None,
         ),
-        other => return Err(format!("Mikrofonens lydformat understøttes ikke: {other:?}")),
+        other => {
+            return Err(format!(
+                "Mikrofonens lydformat understøttes ikke: {other:?}"
+            ))
+        }
     }
     .map_err(|e| format!("Kunne ikke åbne mikrofonen: {e}"))?;
 
-    stream.play().map_err(|e| format!("Kunne ikke starte mikrofonen: {e}"))?;
+    stream
+        .play()
+        .map_err(|e| format!("Kunne ikke starte mikrofonen: {e}"))?;
     Ok((stream, sample_rate))
 }
 
@@ -373,7 +397,10 @@ mod tests {
 
         shared.arm();
         shared.push(Vec::new());
-        assert!(!shared.got_audio.load(Ordering::Acquire), "an empty buffer is not audio");
+        assert!(
+            !shared.got_audio.load(Ordering::Acquire),
+            "an empty buffer is not audio"
+        );
         shared.push(vec![0.5; 100]);
         shared.push(vec![0.5; 100]);
         assert!(shared.got_audio.load(Ordering::Acquire));

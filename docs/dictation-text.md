@@ -53,6 +53,39 @@ for that mode. Kode/rå never polishes, formats numbers or addresses, or presses
 An explicit `insertAndEnter` output removes its final trigger before cleanup;
 Enter requires confirmed insertion into the original window and focused field.
 
+## Repeated words (stutters)
+
+Three or more equal words in a row become one: "nej nej nej nej" becomes
+"nej", "jeg jeg jeg vil" becomes "jeg vil". Two equal words stay ("meget
+meget"). Numbers and number words are never collapsed ("nul nul nul",
+"tre tre tre", "2 2 2"), and neither are words the dictionary or snippets have
+handled. A comma between the repeats belongs to the run ("nej, nej, nej").
+The raw style (code editors, terminals) never collapses. The switch is
+`collapseStutters` (on by default), "Saml gentagelser" in the dictation settings.
+
+## Text hook
+
+An optional script gets the finished text (after cleanup and polishing) on
+stdin, and what it prints on stdout is inserted instead. It is off by default
+(`textHookEnabled`) and runs a script the user chose.
+
+- Put a `.cmd` or `.ps1` file in `dictation_hooks` in the app data folder
+  (`%APPDATA%\dk.mahoje.tingskriver` on Windows) and pick it in the dictation
+  settings. The name may only have letters, digits, space, dot, dash and
+  underscore, and the file must be in that folder.
+- `.cmd` runs as `cmd.exe /D /Q /C <file>`, `.ps1` as `powershell.exe -NoProfile
+  -NonInteractive -ExecutionPolicy Bypass -File <file>`. The text is never an
+  argument and never goes through a command line, so quotes, `%` and `$` in
+  dictated text are not expanded. Use `[Console]::InputEncoding`/`OutputEncoding`
+  set to UTF-8 in a `.ps1` script if the text has æøå.
+- The script runs with the user's own rights. Only put scripts there that you trust.
+- 30 seconds is the limit; the script is then killed. One final line break in the
+  answer is removed.
+- Fail-open: a missing script, a start error, a timeout, an exit code other than
+  0, an empty or non-UTF-8 answer, or more than 1 MiB of output gives the
+  original text. The log has the kind of failure and the duration, never the
+  text, the answer or the script's error output (discarded).
+
 ## Spoken signs file
 
 `dictation_spoken.json` in the app data folder (`%APPDATA%\Tingskriver` on

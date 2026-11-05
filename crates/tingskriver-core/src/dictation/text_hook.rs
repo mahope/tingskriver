@@ -59,7 +59,9 @@ pub async fn list_scripts(dir: &Path) -> Vec<String> {
     };
     let mut names = Vec::new();
     while let Ok(Some(entry)) = entries.next_entry().await {
-        let Ok(name) = entry.file_name().into_string() else { continue };
+        let Ok(name) = entry.file_name().into_string() else {
+            continue;
+        };
         if script_path(dir, &name).is_ok() && entry.file_type().await.is_ok_and(|t| t.is_file()) {
             names.push(name);
         }
@@ -72,12 +74,22 @@ pub async fn list_scripts(dir: &Path) -> Vec<String> {
 fn launcher(path: &Path) -> (String, Vec<String>) {
     let path = path.to_string_lossy().into_owned();
     if path.to_ascii_lowercase().ends_with(".ps1") {
-        let args = ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File"];
+        let args = [
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+        ];
         let mut args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
         args.push(path);
         ("powershell.exe".to_string(), args)
     } else {
-        ("cmd.exe".to_string(), vec!["/D".into(), "/Q".into(), "/C".into(), path])
+        (
+            "cmd.exe".to_string(),
+            vec!["/D".into(), "/Q".into(), "/C".into(), path],
+        )
     }
 }
 
@@ -108,17 +120,28 @@ async fn run(program: &str, args: &[String], text: String, timeout: Duration) ->
     let started = Instant::now();
     match run_inner(program, args, &text, timeout).await {
         Ok(out) => {
-            log::info!("Dictation text hook finished in {} ms", started.elapsed().as_millis());
+            log::info!(
+                "Dictation text hook finished in {} ms",
+                started.elapsed().as_millis()
+            );
             out
         }
         Err(kind) => {
-            log::warn!("Dictation text hook failed ({kind}) after {} ms; inserting the original text", started.elapsed().as_millis());
+            log::warn!(
+                "Dictation text hook failed ({kind}) after {} ms; inserting the original text",
+                started.elapsed().as_millis()
+            );
             text
         }
     }
 }
 
-async fn run_inner(program: &str, args: &[String], text: &str, timeout: Duration) -> Result<String, &'static str> {
+async fn run_inner(
+    program: &str,
+    args: &[String],
+    text: &str,
+    timeout: Duration,
+) -> Result<String, &'static str> {
     let mut command = Command::new(program);
     command
         .args(args)
@@ -141,15 +164,24 @@ async fn run_inner(program: &str, args: &[String], text: &str, timeout: Duration
         };
         let read = async {
             let mut out = Vec::new();
-            (&mut stdout).take(MAX_OUTPUT as u64 + 1).read_to_end(&mut out).await.map(|_| out)
+            (&mut stdout)
+                .take(MAX_OUTPUT as u64 + 1)
+                .read_to_end(&mut out)
+                .await
+                .map(|_| out)
         };
         let (_, out) = tokio::join!(write, read);
         let out = out.map_err(|_| "could not read the answer")?;
-        let status = child.wait().await.map_err(|_| "could not wait for the script")?;
+        let status = child
+            .wait()
+            .await
+            .map_err(|_| "could not wait for the script")?;
         Ok::<_, &'static str>((status, out))
     };
     // On timeout the future is dropped, and `kill_on_drop` kills the script.
-    let (status, out) = tokio::time::timeout(timeout, exchange).await.map_err(|_| "timeout")??;
+    let (status, out) = tokio::time::timeout(timeout, exchange)
+        .await
+        .map_err(|_| "timeout")??;
     if !status.success() {
         return Err("non-zero exit code");
     }
@@ -184,9 +216,18 @@ mod tests {
 
     #[tokio::test]
     async fn stdout_replaces_the_text_and_one_final_line_break_is_removed() {
-        assert_eq!(run_sh("tr a-z A-Z", "hej verden", TIMEOUT).await, "HEJ VERDEN");
-        assert_eq!(run_sh("printf 'ny tekst\\n\\n'", "x", TIMEOUT).await, "ny tekst\n");
-        assert_eq!(run_sh("printf 'ny tekst\\r\\n'", "x", TIMEOUT).await, "ny tekst");
+        assert_eq!(
+            run_sh("tr a-z A-Z", "hej verden", TIMEOUT).await,
+            "HEJ VERDEN"
+        );
+        assert_eq!(
+            run_sh("printf 'ny tekst\\n\\n'", "x", TIMEOUT).await,
+            "ny tekst\n"
+        );
+        assert_eq!(
+            run_sh("printf 'ny tekst\\r\\n'", "x", TIMEOUT).await,
+            "ny tekst"
+        );
     }
 
     #[tokio::test]
@@ -201,13 +242,21 @@ mod tests {
         assert_eq!(run_sh("echo andet; exit 3", text, TIMEOUT).await, text);
         assert_eq!(run_sh("true", text, TIMEOUT).await, text);
         assert_eq!(run_sh("printf '\\377\\376'", text, TIMEOUT).await, text);
-        assert_eq!(run("/findes/ikke", &[], text.to_string(), TIMEOUT).await, text);
+        assert_eq!(
+            run("/findes/ikke", &[], text.to_string(), TIMEOUT).await,
+            text
+        );
     }
 
     #[tokio::test]
     async fn a_slow_script_is_killed_and_the_original_text_is_used() {
         let started = Instant::now();
-        let out = run_sh("sleep 30; echo for sent", "oprindelig", Duration::from_millis(200)).await;
+        let out = run_sh(
+            "sleep 30; echo for sent",
+            "oprindelig",
+            Duration::from_millis(200),
+        )
+        .await;
         assert_eq!(out, "oprindelig");
         assert!(started.elapsed() < Duration::from_secs(5));
     }
@@ -229,8 +278,25 @@ mod name_tests {
         assert!(script_path(dir, "ret tekst.ps1").is_ok());
         assert!(script_path(dir, "Ret-1_a.CMD").is_ok());
         for bad in [
-            "", "  ", "a.exe", "a.bat", "a", "a.cmd.txt", "..\\a.cmd", "../a.cmd", "sub/a.cmd", "C:\\a.cmd",
-            "a&b.cmd", "a%PATH%.cmd", "a^b.cmd", "a;b.ps1", "a`b.ps1", "a$b.ps1", "a\"b.cmd", ".hidden.cmd", "a..b.cmd",
+            "",
+            "  ",
+            "a.exe",
+            "a.bat",
+            "a",
+            "a.cmd.txt",
+            "..\\a.cmd",
+            "../a.cmd",
+            "sub/a.cmd",
+            "C:\\a.cmd",
+            "a&b.cmd",
+            "a%PATH%.cmd",
+            "a^b.cmd",
+            "a;b.ps1",
+            "a`b.ps1",
+            "a$b.ps1",
+            "a\"b.cmd",
+            ".hidden.cmd",
+            "a..b.cmd",
         ] {
             assert!(script_path(dir, bad).is_err(), "{bad:?} should be refused");
         }
@@ -243,13 +309,19 @@ mod name_tests {
         assert_eq!(args.last().map(String::as_str), Some("h/a.ps1"));
         assert!(args.contains(&"-NonInteractive".to_string()));
         let (program, args) = launcher(Path::new("h/a.cmd"));
-        assert_eq!((program.as_str(), args.last().map(String::as_str)), ("cmd.exe", Some("h/a.cmd")));
+        assert_eq!(
+            (program.as_str(), args.last().map(String::as_str)),
+            ("cmd.exe", Some("h/a.cmd"))
+        );
     }
 
     #[tokio::test]
     async fn a_missing_script_gives_the_original_text() {
         let dir = tempfile::tempdir().unwrap();
-        assert_eq!(apply(dir.path(), "findes-ikke.cmd", "tekst".into()).await, "tekst");
+        assert_eq!(
+            apply(dir.path(), "findes-ikke.cmd", "tekst".into()).await,
+            "tekst"
+        );
         assert_eq!(apply(dir.path(), "../x.cmd", "tekst".into()).await, "tekst");
         assert!(list_scripts(&dir.path().join("mangler")).await.is_empty());
     }
@@ -260,6 +332,9 @@ mod name_tests {
         for name in ["b.ps1", "A.cmd", "notes.txt", "x&y.cmd"] {
             tokio::fs::write(dir.path().join(name), "").await.unwrap();
         }
-        assert_eq!(list_scripts(dir.path()).await, vec!["A.cmd".to_string(), "b.ps1".to_string()]);
+        assert_eq!(
+            list_scripts(dir.path()).await,
+            vec!["A.cmd".to_string(), "b.ps1".to_string()]
+        );
     }
 }

@@ -187,6 +187,16 @@ impl Service {
         self.rules.read().map(|r| r.clone()).unwrap_or_default()
     }
 
+    /// The folder for text hook scripts (created if missing) and the scripts in it.
+    pub async fn hook_scripts(&self) -> (String, Vec<String>) {
+        let dir = super::text_hook::hook_dir(&self.app_data_dir);
+        if let Err(e) = tokio::fs::create_dir_all(&dir).await {
+            log::warn!("Dictation: could not create the hook folder: {e}");
+        }
+        let scripts = super::text_hook::list_scripts(&dir).await;
+        (dir.to_string_lossy().into_owned(), scripts)
+    }
+
     pub fn shortcut_active(&self) -> bool {
         self.shortcut_active.load(Ordering::Relaxed)
     }
