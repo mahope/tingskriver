@@ -1024,6 +1024,7 @@ mod tests {
     fn file(name: &str, content: &[u8]) -> FileEntry {
         FileEntry {
             name: name.to_string(),
+            remote_name: None,
             size: content.len() as u64,
             sha256: crate::model_download::sha256_hex(content),
         }

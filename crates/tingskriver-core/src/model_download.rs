@@ -55,7 +55,11 @@ pub struct Source {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct FileEntry {
+    /// File name on disk.
     pub name: String,
+    /// File name at the sources when it differs from the name on disk.
+    #[serde(default)]
+    pub remote_name: Option<String>,
     pub size: u64,
     pub sha256: String,
 }
@@ -242,7 +246,11 @@ async fn fetch_from_source(
 ) -> Result<(), TransferError> {
     let part = part_path(dir, &file.name);
     let final_path = dir.join(&file.name);
-    let url = format!("{}/{}", source.base_url.trim_end_matches('/'), file.name);
+    let url = format!(
+        "{}/{}",
+        source.base_url.trim_end_matches('/'),
+        file.remote_name.as_deref().unwrap_or(&file.name)
+    );
 
     let mut have = match fs::metadata(&part).await {
         Ok(metadata) => metadata.len(),
@@ -707,6 +715,7 @@ mod tests {
     fn spec(name: &str, body: &[u8]) -> FileEntry {
         FileEntry {
             name: name.to_string(),
+            remote_name: None,
             size: body.len() as u64,
             sha256: sha256_hex(body),
         }
