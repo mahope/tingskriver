@@ -63,6 +63,8 @@ pub struct DictationSettings {
     pub language: String,
     pub format_numbers: bool,
     pub format_addresses: bool,
+    /// Three or more equal words in a row become one ("nej nej nej" → "nej").
+    pub collapse_stutters: bool,
     pub modes: ModeCollection,
 }
 
@@ -96,6 +98,7 @@ impl Default for DictationSettings {
             language: DEFAULT_LANGUAGE.into(),
             format_numbers: true,
             format_addresses: true,
+            collapse_stutters: true,
             modes: ModeCollection::default(),
         }
     }

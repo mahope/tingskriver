@@ -1128,6 +1128,7 @@ fn cleanup_options<'a>(
         format_numbers: style == Style::Normal && settings.format_numbers
             && mode.and_then(|m| m.formatting.number_format.as_deref()) != Some("ordret"),
         format_addresses: style == Style::Normal && settings.format_addresses,
+        collapse_stutters: style == Style::Normal && settings.collapse_stutters,
         enter_triggers: &[],
     }
 }
