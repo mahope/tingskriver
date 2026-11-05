@@ -40,6 +40,7 @@ pub mod batch_processor;
 pub mod system_detector;
 pub mod device_monitor;  // NEW: Device disconnect/reconnect monitoring
 pub mod device_follow;   // Default-device following decisions (Windows hot-swap)
+pub mod render_follow;   // Which playback device the system-audio loopback follows
 #[cfg(target_os = "windows")]
 pub mod windows_endpoint_notifier;
 #[cfg(target_os = "windows")]
