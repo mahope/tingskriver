@@ -90,12 +90,11 @@ function Save-Diagnostics {
   try {
     $events = Get-WinEvent -LogName Application -MaxEvents 25 -FilterXPath '*[System[(Level=1 or Level=2)]]' -ErrorAction Stop |
       Select-Object TimeCreated, ProviderName, Id, LevelDisplayName, Message
-    $events | Format-List | Out-String | Set-Content -Path (Join-Path $OutputDir 'eventlog-tail.txt') -Encoding utf8
+    [IO.File]::WriteAllText((Join-Path $OutputDir 'eventlog-tail.txt'), ($events | Format-List | Out-String), (New-Object Text.UTF8Encoding $false))
     Write-Host '--- Application event log, newest errors ---'
     $events | Format-List | Out-String | Write-Host
   } catch {
-    "No error events found, or the event log could not be read: $($_.Exception.Message)" |
-      Set-Content -Path (Join-Path $OutputDir 'eventlog-tail.txt') -Encoding utf8
+    [IO.File]::WriteAllText((Join-Path $OutputDir 'eventlog-tail.txt'), "No error events found, or the event log could not be read: $($_.Exception.Message)", (New-Object Text.UTF8Encoding $false))
   }
 }
 
@@ -112,16 +111,6 @@ try {
   $setupPath = (Resolve-Path $Setup).Path
   $hash = (Get-FileHash $setupPath -Algorithm SHA256).Hash.ToLowerInvariant()
   Write-Host "Installer: $setupPath ($((Get-Item $setupPath).Length) bytes) sha256 $hash"
-  EndStep
-
-  # 2. Synthetic user data and a key that must survive the uninstall.
-  Step 'Seed synthetic user data and a Credential Manager key'
-  New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
-  Set-Content -Path $dataMarker -Value 'synthetic smoke-test data' -Encoding ascii
-  $secret = [guid]::NewGuid().ToString('N')
-  & cmdkey.exe "/generic:$credentialTarget" '/user:smoke-test' "/pass:$secret" | Out-Null
-  if ($LASTEXITCODE -ne 0) { Fail "cmdkey could not add $credentialTarget" }
-  $secret = $null
   EndStep
 
   # 3. Silent install.
@@ -169,6 +158,12 @@ try {
 
   # 6. Start hidden and stay alive.
   Step "Start the app hidden and keep it alive for $KeepAliveSeconds s"
+  # Setup may have started the app itself; stop it so the instance below is the
+  # only one (single-instance would otherwise reject it), and only count log
+  # lines written from now on.
+  Get-Process -Name 'tingskriver-app' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+  Start-Sleep -Seconds 2
+  $logBefore = (Read-LogText).Length
   $app = Start-Process -FilePath $exe -ArgumentList '--hidden' -PassThru
   $deadline = (Get-Date).AddSeconds($KeepAliveSeconds)
   while ((Get-Date) -lt $deadline) {
@@ -176,11 +171,23 @@ try {
     Start-Sleep -Seconds 1
   }
   if ($app.HasExited) { Fail "The app exited with code $($app.ExitCode)" }
-  if ((Read-LogText) -notmatch '\(GPUI\) starting hidden') { Fail "The app log has no '(GPUI) starting hidden' line" }
+  $newLog = (Read-LogText).Substring([Math]::Min($logBefore, (Read-LogText).Length))
+  if ($newLog -notmatch '\(GPUI\) starting hidden') { Fail "The app log has no '(GPUI) starting hidden' line" }
   Write-Host "The app is still running (pid $($app.Id))."
   Stop-Process -Id $app.Id -Force
   if (-not $app.WaitForExit(15000)) { Fail 'The app process did not stop' }
   $app = $null
+  EndStep
+
+  # Synthetic user data and a key that must survive the uninstall. Seeded after
+  # the install, so the app and its hooks start against a clean machine.
+  Step 'Seed synthetic user data and a Credential Manager key'
+  New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
+  Set-Content -Path $dataMarker -Value 'synthetic smoke-test data' -Encoding ascii
+  $secret = [guid]::NewGuid().ToString('N')
+  & cmdkey.exe "/generic:$credentialTarget" '/user:smoke-test' "/pass:$secret" | Out-Null
+  if ($LASTEXITCODE -ne 0) { Fail "cmdkey could not add $credentialTarget" }
+  $secret = $null
   EndStep
 
   # 7. Silent uninstall, with the command Windows itself would run.

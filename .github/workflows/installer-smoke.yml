@@ -17,9 +17,6 @@ on:
   push:
     tags:
       - 'app-v*'
-    # TEMPORARY while the workflow is developed (no PR yet); removed before the PR.
-    branches:
-      - 'issue/185-roegtest-installer'
   pull_request:
     paths:
       - 'installer/**'
@@ -198,10 +195,18 @@ jobs:
         shell: pwsh
         run: |
           # Short timeouts: a broken installer either exits at once or hangs.
-          pwsh -NoProfile -File ./installer/smoke-test.ps1 -Setup "${{ steps.broken.outputs.path }}" -OutputDir broken-out -InstallTimeoutSeconds 90
-          if ($LASTEXITCODE -eq 0) {
+          $output = pwsh -NoProfile -File ./installer/smoke-test.ps1 -Setup "${{ steps.broken.outputs.path }}" -OutputDir broken-out -InstallTimeoutSeconds 90 2>&1 | Out-String
+          $code = $LASTEXITCODE
+          Write-Host $output
+          if ($code -eq 0) {
             Write-Host '::error::The smoke test passed with a corrupted installer, so it cannot be trusted.'
             exit 1
           }
-          Write-Host "The smoke test failed on the corrupted installer (exit code $LASTEXITCODE), as it should."
+          # Red for the right reason: the install step must be what failed, not a
+          # syntax error or a missing file in the script.
+          if ($output -notmatch 'SMOKE TEST FAILED: (Setup\.exe --silent exited|install did not finish|No uninstall entry|.* is missing after install)') {
+            Write-Host "::error::The smoke test failed (exit code $code), but not in the install step, so this check proves nothing."
+            exit 1
+          }
+          Write-Host "The smoke test failed in the install step on the corrupted installer (exit code $code), as it should."
           exit 0
