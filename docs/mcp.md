@@ -17,12 +17,50 @@ directory. Always prefer the setup copied from the running app: it resolves
 the actual executable location. Claude Code and Codex launch the same server.
 Restart the MCP client after installing an update if it holds an older process.
 
+## Native settings and privacy controls
+
+The GPUI app has a separate **Aktivér MCP-serveren** switch. It defaults off,
+including when upgrading an existing MCP installation. The selected meeting
+policy remains `marked`; notes, summary/tasks, transcript and participant/speaker
+fields all start disabled. Enable only the fields you intend to share. These
+choices also filter search excerpts and tasks. Speaker suppression removes the
+structured speaker field, not names embedded in prose. Metadata policy still
+limits content even when content switches are selected. `all` separately permits
+dictations and recording actions; use marked-only access to exclude those.
+
+Settings show the installed executable path, whether it is available, the number
+of matching client-owned server processes at the last refresh, shared-meeting
+count and a link to the existing sharing page. There is no listening port or
+app-owned daemon to start: each client launches its own stdio process. Turning
+off access blocks subsequent reads/actions without killing the client's process;
+it cannot retract content already supplied or cancel an action already running.
+
+**Test forbindelsen** starts that executable, initializes MCP and lists tools,
+then kills/reaps the test process. It never calls a meeting tool and works while
+sharing is disabled. Missing binary, timeout and protocol failures are displayed.
+
+The native call journal contains the latest 100 known tool calls, UTC timestamps,
+validated existing meeting IDs and success/failure. It stores no tool arguments,
+results, titles, search terms, notes or error strings. `mcp-audit.sqlite` is a
+separate writable local file; the meeting database stays read-only in the server.
+Refresh and clear are explicit actions in Settings. If journaling fails after an
+action, stderr reports the failure without changing the completed action's result.
+Local users with access to the data directory can also access this metadata.
+
+Both clients' configuration buttons resolve the binary beside the running app,
+including Velopack's current/versioned path; they are disabled if it is missing.
+The earlier Tauri settings expose the meeting policy only; use the GPUI app to
+set the master/content switches. No owner-specific automatic permission exists.
+
 ## Access
+
+The following table applies **after** enabling the master switch; meeting
+content is further restricted by the four independent content switches.
 
 | Level | Meetings | Content | Dictation | Actions |
 | --- | --- | --- | --- | --- |
 | `marked` (default) | Explicitly shared only | Shared meetings | Denied | Shared meetings only |
-| `metadata` | All | Titles, dates, duration, tasks | Denied | Denied |
+| `metadata` | All | Titles, dates, duration; tasks only with summary permission | Denied | Denied |
 | `all` | All | All | Allowed | Allowed |
 | `off` | None | None | Denied | Denied |
 
@@ -66,7 +104,7 @@ flags, notes, summaries, targets or queue entries. App logs record operation
 name and success, never action arguments or note text. Both app hosts forward
 action notifications. Notifications may be limited by OS permissions.
 
-`handoff` approves a snapshot of the saved summary, transcript and notes to an
+`handoff` requires all four content switches and approves a snapshot of the saved summary, transcript and notes to an
 already configured target; it cannot create a target or bypass delivery policy.
 Do not approve it in an AI client unless that delivery is intended. The app's
 delivery queue owns all writes, retries and transport. Existing local-only and

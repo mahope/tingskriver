@@ -125,12 +125,13 @@ som knappen i appen kopierer; TOML udvider ikke `%LOCALAPPDATA%`:
 command = 'C:\Users\<brugernavn>\AppData\Local\Tingskriver\tingskriver-mcp.exe'
 ```
 
-Standard er **Kun markerede møder**. Deling er slået fra som standard.
+MCP er som standard **slået fra**, også efter opdatering fra en ældre MCP-version.
+Aktivér serveren i GPUI-appens indstillinger. Mødevalget starter på
+**Kun markerede møder**, og alle fire datadele er fravalgt.
 Brug **Del med AI-værktøjer** på GPUI-appens mødeside til at dele et møde,
 og **Stop deling med AI-værktøjer** til at ophæve delingen.
 **Kun metadata** udelader transskript, referat,
-noter og dikteringer; **Fra** giver kun en forklaring. **Alt** giver fuld
-læseadgang, herunder dikteringer. Vælg selv Alt på din egen installation,
+noter og dikteringer; **Fra** giver kun en forklaring. **Alt** omfatter alle møder og dikteringer; de valgte datadele begrænser stadig mødeindholdet. Vælg selv Alt på din egen installation,
 hvis det er den ønskede adgang. Ingen installation opgraderes automatisk til Alt.
 Læseværktøjer virker uden appen. Handlinger går gennem den åbne app og viser
 en notifikation og en logpost. Aflevering bruger de eksisterende mål og
@@ -165,12 +166,13 @@ TOML does not expand `%LOCALAPPDATA%`:
 command = 'C:\Users\<username>\AppData\Local\Tingskriver\tingskriver-mcp.exe'
 ```
 
-New installations default to **Marked meetings only**; each meeting starts
-unshared. Use **Del med AI-værktøjer** on the installed GPUI app's Meetings
+MCP is **disabled by default**, including upgrades from the earlier MCP version.
+Enable it in the GPUI settings. Meeting selection defaults to **Marked meetings
+only**, each meeting starts unshared, and all four content switches start off. Use **Del med AI-værktøjer** on the installed GPUI app's Meetings
 page to share a meeting, or **Stop deling med AI-værktøjer** to revoke it.
 **Metadata only** excludes transcripts, summaries, notes and
 dictation. **Off** returns an explanation without meeting content. **All**
-includes dictation; choose it explicitly if wanted on your own installation.
+includes dictation and all meetings; the content switches still apply to meetings; choose it explicitly if wanted on your own installation.
 Reads work while the app is closed. Actions require the running app and
 produce notifications and log entries. Delivery reuses configured targets
 and respects local-only/private settings. See [MCP details](docs/mcp.md).
