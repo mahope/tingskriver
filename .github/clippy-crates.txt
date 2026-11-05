@@ -1,0 +1,5 @@
+# Crates that must stay clean under `cargo clippy --all-targets -- -D warnings`
+# (the ratchet in rust.yml, docs/agenter.md). One crate per line; add a line
+# when a crate is clean, never remove one to get green.
+tingskriver-overlay
+tingskriver-host

@@ -1,7 +1,9 @@
 name: Branch build
 
 # Every push to a branch other than main builds the Windows installer
-# (no release) so the branch can be verified and tested.
+# (no release) so the branch can be verified and tested. Pushes that only
+# change site/, docs/ and the like skip the builds (.github/scripts/ci-scope.py;
+# a skipped job counts as passed).
 
 on:
   push:
@@ -16,7 +18,31 @@ permissions:
   contents: read
 
 jobs:
+  scope:
+    name: Change scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      rust: ${{ steps.scope.outputs.rust }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Does this change need the builds?
+        id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+        run: >-
+          python3 .github/scripts/ci-scope.py
+          --event-name "$EVENT_NAME" --ref-name "$REF_NAME" --ref-type "$REF_TYPE"
+
   windows:
+    needs: scope
+    if: ${{ needs.scope.outputs.rust == 'true' }}
     uses: ./.github/workflows/windows-build.yml
     with:
       release: false
@@ -26,6 +52,8 @@ jobs:
   # it that way (tingskriver-core runs the same tests in rust.yml).
   device-follow-tests:
     name: Device switching unit tests
+    needs: scope
+    if: ${{ needs.scope.outputs.rust == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
