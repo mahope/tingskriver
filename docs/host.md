@@ -272,7 +272,7 @@ meeting. After each step, read the `power:` lines in `tingskriver-app.log`.
     `recording ended by sleep`, `database flushed`, resume, `telling the
     user`. `metadata.json` of the meeting has `"ended_by": "sleep"`. After a
     minute `audio.mp4` exists, plays to the moment of sleep, and
-    `.raw`/`.checkpoints` are gone (status `ok`). Nothing records after waking.
+    the `.checkpoints` folder is gone (status `ok`). Nothing records after waking.
 12. **Logoff during a recording.** Record 1 minute, sign out, sign in. The app
     (started at sign-in) shows the same card with cause "logget af". Log:
     `WM_QUERYENDSESSION`, `WM_ENDSESSION (ending)`, `recording ended by

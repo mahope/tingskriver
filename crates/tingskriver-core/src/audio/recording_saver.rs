@@ -495,6 +495,8 @@ impl Default for RecordingSaver {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
 

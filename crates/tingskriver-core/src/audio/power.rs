@@ -349,6 +349,8 @@ impl PowerSession for CoreSession {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
