@@ -22,6 +22,7 @@ use super::logic::hotkey::ChordSignal;
 use super::logic::order::Order;
 use super::logic::spoken::{self, FieldId, LastInsertion, VoiceCommand};
 use super::logic::timing::{self, Steps};
+use super::logic::target_check::Refusal;
 use super::overlay::{Overlay, OverlayState};
 use super::modes::{Context, Mode};
 use super::secrets;
@@ -424,7 +425,11 @@ fn foreground_window() -> usize {
 }
 
 fn flash_error(overlay: &Arc<dyn Overlay>) {
-    overlay.set(OverlayState::Error);
+    flash(overlay, OverlayState::Error);
+}
+
+fn flash(overlay: &Arc<dyn Overlay>, state: OverlayState) {
+    overlay.set(state);
     let overlay = overlay.clone();
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(1500));
@@ -892,6 +897,7 @@ impl Service {
             app: target_app.clone(),
         };
         let inserted = insert(text.clone(), options, enter, target_window).await;
+        let mut refusal = None;
         let (insert_method, inserted_at) = match inserted {
             Ok((method, at, field)) => {
                 self.set_error(None);
@@ -900,7 +906,13 @@ impl Service {
             }
             Err(e) => {
                 log::warn!("Dictation insert failed: {e}");
-                self.set_error(Some(format!("Teksten kunne ikke indsættes: {e}")));
+                refusal = Refusal::from_message(&e);
+                if let Some(r) = refusal {
+                    self.set_error(Some(r.message().to_string()));
+                    flash(&self.overlay, OverlayState::Refused(r.pill_text()));
+                } else {
+                    self.set_error(Some(format!("Teksten kunne ikke indsættes: {e}")));
+                }
                 (None, Instant::now())
             }
         };
@@ -935,7 +947,8 @@ impl Service {
             insert_method.unwrap_or("none"),
         );
 
-        if settings.history_enabled {
+        // Text refused by a password field is never kept, not even in the history.
+        if settings.history_enabled && !refusal.is_some_and(Refusal::keeps_text_out_of_history) {
             self.save_history(&settings, &samples, text, target_app, style, transcript, latency_ms, audio_ms, insert_method)
                 .await;
         }

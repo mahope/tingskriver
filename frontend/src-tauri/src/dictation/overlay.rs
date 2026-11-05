@@ -61,7 +61,7 @@ pub fn set<R: Runtime>(app: &AppHandle<R>, state: OverlayState) {
         OverlayState::Processing => {
             "window.__tingskriverDictation && window.__tingskriverDictation({state:'processing'})".to_string()
         }
-        OverlayState::Error => {
+        OverlayState::Error | OverlayState::Refused(_) => {
             "window.__tingskriverDictation && window.__tingskriverDictation({state:'error'})".to_string()
         }
         OverlayState::Hidden => {

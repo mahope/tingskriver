@@ -12,6 +12,7 @@ pub mod hotkey;
 pub mod modes;
 pub mod numbers;
 pub mod spoken;
+pub mod target_check;
 mod token;
 pub mod order;
 pub mod paste;

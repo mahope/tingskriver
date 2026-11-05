@@ -874,7 +874,7 @@ pub fn insert_output_at(text: &str, options: &InsertOptions, enter: bool, target
         if !paste::same_target(target, foreground_window()) || super::logic::app_style::is_code_editor(foreground_process().as_deref()) {
             return Err("Programmet skiftede før Enter; teksten er indsat".into());
         }
-        super::logic::spoken::require_field(result.2.as_ref(), super::target_win::focused_field().as_ref())?;
+        require_field_ok(result.2.as_ref())?;
         if !send_inputs(&[
             key_input(VK_RETURN.0, 0, KEYBD_EVENT_FLAGS(0)),
             key_input(VK_RETURN.0, 0, KEYEVENTF_KEYUP),
@@ -883,6 +883,13 @@ pub fn insert_output_at(text: &str, options: &InsertOptions, enter: bool, target
         }
     }
     Ok(result)
+}
+
+/// Right before the text goes in: the focus must still be in the same field,
+/// and that field must still take text (a password field may have gained focus).
+fn require_field_ok(expected: Option<&super::logic::spoken::FieldId>) -> Result<(), String> {
+    super::logic::target_check::verify(expected, super::target_win::focus().as_ref())
+        .map_err(|r| r.message().to_string())
 }
 
 fn check_target(target: usize) -> Result<(), String> {
@@ -895,12 +902,15 @@ fn check_target(target: usize) -> Result<(), String> {
 
 fn insert_text_inner(text: &str, options: &InsertOptions, enter: bool, target: usize) -> Result<(InsertMethod, Instant, Option<super::logic::spoken::FieldId>), String> {
     wait_for_modifiers_released(Duration::from_millis(1500));
-    let field = super::target_win::focused_field();
+    // Read before anything is touched: a password, read-only or disabled
+    // field is refused here, with nothing put on the clipboard.
+    let focus = super::target_win::focus();
+    if let Some(focus) = &focus {
+        super::logic::target_check::decide(&focus.probe).map_err(|r| r.message().to_string())?;
+    }
+    let field = focus.map(|focus| focus.id);
     let typed = |text: &str| {
-        super::logic::spoken::require_field(
-            field.as_ref(),
-            super::target_win::focused_field().as_ref(),
-        )?;
+        require_field_ok(field.as_ref())?;
         self::typed(text).map(|(method, at)| (method, at, field.clone()))
     };
 
@@ -941,10 +951,7 @@ fn insert_text_inner(text: &str, options: &InsertOptions, enter: bool, target: u
         std::thread::sleep(Duration::from_millis(2));
     }
     owner.set_paste_sent();
-    if let Err(e) = super::logic::spoken::require_field(
-        field.as_ref(),
-        super::target_win::focused_field().as_ref(),
-    ) {
+    if let Err(e) = require_field_ok(field.as_ref()) {
         let _ = restore_clipboard(&owner, &saved);
         return Err(e);
     }
