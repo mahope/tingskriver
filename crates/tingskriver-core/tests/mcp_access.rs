@@ -4,6 +4,10 @@ use tingskriver_core::mcp::{Access, Reader};
 async fn fixture() -> SqlitePool {
     let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    sqlx::query("UPDATE mcp_settings SET enabled=1,notes=1,summary=1,transcript=1,participants=1")
+        .execute(&pool)
+        .await
+        .unwrap();
     for (id, shared) in [("visible", true), ("hidden", false)] {
         sqlx::query("INSERT INTO meetings(id,title,created_at,updated_at,ai_shared) VALUES (?,?,'2026-11-01','2026-11-01',?)")
             .bind(id).bind(id).bind(shared).execute(&pool).await.unwrap();
@@ -13,6 +17,52 @@ async fn fixture() -> SqlitePool {
             .bind(id).execute(&pool).await.unwrap();
     }
     pool
+}
+
+#[tokio::test]
+async fn data_switches_apply_to_every_read_surface_and_live_reader() {
+    use tingskriver_core::mcp::{save_settings, Settings};
+    let pool = fixture().await;
+    sqlx::query("UPDATE transcripts SET speaker='SECRET speaker'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let reader = Reader::new(pool.clone());
+    let mut value = Settings {
+        enabled: true,
+        ..Settings::default()
+    };
+    save_settings(&pool, value).await.unwrap();
+    let metadata = reader.get_meeting("visible", &[]).await.unwrap();
+    assert!(metadata.get("transskript").is_none());
+    assert!(metadata.get("referat").is_none());
+    assert!(metadata.get("noter").is_none());
+    assert!(reader.search("SECRET").await.unwrap().is_empty());
+    assert!(reader.list_tasks(false).await.unwrap().is_empty());
+    value.transcript = true;
+    save_settings(&pool, value).await.unwrap();
+    let transcript = reader.get_meeting("visible", &[]).await.unwrap();
+    assert_eq!(transcript["transskript"][0]["text"], "SECRET transcript");
+    assert!(transcript["transskript"][0]["speaker"].is_null());
+    assert!(reader
+        .search("SECRET")
+        .await
+        .unwrap()
+        .iter()
+        .all(|hit| hit["source"] == "transcript"));
+    value.participants = true;
+    value.summary = true;
+    save_settings(&pool, value).await.unwrap();
+    assert_eq!(
+        reader.get_meeting("visible", &[]).await.unwrap()["transskript"][0]["speaker"],
+        "SECRET speaker"
+    );
+    assert!(reader.get_meeting("hidden", &[]).await.is_err());
+    value.enabled = false;
+    save_settings(&pool, value).await.unwrap();
+    assert!(reader.get_meeting("visible", &[]).await.is_err());
+    assert!(reader.search("SECRET").await.is_err());
+    assert!(reader.list_tasks(false).await.is_err());
 }
 
 #[tokio::test]

@@ -17,6 +17,34 @@ pub enum Access {
 const STORAGE: &str = "MCP-data kunne ikke læses. Åbn Tingskriver og prøv igen.";
 const DENIED: &str = "Adgang er slået fra, eller mødet er ikke delt med AI-værktøjer.";
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, sqlx::FromRow)]
+pub struct Settings {
+    pub enabled: bool,
+    pub notes: bool,
+    pub summary: bool,
+    pub transcript: bool,
+    pub participants: bool,
+}
+
+pub async fn settings(pool: &SqlitePool) -> Result<Settings, String> {
+    sqlx::query_as(
+        "SELECT enabled,notes,summary,transcript,participants FROM mcp_settings WHERE id=1",
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|_| STORAGE.into())
+}
+
+pub async fn save_settings(pool: &SqlitePool, value: Settings) -> Result<(), String> {
+    let result = sqlx::query("UPDATE mcp_settings SET enabled=?,notes=?,summary=?,transcript=?,participants=? WHERE id=1")
+        .bind(value.enabled).bind(value.notes).bind(value.summary).bind(value.transcript).bind(value.participants)
+        .execute(pool).await.map_err(|_| STORAGE)?;
+    if result.rows_affected() != 1 {
+        return Err(STORAGE.into());
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug, sqlx::FromRow)]
 pub struct SharingMeeting {
     pub id: String,
@@ -85,6 +113,24 @@ impl Reader {
         policy(&mut tx).await
     }
 
+    pub async fn selected_access(&self) -> Result<Access, String> {
+        let value: String = sqlx::query_scalar("SELECT access FROM mcp_settings WHERE id=1")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|_| STORAGE)?;
+        serde_json::from_value(json!(value)).map_err(|_| STORAGE.into())
+    }
+
+    /// Resolve only a technical ID that actually exists; never journal raw input.
+    pub async fn existing_id(&self, id: &str) -> Option<String> {
+        sqlx::query_scalar("SELECT id FROM meetings WHERE id=?")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await
+            .ok()
+            .flatten()
+    }
+
     async fn snapshot(&self) -> Result<(Transaction<'_, Sqlite>, Access), String> {
         let mut tx = self.pool.begin().await.map_err(|_| STORAGE)?;
         let access = policy(&mut tx).await?;
@@ -101,6 +147,9 @@ impl Reader {
 
     pub async fn list_tasks(&self, open_only: bool) -> Result<Vec<Value>, String> {
         let (mut tx, access) = self.snapshot().await?;
+        if !data_policy(&mut tx).await?.summary {
+            return Ok(vec![]);
+        }
         let rows = sqlx::query("SELECT s.meeting_id,s.result FROM summary_processes s JOIN meetings m ON m.id=s.meeting_id WHERE (? != 'marked' OR m.ai_shared=1) AND s.result IS NOT NULL ORDER BY m.created_at DESC LIMIT 500")
             .bind(access_name(access)).fetch_all(&mut *tx).await.map_err(|_| STORAGE)?;
         let mut tasks = vec![];
@@ -251,7 +300,16 @@ impl Reader {
         if access == Access::Metadata {
             return Ok(result);
         }
-        let wants = |p: &str| parts.is_empty() || parts.iter().any(|s| s == p);
+        let data = data_policy(&mut tx).await?;
+        let wants = |p: &str| {
+            (parts.is_empty() || parts.iter().any(|s| s == p))
+                && match p {
+                    "referat" => data.summary,
+                    "noter" => data.notes,
+                    "transskript" => data.transcript,
+                    _ => false,
+                }
+        };
         if wants("referat") {
             result["referat"] = sqlx::query_scalar::<_, Option<String>>(
                 "SELECT result FROM summary_processes WHERE meeting_id=?",
@@ -285,7 +343,7 @@ impl Reader {
                 items.push(
                     json!({"text":r.try_get::<String,_>("transcript").map_err(|_| STORAGE)?,
                     "timestamp":r.try_get::<String,_>("timestamp").map_err(|_| STORAGE)?,
-                    "speaker":r.try_get::<Option<String>,_>("speaker").map_err(|_| STORAGE)?,
+                    "speaker":if data.participants { r.try_get::<Option<String>,_>("speaker").map_err(|_| STORAGE)? } else { None },
                     "start":r.try_get::<Option<f64>,_>("audio_start_time").map_err(|_| STORAGE)?,
                     "end":r.try_get::<Option<f64>,_>("audio_end_time").map_err(|_| STORAGE)?}),
                 );
@@ -297,6 +355,7 @@ impl Reader {
 
     pub async fn search(&self, text: &str) -> Result<Vec<Value>, String> {
         let (mut tx, access) = self.snapshot().await?;
+        let data = data_policy(&mut tx).await?;
         let query = text
             .split_whitespace()
             .filter(|s| s.chars().any(char::is_alphanumeric))
@@ -309,8 +368,12 @@ impl Reader {
         let rows = sqlx::query("SELECT d.meeting_id,d.source,d.time_seconds,snippet(search_fts,0,'','','…',32) AS excerpt
             FROM search_fts JOIN search_documents d ON d.id=search_fts.rowid JOIN meetings m ON m.id=d.meeting_id
             WHERE search_fts MATCH ? AND (? != 'marked' OR m.ai_shared=1)
-            AND (? != 'metadata' OR d.source='title') ORDER BY bm25(search_fts),d.id LIMIT 100")
-            .bind(query).bind(access_name(access)).bind(access_name(access)).fetch_all(&mut *tx).await.map_err(|_| STORAGE)?;
+            AND (? != 'metadata' OR d.source='title')
+            AND (d.source='title' OR (d.source='note' AND ?) OR (d.source='summary' AND ?) OR (d.source='transcript' AND ?))
+            ORDER BY bm25(search_fts),d.id LIMIT 100")
+            .bind(query).bind(access_name(access)).bind(access_name(access))
+            .bind(data.notes).bind(data.summary).bind(data.transcript)
+            .fetch_all(&mut *tx).await.map_err(|_| STORAGE)?;
         rows.into_iter()
             .map(|r| {
                 Ok(
@@ -334,11 +397,23 @@ fn access_name(access: Access) -> &'static str {
 }
 
 async fn policy(tx: &mut Transaction<'_, Sqlite>) -> Result<Access, String> {
+    if !data_policy(tx).await?.enabled {
+        return Ok(Access::Off);
+    }
     let value: String = sqlx::query_scalar("SELECT access FROM mcp_settings WHERE id=1")
         .fetch_one(&mut **tx)
         .await
         .map_err(|_| STORAGE)?;
     serde_json::from_value(json!(value)).map_err(|_| STORAGE.into())
+}
+
+async fn data_policy(tx: &mut Transaction<'_, Sqlite>) -> Result<Settings, String> {
+    sqlx::query_as(
+        "SELECT enabled,notes,summary,transcript,participants FROM mcp_settings WHERE id=1",
+    )
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(|_| STORAGE.into())
 }
 
 async fn visible(tx: &mut Transaction<'_, Sqlite>, access: Access, id: &str) -> Result<(), String> {

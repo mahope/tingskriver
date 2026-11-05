@@ -53,6 +53,10 @@ async fn app_checks_policy_and_notifies_without_logging_note_content() {
     )
     .await
     .unwrap();
+    sqlx::query("UPDATE mcp_settings SET enabled=1,notes=1,summary=1,transcript=1,participants=1")
+        .execute(db.pool())
+        .await
+        .unwrap();
     sqlx::query("INSERT INTO meetings(id,title,created_at,updated_at) VALUES ('one','Fixture','2026-11-01','2026-11-01')").execute(db.pool()).await.unwrap();
     let host = Arc::new(Host {
         db,
@@ -110,6 +114,10 @@ async fn local_channel_is_private_and_missing_app_has_a_clear_error() {
     )
     .await
     .unwrap();
+    sqlx::query("UPDATE mcp_settings SET enabled=1,notes=1,summary=1,transcript=1,participants=1")
+        .execute(db.pool())
+        .await
+        .unwrap();
     sqlx::query("INSERT INTO meetings(id,title,created_at,updated_at,ai_shared) VALUES ('one','Fixture','','',1)").execute(db.pool()).await.unwrap();
     let host = Arc::new(Host {
         db,
@@ -154,6 +162,10 @@ async fn handoff_uses_the_app_queue_and_obeys_delivery_privacy() {
     )
     .await
     .unwrap();
+    sqlx::query("UPDATE mcp_settings SET enabled=1,notes=1,summary=1,transcript=1,participants=1")
+        .execute(db.pool())
+        .await
+        .unwrap();
     sqlx::query("INSERT INTO meetings(id,title,created_at,updated_at,ai_shared) VALUES ('one','Fixture','2026-11-01T10:00:00Z','2026-11-01T10:00:00Z',1)").execute(db.pool()).await.unwrap();
     sqlx::query("INSERT INTO summary_processes(meeting_id,status,created_at,updated_at,result) VALUES ('one','completed','2026-11-01T10:00:00Z','2026-11-01T10:00:00Z','{\"markdown\":\"Approved summary\"}')").execute(db.pool()).await.unwrap();
     let host = Arc::new(Host {
@@ -201,6 +213,16 @@ async fn handoff_uses_the_app_queue_and_obeys_delivery_privacy() {
         })
         .await
         .unwrap();
+    let mut controls = mcp::settings(host.db.pool()).await.unwrap();
+    controls.transcript = false;
+    mcp::save_settings(host.db.pool(), controls).await.unwrap();
+    assert!(mcp_ipc::execute(host.clone(), &delivery, action.clone())
+        .await
+        .unwrap_err()
+        .contains("alle mødele"));
+    assert!(delivery.jobs().await.unwrap().is_empty());
+    controls.transcript = true;
+    mcp::save_settings(host.db.pool(), controls).await.unwrap();
     let result = mcp_ipc::execute(host, &delivery, action).await.unwrap();
     let job = result["job"].as_str().unwrap();
     assert!(!out.exists());

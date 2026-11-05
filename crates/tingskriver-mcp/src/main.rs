@@ -146,10 +146,29 @@ impl ServerHandler for Server {
         request: CallToolRequestParams,
         _: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
-        let result = match self
-            .run_tool(&request.name, request.arguments.unwrap_or_default())
-            .await
+        let args = request.arguments.unwrap_or_default();
+        let meeting_id = if let Some(id) = args.get("id").and_then(Value::as_str) {
+            match Reader::open(&self.dir.join(tingskriver_core::paths::DATABASE_FILE)).await {
+                Ok(reader) => reader.existing_id(id).await,
+                Err(_) => None,
+            }
+        } else {
+            None
+        };
+        let outcome = self.run_tool(&request.name, args).await;
+        if tingskriver_core::mcp_audit::record(
+            &self.dir,
+            &request.name,
+            meeting_id.as_deref(),
+            outcome.is_ok(),
+        )
+        .await
+        .is_err()
         {
+            // Do not turn a completed action into a retryable failure.
+            eprintln!("MCP-kaldsloggen kunne ikke gemmes.");
+        }
+        let result = match outcome {
             Ok(value) => CallToolResult::success(vec![ContentBlock::text(value.to_string())]),
             Err(message) => CallToolResult::error(vec![ContentBlock::text(message)]),
         };

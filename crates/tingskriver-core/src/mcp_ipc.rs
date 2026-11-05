@@ -148,6 +148,15 @@ pub async fn execute(
     if matches!(access, Access::Off | Access::Metadata) {
         return Err("Handlinger kræver Alt eller et markeret møde.".into());
     }
+    if matches!(action, Action::Handoff { .. }) {
+        let settings = crate::mcp::settings(database.pool()).await?;
+        if !(settings.notes && settings.summary && settings.transcript && settings.participants) {
+            return Err(
+                "Aflevering kræver tilladelse til alle mødele. Vælg dem i MCP-indstillingerne."
+                    .into(),
+            );
+        }
+    }
     let name = match &action {
         Action::StartRecording { .. } => "start_recording",
         Action::StopRecording => "stop_recording",

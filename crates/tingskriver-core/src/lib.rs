@@ -45,6 +45,8 @@ pub mod crash_dumps;
 pub mod database;
 pub mod delivery;
 pub mod mcp;
+pub mod mcp_audit;
+pub mod mcp_probe;
 pub mod mcp_ipc;
 pub mod diagnose;
 pub mod dictation;

@@ -17,6 +17,21 @@ async fn stdio_initializes_lists_tools_and_reports_closed_app() {
     .await
     .unwrap();
     sqlx_fixture(&db).await;
+    // The user-triggered probe works while sharing is disabled and never reads data.
+    tingskriver_core::mcp_probe::test_connection(
+        std::path::Path::new(env!("CARGO_BIN_EXE_tingskriver-mcp")),
+        dir.path(),
+    )
+    .await
+    .unwrap();
+    assert!(tingskriver_core::mcp_audit::recent(dir.path())
+        .await
+        .unwrap()
+        .is_empty());
+    sqlx::query("UPDATE mcp_settings SET enabled=1,notes=1,summary=1,transcript=1,participants=1")
+        .execute(db.pool())
+        .await
+        .unwrap();
     tingskriver_core::mcp::set_access(db.pool(), tingskriver_core::mcp::Access::All)
         .await
         .unwrap();
@@ -48,6 +63,11 @@ async fn stdio_initializes_lists_tools_and_reports_closed_app() {
     }
     send(&mut input, json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"fixture","version":"1"}}})).await;
     assert!(receive(&mut output).await["result"]["capabilities"]["tools"].is_object());
+    assert!(
+        tingskriver_core::mcp_probe::running_servers(std::path::Path::new(env!(
+            "CARGO_BIN_EXE_tingskriver-mcp"
+        ))) >= 1
+    );
     send(
         &mut input,
         json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
@@ -88,6 +108,21 @@ async fn stdio_initializes_lists_tools_and_reports_closed_app() {
         .as_str()
         .unwrap()
         .contains("Åbn Tingskriver"));
+    send(&mut input, json!({"jsonrpc":"2.0","id":40,"method":"tools/call","params":{"name":"get_meeting","arguments":{"id":"PRIVATE rejected argument"}}})).await;
+    assert_eq!(receive(&mut output).await["result"]["isError"], true);
+    let audit = tingskriver_core::mcp_audit::recent(dir.path())
+        .await
+        .unwrap();
+    assert_eq!(audit.len(), 5);
+    assert_eq!(audit[0].meeting_id, None);
+    assert!(!audit[0].success);
+    assert!(audit
+        .iter()
+        .any(|entry| entry.meeting_id.as_deref() == Some("fixture")));
+    assert!(audit
+        .iter()
+        .all(|entry| !format!("{entry:?}").contains("PRIVATE")
+            && !format!("{entry:?}").contains("SECRET")));
     #[cfg(target_os = "linux")]
     {
         let pid = child.id().unwrap().to_string();
