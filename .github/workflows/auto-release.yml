@@ -1,0 +1,125 @@
+name: Auto release
+
+# Every 8 hours: when main has changes since the last published GPUI release and
+# the CI of main is green, step the pre-release counter (0.5.0-dev.N), commit
+# the bump and a changelog (docs/changelog/<version>.md), tag app-v<version> and
+# let app-release.yml build and publish it. Details: docs/auto-release.md.
+#
+# Switch off: set the repository variable AUTO_RELEASE to false
+# (Settings, Secrets and variables, Actions, Variables), or disable this workflow.
+# A manual run (workflow_dispatch) ignores the variable and defaults to a dry run.
+
+on:
+  schedule:
+    - cron: '0 */8 * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Only decide and show the version and changelog; change nothing
+        type: boolean
+        default: true
+
+concurrency:
+  group: auto-release
+  cancel-in-progress: false
+
+permissions:
+  # The bump commit and the tag go to main.
+  contents: write
+  # A tag pushed with GITHUB_TOKEN does not start app-release.yml; a dispatch does.
+  actions: write
+  # Pull request titles for the changelog.
+  pull-requests: read
+
+env:
+  GH_TOKEN: ${{ github.token }}
+  DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+  # Stable versions (no suffix) need the manual performance sign-off in
+  # docs/release-checkliste.md; opt in with the variable AUTO_RELEASE_STABLE=true.
+  ALLOW_STABLE: ${{ vars.AUTO_RELEASE_STABLE == 'true' }}
+
+jobs:
+  release:
+    name: Release when main changed and is green
+    if: ${{ github.event_name != 'schedule' || vars.AUTO_RELEASE != 'false' }}
+    runs-on: ubuntu-latest
+    # Up to 90 minutes waiting for CI, then the Windows build in app-release.yml.
+    timeout-minutes: 300
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Test the release script
+        run: python3 scripts/tests/test_auto_release.py
+
+      - name: Plan
+        id: plan
+        run: |
+          flags=""
+          if [ "$ALLOW_STABLE" = "true" ]; then flags="--allow-stable"; fi
+          python3 scripts/auto_release.py plan $flags
+
+      - name: Summary
+        if: ${{ always() }}
+        env:
+          RELEASE: ${{ steps.plan.outputs.release }}
+          REASON: ${{ steps.plan.outputs.reason }}
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          {
+            echo "### Auto release"
+            if [ "$RELEASE" = "true" ]; then
+              echo "Release decided: **$VERSION** (dry run: $DRY_RUN)."
+            else
+              echo "No release: \`${REASON:-no plan}\`."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Dry run
+        if: ${{ steps.plan.outputs.release == 'true' && env.DRY_RUN == 'true' }}
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+          PREVIOUS: ${{ steps.plan.outputs.previous }}
+        run: |
+          python3 scripts/auto_release.py changelog --version "$VERSION" --since "$PREVIOUS" --out "$RUNNER_TEMP/changelog-$VERSION.md" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "Dry run: would release $VERSION. Nothing was changed."
+
+      - name: Bump version and write changelog
+        if: ${{ steps.plan.outputs.release == 'true' && env.DRY_RUN != 'true' }}
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+          CURRENT: ${{ steps.plan.outputs.current }}
+          PREVIOUS: ${{ steps.plan.outputs.previous }}
+        run: |
+          set -euo pipefail
+          python3 scripts/auto_release.py bump --version "$VERSION"
+          cargo update --workspace
+          python3 scripts/auto_release.py check-bump --old "$CURRENT" --new "$VERSION"
+          python3 scripts/auto_release.py changelog --version "$VERSION" --since "$PREVIOUS" --out "docs/changelog/$VERSION.md"
+
+      # The push fails when main moved since the CI check; nothing is tagged then,
+      # and the next run starts over.
+      - name: Commit, push and tag
+        if: ${{ steps.plan.outputs.release == 'true' && env.DRY_RUN != 'true' }}
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+          TAG: ${{ steps.plan.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Cargo.toml Cargo.lock "docs/changelog/$VERSION.md"
+          git commit -m "Release $VERSION"
+          git push origin HEAD:main
+          git tag -a "$TAG" -m "Tingskriver $VERSION" HEAD
+          git push origin "$TAG"
+
+      - name: Publish and verify
+        if: ${{ steps.plan.outputs.release == 'true' && env.DRY_RUN != 'true' }}
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+          TAG: ${{ steps.plan.outputs.tag }}
+        run: python3 scripts/auto_release.py release --tag "$TAG" --version "$VERSION" --changelog "docs/changelog/$VERSION.md"
