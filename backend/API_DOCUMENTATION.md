@@ -7,7 +7,7 @@ Meetily backend releases.
 
 Meetily no longer supports the standalone FastAPI backend as the active
 application API. The supported application is the Tauri desktop app, where the
-Next.js UI communicates with the Rust core through Tauri commands and events.
+The UI communicates with the Rust core through Tauri commands and events.
 
 Use these docs for the supported architecture and build flow:
 
