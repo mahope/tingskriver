@@ -39,6 +39,7 @@ pub(crate) use perf_trace;
 pub mod anthropic;
 pub mod api;
 pub mod audio;
+pub mod briefing;
 pub mod calendar;
 pub mod config;
 pub mod crash_dumps;
