@@ -159,7 +159,11 @@ impl ProgressSink for SummaryProgress {
             0.0
         };
         if let Some(callback) = &self.callback {
-            callback(DownloadProgress::new(file_bytes, self.total_bytes, speed_mbps));
+            callback(DownloadProgress::new(
+                file_bytes,
+                self.total_bytes,
+                speed_mbps,
+            ));
         }
         if let Some(model_info) = self.models.write().await.get_mut(&self.model_name) {
             model_info.status = ModelStatus::Downloading { progress: percent };
@@ -387,13 +391,24 @@ impl ModelManager {
         if let Some(entry) = model_download::entry("summary", model_name) {
             let dir = info.path.parent().unwrap_or(&self.models_dir).to_path_buf();
             if let Err(error) =
-                model_download::verify_installed(&dir, &entry.files[0], &CancellationToken::new()).await
+                model_download::verify_installed(&dir, &entry.files[0], &CancellationToken::new())
+                    .await
             {
-                log::error!("Built-in model {} failed verification: {}", model_name, error);
+                log::error!(
+                    "Built-in model {} failed verification: {}",
+                    model_name,
+                    error
+                );
                 if matches!(error, TransferError::InstalledMismatch { .. }) {
-                    if let Some(model_info) = self.available_models.write().await.get_mut(model_name) {
+                    if let Some(model_info) =
+                        self.available_models.write().await.get_mut(model_name)
+                    {
                         model_info.status = ModelStatus::Corrupted {
-                            file_size: info.path.metadata().map(|m| m.len() / (1024 * 1024)).unwrap_or(0),
+                            file_size: info
+                                .path
+                                .metadata()
+                                .map(|m| m.len() / (1024 * 1024))
+                                .unwrap_or(0),
                             expected_min_size: entry.files[0].size / (1024 * 1024),
                         };
                     }
@@ -463,13 +478,24 @@ impl ModelManager {
 
         // Pinned size, SHA-256 and sources (main source first, then the reserve mirror).
         let Some(entry) = model_download::entry("summary", model_name) else {
-            self.finish_failed_download(model_name, &file_path, "Model is missing from the model manifest".to_string())
-                .await;
-            return Err(anyhow!("Model {} is missing from the model manifest", model_name));
+            self.finish_failed_download(
+                model_name,
+                &file_path,
+                "Model is missing from the model manifest".to_string(),
+            )
+            .await;
+            return Err(anyhow!(
+                "Model {} is missing from the model manifest",
+                model_name
+            ));
         };
         let file = &entry.files[0];
 
-        log::info!("Downloading {} from the pinned sources ({} source(s))", model_name, entry.sources.len());
+        log::info!(
+            "Downloading {} from the pinned sources ({} source(s))",
+            model_name,
+            entry.sources.len()
+        );
         log::info!("Saving to: {}", file_path.display());
 
         let cancel = CancellationToken::new();
@@ -479,7 +505,8 @@ impl ModelManager {
             .insert(model_name.to_string(), cancel.clone());
 
         let result = async {
-            let client = model_download::client().map_err(|e| TransferError::Failed(e.to_string()))?;
+            let client =
+                model_download::client().map_err(|e| TransferError::Failed(e.to_string()))?;
             let mut sink = SummaryProgress {
                 models: Arc::clone(&self.available_models),
                 model_name: model_name.to_string(),
@@ -512,15 +539,23 @@ impl ModelManager {
 
         match result {
             Ok(fetched) => {
-                log::info!("Download completed for model {} (source: {})", model_name, fetched.source);
+                log::info!(
+                    "Download completed for model {} (source: {})",
+                    model_name,
+                    fetched.source
+                );
 
                 if let Err(e) = self.validate_gguf_file(&file_path).await {
                     log::error!("Downloaded file failed validation: {}", e);
                     // Verified by SHA-256 but not a GGUF: never keep it as the active model.
                     let _ = fs::remove_file(&file_path).await;
                     model_download::remove_sidecars(&self.models_dir, &model_def.gguf_file).await;
-                    self.finish_failed_download(model_name, &file_path, format!("Validation failed: {}", e))
-                        .await;
+                    self.finish_failed_download(
+                        model_name,
+                        &file_path,
+                        format!("Validation failed: {}", e),
+                    )
+                    .await;
                     return Err(anyhow!("File validation failed: {}", e));
                 }
 
@@ -554,7 +589,8 @@ impl ModelManager {
             }
             Err(error) => {
                 log::error!("Download failed for {}: {}", model_name, error);
-                self.finish_failed_download(model_name, &file_path, error.to_string()).await;
+                self.finish_failed_download(model_name, &file_path, error.to_string())
+                    .await;
                 Err(anyhow::Error::from(error))
             }
         }

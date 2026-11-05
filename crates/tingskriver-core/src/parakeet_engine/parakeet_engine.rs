@@ -1,5 +1,7 @@
+use crate::model_download::{
+    self, FileEntry, ProgressSink, Source, TransferError, TransferOptions,
+};
 use crate::parakeet_engine::pool::{self, BoxedModel, ModelPool};
-use crate::model_download::{self, FileEntry, ProgressSink, Source, TransferError, TransferOptions};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -7,8 +9,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tokio::fs;
 use std::time::{Duration, Instant};
+use tokio::fs;
 use tokio::sync::{watch, Mutex, RwLock};
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
@@ -221,10 +223,16 @@ impl ProgressSink for ParakeetProgress {
             .bytes_since_report
             .saturating_add(file_bytes.saturating_sub(self.last_file_bytes));
         self.last_file_bytes = file_bytes;
-        let confirmed = self.base_bytes.saturating_add(file_bytes).min(self.total_bytes);
+        let confirmed = self
+            .base_bytes
+            .saturating_add(file_bytes)
+            .min(self.total_bytes);
         let progress = ParakeetEngine::in_flight_progress(confirmed, self.total_bytes, 0.0);
         let elapsed = self.last_report.elapsed();
-        if !(self.first || progress.percent > self.last_percent || elapsed >= Duration::from_millis(500)) {
+        if !(self.first
+            || progress.percent > self.last_percent
+            || elapsed >= Duration::from_millis(500))
+        {
             return;
         }
         let speed_mbps = if !self.first && elapsed.as_secs_f64() > 0.0 {
@@ -233,10 +241,16 @@ impl ProgressSink for ParakeetProgress {
             0.0
         };
         if let Some(callback) = &self.callback {
-            callback(ParakeetEngine::in_flight_progress(confirmed, self.total_bytes, speed_mbps));
+            callback(ParakeetEngine::in_flight_progress(
+                confirmed,
+                self.total_bytes,
+                speed_mbps,
+            ));
         }
         if let Some(model) = self.models.write().await.get_mut(&self.model_name) {
-            model.status = ModelStatus::Downloading { progress: progress.percent };
+            model.status = ModelStatus::Downloading {
+                progress: progress.percent,
+            };
         }
         self.first = false;
         self.last_percent = progress.percent;
@@ -317,7 +331,8 @@ impl ParakeetEngine {
 
     /// Discover available Parakeet models.
     pub async fn discover_models(&self) -> Result<Vec<ModelInfo>> {
-        self.discover_models_from_specs(PARAKEET_MODEL_SPECS, &manifest_files).await
+        self.discover_models_from_specs(PARAKEET_MODEL_SPECS, &manifest_files)
+            .await
     }
 
     async fn discover_models_from_specs(
@@ -717,8 +732,12 @@ impl ParakeetEngine {
             .ok_or_else(|| anyhow!("Model {} not found", model_name))?;
         find_model_spec(model_name)
             .ok_or_else(|| anyhow!("Unsupported Parakeet model: {}", model_name))?;
-        let entry = model_download::entry("parakeet", model_name)
-            .ok_or_else(|| anyhow!("Parakeet model {} is missing from the model manifest", model_name))?;
+        let entry = model_download::entry("parakeet", model_name).ok_or_else(|| {
+            anyhow!(
+                "Parakeet model {} is missing from the model manifest",
+                model_name
+            )
+        })?;
 
         self.download_model_detailed_from_source(
             model_name,
@@ -818,7 +837,10 @@ impl ParakeetEngine {
         artifacts: &[FileEntry],
         active_download: &ActiveDownload,
         mut progress_callback: Option<Box<dyn Fn(DownloadProgress) + Send>>,
-    ) -> Result<(DownloadProgress, Option<Box<dyn Fn(DownloadProgress) + Send>>)> {
+    ) -> Result<(
+        DownloadProgress,
+        Option<Box<dyn Fn(DownloadProgress) + Send>>,
+    )> {
         if active_download.cancellation.is_cancelled() {
             return Err(DownloadCancelled.into());
         }
@@ -1031,7 +1053,10 @@ mod tests {
     }
 
     fn sources(base_url: &str) -> Vec<Source> {
-        vec![Source { name: "test".to_string(), base_url: base_url.to_string() }]
+        vec![Source {
+            name: "test".to_string(),
+            base_url: base_url.to_string(),
+        }]
     }
 
     fn small_artifacts() -> Vec<FileEntry> {
@@ -1175,12 +1200,16 @@ mod tests {
             .await
             .expect("seed exact artifact");
         }
-        assert!(ParakeetEngine::validate_model_directory(temp_dir.path(), &small_artifacts).is_ok());
+        assert!(
+            ParakeetEngine::validate_model_directory(temp_dir.path(), &small_artifacts).is_ok()
+        );
 
         fs::remove_file(temp_dir.path().join("vocab.txt"))
             .await
             .expect("remove required artifact");
-        assert!(ParakeetEngine::validate_model_directory(temp_dir.path(), &small_artifacts).is_err());
+        assert!(
+            ParakeetEngine::validate_model_directory(temp_dir.path(), &small_artifacts).is_err()
+        );
 
         fs::write(temp_dir.path().join("vocab.txt"), [])
             .await
@@ -1188,12 +1217,16 @@ mod tests {
         fs::write(temp_dir.path().join("encoder.bin"), [0; 3])
             .await
             .expect("seed one-byte-short artifact");
-        assert!(ParakeetEngine::validate_model_directory(temp_dir.path(), &small_artifacts).is_err());
+        assert!(
+            ParakeetEngine::validate_model_directory(temp_dir.path(), &small_artifacts).is_err()
+        );
 
         fs::write(temp_dir.path().join("encoder.bin"), [0; 5])
             .await
             .expect("seed one-byte-oversized artifact");
-        assert!(ParakeetEngine::validate_model_directory(temp_dir.path(), &small_artifacts).is_err());
+        assert!(
+            ParakeetEngine::validate_model_directory(temp_dir.path(), &small_artifacts).is_err()
+        );
     }
 
     #[tokio::test]
@@ -1314,7 +1347,10 @@ mod tests {
         server.await.expect("join 403 server");
         assert!(error.to_string().contains("403"));
         assert_eq!(fs::read(model_dir.join("encoder.bin")).await.unwrap(), b"ABCD");
-        assert_eq!(fs::read(model_dir.join("decoder.bin.part")).await.unwrap(), b"X");
+        assert_eq!(
+            fs::read(model_dir.join("decoder.bin.part")).await.unwrap(),
+            b"X"
+        );
         assert!(!model_dir.join("decoder.bin").exists());
         assert!(!engine.active_downloads.lock().await.downloads.contains_key(TEST_MODEL_NAME));
 
@@ -1412,8 +1448,17 @@ mod tests {
         server.await.expect("join partial-response server");
 
         assert!(is_download_cancelled(&error));
-        assert_eq!(fs::metadata(model_dir.join("near.bin.part")).await.unwrap().len(), 99);
-        assert!(!model_dir.join("near.bin").exists(), "a cancelled download is never activated");
+        assert_eq!(
+            fs::metadata(model_dir.join("near.bin.part"))
+                .await
+                .unwrap()
+                .len(),
+            99
+        );
+        assert!(
+            !model_dir.join("near.bin").exists(),
+            "a cancelled download is never activated"
+        );
         assert!(matches!(test_model_status(&engine).await, ModelStatus::Missing));
 
         let (base_url, server) = serve_requests(vec![response(
@@ -1715,9 +1760,13 @@ mod tests {
     async fn changed_byte_is_rejected_and_the_existing_model_stays_available() {
         let artifacts = vec![file("model.bin", b"ABCD")];
         let (_temp_dir, engine, model_dir) = test_engine().await;
-        fs::create_dir_all(&model_dir).await.expect("create model directory");
+        fs::create_dir_all(&model_dir)
+            .await
+            .expect("create model directory");
         // Same size, different content: usable by size, not the pinned file.
-        fs::write(model_dir.join("model.bin"), b"OLD!").await.expect("seed existing model");
+        fs::write(model_dir.join("model.bin"), b"OLD!")
+            .await
+            .expect("seed existing model");
 
         let (base_url, server) =
             serve_requests(vec![response("model.bin", None, "200 OK", b"ABCE", None)]).await;
@@ -1734,10 +1783,22 @@ mod tests {
         server.await.expect("join tampered server");
 
         assert!(error.to_string().contains("model.bin"), "{error}");
-        assert!(error.to_string().contains("SHA-256") && error.to_string().contains("slettet"), "{error}");
-        assert_eq!(fs::read(model_dir.join("model.bin")).await.unwrap(), b"OLD!");
-        assert!(!model_dir.join("model.bin.part").exists(), "the rejected download is deleted");
-        assert!(matches!(test_model_status(&engine).await, ModelStatus::Available));
+        assert!(
+            error.to_string().contains("SHA-256") && error.to_string().contains("slettet"),
+            "{error}"
+        );
+        assert_eq!(
+            fs::read(model_dir.join("model.bin")).await.unwrap(),
+            b"OLD!"
+        );
+        assert!(
+            !model_dir.join("model.bin.part").exists(),
+            "the rejected download is deleted"
+        );
+        assert!(matches!(
+            test_model_status(&engine).await,
+            ModelStatus::Available
+        ));
     }
 
     #[tokio::test]
@@ -1745,9 +1806,16 @@ mod tests {
         let name = "parakeet-tdt-0.6b-v3-int8";
         let (_temp_dir, engine, _model_dir) = test_engine().await;
         let dir = engine.models_dir.join(name);
-        fs::create_dir_all(&dir).await.expect("create model directory");
-        for file in &model_download::entry("parakeet", name).expect("manifest entry").files {
-            fs::write(dir.join(&file.name), b"not the pinned file").await.expect("seed file");
+        fs::create_dir_all(&dir)
+            .await
+            .expect("create model directory");
+        for file in &model_download::entry("parakeet", name)
+            .expect("manifest entry")
+            .files
+        {
+            fs::write(dir.join(&file.name), b"not the pinned file")
+                .await
+                .expect("seed file");
         }
         engine.available_models.write().await.insert(
             name.to_string(),
@@ -1762,11 +1830,20 @@ mod tests {
             },
         );
 
-        let error = engine.load_model(name).await.expect_err("a changed model must not load");
+        let error = engine
+            .load_model(name)
+            .await
+            .expect_err("a changed model must not load");
         assert!(error.to_string().contains("SHA-256"), "{error}");
         assert!(engine.current_model_name.read().await.is_none());
         assert!(matches!(
-            engine.available_models.read().await.get(name).unwrap().status,
+            engine
+                .available_models
+                .read()
+                .await
+                .get(name)
+                .unwrap()
+                .status,
             ModelStatus::Corrupted { .. }
         ));
     }

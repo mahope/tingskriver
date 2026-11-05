@@ -740,9 +740,12 @@ mod tests {
         StallAfterHalf,
     }
 
+    /// `(path, Range header)` of every request the test server has seen.
+    type RequestLog = Arc<Mutex<Vec<(String, Option<String>)>>>;
+
     struct TestServer {
         base_url: String,
-        requests: Arc<Mutex<Vec<(String, Option<String>)>>>,
+        requests: RequestLog,
     }
 
     /// One connection per request, any number of requests, until the test ends.

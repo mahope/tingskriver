@@ -288,7 +288,7 @@
      "base_url": "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce"
     },
     {
-     "name": "meetily-mirror",
+     "name": "mirror",
      "base_url": "https://meetily.towardsgeneralintelligence.com/models/parakeet-tdt-0.6b-v3-onnx"
     }
    ],

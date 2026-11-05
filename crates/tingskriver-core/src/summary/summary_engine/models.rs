@@ -379,7 +379,11 @@ mod tests {
                 model.name
             );
             // size_mb is the rounded size shown in the UI.
-            assert!((file.size / (1024 * 1024)).abs_diff(model.size_mb) <= 1, "{}", model.name);
+            assert!(
+                (file.size / (1024 * 1024)).abs_diff(model.size_mb) <= 1,
+                "{}",
+                model.name
+            );
         }
     }
 

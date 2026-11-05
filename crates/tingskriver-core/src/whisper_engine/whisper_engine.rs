@@ -1,20 +1,22 @@
 // Commit name to recover the serial whisper engine processing for smaller meetings [Slower processing but dooes not fail] - "before parallel processing implementation"
 
-use std::path::{PathBuf};
+use super::acceleration::{whisper_context_acceleration_for, WhisperCompiledBackend};
+use crate::config::WHISPER_MODEL_CATALOG;
+use crate::model_download::{
+    self, FileEntry, ProgressSink, Source, TransferError, TransferOptions,
+};
+use anyhow::{anyhow, Result};
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tokio::fs;
 use tokio::sync::{watch, Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
-use whisper_rs::{WhisperContext, WhisperContextParameters, FullParams, SamplingStrategy};
-use serde::{Serialize, Deserialize};
-use anyhow::{Result, anyhow};
-use async_trait::async_trait;
-use tokio::fs;
-use crate::model_download::{self, FileEntry, ProgressSink, Source, TransferError, TransferOptions};
-use crate::config::WHISPER_MODEL_CATALOG;
-use super::acceleration::{whisper_context_acceleration_for, WhisperCompiledBackend};
+use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ModelStatus {
@@ -260,7 +262,7 @@ impl WhisperEngine {
             .expect("download state test hook mutex should not be poisoned")
             .clone()
     }
-    
+
     /// Status of a model file as it is on disk. Models in the pinned manifest must have exactly
     /// the pinned size and a GGML header here; the SHA-256 is checked when the model is
     /// downloaded and when it is loaded.
@@ -276,8 +278,8 @@ impl WhisperEngine {
             .map(|model| model.2)
             .unwrap_or(0);
         let pinned_size = Self::pinned_file(model_name).map(|file| file.size);
-        let expected_min_size = pinned_size
-            .unwrap_or(((catalog_size_mb as f64 * 0.9) as u64) * 1024 * 1024);
+        let expected_min_size =
+            pinned_size.unwrap_or(((catalog_size_mb as f64 * 0.9) as u64) * 1024 * 1024);
         let size_ok = match pinned_size {
             Some(exact) => file_size_bytes == exact,
             None => file_size_mb >= expected_min_size / (1024 * 1024) && file_size_mb > 1,
@@ -287,15 +289,27 @@ impl WhisperEngine {
             match self.validate_model_file(model_path).await {
                 Ok(_) => ModelStatus::Available,
                 Err(_) => {
-                    log::warn!("Model file {} has correct size but appears corrupted (failed validation)",
-                             model_path.display());
-                    ModelStatus::Corrupted { file_size: file_size_bytes, expected_min_size }
+                    log::warn!(
+                        "Model file {} has correct size but appears corrupted (failed validation)",
+                        model_path.display()
+                    );
+                    ModelStatus::Corrupted {
+                        file_size: file_size_bytes,
+                        expected_min_size,
+                    }
                 }
             }
         } else if file_size_mb > 0 {
-            log::warn!("Model file {} exists but is corrupted ({} bytes, expected {} bytes)",
-                     model_path.display(), file_size_bytes, expected_min_size);
-            ModelStatus::Corrupted { file_size: file_size_bytes, expected_min_size }
+            log::warn!(
+                "Model file {} exists but is corrupted ({} bytes, expected {} bytes)",
+                model_path.display(),
+                file_size_bytes,
+                expected_min_size
+            );
+            ModelStatus::Corrupted {
+                file_size: file_size_bytes,
+                expected_min_size,
+            }
         } else {
             ModelStatus::Missing
         }
@@ -355,11 +369,12 @@ impl WhisperEngine {
         
         Ok(models)
     }
-    
+
     pub async fn load_model(&self, model_name: &str) -> Result<()> {
         let model_info = {
             let models = self.available_models.read().await;
-            models.get(model_name)
+            models
+                .get(model_name)
                 .cloned()
                 .ok_or_else(|| anyhow!("Model {} not found", model_name))?
         };
@@ -465,11 +480,16 @@ impl WhisperEngine {
             return Ok(());
         };
         let dir = model_path.parent().unwrap_or(&self.models_dir);
-        if let Err(error) = model_download::verify_installed(dir, file, &CancellationToken::new()).await {
+        if let Err(error) =
+            model_download::verify_installed(dir, file, &CancellationToken::new()).await
+        {
             if matches!(error, TransferError::InstalledMismatch { .. }) {
                 let file_size = fs::metadata(model_path).await.map(|m| m.len()).unwrap_or(0);
                 if let Some(model) = self.available_models.write().await.get_mut(model_name) {
-                    model.status = ModelStatus::Corrupted { file_size, expected_min_size: file.size };
+                    model.status = ModelStatus::Corrupted {
+                        file_size,
+                        expected_min_size: file.size,
+                    };
                 }
             }
             return Err(anyhow::Error::from(error));
@@ -1322,7 +1342,11 @@ impl WhisperEngine {
         result
     }
 
-    pub async fn download_model(&self, model_name: &str, progress_callback: Option<Box<dyn Fn(u8) + Send>>) -> Result<()> {
+    pub async fn download_model(
+        &self,
+        model_name: &str,
+        progress_callback: Option<Box<dyn Fn(u8) + Send>>,
+    ) -> Result<()> {
         log::info!("Starting download for model: {}", model_name);
 
         // File name, size, SHA-256, pinned revision and sources come from model_manifest.json.
@@ -1406,7 +1430,11 @@ impl WhisperEngine {
             TransferError::Cancelled => anyhow::Error::from(DownloadCancelled),
             other => anyhow::Error::from(other),
         })?;
-        log::info!("Whisper model {} came from source '{}'", model_name, fetched.source);
+        log::info!(
+            "Whisper model {} came from source '{}'",
+            model_name,
+            fetched.source
+        );
 
         {
             let mut models = self.available_models.write().await;
@@ -1890,7 +1918,12 @@ mod tests {
         let (url, request, server) = response_http_server(8, b"ggml\0\0\0\0").await;
 
         let error = engine
-            .download_model_from_sources("tiny", &tiny_file(b"ggml\0\0\0\0", 8), &source_for(&url), None)
+            .download_model_from_sources(
+                "tiny",
+                &tiny_file(b"ggml\0\0\0\0", 8),
+                &source_for(&url),
+                None,
+            )
             .await
             .unwrap_err();
         let request = String::from_utf8(request.await.unwrap()).unwrap();
@@ -1987,7 +2020,12 @@ mod tests {
 
     fn write_installed_tiny(path: &std::path::Path) {
         std::fs::write(path, b"ggml\0\0\0\0").unwrap();
-        std::fs::OpenOptions::new().write(true).open(path).unwrap().set_len(TINY_BYTES).unwrap();
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_len(TINY_BYTES)
+            .unwrap();
     }
 
     #[tokio::test]
@@ -2011,11 +2049,20 @@ mod tests {
             .unwrap_err();
         server.await.unwrap();
 
-        assert!(error.to_string().contains("SHA-256") && error.to_string().contains("slettet"), "{error}");
+        assert!(
+            error.to_string().contains("SHA-256") && error.to_string().contains("slettet"),
+            "{error}"
+        );
         assert!(!dir.path().join("ggml-tiny.bin.part").exists());
         assert_eq!(std::fs::metadata(&model_path).unwrap().len(), TINY_BYTES);
         assert!(matches!(
-            engine.available_models.read().await.get("tiny").unwrap().status,
+            engine
+                .available_models
+                .read()
+                .await
+                .get("tiny")
+                .unwrap()
+                .status,
             ModelStatus::Available
         ));
     }
@@ -2034,7 +2081,13 @@ mod tests {
         assert!(error.to_string().contains("SHA-256"), "{error}");
         assert!(engine.get_current_model().await.is_none());
         assert!(matches!(
-            engine.available_models.read().await.get("tiny").unwrap().status,
+            engine
+                .available_models
+                .read()
+                .await
+                .get("tiny")
+                .unwrap()
+                .status,
             ModelStatus::Corrupted { .. }
         ));
     }
@@ -2053,7 +2106,10 @@ mod tests {
             .unwrap_err();
         server.await.unwrap();
 
-        assert!(error.to_string().contains("Download stream failed"), "{error}");
+        assert!(
+            error.to_string().contains("Download stream failed"),
+            "{error}"
+        );
         assert!(!engine.active_downloads.lock().await.contains_key("tiny"));
         assert!(!model_path.exists());
         assert!(matches!(
@@ -2106,6 +2162,9 @@ mod tests {
         // from the model list when it is shown as corrupted.
         assert!(model_path.exists());
         let models = engine.discover_models().await.unwrap();
-        assert!(matches!(tiny_model(&models).status, ModelStatus::Corrupted { .. }));
+        assert!(matches!(
+            tiny_model(&models).status,
+            ModelStatus::Corrupted { .. }
+        ));
     }
 }
