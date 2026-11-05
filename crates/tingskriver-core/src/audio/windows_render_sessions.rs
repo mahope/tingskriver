@@ -24,10 +24,10 @@ use windows::Win32::System::Threading::GetCurrentProcessId;
 use super::render_follow::RenderObservation;
 
 /// Keeps COM initialised on this thread for as long as it lives.
-struct ComGuard(bool);
+pub(super) struct ComGuard(bool);
 
 impl ComGuard {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         // SAFETY: plain COM initialisation of the calling thread. A failure
         // (e.g. the thread is already in another apartment) is not fatal: COM
         // is usable then, and we must not uninitialise what we did not init.
@@ -45,7 +45,7 @@ impl Drop for ComGuard {
     }
 }
 
-fn friendly_name(device: &IMMDevice) -> Result<String, String> {
+pub(super) fn friendly_name(device: &IMMDevice) -> Result<String, String> {
     // SAFETY: COM calls on interfaces we own; the PROPVARIANT is dropped
     // (and cleared) by its Drop impl.
     unsafe {

@@ -41,6 +41,9 @@ pub mod system_detector;
 pub mod device_monitor;  // NEW: Device disconnect/reconnect monitoring
 pub mod device_follow;   // Default-device following decisions (Windows hot-swap)
 pub mod render_follow;   // Which playback device the system-audio loopback follows
+pub mod device_transport;  // Bus (USB/Bluetooth/built-in) from the adapter path
+#[cfg(target_os = "windows")]
+pub mod windows_device_topology;
 #[cfg(target_os = "windows")]
 pub mod windows_endpoint_notifier;
 #[cfg(target_os = "windows")]

@@ -56,7 +56,20 @@ impl AudioCapture {
 
         // Detect device kind (Bluetooth vs Wired) for adaptive processing
         // Use reasonable defaults for buffer size (512 samples is typical)
-        let device_kind = super::device_detection::InputDeviceKind::detect(&device.name, 512, sample_rate);
+        // The bus (USB, Bluetooth, built-in) comes from the adapter path when
+        // the system can tell; the name is only the fallback. The buffer
+        // timeouts follow the result.
+        let classification = super::device_detection::InputDeviceKind::classify(&device.name, 512, sample_rate);
+        let device_kind = classification.kind;
+        info!(
+            "[{:?}] '{}': bus {}, {:?}",
+            device_type,
+            device.name,
+            classification
+                .transport
+                .map_or("unknown (classified by name)".to_string(), |t| t.to_string()),
+            device_kind
+        );
 
         if needs_resampling {
             warn!(
