@@ -8,6 +8,9 @@
 //!
 //! - [`model`]: states, timing and bar history (any OS, tested)
 //! - [`layout`], [`render`], [`text`]: geometry and drawing (any OS, tested)
+//! - [`prompt`], [`prompt_layout`], [`focus`]: the prompt window's model,
+//!   geometry and Focus Assist decision (any OS, tested); `windows_prompt` is
+//!   its Win32 window (Windows). See `docs/promptvindue.md`.
 //! - `windows`: the window itself, [`windows::Overlay`] and
 //!   [`windows::CoreOverlay`] for the dictation service in core (Windows)
 
