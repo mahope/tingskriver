@@ -68,6 +68,13 @@ share and the duration difference. A muted or mis-routed channel fails as a miss
 pilot, not as a good isolation. The recording is never touched: the analysis reads
 the finished files.
 
+The microphone track passes through the production capture filters (high-pass,
+noise suppression, loudness normalisation in `pipeline.rs`) before it is saved, and
+the analysis measures what is saved. A normaliser can raise the microphone pilot and
+a noise suppressor can dampen a pure tone, so read the reported pilot level and
+isolation figures with that in mind; they have not been compared with and without
+the filters yet.
+
 ```sh
 cargo run --locked -p tingskriver-core --example recording_soak -- \
   isolation /tmp/isolation 2 docs/kanalisolation-graenser.json

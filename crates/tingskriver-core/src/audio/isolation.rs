@@ -90,6 +90,20 @@ impl Thresholds {
         if self.phase_guard_s < 0.0 || !(0.0..=1.0).contains(&self.max_clipped_share) {
             return Err("phase_guard_s must be >= 0 and max_clipped_share within 0..1".into());
         }
+        let db_floors = [
+            ("both_mic_db", self.both_mic_db),
+            ("both_system_db", self.both_system_db),
+            ("mic_only_db", self.mic_only_db),
+            ("system_only_db", self.system_only_db),
+        ];
+        for (name, value) in db_floors {
+            if value < 0.0 {
+                return Err(format!("{name} must not be negative"));
+            }
+        }
+        if self.min_pilot_dbfs > 0.0 {
+            return Err("min_pilot_dbfs must be <= 0 (dBFS)".into());
+        }
         Ok(())
     }
 }
@@ -578,6 +592,16 @@ mod tests {
         let mut t = thresholds();
         t.system_hz = t.mic_hz + 10.0;
         let json = serde_json::to_string(&t).expect("json");
+        assert!(Thresholds::from_json(&json).is_err());
+
+        let mut negative = thresholds();
+        negative.mic_only_db = -3.0;
+        let json = serde_json::to_string(&negative).expect("json");
+        assert!(Thresholds::from_json(&json).is_err());
+
+        let mut loud = thresholds();
+        loud.min_pilot_dbfs = 6.0;
+        let json = serde_json::to_string(&loud).expect("json");
         assert!(Thresholds::from_json(&json).is_err());
     }
 

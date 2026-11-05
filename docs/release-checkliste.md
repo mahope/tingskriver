@@ -41,7 +41,16 @@ og checklisten henviser til den i stedet for at gentage tallene.
   (997 Hz): først begge i 10 sekunder, så kun mikrofonen i 10 sekunder, så kun
   systemet i 10 sekunder. Brug høretelefoner eller en loopback-kabel, så højttalerne
   ikke selv lækker lyd ind i mikrofonen. Kun syntetisk lyd, aldrig rigtige stemmer.
-  Kør værktøjet på de to gemte spor og vedhæft rapporten (exit 0 = bestået):
+  Efter en normal optagelse findes sporene kun som `microphone.m4a` og `system.m4a`
+  (de rå WAV-filer slettes, når optagelsen er verificeret), og værktøjet læser kun
+  WAV. Konvertér først begge spor uden at ændre optagelsen:
+
+  ```powershell
+  ffmpeg -i microphone.m4a -ar 48000 -ac 1 microphone.wav
+  ffmpeg -i system.m4a -ar 48000 -ac 1 system.wav
+  ```
+
+  Kør værktøjet på de to WAV-spor og vedhæft rapporten (exit 0 = bestået):
 
   ```powershell
   cargo run --release --locked -p tingskriver-core --example kanalisolation -- `
