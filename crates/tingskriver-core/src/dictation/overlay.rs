@@ -8,6 +8,9 @@ pub enum OverlayState {
     Recording { level: f32, locked: bool },
     Processing,
     Error,
+    /// Nothing was inserted, and why (short Danish text, never the field's
+    /// content). Drawn like an error.
+    Refused(&'static str),
     Hidden,
 }
 

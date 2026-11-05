@@ -16,6 +16,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 use super::logic::modes::ForegroundWindow;
 use super::logic::spoken::{EditPlan, FieldId};
+use super::logic::target_check::{ElementProps, FieldProbe, Focus};
 
 fn text_of(read: impl FnOnce(&mut [u16]) -> i32) -> Option<String> {
     let mut buf = [0u16; 512];
@@ -42,9 +43,35 @@ pub fn foreground_window() -> ForegroundWindow {
     }
 }
 
-/// UI Automation runtime id of the focused element. Browsers and Electron
-/// apps draw all their text fields in one control; this tells them apart.
-fn focused_element_id() -> Option<Vec<i32>> {
+/// What UI Automation says about an element. A failed call is `None`
+/// (not reported), which never blocks dictation.
+struct UiaElement<'a>(&'a windows::Win32::UI::Accessibility::IUIAutomationElement);
+
+impl ElementProps for UiaElement<'_> {
+    fn is_password(&self) -> Option<bool> {
+        unsafe { self.0.CurrentIsPassword().ok().map(|b| b.as_bool()) }
+    }
+
+    fn is_enabled(&self) -> Option<bool> {
+        unsafe { self.0.CurrentIsEnabled().ok().map(|b| b.as_bool()) }
+    }
+
+    fn is_read_only(&self) -> Option<bool> {
+        use windows::core::Interface;
+        use windows::Win32::UI::Accessibility::{IUIAutomationValuePattern, UIA_ValuePatternId};
+        unsafe {
+            // No Value pattern (many browser and Electron fields): not reported.
+            let pattern = self.0.GetCurrentPattern(UIA_ValuePatternId).ok()?;
+            let value: IUIAutomationValuePattern = pattern.cast().ok()?;
+            value.CurrentIsReadOnly().ok().map(|b| b.as_bool())
+        }
+    }
+}
+
+/// UI Automation runtime id and properties of the focused element. Browsers
+/// and Electron apps draw all their text fields in one control; the id tells
+/// them apart.
+fn focused_element() -> (Option<Vec<i32>>, FieldProbe) {
     use windows::Win32::System::Com::{
         CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
         COINIT_MULTITHREADED,
@@ -59,10 +86,12 @@ fn focused_element_id() -> Option<Vec<i32>> {
         // A successful CoInitializeEx is paired with CoUninitialize; on a
         // thread that already has COM, the existing apartment is used.
         let init = CoInitializeEx(None, COINIT_MULTITHREADED);
+        let mut probe = FieldProbe::default();
         let id = (|| {
             let automation: IUIAutomation =
                 CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
             let element = automation.GetFocusedElement().ok()?;
+            probe = FieldProbe::read(&UiaElement(&element));
             let array = element.GetRuntimeId().ok()?;
             if array.is_null() {
                 return None;
@@ -87,13 +116,19 @@ fn focused_element_id() -> Option<Vec<i32>> {
         if init.is_ok() {
             CoUninitialize();
         }
-        id
+        (id, probe)
     }
 }
 
 /// The control with keyboard focus in the foreground window, and the UI
 /// Automation element inside it.
 pub fn focused_field() -> Option<FieldId> {
+    focus().map(|focus| focus.id)
+}
+
+/// The focused field with the properties that decide whether dictation may
+/// write into it ([`super::logic::target_check`]).
+pub fn focus() -> Option<Focus> {
     let process = super::win::foreground_process()?;
     unsafe {
         let window: HWND = GetForegroundWindow();
@@ -109,11 +144,15 @@ pub fn focused_field() -> Option<FieldId> {
             Ok(()) if !info.hwndFocus.0.is_null() => info.hwndFocus,
             _ => window,
         };
-        Some(FieldId {
-            process,
-            window: window.0 as isize,
-            control: control.0 as isize,
-            element: focused_element_id(),
+        let (element, probe) = focused_element();
+        Some(Focus {
+            id: FieldId {
+                process,
+                window: window.0 as isize,
+                control: control.0 as isize,
+                element,
+            },
+            probe,
         })
     }
 }
