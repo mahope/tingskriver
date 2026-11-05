@@ -266,37 +266,65 @@ def repo_name():
     return os.environ.get("GITHUB_REPOSITORY") or gh_json("repo", "view", "--json", "nameWithOwner")["nameWithOwner"]
 
 
-def published_app_tags():
+def release_states():
+    """(published, drafts): tags of non-draft and of draft GPUI releases."""
     releases = gh_json("release", "list", "--limit", "300", "--json", "tagName,isDraft")
-    return [r["tagName"] for r in releases if not r["isDraft"] and r["tagName"].startswith(TAG_PREFIX)]
+    app = [r for r in releases if r["tagName"].startswith(TAG_PREFIX)]
+    return [r["tagName"] for r in app if not r["isDraft"]], [r["tagName"] for r in app if r["isDraft"]]
+
+
+def published_app_tags():
+    return release_states()[0]
+
+
+def log_commits(rev_range, limit=None, cwd=ROOT):
+    """First-parent commits (sha, subject, author email, commit time), newest first.
+
+    NUL separates the fields: a subject may contain a tab.
+    """
+    cmd = ["git", "log", "--first-parent", "--format=%H%x00%ae%x00%ct%x00%s"]
+    if limit:
+        cmd += ["-n", str(limit)]
+    out = run(*cmd, rev_range, cwd=cwd).stdout
+    commits = []
+    for line in out.splitlines():
+        sha, email, ts, subject = line.split("\0", 3)
+        commits.append((sha, subject, email, int(ts)))
+    return commits
 
 
 def commits_since(tag, ref="HEAD"):
-    """First-parent commits after `tag`, newest first, without our own release commits."""
-    out = run("git", "log", "--first-parent", "--format=%H%x09%s%x09%ae", f"{tag}..{ref}").stdout
-    commits = []
-    for line in out.splitlines():
-        sha, subject, email = line.split("\t")
-        if not is_bump_commit(subject, email):
-            commits.append((sha, subject))
-    return commits
+    """Commits after `tag`, newest first, without our own release commits (for the changelog)."""
+    return [(sha, subject) for sha, subject, email, _ in log_commits(f"{tag}..{ref}") if not is_bump_commit(subject, email)]
+
+
+def changes_since_last_attempt(tag, ref="HEAD", cwd=ROOT):
+    """Changes after the most recent release attempt: the newest app tag or a newer bump commit.
+
+    Returns (changes, stray_bump): `stray_bump` is True when a Release commit newer than the tag
+    was found, i.e. the bump reached main but its tag did not.
+    """
+    changes = []
+    for sha, subject, email, _ in log_commits(f"{tag}..{ref}" if tag else ref, None if tag else 200, cwd=cwd):
+        if is_bump_commit(subject, email):
+            return changes, True
+        changes.append((sha, subject))
+    return changes, False
 
 
 def gate_commit():
     """The commit CI must be green for: HEAD, or below it when HEAD is a bump commit without CI."""
-    out = run("git", "log", "--first-parent", "--format=%H%x09%s%x09%ae%x09%ct", "-n", "20", "HEAD").stdout
-    for line in out.splitlines():
-        sha, subject, email, ts = line.split("\t")
+    for sha, subject, email, ts in log_commits("HEAD", 20):
         if not is_bump_commit(subject, email):
-            return sha, int(ts)
+            return sha, ts
     raise RuntimeError("no commit below the release commits found")
 
 
-def decide(tags, cargo_version, published, changes_since_last_tag):
+def decide(tags, cargo_version, published, changes_since_last_attempt, stray_bump=False, drafts=()):
     """What to do, from facts only (pure). Returns (action, reason, version, last_tag, last_published).
 
-    action is "release", "skip" or "fail". `changes_since_last_tag` is the number of commits on
-    main after the newest app-v* tag, or None when there is no such tag.
+    action is "release", "skip" or "fail". `changes_since_last_attempt` is the number of commits on
+    main after the newest app-v* tag or a newer Release commit, or None when there is no such tag.
     """
     highest = highest_version(tags, cargo_version)
     version = next_version(highest)
@@ -307,7 +335,16 @@ def decide(tags, cargo_version, published, changes_since_last_tag):
     last_published = pub[-1] if pub else None
     if version in (version_from_tag(t) for t in tags):
         raise RuntimeError(f"version {version} is already tagged; tags are never reused")
-    if last_tag is not None and changes_since_last_tag == 0:
+    # A stable version in Cargo.toml without its tag is a manual release in the making (the performance
+    # sign-off may sit between the commit and the tag): do not publish pre-releases on top of it.
+    if not parse_version(cargo_version)[3] and TAG_PREFIX + cargo_version not in tags:
+        return "skip", "stable-pending", version, last_tag, last_published
+    if last_tag is not None and changes_since_last_attempt == 0:
+        if stray_bump:
+            # The bump commit reached main, but its tag did not. Do not bump again for the same content.
+            return "fail", "bump-without-tag", version, last_tag, last_published
+        if last_tag in drafts:
+            return "skip", "release-is-draft", version, last_tag, last_published
         if last_tag != last_published:
             # The last attempt left a tag without a release and nothing new has landed since.
             # Do not burn another version for the same content: a person looks at the failed build.
@@ -324,22 +361,36 @@ def cmd_plan(args):
     cargo_version = read_workspace_version(CARGO_TOML.read_text(encoding="utf-8"))
     run("git", "fetch", "--tags", "--force", "origin")
     tags = run("git", "tag", "--list").stdout.split()
-    published = published_app_tags()
+    published, drafts = release_states()
     newest_tag = max((t for t in tags if t.startswith(TAG_PREFIX) and version_from_tag(t)),
                      key=lambda t: version_key(version_from_tag(t)), default=None)
-    changes = commits_since(newest_tag) if newest_tag else None
+    changes, stray_bump = changes_since_last_attempt(newest_tag)
     action, reason, version, last_tag, last_published = decide(
-        tags, cargo_version, published, None if changes is None else len(changes))
+        tags, cargo_version, published, len(changes), stray_bump, drafts)
     log(f"Cargo.toml {cargo_version}; newest app tag {last_tag}; last published GPUI release {last_published}; "
-        f"next version {version}; {'no tag yet' if changes is None else f'{len(changes)} change(s) since {last_tag}'}")
-    if action == "fail":
+        f"next version {version}; {len(changes)} change(s) since the last attempt"
+        f"{' (a Release commit without a tag was found)' if stray_bump else ''}")
+    if action == "fail" and reason == "last-attempt-failed":
+        building = gh_json("run", "list", "--workflow", RELEASE_WORKFLOW, "--branch", last_tag, "--limit", "5",
+                           "--json", "status")
+        if any(r["status"] != "completed" for r in building):
+            log(f"{last_tag} is still being built by {RELEASE_WORKFLOW}. Trying again at the next run.")
+            set_output(release="false", reason="release-building")
+            return 0
+    if action == "fail" and reason == "last-attempt-failed":
         log(f"ERROR The newest tag {last_tag} has no published release, and nothing has been merged since. "
             f"Look at the failed {RELEASE_WORKFLOW} run for {last_tag}. Fix it and run that workflow on "
             f"the tag again, or merge a change to get a new version. Not burning another version number.")
         set_output(release="false", reason=reason)
         return 1
+    if action == "fail":
+        log(f"ERROR A Release commit for {cargo_version} is on main without its tag, and nothing has been merged "
+            f"since. Tag it by hand (git tag -a app-v{cargo_version} <the Release commit>; git push origin "
+            f"app-v{cargo_version}) and run {RELEASE_WORKFLOW} on the tag. Not bumping again.")
+        set_output(release="false", reason=reason)
+        return 1
     if action == "skip":
-        log(f"No changes on main since {last_tag}. Nothing to release.")
+        log(f"Nothing to release ({reason}).")
         set_output(release="false", reason=reason)
         return 0
     tag = TAG_PREFIX + version
