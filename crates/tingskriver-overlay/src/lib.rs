@@ -11,8 +11,11 @@
 //! - `windows`: the window itself, [`windows::Overlay`] and
 //!   [`windows::CoreOverlay`] for the dictation service in core (Windows)
 
+pub mod focus;
 pub mod layout;
 pub mod model;
+pub mod prompt;
+pub mod prompt_layout;
 pub mod render;
 pub mod text;
 pub mod theme;

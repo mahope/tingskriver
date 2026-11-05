@@ -77,6 +77,20 @@ catalogue! {
     LOG_FAILED = "Logfilen kunne ikke oprettes, så detaljerne står kun i konsollen.";
     DATABASE_FAILED = "Tingskriver kunne ikke åbne dine møder";
     RETRY = "Prøv igen";
+    PROMPT_MEETING_TITLE = "Er du i et møde?";
+    PROMPT_MEETING_BODY = "Tingskriver kan optage mødet og lave referat bagefter.";
+    PROMPT_RECORD = "Optag";
+    PROMPT_IGNORE = "Ignorér";
+    PROMPT_REMINDER_TITLE = "Mødet starter om {value}";
+    PROMPT_REMINDER_RECORD = "Optag mødet";
+    PROMPT_REMINDER_LATER = "Ikke nu";
+    PROMPT_END_TITLE = "Er mødet slut?";
+    PROMPT_END_BODY = "Optagelsen stopper om {value}, hvis du ikke svarer.";
+    PROMPT_END_STOP = "Stop optagelsen";
+    PROMPT_END_KEEP = "Fortsæt";
+    PROMPT_KEYS_HINT = "Ctrl+Alt+Enter vælger den første knap, Ctrl+Alt+Esc lukker, og Ctrl+Alt+P flytter fokus til vinduet. Så virker Tab, Enter og Esc.";
+    PROMPT_QUIET_MARK = "Stille tilstand: spørgsmål udsat";
+    PROMPT_WINDOW_NAME = "Tingskriver spørger";
 }
 
 macro_rules! parameterized {
@@ -94,6 +108,8 @@ parameterized! {
     data_dir => DATA_DIR;
     database => DATABASE;
     log_file => LOG_FILE;
+    prompt_reminder_title => PROMPT_REMINDER_TITLE;
+    prompt_end_body => PROMPT_END_BODY;
 }
 
 pub fn measure_model_label(provider: &str, model: &str, location: &str) -> String {
