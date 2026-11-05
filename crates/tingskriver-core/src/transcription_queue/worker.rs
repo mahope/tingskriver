@@ -66,7 +66,9 @@ impl Queue {
         match result {
             Ok(mut value) => {
                 self.complete_carrying_over(&job, &mut value).await?;
-                emit(event(&job, "completed", None, None));
+                let mut done = event(&job, "completed", None, None);
+                done.rejected = value["rejected"]["message"].as_str().map(str::to_string);
+                emit(done);
             }
             Err(retry_after) => {
                 let finished =
@@ -102,6 +104,7 @@ impl Queue {
                 job_id: &previous.job_id,
                 result: &previous.result,
                 corrections: &corrections,
+                names: &names,
             },
             value,
         );
@@ -118,6 +121,7 @@ fn event(job: &Job, status: &str, next_attempt: Option<i64>, track: Option<&str>
         status: status.into(),
         next_attempt,
         track: track.map(str::to_string),
+        rejected: None,
     }
 }
 

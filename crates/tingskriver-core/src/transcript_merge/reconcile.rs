@@ -36,6 +36,17 @@ fn overlap(a: (u64, u64), b: (u64, u64)) -> u64 {
 /// one-to-one (best overlap wins a collision). Other speakers get the lowest
 /// number that no old speaker used, so a number never silently changes owner.
 pub fn reconcile_speakers(old: &[SpeakerSpan], new: &[SpeakerSpan]) -> BTreeMap<usize, usize> {
+    reconcile_speakers_reserving(old, new, &[])
+}
+
+/// Like [`reconcile_speakers`], but `extra_reserved` numbers (carrying a
+/// confirmed name or correction without any old span) are never handed out to
+/// an unmatched speaker either.
+pub fn reconcile_speakers_reserving(
+    old: &[SpeakerSpan],
+    new: &[SpeakerSpan],
+    extra_reserved: &[usize],
+) -> BTreeMap<usize, usize> {
     let mut total: BTreeMap<usize, u64> = BTreeMap::new();
     let mut shared: HashMap<(usize, usize), u64> = HashMap::new();
     for n in new {
@@ -59,7 +70,11 @@ pub fn reconcile_speakers(old: &[SpeakerSpan], new: &[SpeakerSpan]) -> BTreeMap<
             mapping.insert(n, o);
         }
     }
-    let reserved: BTreeSet<usize> = old.iter().map(|o| o.nummer).collect();
+    let reserved: BTreeSet<usize> = old
+        .iter()
+        .map(|o| o.nummer)
+        .chain(extra_reserved.iter().copied())
+        .collect();
     let mut next = 1;
     for &n in total.keys() {
         if mapping.contains_key(&n) {

@@ -95,3 +95,12 @@ fn truncation_rule_counts_danish_letters_and_punctuation_is_free() {
     // An ASCII-only filter would see 0 letters in both and never trigger.
     assert!(is_truncated(&"ø".repeat(500), ""));
 }
+
+#[test]
+fn reserved_names_and_corrections_are_not_reused() {
+    let old = [span(0, 1_000, 1)];
+    let new = [span(10_000, 11_000, 9)];
+    // Number 2 and 3 carry a name or a correction but have no old span.
+    assert_eq!(reconcile_speakers_reserving(&old, &new, &[2, 3])[&9], 4);
+    assert_eq!(reconcile_speakers(&old, &new)[&9], 2);
+}
