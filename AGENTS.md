@@ -37,7 +37,7 @@ Find rækken for det, du har ændret. Kontrollen i anden kolonne skal være grø
 | `crates/tingskriver-core` (platformuafhængig kode) | Job "Core tests and crate boundaries (Linux)" | `cargo test --locked -p tingskriver-core` |
 | `crates/tingskriver-core`, en ny afhængighed | Samme job: core må ikke afhænge af UI-crates | `cargo tree -p tingskriver-core` (ingen `tauri`, `gpui`, `wry`, `webview2`) |
 | `crates/tingskriver-core`, I/O eller HTTP i async kode | Async-I/O-vagten | `bash scripts/check-async-io-guard.sh` |
-| `crates/tingskriver-core/src/audio`, optagelse | Lydtests og optagesoak | `cargo test --locked -p tingskriver-core --example recording_soak` ([docs/recording-soak.md](docs/recording-soak.md)) |
+| `crates/tingskriver-core/src/audio`, optagelse | Lydtests og optagesoak | `cargo build --release --locked -p tingskriver-core --example recording_soak`, derefter `python3 scripts/recording-soak.py --binary target/release/examples/recording_soak --output <ny mappe> --seconds 8 --interval 1` ([docs/recording-soak.md](docs/recording-soak.md)) |
 | Enhedsskift eller mute | Beslutningstabellen | `cargo test --locked -p tingskriver-core --test device_decisions` |
 | Windows-kode (`#[cfg(windows)]`) i en hvilken som helst crate | Job "Windows check from Linux (cargo xwin)" og "Windows workspace build and tests" | `cargo xwin check --locked --target x86_64-pc-windows-msvc -p tingskriver-core -p tingskriver-overlay -p tingskriver-host -p tingskriver-app` |
 | `crates/tingskriver-overlay` | Overlayets tests | `cargo test --locked -p tingskriver-overlay` (Windows-testen kører kun på Windows) |

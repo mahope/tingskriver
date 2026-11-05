@@ -38,7 +38,9 @@ Fra repoets rod, på Linux eller Windows:
 cargo test --locked -p tingskriver-core                 # platformuafhængig kerne
 cargo test --locked -p tingskriver-core <filter>        # målrettet, fx: dictation
 cargo test --locked -p tingskriver-core --test device_decisions
-cargo test --locked -p tingskriver-core --example recording_soak
+cargo test --locked -p tingskriver-core --example recording_soak   # kun verifier-testen, ikke soaken
+cargo build --release --locked -p tingskriver-core --example recording_soak
+python3 scripts/recording-soak.py --binary target/release/examples/recording_soak --output "$(mktemp -d)" --seconds 8 --interval 1   # hurtig soak
 cargo test --locked -p tingskriver-overlay
 cargo test --locked -p tingskriver-host
 bash scripts/check-async-io-guard.sh
