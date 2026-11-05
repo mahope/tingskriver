@@ -27,6 +27,10 @@ catalogue! {
     MEASURE_SELECT = "Vælg:";
     MEASURE_SELECTED = "Valgt:";
     MEASURE_START = "Kør valgte modeller";
+    BRIEF_TITLE = "Forberedelse";
+    BRIEF_LOADING = "Laver forberedelse ud fra de seneste møder i serien …";
+    BRIEF_FAILED = "Forberedelsen kunne ikke laves. Mødet er upåvirket.";
+    BRIEF_LOCAL = "Laves kun ud fra dine egne referater på computeren.";
     MEASURE_RUNNING = "Måler … Vent, til alle valgte modeller er kørt.";
     MEASURE_INTERRUPTED = "Målingen blev afbrudt. Prøv igen.";
     MEASURE_SAVED = "Målingen er afsluttet. Resultatet er gemt lokalt.";
