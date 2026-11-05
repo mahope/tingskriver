@@ -7,6 +7,22 @@
 //! Subscribers (the meeting list, the search) get the set of tables, never
 //! row data, and merge bursts with [`ChangeReceiver::next_batch`].
 //!
+//! Where to hook in: the meeting list (#56) and the search (#68) call
+//! [`keep_fresh`] with `db.changes().subscribe()` and the tables they read
+//! when they are created. Nothing subscribes yet because neither list exists
+//! on this branch.
+//!
+//! Limits of SQLite's hooks, all of which only cause an extra reload and
+//! never a missed one:
+//! - Subscribe to base tables (`meetings`, `transcripts`, ...), not to the
+//!   FTS5 table `search_fts`: it is filled by triggers on the base tables,
+//!   so those are reported, while the virtual table and its shadow tables
+//!   are not a reliable name to listen on. DDL and `WITHOUT ROWID` tables
+//!   are not reported by the update hook at all.
+//! - The rollback hook does not run for `ROLLBACK TO savepoint` or for a
+//!   statement that fails in autocommit, so those tables can stay pending
+//!   and be announced with the connection's next commit.
+//!
 //! The hooks only push a small value into a channel: they never wait, never
 //! touch the database and never block the writer. If a subscriber is too slow
 //! the channel drops the oldest messages and the receiver reports "everything
@@ -45,11 +61,8 @@ impl Change {
     fn merge(&mut self, other: Change) {
         match (&mut *self, other) {
             (Change::Tables(mine), Change::Tables(theirs)) => mine.extend(theirs),
-            (me, other) => {
-                if matches!(other, Change::Everything) {
-                    *me = Change::Everything;
-                }
-            }
+            (_, Change::Everything) => *self = Change::Everything,
+            (Change::Everything, Change::Tables(_)) => {}
         }
     }
 }

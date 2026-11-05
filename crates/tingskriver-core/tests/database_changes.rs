@@ -214,3 +214,24 @@ async fn a_continuous_stream_is_cut_at_max_wait() {
         "list would starve"
     );
 }
+
+#[tokio::test]
+async fn real_writes_are_not_slowed_by_a_stuck_subscriber() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = open(dir.path()).await;
+    // Subscribes and never reads: the channel fills and starts dropping.
+    let _stuck = db.changes().subscribe();
+
+    let started = Instant::now();
+    for i in 0..600 {
+        insert_meeting(db.pool(), &format!("m{i}")).await;
+    }
+    assert!(db.changes().generation() >= 600);
+    assert!(
+        started.elapsed() < Duration::from_secs(60),
+        "writes waited for the subscriber"
+    );
+    let mut late = db.changes().subscribe();
+    insert_meeting(db.pool(), "last").await;
+    assert!(late.next().await.unwrap().touches(&["meetings"]));
+}
