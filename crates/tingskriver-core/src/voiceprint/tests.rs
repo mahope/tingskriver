@@ -449,3 +449,31 @@ async fn dump_rows(pool: &SqlitePool, table: &str) -> Vec<String> {
         .unwrap();
     rows.into_iter().map(|(r,)| r).collect()
 }
+
+#[tokio::test]
+async fn failed_forget_all_keeps_the_index_so_it_can_be_retried() {
+    let f = enabled().await;
+    let anna = f.service.grant_consent(consent("Anna Test")).await.unwrap();
+    f.service.enroll(&anna, &voice(&[1.0, 0.0])).await.unwrap();
+    f.backend.set_fail_deletes(true);
+    assert_eq!(f.service.forget_all().await, Err(VoiceprintError::Storage));
+    // Nothing was reported as forgotten: the index row still points at the
+    // voiceprint, so the retention purge and a retry can still find it.
+    let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM voiceprint_exemplars")
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
+    assert_eq!(n, 1);
+    f.backend.set_fail_deletes(false);
+    f.service.forget_all().await.unwrap();
+    assert!(f.backend.targets().is_empty());
+}
+
+#[tokio::test]
+async fn withdrawing_an_unknown_consent_is_an_error() {
+    let f = enabled().await;
+    assert_eq!(
+        f.service.withdraw_consent("no-such-id").await,
+        Err(VoiceprintError::NoConsent)
+    );
+}

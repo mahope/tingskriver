@@ -314,6 +314,16 @@ impl VoiceprintService {
         .execute(&mut *tx)
         .await?
         .rows_affected();
+        if updated == 0 {
+            let known: Option<(String,)> =
+                sqlx::query_as("SELECT id FROM voiceprint_consents WHERE id = $1")
+                    .bind(consent_id)
+                    .fetch_optional(&mut *tx)
+                    .await?;
+            if known.is_none() {
+                return Err(VoiceprintError::NoConsent);
+            }
+        }
         if updated > 0 {
             sqlx::query("INSERT INTO voiceprint_consent_log (consent_id, event, at) VALUES ($1, 'withdrawn', $2)")
                 .bind(consent_id)
@@ -514,7 +524,7 @@ impl VoiceprintService {
         for (id, created, matched) in rows {
             // An unreadable date is treated as expired: delete rather than keep.
             let last_use = matched.as_deref().or(Some(&created)).and_then(parse);
-            if last_use.is_none_or(|t| t < cutoff) {
+            if last_use.map_or(true, |t| t < cutoff) {
                 self.delete_exemplar(&id).await?;
                 removed += 1;
             }
@@ -537,9 +547,9 @@ impl VoiceprintService {
     /// last run is a day old. Returns `None` when nothing was due.
     pub async fn purge_if_due(&self) -> Result<Option<usize>> {
         let settings = self.settings().await?;
-        let due = settings
-            .last_purge_at
-            .is_none_or(|at| self.clock.now() - at >= Duration::hours(PURGE_INTERVAL_HOURS));
+        let due = settings.last_purge_at.map_or(true, |at| {
+            self.clock.now() - at >= Duration::hours(PURGE_INTERVAL_HOURS)
+        });
         if due {
             Ok(Some(self.purge_expired().await?))
         } else {

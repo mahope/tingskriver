@@ -199,10 +199,21 @@ pub fn delete_credentials_with_prefix(prefix: &str) -> Result<usize, String> {
         CredFree(list as *const std::ffi::c_void);
     }
     let mut removed = 0;
+    let mut failed = 0;
     for (target, kind) in targets {
-        if target.starts_with(prefix) && unsafe { CredDeleteW(&HSTRING::from(target.as_str()), kind, None) }.is_ok() {
-            removed += 1;
+        if !target.starts_with(prefix) {
+            continue;
         }
+        match unsafe { CredDeleteW(&HSTRING::from(target.as_str()), kind, None) } {
+            Ok(()) => removed += 1,
+            // Already gone: that is what we wanted.
+            Err(e) if e.code() == windows::Win32::Foundation::ERROR_NOT_FOUND.to_hresult() => {}
+            Err(_) => failed += 1,
+        }
+    }
+    if failed > 0 {
+        // Never report success while entries remain.
+        return Err(format!("{failed} credential entries could not be deleted"));
     }
     Ok(removed)
 }
