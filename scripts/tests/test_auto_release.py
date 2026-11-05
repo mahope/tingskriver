@@ -45,13 +45,14 @@ class VersionTests(unittest.TestCase):
 
     def test_next_never_goes_backwards(self):
         for v in ("0.5.0-dev.3", "0.5.0-dev.9", "1.2.3"):
-            nxt = ar.next_version(v, allow_stable=True)
+            nxt = ar.next_version(v)
             self.assertGreater(ar.version_key(nxt), ar.version_key(v))
 
-    def test_stable_is_manual_unless_opted_in(self):
-        with self.assertRaises(ar.StableNotAllowed):
-            ar.next_version("0.5.0")
-        self.assertEqual(ar.next_version("0.5.0", allow_stable=True), "0.5.1")
+    def test_stable_is_never_produced_here(self):
+        # After a manual stable release the pre-release series moves on to the next patch.
+        self.assertEqual(ar.next_version("0.5.0"), "0.5.1-dev.1")
+        for v in ("0.5.0-dev.3", "0.5.0", "1.2.3"):
+            self.assertIn("-", ar.next_version(v))
 
     def test_prerelease_without_counter_is_an_error(self):
         with self.assertRaises(ValueError):
@@ -72,6 +73,54 @@ class VersionTests(unittest.TestCase):
     def test_a_burned_tag_is_never_reused(self):
         tags = ["app-v0.5.0-dev.3", "app-v0.5.0-dev.4"]  # dev.4 tagged but never published
         self.assertEqual(ar.next_version(ar.highest_version(tags, "0.5.0-dev.4")), "0.5.0-dev.5")
+
+
+class DecideTests(unittest.TestCase):
+    TAGS = ["v0.5.0-dev.2", "app-v0.5.0-dev.3", "android-v0.0.1"]
+
+    def decide(self, tags=None, cargo="0.5.0-dev.3", published=("app-v0.5.0-dev.3",), changes=5):
+        return ar.decide(tags if tags is not None else self.TAGS, cargo, list(published), changes)
+
+    def test_changes_since_the_last_release(self):
+        action, reason, version, last_tag, last_pub = self.decide()
+        self.assertEqual((action, reason, version, last_tag, last_pub),
+                         ("release", "ok", "0.5.0-dev.4", "app-v0.5.0-dev.3", "app-v0.5.0-dev.3"))
+
+    def test_nothing_new(self):
+        self.assertEqual(self.decide(changes=0)[:2], ("skip", "no-changes"))
+
+    def test_first_ever_release_without_any_app_tag(self):
+        action, _, version, last_tag, last_pub = self.decide(tags=["v0.5.0-dev.2"], published=(), changes=None)
+        self.assertEqual((action, version, last_tag, last_pub), ("release", "0.5.0-dev.4", None, None))
+
+    def test_a_failed_attempt_does_not_loop(self):
+        # dev.4 was tagged (bump commit on main) but never published; nothing merged since.
+        tags = self.TAGS + ["app-v0.5.0-dev.4"]
+        action, reason, version, last_tag, last_pub = self.decide(tags=tags, cargo="0.5.0-dev.4", changes=0)
+        self.assertEqual((action, reason), ("fail", "last-attempt-failed"))
+        self.assertEqual((last_tag, last_pub), ("app-v0.5.0-dev.4", "app-v0.5.0-dev.3"))
+
+    def test_after_a_failed_attempt_new_changes_get_the_next_number(self):
+        tags = self.TAGS + ["app-v0.5.0-dev.4"]
+        action, _, version, _, last_pub = self.decide(tags=tags, cargo="0.5.0-dev.4", changes=2)
+        self.assertEqual((action, version, last_pub), ("release", "0.5.0-dev.5", "app-v0.5.0-dev.3"))
+
+    def test_a_tauri_tag_counts_for_the_number_but_not_as_a_gpui_release(self):
+        action, _, version, last_tag, _ = self.decide(tags=self.TAGS + ["v0.5.0-dev.7"], changes=3)
+        self.assertEqual((action, version, last_tag), ("release", "0.5.0-dev.8", "app-v0.5.0-dev.3"))
+
+    def test_stable_published_by_hand_continues_with_the_next_prerelease_series(self):
+        tags = self.TAGS + ["app-v0.5.0"]
+        action, _, version, _, _ = self.decide(tags=tags, cargo="0.5.0", published=("app-v0.5.0",), changes=4)
+        self.assertEqual((action, version), ("release", "0.5.1-dev.1"))
+
+
+class BumpCommitTests(unittest.TestCase):
+    def test_only_the_bots_release_commit_counts(self):
+        self.assertTrue(ar.is_bump_commit("Release 0.5.0-dev.4", ar.BOT_EMAIL))
+        self.assertFalse(ar.is_bump_commit("Release 0.5.0-dev.4", "someone@example.com"))
+        self.assertFalse(ar.is_bump_commit("Release v0.4.1", ar.BOT_EMAIL))
+        self.assertFalse(ar.is_bump_commit("Release notes for the thing", ar.BOT_EMAIL))
 
 
 class CargoTests(unittest.TestCase):

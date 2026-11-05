@@ -32,15 +32,17 @@ TAG_PREFIX = "app-v"
 RELEASE_WORKFLOW = "app-release.yml"
 REQUIRED_WORKFLOW = "Rust"
 BAD_CONCLUSIONS = {"failure", "cancelled", "timed_out", "action_required", "startup_failure", "stale"}
-BUMP_SUBJECT = re.compile(r"^Release \S+$")
+BOT_EMAIL = "41898282+github-actions[bot]@users.noreply.github.com"
+_BUMP_SUBJECT = re.compile(r"^Release \d+\.\d+\.\d+\S*$")
 
 _SEMVER = re.compile(
     r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$"
 )
 
 
-class StableNotAllowed(Exception):
-    """The highest version has no pre-release suffix; stable releases stay manual."""
+def is_bump_commit(subject, email):
+    """Our own `Release <version>` commit; a person's commit with a similar subject does not count."""
+    return email == BOT_EMAIL and bool(_BUMP_SUBJECT.match(subject))
 
 
 # --------------------------------------------------------------------------
@@ -82,8 +84,12 @@ def highest_version(tags, cargo_version):
     return max(versions, key=version_key)
 
 
-def next_version(current, allow_stable=False):
-    """One micro step: -dev.N becomes -dev.N+1; a stable x.y.z becomes x.y.z+1 (opt-in)."""
+def next_version(current):
+    """One micro step, always a pre-release: -dev.N becomes -dev.N+1.
+
+    After a stable x.y.z (released by hand) the next pre-release series starts at
+    x.y.(z+1)-dev.1. Stable versions are never produced here (docs/release-checkliste.md).
+    """
     major, minor, patch, pre = parse_version(current)
     if pre:
         last = pre[-1]
@@ -91,9 +97,7 @@ def next_version(current, allow_stable=False):
             raise ValueError(f"cannot step pre-release {current}: its last identifier is not a number")
         stepped = pre[:-1] + (str(int(last) + 1),)
         return f"{major}.{minor}.{patch}-{'.'.join(stepped)}"
-    if not allow_stable:
-        raise StableNotAllowed(current)
-    return f"{major}.{minor}.{patch + 1}"
+    return f"{major}.{minor}.{patch + 1}-dev.1"
 
 
 def read_workspace_version(text):
@@ -268,18 +272,48 @@ def published_app_tags():
 
 
 def commits_since(tag, ref="HEAD"):
-    out = run("git", "log", "--first-parent", "--format=%H%x09%s", f"{tag}..{ref}").stdout
-    return [tuple(line.split("\t", 1)) for line in out.splitlines() if line]
+    """First-parent commits after `tag`, newest first, without our own release commits."""
+    out = run("git", "log", "--first-parent", "--format=%H%x09%s%x09%ae", f"{tag}..{ref}").stdout
+    commits = []
+    for line in out.splitlines():
+        sha, subject, email = line.split("\t")
+        if not is_bump_commit(subject, email):
+            commits.append((sha, subject))
+    return commits
 
 
 def gate_commit():
     """The commit CI must be green for: HEAD, or below it when HEAD is a bump commit without CI."""
-    out = run("git", "log", "--first-parent", "--format=%H%x09%s%x09%ct", "-n", "20", "HEAD").stdout
+    out = run("git", "log", "--first-parent", "--format=%H%x09%s%x09%ae%x09%ct", "-n", "20", "HEAD").stdout
     for line in out.splitlines():
-        sha, subject, ts = line.split("\t")
-        if not BUMP_SUBJECT.match(subject):
+        sha, subject, email, ts = line.split("\t")
+        if not is_bump_commit(subject, email):
             return sha, int(ts)
     raise RuntimeError("no commit below the release commits found")
+
+
+def decide(tags, cargo_version, published, changes_since_last_tag):
+    """What to do, from facts only (pure). Returns (action, reason, version, last_tag, last_published).
+
+    action is "release", "skip" or "fail". `changes_since_last_tag` is the number of commits on
+    main after the newest app-v* tag, or None when there is no such tag.
+    """
+    highest = highest_version(tags, cargo_version)
+    version = next_version(highest)
+    app_tags = sorted((t for t in tags if t.startswith(TAG_PREFIX) and version_from_tag(t)),
+                      key=lambda t: version_key(version_from_tag(t)))
+    last_tag = app_tags[-1] if app_tags else None
+    pub = sorted((t for t in published if version_from_tag(t)), key=lambda t: version_key(version_from_tag(t)))
+    last_published = pub[-1] if pub else None
+    if version in (version_from_tag(t) for t in tags):
+        raise RuntimeError(f"version {version} is already tagged; tags are never reused")
+    if last_tag is not None and changes_since_last_tag == 0:
+        if last_tag != last_published:
+            # The last attempt left a tag without a release and nothing new has landed since.
+            # Do not burn another version for the same content: a person looks at the failed build.
+            return "fail", "last-attempt-failed", version, last_tag, last_published
+        return "skip", "no-changes", version, last_tag, last_published
+    return "release", "ok", version, last_tag, last_published
 
 
 # --------------------------------------------------------------------------
@@ -290,30 +324,25 @@ def cmd_plan(args):
     cargo_version = read_workspace_version(CARGO_TOML.read_text(encoding="utf-8"))
     run("git", "fetch", "--tags", "--force", "origin")
     tags = run("git", "tag", "--list").stdout.split()
-    highest = highest_version(tags, cargo_version)
-    try:
-        version = next_version(highest, allow_stable=args.allow_stable)
-    except StableNotAllowed:
-        log(f"Highest version {highest} has no pre-release suffix; stable releases stay manual "
-            f"(see docs/auto-release.md). Nothing to do.")
-        set_output(release="false", reason="stable-manual")
+    published = published_app_tags()
+    newest_tag = max((t for t in tags if t.startswith(TAG_PREFIX) and version_from_tag(t)),
+                     key=lambda t: version_key(version_from_tag(t)), default=None)
+    changes = commits_since(newest_tag) if newest_tag else None
+    action, reason, version, last_tag, last_published = decide(
+        tags, cargo_version, published, None if changes is None else len(changes))
+    log(f"Cargo.toml {cargo_version}; newest app tag {last_tag}; last published GPUI release {last_published}; "
+        f"next version {version}; {'no tag yet' if changes is None else f'{len(changes)} change(s) since {last_tag}'}")
+    if action == "fail":
+        log(f"ERROR The newest tag {last_tag} has no published release, and nothing has been merged since. "
+            f"Look at the failed {RELEASE_WORKFLOW} run for {last_tag}. Fix it and run that workflow on "
+            f"the tag again, or merge a change to get a new version. Not burning another version number.")
+        set_output(release="false", reason=reason)
+        return 1
+    if action == "skip":
+        log(f"No changes on main since {last_tag}. Nothing to release.")
+        set_output(release="false", reason=reason)
         return 0
     tag = TAG_PREFIX + version
-    if tag in tags:
-        raise RuntimeError(f"tag {tag} already exists; tags are never reused")
-
-    published = sorted(published_app_tags(), key=lambda t: version_key(version_from_tag(t) or "0.0.0"))
-    last_published = published[-1] if published else None
-    log(f"Highest version anywhere: {highest} (Cargo.toml {cargo_version}); next: {version}; "
-        f"last published GPUI release: {last_published}")
-
-    if last_published:
-        changes = [(sha, s) for sha, s in commits_since(last_published) if not BUMP_SUBJECT.match(s)]
-        if not changes:
-            log(f"No changes on main since {last_published}. Nothing to release.")
-            set_output(release="false", reason="no-changes")
-            return 0
-        log(f"{len(changes)} change(s) on main since {last_published}")
 
     gate_sha, gate_ts = gate_commit()
     deadline = time.time() + args.wait_minutes * 60
@@ -338,6 +367,16 @@ def cmd_plan(args):
             set_output(release="false", reason="ci-pending")
             return 0
         time.sleep(60)
+
+    # The push of the bump commit would be rejected if main moved while CI was awaited.
+    # Say so now and leave quietly; the next run starts over on the new main.
+    run("git", "fetch", "origin", "main")
+    head = run("git", "rev-parse", "HEAD").stdout.strip()
+    moved = run("git", "rev-parse", "origin/main").stdout.strip()
+    if head != moved:
+        log(f"main moved from {head[:8]} to {moved[:8]} while CI was awaited. Trying again at the next run.")
+        set_output(release="false", reason="main-moved")
+        return 0
 
     set_output(release="true", version=version, tag=tag, previous=last_published or "",
                current=cargo_version, gate=gate_sha, reason="ok")
@@ -371,18 +410,21 @@ def cmd_check_bump(args):
 
 def cmd_changelog(args):
     repo = repo_name()
-    commits = commits_since(args.since) if args.since else [tuple(x.split("\t", 1)) for x in
-                                                           run("git", "log", "--first-parent", "--format=%H%x09%s", "-n", "30").stdout.splitlines()]
+    commits = commits_since(args.since) if args.since else commits_since("HEAD~30")
     entries, seen = [], set()
     for sha, subject in commits:
-        if BUMP_SUBJECT.match(subject) or subject.startswith(("Merge branch", "Merge remote", "wip")):
+        if subject.startswith(("Merge branch", "Merge remote", "wip")):
             continue
         number = pr_number(subject)
         if number is not None:
             if number in seen:
                 continue
             seen.add(number)
-            title = gh_json("pr", "view", str(number), "--json", "title")["title"]
+            try:
+                title = gh_json("pr", "view", str(number), "--json", "title")["title"]
+            except RuntimeError as exc:  # an issue number, or a PR we cannot read: use the commit subject
+                log(f"WARNING no pull request #{number}: {str(exc)[:120]}; using the commit subject")
+                title, number = subject, None
         else:
             title = subject
         entries.append((title, number))
@@ -498,7 +540,7 @@ def cmd_release(args):
         with tempfile.TemporaryDirectory() as tmp:
             notes = Path(tmp) / "notes.md"
             notes.write_text(notes_with_changelog(existing, changelog), encoding="utf-8", newline="\n")
-            run("gh", "release", "edit", args.tag, "--notes-file", str(notes))
+            run("gh", "release", "edit", args.tag, "--latest=false", "--notes-file", str(notes))
         log("Release description now includes the changelog.")
     log(f"Released {args.version}.")
     return 0
@@ -510,7 +552,6 @@ def main(argv=None):
 
     p = sub.add_parser("plan")
     p.add_argument("--wait-minutes", type=int, default=90, help="how long to wait for CI that is still running")
-    p.add_argument("--allow-stable", action="store_true", help="also step stable versions (AUTO_RELEASE_STABLE=true)")
     p.set_defaults(func=cmd_plan)
 
     p = sub.add_parser("bump")
