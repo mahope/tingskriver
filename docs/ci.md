@@ -13,6 +13,7 @@ Issues #187 (lint only what changed) and #192 (measure, scope by path, test sche
 **Scope** (`.github/scripts/ci-scope.py`): the `scope` job decides whether the Rust and installer jobs run.
 
 - `main` and tags always run everything. The automatic release needs a successful `Rust` push run for every commit on `main`, and `main` keeps the full check.
+- Risk: the format gate also runs on `main` (against the previous tip). A merge that brings in an unformatted changed `.rs` file turns that `Rust` run red and holds the automatic release until a later commit fixes the formatting. This is deliberate (`main` keeps the full check); merge only through a green gate.
 - Other branches are compared with the merge-base with `origin/main`. The builds are skipped only when *every* changed path is in the skip list: `site/`, `docs/` (except `docs/schemas/`, which core includes with `include_str!`), `apps/android/`, `README.md`, `CONTRIBUTING.md`, `CLAUDE.md`, issue/PR templates and workflows that share no file with the Rust build (`pages.yml`, `wer.yml`, `android*.yml`, ...). Anything else, including `Cargo.toml`, `Cargo.lock`, `deny.toml`, `.github/scripts/`, `rust.yml`, `branch-build.yml`, `windows-build.yml` and new top-level directories, runs the builds.
 - A later docs-only push to a branch that changed Rust still builds, because the diff is against `main`, not against the previous push.
 - A skipped job counts as passed for required checks, and `scripts/ci-status.sh` treats `skipped` as success.
@@ -41,6 +42,8 @@ After any change to `permissions:` or a reusable workflow, also run the schedule
 ## Measurements
 
 `scripts/ci-minutes.sh <workflow.yml> [runs]` prints wall time and runner minutes (sum of job durations) for the newest successful runs and the medians. It needs one API call per run, so use a `GITHUB_TOKEN` instead of the shared unauthenticated quota.
+
+**Status of acceptance criterion "baseline and after figures in docs/": partly met.** Wall times are measured; runner minutes are not (no token in the job environment), and the "after" figures are estimates. Run `scripts/ci-minutes.sh` with a `GITHUB_TOKEN` and fill in the table before treating #192 as closed.
 
 Baseline, 5/11-26, the 10 newest successful push runs of each workflow (one API call each). Wall time is run creation to last update, so it **includes queue time**; runner minutes were not available within the unauthenticated quota and are listed as "not measured" rather than guessed.
 

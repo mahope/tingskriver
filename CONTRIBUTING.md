@@ -58,6 +58,7 @@ Before starting work on a new feature or bug fix:
 4. Ensure CI checks pass
 5. Request review from at least one maintainer
 6. Address any review comments
+7. Once approved, the PR will be merged into `devtest`
 
 ### Formatting and lint gates
 
@@ -66,7 +67,6 @@ CI checks only what you change (see [docs/ci.md](docs/ci.md)):
 - Every `.rs` file your branch changes must pass `rustfmt --edition 2021 --check`. Run `.github/scripts/check-fmt-changed.sh origin/main` before pushing. Do not reformat files you do not otherwise touch.
 - `cargo clippy --all-targets -- -D warnings` must pass for every crate listed in `.github/clippy-crates.txt`. Add your crate to the list (one line) once it is clean.
 - Changes that only touch `site/`, `docs/` and similar skip the Rust builds on branches; `main` always runs the full CI.
-7. Once approved, the PR will be merged into `devtest`
 
 ### PR Template
 
