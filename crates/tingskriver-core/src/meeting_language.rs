@@ -212,6 +212,7 @@ pub fn extra_languages_hint(primary: &str, extra: &[String]) -> Option<String> {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
 

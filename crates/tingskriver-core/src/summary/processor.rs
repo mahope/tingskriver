@@ -1189,7 +1189,7 @@ mod tests {
     ) -> (String, Vec<String>) {
         use crate::providers::fake_server::{FakeServer, Reply};
         let text = mixed_danish_english_transcript();
-        let detected = crate::summary::language_detection::detect_summary_language(&[text.clone()])
+        let detected = crate::summary::language_detection::detect_summary_language(std::slice::from_ref(&text))
             .language;
         let summary_language = languages.summary_language(None, detected.as_deref());
         let reply = serde_json::json!({"choices": [{"message": {
