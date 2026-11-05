@@ -82,7 +82,12 @@ pub async fn import_subtitle_file_command<R: Runtime>(
     state: tauri::State<'_, crate::state::AppState>,
     path: String,
 ) -> Result<tingskriver_core::subtitle::import::SubtitleImportOutcome, String> {
-    tingskriver_core::subtitle::import::import_subtitle_file(crate::core_bridge::host(&app), &state, &path).await
+    tingskriver_core::subtitle::import::import_subtitle_file(
+        crate::core_bridge::host(&app),
+        &state,
+        &path,
+    )
+    .await
 }
 
 /// "Lav referat igen": start the summary again for an existing meeting.
@@ -92,5 +97,26 @@ pub async fn regenerate_summary_command<R: Runtime>(
     state: tauri::State<'_, crate::state::AppState>,
     meeting_id: String,
 ) -> Result<(), String> {
-    tingskriver_core::subtitle::import::start_summary_for_meeting(crate::core_bridge::host(&app), &state, &meeting_id).await
+    tingskriver_core::subtitle::import::start_summary_for_meeting(
+        crate::core_bridge::host(&app),
+        &state,
+        &meeting_id,
+    )
+    .await
+}
+
+/// Native file dialog for `.vtt`/`.srt` files. Returns `None` when cancelled.
+#[tauri::command]
+pub async fn select_subtitle_file_command<R: Runtime>(
+    app: AppHandle<R>,
+) -> Result<Option<String>, String> {
+    let picked = tokio::task::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .add_filter("Undertekster", &["vtt", "srt"])
+            .blocking_pick_file()
+    })
+    .await
+    .map_err(|e| format!("File dialog task failed: {}", e))?;
+    Ok(picked.map(|p| p.to_string()))
 }

@@ -220,14 +220,13 @@ pub async fn load_prompt_text(pool: &SqlitePool, meeting_id: &str) -> Result<Str
     Ok(cues_to_prompt_text(&cues))
 }
 
-/// Starts the summary with the provider chosen in settings (#44). Used for
-/// the first summary after an import and for "Lav referat igen".
-pub async fn start_summary_for_meeting(
-    app: HostHandle,
-    state: &AppState,
+/// What a summary run needs, read from the database: the provider and model
+/// chosen in settings (#44) and the saved transcript as prompt text. An error
+/// here changes nothing, so the meeting and transcript stay as they are.
+async fn prepare_summary(
+    pool: &SqlitePool,
     meeting_id: &str,
-) -> Result<(), String> {
-    let pool = state.db_manager.pool();
+) -> Result<(String, String, String), String> {
     let config = SettingsRepository::get_model_config(pool)
         .await
         .map_err(|e| format!("Could not read the summary settings: {e}"))?
@@ -235,12 +234,23 @@ pub async fn start_summary_for_meeting(
     let text = load_prompt_text(pool, meeting_id)
         .await
         .map_err(|e| e.to_string())?;
+    Ok((config.provider, config.model, text))
+}
+
+/// Starts the summary with the provider chosen in settings (#44). Used for
+/// the first summary after an import and for "Lav referat igen".
+pub async fn start_summary_for_meeting(
+    app: HostHandle,
+    state: &AppState,
+    meeting_id: &str,
+) -> Result<(), String> {
+    let (provider, model, text) = prepare_summary(state.db_manager.pool(), meeting_id).await?;
     crate::summary::commands::api_process_transcript(
         app,
         state,
         text,
-        config.provider,
-        config.model,
+        provider,
+        model,
         Some(meeting_id.to_string()),
         None,
         None,
@@ -251,6 +261,20 @@ pub async fn start_summary_for_meeting(
     )
     .await
     .map(|_| ())
+}
+
+/// True when the meeting has no summary that is finished or running: no
+/// attempt yet, or the last one failed or was cancelled.
+async fn needs_summary(pool: &SqlitePool, meeting_id: &str) -> Result<bool> {
+    let status: Option<String> =
+        sqlx::query_scalar("SELECT status FROM summary_processes WHERE meeting_id = ?")
+            .bind(meeting_id)
+            .fetch_optional(pool)
+            .await?;
+    Ok(match status {
+        None => true,
+        Some(s) => matches!(s.to_ascii_lowercase().as_str(), "failed" | "cancelled"),
+    })
 }
 
 /// Reads, parses and saves a file, then starts the summary. Emits
@@ -280,6 +304,23 @@ async fn run_import(
     state: &AppState,
     path: &str,
 ) -> Result<SubtitleImportOutcome, String> {
+    let pool = state.db_manager.pool();
+    let (mut outcome, summary_wanted) = import_file_to_db(pool, path).await?;
+    if summary_wanted {
+        outcome.summary_error = start_summary_for_meeting(app, state, &outcome.meeting_id)
+            .await
+            .err();
+    }
+    Ok(outcome)
+}
+
+/// Reads, parses and saves the file. The second value says whether a summary
+/// should be started: always for a new meeting, and for a repeated file only
+/// if its earlier summary failed or was cancelled.
+async fn import_file_to_db(
+    pool: &SqlitePool,
+    path: &str,
+) -> Result<(SubtitleImportOutcome, bool), String> {
     let path = path.to_string();
     let file = tokio::task::spawn_blocking(move || read_subtitle_file(Path::new(&path)))
         .await
@@ -288,32 +329,26 @@ async fn run_import(
     let parsed = parse_subtitles(&file.content).map_err(|e| e.to_string())?;
     let duration_ms = parsed.cues.iter().map(|c| c.end_ms).max().unwrap_or(0);
 
-    let (meeting_id, already_imported) = save_imported_meeting(
-        state.db_manager.pool(),
-        &file.title,
-        &parsed.cues,
-        file.file_time,
-    )
-    .await
-    .map_err(|e| e.to_string())?;
-
-    // A repeated file keeps its meeting and its summary as they are.
-    let summary_error = if already_imported {
-        None
-    } else {
-        start_summary_for_meeting(app, state, &meeting_id)
+    let (meeting_id, already_imported) =
+        save_imported_meeting(pool, &file.title, &parsed.cues, file.file_time)
             .await
-            .err()
-    };
+            .map_err(|e| e.to_string())?;
+    let summary_wanted = !already_imported
+        || needs_summary(pool, &meeting_id)
+            .await
+            .map_err(|e| e.to_string())?;
 
-    Ok(SubtitleImportOutcome {
-        meeting_id,
-        title: file.title,
-        segments_count: parsed.cues.len(),
-        duration_seconds: duration_ms as f64 / 1000.0,
-        already_imported,
-        summary_error,
-    })
+    Ok((
+        SubtitleImportOutcome {
+            meeting_id,
+            title: file.title,
+            segments_count: parsed.cues.len(),
+            duration_seconds: duration_ms as f64 / 1000.0,
+            already_imported,
+            summary_error: None,
+        },
+        summary_wanted,
+    ))
 }
 
 #[cfg(test)]
@@ -417,34 +452,135 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn failed_summary_leaves_meeting_and_transcript() {
+    async fn summary_without_provider_fails_and_keeps_meeting_and_transcript() {
         let pool = pool().await;
         let cues = parse_subtitles(VTT).unwrap().cues;
         let (id, _) = save_imported_meeting(&pool, "A", &cues, None)
             .await
             .unwrap();
-        // The summary process fails (as `fail_and_cleanup` records it).
-        sqlx::query(
-            "INSERT INTO summary_processes (meeting_id, status, created_at, updated_at, error)
-             VALUES (?, 'failed', ?, ?, 'provider down')",
-        )
-        .bind(&id)
-        .bind(Utc::now())
-        .bind(Utc::now())
-        .execute(&pool)
-        .await
-        .unwrap();
+        sqlx::query("DELETE FROM settings")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Production code path: no provider means an error, never a deletion.
+        let err = prepare_summary(&pool, &id).await.unwrap_err();
+        assert!(err.contains("provider"), "{err}");
+
+        let meetings: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM meetings WHERE id = ?")
+            .bind(&id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         let t: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM transcripts WHERE meeting_id = ?")
             .bind(&id)
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(t, 2);
-        // "Lav referat igen" reads the same transcript back.
-        assert!(load_prompt_text(&pool, &id)
+        assert_eq!((meetings, t), (1, 2));
+
+        // "Lav referat igen" once a provider exists reads the same text.
+        SettingsRepository::save_model_config(&pool, "ollama", "test-model", "base", None)
             .await
-            .unwrap()
-            .contains("Goddag."));
+            .unwrap();
+        let (provider, model, text) = prepare_summary(&pool, &id).await.unwrap();
+        assert_eq!(
+            (provider.as_str(), model.as_str()),
+            ("ollama", "test-model")
+        );
+        assert_eq!(text, "Anna Testesen: Goddag.\nBo Eksempel: Tak.");
+    }
+
+    #[tokio::test]
+    async fn repeated_import_retries_only_a_failed_or_missing_summary() {
+        let pool = pool().await;
+        let cues = parse_subtitles(VTT).unwrap().cues;
+        let (id, _) = save_imported_meeting(&pool, "A", &cues, None)
+            .await
+            .unwrap();
+        assert!(needs_summary(&pool, &id).await.unwrap());
+        for (status, wanted) in [
+            ("failed", true),
+            ("cancelled", true),
+            ("PENDING", false),
+            ("processing", false),
+            ("completed", false),
+        ] {
+            sqlx::query(
+                "INSERT OR REPLACE INTO summary_processes (meeting_id, status, created_at, updated_at)
+                 VALUES (?, ?, ?, ?)",
+            )
+            .bind(&id)
+            .bind(status)
+            .bind(Utc::now())
+            .bind(Utc::now())
+            .execute(&pool)
+            .await
+            .unwrap();
+            assert_eq!(needs_summary(&pool, &id).await.unwrap(), wanted, "{status}");
+        }
+    }
+
+    #[tokio::test]
+    async fn import_flow_from_file_and_repeat() {
+        let pool = pool().await;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("team_moede.vtt");
+        std::fs::write(&path, format!("\u{feff}{VTT}")).unwrap();
+        let path = path.to_str().unwrap();
+
+        let (first, wanted) = import_file_to_db(&pool, path).await.unwrap();
+        assert!(wanted && !first.already_imported);
+        assert_eq!(first.segments_count, 2);
+        assert_eq!(first.title, "team moede");
+        assert_eq!(first.duration_seconds, 9.0);
+
+        // Same file again: same meeting; no summary yet, so one is wanted.
+        let (again, wanted) = import_file_to_db(&pool, path).await.unwrap();
+        assert!(again.already_imported && wanted);
+        assert_eq!(again.meeting_id, first.meeting_id);
+
+        // With a finished summary the repeat starts nothing.
+        sqlx::query(
+            "INSERT INTO summary_processes (meeting_id, status, created_at, updated_at)
+             VALUES (?, 'completed', ?, ?)",
+        )
+        .bind(&first.meeting_id)
+        .bind(Utc::now())
+        .bind(Utc::now())
+        .execute(&pool)
+        .await
+        .unwrap();
+        let (_, wanted) = import_file_to_db(&pool, path).await.unwrap();
+        assert!(!wanted);
+
+        let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM meetings")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(n, 1);
+    }
+
+    #[tokio::test]
+    async fn import_flow_rejects_bad_files_without_creating_a_meeting() {
+        let pool = pool().await;
+        let dir = tempfile::tempdir().unwrap();
+        let bad = dir.path().join("tom.srt");
+        std::fs::write(&bad, "ikke en undertekst\n").unwrap();
+        let wrong = dir.path().join("lyd.mp3");
+        std::fs::write(&wrong, "x").unwrap();
+        assert!(import_file_to_db(&pool, bad.to_str().unwrap())
+            .await
+            .is_err());
+        assert!(import_file_to_db(&pool, wrong.to_str().unwrap())
+            .await
+            .is_err());
+        assert!(import_file_to_db(&pool, "/findes/ikke.vtt").await.is_err());
+        let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM meetings")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(n, 0);
     }
 
     #[test]

@@ -72,6 +72,10 @@ pub fn parse_subtitles(content: &str) -> Result<ParsedSubtitles, SubtitleError> 
     let mut cues = Vec::new();
     let mut skipped = 0usize;
     let mut i = if is_vtt { 1 } else { 0 };
+    // Header lines right after `WEBVTT` (`Kind: captions`, `Language: da`).
+    while is_vtt && i < lines.len() && !lines[i].trim().is_empty() && !lines[i].contains("-->") {
+        i += 1;
+    }
 
     while i < lines.len() {
         if lines[i].trim().is_empty() {
@@ -200,14 +204,7 @@ fn split_voices(raw: &str) -> Vec<(Option<String>, String)> {
     while let Some(lt) = rest.find('<') {
         buf.push_str(&rest[..lt]);
         let after = &rest[lt + 1..];
-        let tag_like = after
-            .chars()
-            .next()
-            .is_some_and(|c| c.is_alphanumeric() || c == '/');
-        match after
-            .find('>')
-            .filter(|gt| tag_like && !after[..*gt].contains('<'))
-        {
+        match after.find('>').filter(|gt| looks_like_tag(&after[..*gt])) {
             Some(gt) => {
                 let tag = &after[..gt];
                 if let Some(name) = voice_name(tag) {
@@ -233,6 +230,21 @@ fn split_voices(raw: &str) -> Vec<(Option<String>, String)> {
     buf.push_str(rest);
     flush(&speaker, &mut buf, &mut pieces);
     pieces
+}
+
+/// A WebVTT tag starts with a letter or `/` (`v`, `c`, `i`, `/v`) or is a
+/// timestamp tag (`00:00:01.000`). Text such as `3 <5 og 7> x` is not a tag.
+fn looks_like_tag(inner: &str) -> bool {
+    if inner.contains('<') {
+        return false;
+    }
+    match inner.chars().next() {
+        Some(c) if c.is_alphabetic() || c == '/' => true,
+        Some(c) if c.is_ascii_digit() => inner
+            .chars()
+            .all(|c| c.is_ascii_digit() || c == ':' || c == '.'),
+        _ => false,
+    }
 }
 
 /// `v Navn`, `v.klasse Navn` -> `Navn`. Returns None for other tags.
@@ -442,6 +454,21 @@ mod tests {
         let p = parse_subtitles(srt).unwrap();
         assert_eq!(p.cues.len(), 1);
         assert_eq!(p.cues[0].text, "3 < 5 og fed");
+    }
+
+    #[test]
+    fn header_lines_are_not_counted_as_skipped() {
+        let vtt = "WEBVTT\nKind: captions\nLanguage: da\n\n00:00:01.000 --> 00:00:02.000\nHej\n";
+        let p = parse_subtitles(vtt).unwrap();
+        assert_eq!(p.skipped_blocks, 0);
+        assert_eq!(p.cues.len(), 1);
+    }
+
+    #[test]
+    fn angle_brackets_in_speech_are_kept_but_real_tags_removed() {
+        let srt = "1\n00:00:01,000 --> 00:00:02,000\n3 <5 og 7> x <i>fed</i> <00:00:01.500>slut\n";
+        let p = parse_subtitles(srt).unwrap();
+        assert_eq!(p.cues[0].text, "3 <5 og 7> x fed slut");
     }
 
     #[test]
