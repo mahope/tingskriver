@@ -17,4 +17,5 @@ mod token;
 pub mod order;
 pub mod paste;
 pub mod residency;
+pub mod startup;
 pub mod timing;

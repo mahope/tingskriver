@@ -21,7 +21,9 @@ use super::logic::gesture::{Gesture, GestureAction, GestureConfig, GestureEvent}
 use super::logic::hotkey::ChordSignal;
 use super::logic::order::Order;
 use super::logic::spoken::{self, FieldId, LastInsertion, VoiceCommand};
+use super::logic::startup::{self, Startup};
 use super::logic::timing::{self, Steps};
+use super::sound::{self, Sound};
 use super::logic::target_check::{Focus, Refusal};
 use super::overlay::{Overlay, OverlayState};
 use super::modes::{Context, Mode};
@@ -79,6 +81,28 @@ pub struct Service {
     trigger: Mutex<Option<std::sync::mpsc::Sender<(ChordSignal, Instant, Option<String>)>>>,
 }
 
+/// Open or close the kept-open microphone to match the settings. Opening the
+/// device can take a while, so it happens on its own thread.
+fn apply_capture(settings: &DictationSettings) {
+    #[cfg(windows)]
+    {
+        let options = settings.capture_options();
+        let keep = settings.enabled && options.keep_open;
+        let spawned = std::thread::Builder::new().name("dictation-capture-setup".into()).spawn(move || {
+            if keep {
+                super::capture::warm_up(&options);
+            } else {
+                super::capture::release();
+            }
+        });
+        if let Err(e) = spawned {
+            log::warn!("Dictation microphone setup thread not started: {e}");
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = settings;
+}
+
 fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
@@ -132,6 +156,7 @@ async fn init_inner(app: HostHandle, overlay: Arc<dyn Overlay>) -> Result<(), St
         .map_err(|_| "dictation already initialised".to_string())?;
 
     service.apply_shortcut();
+    apply_capture(&service.settings());
     if let Some(e) = spoken_error { service.set_error(Some(e)); }
     // Recordings must be gone 24 h after they were made, also when no new
     // dictation happens in between, so check every ten minutes.
@@ -188,6 +213,9 @@ impl Service {
         }
         if previous.enabled != settings.enabled || previous.shortcut != settings.shortcut || previous.modes != settings.modes {
             self.apply_shortcut();
+        }
+        if previous.capture_options() != settings.capture_options() || previous.enabled != settings.enabled {
+            apply_capture(&settings);
         }
         Ok(settings)
     }
@@ -397,8 +425,11 @@ struct Session {
     start_focus: Option<Focus>,
     settings: DictationSettings,
     mode: Option<Mode>,
-    /// Shortcut pressed until the microphone was open.
-    start_ms: u64,
+    /// When the shortcut was pressed.
+    pressed: Instant,
+    /// Shortcut pressed until the first audio arrived; `None` until the
+    /// recording is ready.
+    start_ms: Option<u64>,
 }
 
 fn gesture_event(signal: ChordSignal) -> GestureEvent {
@@ -486,10 +517,9 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant, Optio
                     // Load the local model while the user speaks, so neither
                     // the local engine nor the fallback pays for a load.
                     super::warm::prewarm_parakeet();
-                    match Recorder::start() {
+                    match Recorder::start(&settings.capture_options()) {
                         Ok(recorder) => {
                             DICTATING.store(true, Ordering::Relaxed);
-                            let start_ms = at.elapsed().as_millis() as u64;
                             session = Some(Session {
                                 recorder,
                                 target_app,
@@ -497,7 +527,8 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant, Optio
                                 start_focus,
                                 settings,
                                 mode,
-                                start_ms,
+                                pressed: at,
+                                start_ms: None,
                             });
                         }
                         Err(e) => {
@@ -519,6 +550,9 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant, Optio
                     if let Some(s) = session.take() {
                         let samples = s.recorder.stop();
                         DICTATING.store(false, Ordering::Relaxed);
+                        if startup::should_play_sound(s.settings.sound_enabled, s.settings.sound_volume, s.start_ms.is_some()) {
+                            sound::play(Sound::Stop, s.settings.sound_volume);
+                        }
                         service.overlay.set(OverlayState::Processing);
                         let service = service.clone();
                         let target_app = s.target_app;
@@ -536,11 +570,37 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant, Optio
             }
         }
 
-        if let Some(s) = &session {
-            service.overlay.set(OverlayState::Recording {
-                level: s.recorder.level(),
-                locked: gesture.is_locked(),
-            });
+        let mut silent = false;
+        if let Some(s) = session.as_mut() {
+            if s.start_ms.is_none() {
+                match startup::startup(s.recorder.age(), s.recorder.first_audio_at().is_some()) {
+                    Startup::Ready => {
+                        let first = s.recorder.first_audio_at().unwrap_or_else(Instant::now);
+                        s.start_ms = Some(first.saturating_duration_since(s.pressed).as_millis() as u64);
+                        if startup::should_play_sound(s.settings.sound_enabled, s.settings.sound_volume, true) {
+                            sound::play(Sound::Start, s.settings.sound_volume);
+                        }
+                    }
+                    Startup::NoSound => silent = true,
+                    Startup::Waiting => {}
+                }
+            }
+            // The pill only shows "recording" once audio arrives.
+            if s.start_ms.is_some() {
+                service.overlay.set(OverlayState::Recording {
+                    level: s.recorder.level(),
+                    locked: gesture.is_locked(),
+                });
+            }
+        }
+        if silent {
+            // No sound at all: nothing was recorded, so end it with a message.
+            session = None;
+            DICTATING.store(false, Ordering::Relaxed);
+            log::warn!("Dictation microphone delivered no audio within {} ms", startup::NO_SOUND_AFTER.as_millis());
+            service.set_error(Some(startup::NO_SOUND_MESSAGE.to_string()));
+            gesture.reset();
+            flash(&service.overlay, OverlayState::Refused(startup::NO_SOUND_PILL));
         }
     }
 
@@ -801,7 +861,7 @@ impl Service {
         start_focus: Option<Focus>,
         selection: (DictationSettings, Option<Mode>),
         released_at: Instant,
-        start_ms: u64,
+        start_ms: Option<u64>,
         turn: &Turn,
     ) {
         let (base_settings, mut mode) = selection;
@@ -928,7 +988,7 @@ impl Service {
         };
         let latency_ms = inserted_at.saturating_duration_since(released_at).as_millis() as i64;
         let steps = Steps {
-            start_ms: Some(start_ms),
+            start_ms,
             audio_ms,
             capture_ms,
             transcribe_ms,
@@ -937,7 +997,8 @@ impl Service {
             total_ms: latency_ms as u64,
         };
         log::info!(
-            "Dictation steps: start {start_ms} ms, capture {capture_ms} ms, transcribe {transcribe_ms} ms, polish {} ms, insert {} ms",
+            "Dictation steps: start {} ms, capture {capture_ms} ms, transcribe {transcribe_ms} ms, polish {} ms, insert {} ms",
+            start_ms.map(|ms| ms.to_string()).unwrap_or_else(|| "-".to_string()),
             polish_ms.map(|ms| ms.to_string()).unwrap_or_else(|| "-".to_string()),
             steps.insert_ms,
         );

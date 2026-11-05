@@ -14,6 +14,7 @@ pub mod overlay;
 pub mod secrets;
 pub mod service;
 pub mod settings;
+pub mod sound;
 pub mod store;
 pub mod syv;
 pub mod text_hook;
