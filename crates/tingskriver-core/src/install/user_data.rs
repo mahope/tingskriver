@@ -16,6 +16,7 @@ pub const REMOVE_ON_UNINSTALL_MARKER: &str = "slet-data-ved-afinstallation";
 pub const CREDENTIAL_PREFIX: &str = "Tingskriver/";
 
 /// Remember whether uninstalling should delete the user's data.
+#[allow(clippy::disallowed_methods)]
 pub fn set_remove_on_uninstall(app_data_dir: &Path, remove: bool) -> std::io::Result<()> {
     let marker = app_data_dir.join(REMOVE_ON_UNINSTALL_MARKER);
     if remove {
@@ -53,6 +54,7 @@ pub fn removal_targets(app_data_dir: Option<PathBuf>, log_dir: Option<PathBuf>) 
 
 /// Delete the user's data if they asked for it. Returns what happened, for
 /// the log.
+#[allow(clippy::disallowed_methods)] // Synchronous disk worker.
 pub fn remove_if_requested() -> Vec<String> {
     let Some(app_data_dir) = crate::paths::app_data_dir() else {
         return vec!["no data folder; nothing to remove".to_string()];
@@ -86,6 +88,7 @@ fn remove_credentials() -> Vec<String> {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
     use crate::paths::APP_ID;

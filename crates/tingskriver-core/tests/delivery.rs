@@ -21,6 +21,103 @@ fn bundle() -> Bundle {
     }
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn credentials_run_off_the_async_executor() {
+    use std::sync::Mutex;
+    use tingskriver_core::providers::secrets::{ApiKey, KeyStore};
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+    };
+
+    struct ThreadCheckedKeys {
+        inner: MemoryKeyStore,
+        calls: Mutex<Vec<(&'static str, std::thread::ThreadId)>>,
+    }
+    impl KeyStore for ThreadCheckedKeys {
+        fn get(&self, target: &str) -> Result<Option<ApiKey>, String> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(("get", std::thread::current().id()));
+            self.inner.get(target)
+        }
+        fn set(&self, target: &str, key: &ApiKey) -> Result<(), String> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(("set", std::thread::current().id()));
+            self.inner.set(target, key)
+        }
+        fn delete(&self, target: &str) -> Result<(), String> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(("delete", std::thread::current().id()));
+            self.inner.delete(target)
+        }
+    }
+
+    let executor = std::thread::current().id();
+    let keys = Arc::new(ThreadCheckedKeys {
+        inner: MemoryKeyStore::default(),
+        calls: Mutex::new(Vec::new()),
+    });
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let service = Delivery::open(&dir.path().join("queue"), keys.clone())
+        .await
+        .unwrap();
+    service
+        .set_policy(Policy {
+            local_only: false,
+            private: false,
+        })
+        .await
+        .unwrap();
+    let target = Target {
+        id: "hook".into(),
+        name: "Webhook".into(),
+        destination: Destination::Webhook {
+            format: WebhookFormat::Json,
+        },
+    };
+    service
+        .save_target(
+            target.clone(),
+            Some(format!(
+                "http://{}/synthetic",
+                listener.local_addr().unwrap()
+            )),
+        )
+        .await
+        .unwrap();
+    service.save_target(target, None).await.unwrap();
+    service.test_target("hook").await.unwrap();
+    let receive = async {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut request = vec![0; 65536];
+        stream.read(&mut request).await.unwrap();
+        stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+    };
+    let (sent, _) = tokio::join!(service.run_due(), receive);
+    sent.unwrap();
+    assert_eq!(service.jobs().await.unwrap()[0].status, "completed");
+    service.delete_target("hook").await.unwrap();
+    let calls = keys.calls.lock().unwrap();
+    assert_eq!(
+        calls
+            .iter()
+            .map(|(operation, _)| *operation)
+            .collect::<Vec<_>>(),
+        ["set", "get", "get", "delete"]
+    );
+    assert!(calls.iter().all(|(_, thread)| *thread != executor));
+}
+
 #[test]
 fn channel_limits_count_utf16_and_do_not_split_unicode() {
     let mut b = bundle();

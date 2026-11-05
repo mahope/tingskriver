@@ -191,6 +191,7 @@ impl DictationSettings {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod mode_tests {
     use super::*;
 
@@ -222,48 +223,69 @@ mod mode_tests {
 
 /// The spoken signs table: built-in plus `dictation_spoken.json` in `dir`.
 /// A broken file gives the built-in table and the error to show.
-pub fn load_spoken_table(dir: &Path) -> (SpokenTable, Option<String>) {
-    let path = dir.join(SPOKEN_FILE);
-    match std::fs::read_to_string(&path) {
-        Ok(json) => match SpokenTable::with_user(&json) {
-            Ok(table) => (table, None),
-            Err(e) => (
-                SpokenTable::builtin(),
-                Some(format!("{e} ({})", path.display())),
-            ),
-        },
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (SpokenTable::builtin(), None),
-        Err(e) => (
+pub async fn load_spoken_table(dir: &Path) -> (SpokenTable, Option<String>) {
+    let dir = dir.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        #[allow(clippy::disallowed_methods)]
+        fn blocking(dir: &Path) -> (SpokenTable, Option<String>) {
+            let path = dir.join(SPOKEN_FILE);
+            match std::fs::read_to_string(&path) {
+                Ok(json) => match SpokenTable::with_user(&json) {
+                    Ok(table) => (table, None),
+                    Err(e) => (
+                        SpokenTable::builtin(),
+                        Some(format!("{e} ({})", path.display())),
+                    ),
+                },
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    (SpokenTable::builtin(), None)
+                }
+                Err(e) => (
+                    SpokenTable::builtin(),
+                    Some(format!("{} kan ikke læses: {e}", path.display())),
+                ),
+            }
+        }
+        blocking(&dir)
+    })
+    .await
+    .unwrap_or_else(|e| {
+        (
             SpokenTable::builtin(),
-            Some(format!("{} kan ikke læses: {e}", path.display())),
-        ),
-    }
+            Some(format!("Could not load spoken rules: {e}")),
+        )
+    })
 }
 
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod spoken_tests {
     use super::*;
     #[test]
     fn spoken_file_is_optional_and_errors_are_reported() {
         let dir = tempfile::tempdir().unwrap();
-        let (table, error) = load_spoken_table(dir.path());
+        let (table, error) =
+            crate::audio::common::assert_uses_blocking_pool(load_spoken_table(dir.path()));
         assert_eq!((table, error), (SpokenTable::builtin(), None));
 
         std::fs::write(dir.path().join(SPOKEN_FILE), "{ ikke json").unwrap();
-        let (table, error) = load_spoken_table(dir.path());
+        let (table, error) =
+            crate::audio::common::assert_uses_blocking_pool(load_spoken_table(dir.path()));
         assert_eq!(table, SpokenTable::builtin());
         assert!(error.is_some());
 
         let json = r#"{"version":1,"entries":[{"phrases":["pil"],"action":{"type":"symbol","text":"→","spaceBefore":true,"spaceAfter":true}}]}"#;
         std::fs::write(dir.path().join(SPOKEN_FILE), json).unwrap();
-        let (table, error) = load_spoken_table(dir.path());
+        let (table, error) =
+            crate::audio::common::assert_uses_blocking_pool(load_spoken_table(dir.path()));
         assert!(error.is_none());
         assert!(table.action_for("pil").is_some());
     }
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod text_settings_tests {
     use super::*;
 

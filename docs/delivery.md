@@ -123,5 +123,10 @@ out of band. Never paste a private key into settings or logs.
    connection reaches the SSH/webhook listener. Turn both off and verify an
    explicitly approved synthetic meeting arrives in full.
 
+Folder exports and SSH bundle staging run on blocking workers, including
+temporary-file cleanup. Queue directory creation uses Tokio file I/O, and
+credential access runs on blocking workers. Webhooks and the SFTP process keep
+their asynchronous timeouts.
+
 Automated tests cover persistence, policies, real loopback webhook traffic,
 schema and limits. The real restricted-server acceptance requires Mads' target.

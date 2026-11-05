@@ -121,6 +121,7 @@ impl Client {
 }
 
 #[cfg(all(test, unix))]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;

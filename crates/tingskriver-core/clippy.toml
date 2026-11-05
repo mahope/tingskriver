@@ -1,0 +1,27 @@
+disallowed-types = [
+    { path = "reqwest::blocking::Response", reason = "Core must use asynchronous HTTP with a deadline" },
+    { path = "reqwest::blocking::Client", reason = "Core must use asynchronous HTTP with a deadline" },
+    { path = "reqwest::blocking::ClientBuilder", reason = "Core must use asynchronous HTTP with a deadline" },
+    { path = "reqwest::blocking::RequestBuilder", reason = "Core must use asynchronous HTTP with a deadline" },
+]
+disallowed-methods = [
+    { path = "reqwest::blocking::get", reason = "Use the bounded async core HTTP client" },
+    { path = "reqwest::blocking::Client::new", reason = "Use the bounded async core HTTP client" },
+    { path = "reqwest::blocking::Client::builder", reason = "Use the bounded async core HTTP client" },
+    { path = "std::fs::read", reason = "Async modules use tokio::fs or a spawn_blocking worker" },
+    { path = "std::fs::read_to_string", reason = "Async modules use tokio::fs or a spawn_blocking worker" },
+    { path = "std::fs::write", reason = "Async modules use tokio::fs or a spawn_blocking worker" },
+    { path = "std::fs::read_dir", reason = "Async modules use tokio::fs or a spawn_blocking worker" },
+    { path = "std::fs::metadata", reason = "Async modules use tokio::fs or a spawn_blocking worker" },
+    { path = "std::fs::create_dir_all", reason = "Async modules use tokio::fs or a spawn_blocking worker" },
+    { path = "std::fs::create_dir", reason = "Async modules use tokio::fs or a spawn_blocking worker" },
+    { path = "std::fs::remove_dir_all", reason = "Async modules use tokio::fs or a spawn_blocking worker" },
+    { path = "std::fs::remove_dir", reason = "Async modules use tokio::fs or a spawn_blocking worker" },
+    { path = "std::fs::canonicalize", reason = "Async modules use tokio::fs or a spawn_blocking worker" },
+    { path = "std::fs::remove_file", reason = "Async modules use tokio::fs or a spawn_blocking worker" },
+    { path = "std::fs::rename", reason = "Async modules use tokio::fs or a spawn_blocking worker" },
+    { path = "std::fs::copy", reason = "Async modules use tokio::fs or a spawn_blocking worker" },
+    { path = "std::fs::File::open", reason = "Async modules use tokio::fs or a spawn_blocking worker" },
+    { path = "std::fs::File::create", reason = "Async modules use tokio::fs or a spawn_blocking worker" },
+    { path = "std::fs::OpenOptions::open", reason = "Async modules use tokio::fs or a spawn_blocking worker" },
+]

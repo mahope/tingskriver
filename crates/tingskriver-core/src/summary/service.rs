@@ -14,7 +14,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
@@ -290,7 +290,13 @@ impl SummaryService {
             return None;
         };
 
-        match read_detected_summary_language_from_metadata(Path::new(&folder_path)) {
+        match tokio::task::spawn_blocking(move || {
+            read_detected_summary_language_from_metadata(std::path::Path::new(&folder_path))
+        })
+        .await
+        .map_err(anyhow::Error::from)
+        .and_then(|result| result)
+        {
             Ok(language) => language,
             Err(e) => {
                 warn!(
@@ -545,7 +551,7 @@ impl SummaryService {
             }),
         };
 
-        let client = reqwest::Client::new();
+        let client = crate::http::client();
         let result = generate_meeting_summary(
             &client,
             &provider,

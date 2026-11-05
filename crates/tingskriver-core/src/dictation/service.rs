@@ -99,7 +99,7 @@ async fn init_inner(app: HostHandle, overlay: Arc<dyn Overlay>) -> Result<(), St
     let store = Store::open(&app_data_dir.join("dictation.sqlite")).await?;
     let settings = store.settings().await?;
     let mut rules = store.rules().await?;
-    let (spoken, spoken_error) = settings::load_spoken_table(&app_data_dir);
+    let (spoken, spoken_error) = settings::load_spoken_table(&app_data_dir).await;
     rules.spoken = spoken;
     let timings = Timings::open(store.pool()).await?;
     super::warm::set_policy(settings.residency_policy());
@@ -111,7 +111,7 @@ async fn init_inner(app: HostHandle, overlay: Arc<dyn Overlay>) -> Result<(), St
         latency_warned: Mutex::new(BTreeSet::new()),
         settings: RwLock::new(settings),
         rules: RwLock::new(rules),
-        http: reqwest::Client::new(),
+        http: crate::http::client(),
         audio_dir: app_data_dir.join("dictation_audio"),
         app_data_dir,
         shortcut_active: AtomicBool::new(false),
@@ -193,7 +193,7 @@ impl Service {
 
     pub async fn reload_rules(&self) -> Result<(), String> {
         let mut rules = self.store.rules().await?;
-        let (spoken, spoken_error) = settings::load_spoken_table(&self.app_data_dir);
+        let (spoken, spoken_error) = settings::load_spoken_table(&self.app_data_dir).await;
         rules.spoken = spoken;
         if let Some(e) = spoken_error {
             log::warn!("Dictation: {e}");
@@ -256,6 +256,7 @@ impl Service {
         self.reload_rules().await
     }
 
+    #[allow(clippy::disallowed_methods)]
     pub fn delete_files(&self, paths: Vec<String>) {
         for path in paths {
             let path = PathBuf::from(path);
@@ -1002,8 +1003,18 @@ impl Service {
         let created_at = now_ms();
         let audio_path = if settings.keep_audio {
             let path = self.audio_dir.join(format!("{created_at}.wav"));
-            let written = std::fs::create_dir_all(&self.audio_dir)
-                .and_then(|_| std::fs::write(&path, audio::wav_bytes(samples, audio::TARGET_RATE)));
+            let audio_dir = self.audio_dir.clone();
+            let output = path.clone();
+            let samples = samples.to_vec();
+            #[allow(clippy::disallowed_methods)]
+            // File encoding and writes run on the blocking pool.
+            let written = tokio::task::spawn_blocking(move || {
+                std::fs::create_dir_all(audio_dir)?;
+                std::fs::write(output, audio::wav_bytes(&samples, audio::TARGET_RATE))
+            })
+            .await
+            .map_err(std::io::Error::other)
+            .and_then(|result| result);
             match written {
                 Ok(()) => Some(path.to_string_lossy().into_owned()),
                 Err(e) => {
@@ -1096,6 +1107,7 @@ fn cleanup_options<'a>(
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
 

@@ -29,7 +29,9 @@ impl Engine for FixtureEngine {
     fn transcribe<'a>(&'a self, clip: &'a Clip, _root: &'a Path) -> Transcription<'a> {
         Box::pin(async move {
             let path = relative_file(&self.hypotheses, &format!("{}.txt", clip.id))?;
-            std::fs::read_to_string(path).context("Cannot read fixture hypothesis")
+            tokio::fs::read_to_string(path)
+                .await
+                .context("Cannot read fixture hypothesis")
         })
     }
 }
@@ -95,6 +97,7 @@ pub fn read_pcm16(path: &Path) -> Result<Vec<f32>> {
     read_pcm16_with_limit(path, 8)
 }
 
+#[allow(clippy::disallowed_methods)]
 pub(crate) fn read_pcm16_with_limit(path: &Path, seconds: u64) -> Result<Vec<f32>> {
     let max_data = seconds * 32_000;
     if std::fs::metadata(path).context("Cannot inspect WAV")?.len() > max_data + 44_000 {

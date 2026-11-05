@@ -31,7 +31,9 @@ fn credential(id: &str) -> String {
 
 impl Delivery {
     pub async fn open(dir: &Path, keys: Arc<dyn KeyStore>) -> Result<Self, Error> {
-        std::fs::create_dir_all(dir).map_err(|_| Error::Storage)?;
+        tokio::fs::create_dir_all(dir)
+            .await
+            .map_err(|_| Error::Storage)?;
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
             .connect_with(
@@ -119,15 +121,13 @@ impl Delivery {
             if let Some(url) = webhook_url {
                 super::transport::validate_url(&url)?;
                 let key = ApiKey::new(url).ok_or(Error::Invalid)?;
-                self.keys
-                    .set(&credential(&target.id), &key)
+                let keys = self.keys.clone();
+                let name = credential(&target.id);
+                tokio::task::spawn_blocking(move || keys.set(&name, &key))
+                    .await
+                    .map_err(|_| Error::Credential)?
                     .map_err(|_| Error::Credential)?;
-            } else if self
-                .keys
-                .get(&credential(&target.id))
-                .map_err(|_| Error::Credential)?
-                .is_none()
-            {
+            } else if self.webhook_key(&target.id).await?.is_none() {
                 return Err(Error::Credential);
             }
         }
@@ -145,10 +145,22 @@ impl Delivery {
             .execute(&self.pool)
             .await
             .map_err(|_| Error::Storage)?;
-        self.keys
-            .delete(&credential(id))
+        let keys = self.keys.clone();
+        let name = credential(id);
+        tokio::task::spawn_blocking(move || keys.delete(&name))
+            .await
+            .map_err(|_| Error::Credential)?
             .map_err(|_| Error::Credential)?;
         Ok(())
+    }
+
+    async fn webhook_key(&self, id: &str) -> Result<Option<ApiKey>, Error> {
+        let keys = self.keys.clone();
+        let name = credential(id);
+        tokio::task::spawn_blocking(move || keys.get(&name))
+            .await
+            .map_err(|_| Error::Credential)?
+            .map_err(|_| Error::Credential)
     }
 
     /// An immutable approved snapshot. A private meeting can never be queued.
@@ -236,9 +248,8 @@ impl Delivery {
                 target.validate()?;
                 let url = if matches!(target.destination, Destination::Webhook { .. }) {
                     Some(
-                        self.keys
-                            .get(&credential(&target_id))
-                            .map_err(|_| Error::Credential)?
+                        self.webhook_key(&target_id)
+                            .await?
                             .ok_or(Error::Credential)?,
                     )
                 } else {

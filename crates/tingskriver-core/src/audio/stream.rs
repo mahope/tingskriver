@@ -612,6 +612,7 @@ impl Drop for AudioStreamManager {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod worker_tests {
     use super::super::{
         callback_queue::CaptureStamp,

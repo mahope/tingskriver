@@ -139,6 +139,7 @@ pub async fn start_retranscription(
 
 /// Find audio file in meeting folder
 /// Tries common names first, then scans for any file with an audio extension
+#[allow(clippy::disallowed_methods)]
 fn find_audio_file(folder: &Path) -> Result<PathBuf> {
     let candidates = [
         "audio.mp4", "audio.m4a", "audio.wav", "audio.mp3",
@@ -375,7 +376,9 @@ async fn run_retranscription(
         }
 
         // Transcribe this segment
-        let cached = checkpoint.load(i, segment.start_timestamp_ms, segment.end_timestamp_ms)?;
+        let cached = checkpoint
+            .load_async(i, segment.start_timestamp_ms, segment.end_timestamp_ms)
+            .await?;
         let (text, conf, words) = if let Some(result) = cached {
             result
         } else {
@@ -398,7 +401,16 @@ async fn run_retranscription(
                     .map_err(|e| anyhow!("Whisper transcription failed on segment {}: {}", i, e))?;
                 (words.iter().map(|w| w.text.as_str()).collect::<Vec<_>>().join(" "), 0.9f32, words)
             };
-            checkpoint.save(i, segment.start_timestamp_ms, segment.end_timestamp_ms, &result.0, result.1, &result.2)?;
+            checkpoint
+                .save_async(
+                    i,
+                    segment.start_timestamp_ms,
+                    segment.end_timestamp_ms,
+                    &result.0,
+                    result.1,
+                    &result.2,
+                )
+                .await?;
             result
         };
 
@@ -483,7 +495,8 @@ async fn run_retranscription(
     // Write updated transcripts.json and metadata.json to the meeting folder
     emit_progress(&app, &meeting_id, "saving", 90, "Writing transcript files...");
 
-    if let Err(e) = write_transcripts_json(&folder_path, &segments) {
+    let segments_count = segments.len();
+    if let Err(e) = write_transcripts_json(&folder_path, segments).await {
         warn!("Failed to write transcripts.json: {}", e);
     }
 
@@ -499,11 +512,16 @@ async fn run_retranscription(
         &meeting_id,
         duration_seconds,
         &audio_filename,
-    ) {
+    )
+    .await
+    {
         warn!("Failed to update metadata.json: {}", e);
     }
 
-    if checkpoint.finish().is_err() {
+    if tokio::task::spawn_blocking(move || checkpoint.finish())
+        .await?
+        .is_err()
+    {
         warn!("Could not clean up completed transcription checkpoints");
     }
 
@@ -511,7 +529,7 @@ async fn run_retranscription(
 
     Ok(RetranscriptionResult {
         meeting_id,
-        segments_count: segments.len(),
+        segments_count,
         duration_seconds,
         language,
     })
@@ -740,49 +758,70 @@ async fn get_configured_parakeet_model(app: &HostHandle) -> Result<String> {
 }
 
 /// Write or update metadata.json for retranscription (preserves existing fields, adds retranscribed_at)
-fn write_retranscription_metadata(
+async fn write_retranscription_metadata(
     folder: &Path,
     meeting_id: &str,
     duration_seconds: f64,
     audio_filename: &str,
 ) -> Result<()> {
-    let metadata_path = folder.join("metadata.json");
-    let temp_path = folder.join(".metadata.json.tmp");
-    let now = chrono::Utc::now().to_rfc3339();
+    let folder = folder.to_path_buf();
+    let meeting_id = meeting_id.to_owned();
+    let audio_filename = audio_filename.to_owned();
+    tokio::task::spawn_blocking(move || {
+        #[allow(clippy::disallowed_methods)]
+        fn blocking(
+            folder: &Path,
+            meeting_id: &str,
+            duration_seconds: f64,
+            audio_filename: &str,
+        ) -> Result<()> {
+            let metadata_path = folder.join("metadata.json");
+            let temp_path = folder.join(".metadata.json.tmp");
+            let now = chrono::Utc::now().to_rfc3339();
 
-    // Try to read existing metadata and update it
-    let json = if metadata_path.exists() {
-        let existing = std::fs::read_to_string(&metadata_path)?;
-        let mut value: serde_json::Value = serde_json::from_str(&existing)?;
-        if let Some(obj) = value.as_object_mut() {
-            obj.insert("duration_seconds".to_string(), serde_json::json!(duration_seconds));
-            obj.insert("retranscribed_at".to_string(), serde_json::json!(now));
-            obj.insert("status".to_string(), serde_json::json!("completed"));
-            obj.insert("transcript_file".to_string(), serde_json::json!("transcripts.json"));
-            obj.remove("detected_summary_language");
+            // Try to read existing metadata and update it
+            let json = if metadata_path.exists() {
+                let existing = std::fs::read_to_string(&metadata_path)?;
+                let mut value: serde_json::Value = serde_json::from_str(&existing)?;
+                if let Some(obj) = value.as_object_mut() {
+                    obj.insert(
+                        "duration_seconds".to_string(),
+                        serde_json::json!(duration_seconds),
+                    );
+                    obj.insert("retranscribed_at".to_string(), serde_json::json!(now));
+                    obj.insert("status".to_string(), serde_json::json!("completed"));
+                    obj.insert(
+                        "transcript_file".to_string(),
+                        serde_json::json!("transcripts.json"),
+                    );
+                    obj.remove("detected_summary_language");
+                }
+                value
+            } else {
+                serde_json::json!({
+                    "version": "1.0",
+                    "meeting_id": meeting_id,
+                    "created_at": now,
+                    "completed_at": now,
+                    "retranscribed_at": now,
+                    "duration_seconds": duration_seconds,
+                    "audio_file": audio_filename,
+                    "transcript_file": "transcripts.json",
+                    "status": "completed",
+                    "source": "retranscription"
+                })
+            };
+
+            let json_string = serde_json::to_string_pretty(&json)?;
+            std::fs::write(&temp_path, &json_string)?;
+            std::fs::rename(&temp_path, &metadata_path)?;
+
+            info!("Wrote metadata.json to {}", metadata_path.display());
+            Ok(())
         }
-        value
-    } else {
-        serde_json::json!({
-            "version": "1.0",
-            "meeting_id": meeting_id,
-            "created_at": now,
-            "completed_at": now,
-            "retranscribed_at": now,
-            "duration_seconds": duration_seconds,
-            "audio_file": audio_filename,
-            "transcript_file": "transcripts.json",
-            "status": "completed",
-            "source": "retranscription"
-        })
-    };
-
-    let json_string = serde_json::to_string_pretty(&json)?;
-    std::fs::write(&temp_path, &json_string)?;
-    std::fs::rename(&temp_path, &metadata_path)?;
-
-    info!("Wrote metadata.json to {}", metadata_path.display());
-    Ok(())
+        blocking(&folder, &meeting_id, duration_seconds, &audio_filename)
+    })
+    .await?
 }
 
 // Tauri commands
@@ -850,6 +889,7 @@ pub async fn is_retranscription_in_progress_command() -> bool {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
 
@@ -1049,12 +1089,12 @@ mod tests {
         )
         .unwrap();
 
-        write_retranscription_metadata(
+        crate::audio::common::assert_uses_blocking_pool(write_retranscription_metadata(
             dir.path(),
             "ignored-for-existing-metadata",
             5046.4,
             "recording.m4a",
-        )
+        ))
         .unwrap();
 
         let metadata: serde_json::Value =

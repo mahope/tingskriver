@@ -293,4 +293,5 @@ impl<O: AudioOutput> Drop for Player<O> {
     }
 }
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests;

@@ -131,6 +131,7 @@ impl SidecarManager {
     }
 
     /// Resolve the path to llama-helper binary
+    #[allow(clippy::disallowed_methods)]
     fn resolve_helper_binary() -> Result<PathBuf> {
         // 1. Check environment variable (dev mode or manual override)
         if let Ok(env_path) = std::env::var("TINGSKRIVER_LLAMA_HELPER") {
@@ -777,4 +778,5 @@ mod job;
 
 #[cfg(test)]
 #[path = "sidecar_tests.rs"]
+#[allow(clippy::disallowed_methods)]
 mod tests;

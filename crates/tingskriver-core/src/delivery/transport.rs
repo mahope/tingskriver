@@ -17,6 +17,7 @@ pub(super) fn validate_url(value: &str) -> Result<(), Error> {
     Ok(())
 }
 
+#[allow(clippy::disallowed_methods)] // Only called on blocking workers.
 fn write_bundle(dir: &Path, bundle: &Bundle) -> Result<(), Error> {
     std::fs::create_dir_all(dir).map_err(|_| Error::Transport)?;
     for (name, text) in [
@@ -33,6 +34,40 @@ fn write_bundle(dir: &Path, bundle: &Bundle) -> Result<(), Error> {
     Ok(())
 }
 
+#[allow(clippy::disallowed_methods)] // Complete atomic folder export on one blocking worker.
+fn send_folder(path: &Path, bundle: &Bundle, id: &str) -> Result<(), Error> {
+    std::fs::create_dir_all(path).map_err(|_| Error::Transport)?;
+    let final_dir = path.join(id);
+    // A retry after a crash sees the same complete immutable bundle.
+    if final_dir.is_dir() {
+        return Ok(());
+    }
+    let temp = tempfile::Builder::new()
+        .prefix(".tingskriver-")
+        .tempdir_in(path)
+        .map_err(|_| Error::Transport)?;
+    write_bundle(temp.path(), bundle)?;
+    std::fs::rename(temp.path(), final_dir).map_err(|_| Error::Transport)?;
+    Ok(())
+}
+
+// TempDir removes files synchronously, including when an SSH future is cancelled.
+struct StagedBundle(Option<tempfile::TempDir>);
+
+impl StagedBundle {
+    fn path(&self) -> &Path {
+        self.0.as_ref().expect("staged bundle is live").path()
+    }
+}
+
+impl Drop for StagedBundle {
+    fn drop(&mut self) {
+        if let Some(temp) = self.0.take() {
+            tokio::task::spawn_blocking(move || drop(temp));
+        }
+    }
+}
+
 pub(super) async fn send(
     destination: &Destination,
     bundle: &Bundle,
@@ -44,19 +79,12 @@ pub(super) async fn send(
     }
     match destination {
         Destination::Folder { path } => {
-            std::fs::create_dir_all(path).map_err(|_| Error::Transport)?;
-            let final_dir = path.join(id);
-            // A retry after a crash sees the same complete immutable bundle.
-            if final_dir.is_dir() {
-                return Ok(());
-            }
-            let temp = tempfile::Builder::new()
-                .prefix(".tingskriver-")
-                .tempdir_in(path)
-                .map_err(|_| Error::Transport)?;
-            write_bundle(temp.path(), bundle)?;
-            std::fs::rename(temp.path(), final_dir).map_err(|_| Error::Transport)?;
-            Ok(())
+            let path = path.clone();
+            let bundle = bundle.clone();
+            let id = id.to_owned();
+            tokio::task::spawn_blocking(move || send_folder(&path, &bundle, &id))
+                .await
+                .map_err(|_| Error::Transport)?
         }
         Destination::Webhook { format } => {
             let url = url.ok_or(Error::Credential)?.expose();
@@ -85,8 +113,14 @@ pub(super) async fn send(
             key_path,
             remote_dir,
         } => {
-            let temp = tempfile::tempdir().map_err(|_| Error::Transport)?;
-            write_bundle(temp.path(), bundle)?;
+            let bundle = bundle.clone();
+            let temp = tokio::task::spawn_blocking(move || {
+                let temp = tempfile::tempdir().map_err(|_| Error::Transport)?;
+                write_bundle(temp.path(), &bundle)?;
+                Ok::<_, Error>(StagedBundle(Some(temp)))
+            })
+            .await
+            .map_err(|_| Error::Transport)??;
             let mut batch = String::new();
             for name in ["transcript.md", "summary.md", "notes.md", "sidecar.json"] {
                 let local = temp
