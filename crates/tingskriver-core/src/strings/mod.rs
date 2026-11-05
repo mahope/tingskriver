@@ -51,6 +51,13 @@ catalogue! {
     FIRST_MEETING = "Når du har optaget dit første møde, står det her.";
     NO_MEETINGS_YET = "Ingen møder at vise endnu";
     MEETINGS_LATER = "Mødelisten kommer hertil i en senere version. Indtil da finder du dine møder i den nuværende app.";
+    IMPORT_TRANSCRIPT = "Importér transskript";
+    IMPORT_TRANSCRIPT_HELP = "Vælg en .vtt- eller .srt-fil fra Teams, Zoom eller Meet, eller træk den hertil. Der oprettes et møde uden lyd, og referatet laves med den valgte udbyder.";
+    IMPORT_TRANSCRIPT_UNSUPPORTED = "Kun .vtt- og .srt-filer kan importeres.";
+    IMPORT_ALREADY_DONE = "Transskriptet er allerede importeret. Det eksisterende møde er åbnet.";
+    NO_AUDIO_FOR_MEETING = "Mødet har ingen lyd, kun et importeret transskript.";
+    SUMMARY_FAILED = "Referatet kunne ikke laves. Mødet og transskriptet er gemt.";
+    SUMMARY_REDO = "Lav referat igen";
     DICTATION_LATER = "Hold Ctrl+Win nede, tal, og slip. Teksten skrives der, hvor markøren står. Diktering flytter hertil i en senere version.";
     PROBE = "Prøvefelt";
     PROBE_HELP = "Brug felterne til at teste tastaturet: æøå, dødtaster (^ ¨ ~ ´ `) efterfulgt af en vokal, AltGr-tegn (@ £ $ € { [ ] } | \\) og IME-komposition.";

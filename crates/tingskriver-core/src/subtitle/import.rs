@@ -42,6 +42,8 @@ pub struct SubtitleFile {
     pub title: String,
 }
 
+/// Blocking file access: call it from `spawn_blocking`.
+#[allow(clippy::disallowed_methods)]
 pub fn read_subtitle_file(path: &Path) -> Result<SubtitleFile> {
     let ext = path
         .extension()
@@ -110,7 +112,11 @@ pub fn import_key(cues: &[Cue]) -> String {
 
 /// Meeting start = file time minus the transcript's length, so a transcript
 /// exported right after the meeting lands on the day the meeting happened.
-pub fn meeting_start(file_time: Option<DateTime<Utc>>, now: DateTime<Utc>, duration_ms: u64) -> DateTime<Utc> {
+pub fn meeting_start(
+    file_time: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
+    duration_ms: u64,
+) -> DateTime<Utc> {
     file_time.unwrap_or(now) - Duration::milliseconds(duration_ms.min(i64::MAX as u64) as i64)
 }
 
@@ -186,9 +192,12 @@ async fn find_by_key(pool: &SqlitePool, key: &str) -> Result<Option<String>> {
     )
 }
 
+/// `transcript`, `speaker`, `audio_start_time`, `audio_end_time`.
+type TranscriptRow = (String, Option<String>, Option<f64>, Option<f64>);
+
 /// The saved transcript of a meeting as prompt text, speakers included.
 pub async fn load_prompt_text(pool: &SqlitePool, meeting_id: &str) -> Result<String> {
-    let rows: Vec<(String, Option<String>, Option<f64>, Option<f64>)> = sqlx::query_as(
+    let rows: Vec<TranscriptRow> = sqlx::query_as(
         "SELECT transcript, speaker, audio_start_time, audio_end_time FROM transcripts
          WHERE meeting_id = ? ORDER BY audio_start_time ASC, rowid ASC",
     )
@@ -257,7 +266,10 @@ pub async fn import_subtitle_file(
             let _ = app.emit("subtitle-import-complete", outcome);
         }
         Err(error) => {
-            let _ = app.emit("subtitle-import-error", serde_json::json!({ "error": error }));
+            let _ = app.emit(
+                "subtitle-import-error",
+                serde_json::json!({ "error": error }),
+            );
         }
     }
     result
@@ -289,7 +301,9 @@ async fn run_import(
     let summary_error = if already_imported {
         None
     } else {
-        start_summary_for_meeting(app, state, &meeting_id).await.err()
+        start_summary_for_meeting(app, state, &meeting_id)
+            .await
+            .err()
     };
 
     Ok(SubtitleImportOutcome {
@@ -337,7 +351,10 @@ mod tests {
                 .await
                 .unwrap();
         // 9 s of transcript: the meeting started at 10:00:00.
-        assert_eq!(created, Utc.with_ymd_and_hms(2026, 11, 3, 10, 0, 0).unwrap());
+        assert_eq!(
+            created,
+            Utc.with_ymd_and_hms(2026, 11, 3, 10, 0, 0).unwrap()
+        );
         assert!(folder.is_none());
 
         let rows: Vec<(String, Option<String>, f64, f64)> = sqlx::query_as(
@@ -349,7 +366,10 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0], ("Goddag.".into(), Some("Anna Testesen".into()), 1.0, 4.0));
+        assert_eq!(
+            rows[0],
+            ("Goddag.".into(), Some("Anna Testesen".into()), 1.0, 4.0)
+        );
         assert_eq!(rows[1].1.as_deref(), Some("Bo Eksempel"));
 
         assert_eq!(
@@ -400,7 +420,9 @@ mod tests {
     async fn failed_summary_leaves_meeting_and_transcript() {
         let pool = pool().await;
         let cues = parse_subtitles(VTT).unwrap().cues;
-        let (id, _) = save_imported_meeting(&pool, "A", &cues, None).await.unwrap();
+        let (id, _) = save_imported_meeting(&pool, "A", &cues, None)
+            .await
+            .unwrap();
         // The summary process fails (as `fail_and_cleanup` records it).
         sqlx::query(
             "INSERT INTO summary_processes (meeting_id, status, created_at, updated_at, error)
@@ -419,7 +441,10 @@ mod tests {
             .unwrap();
         assert_eq!(t, 2);
         // "Lav referat igen" reads the same transcript back.
-        assert!(load_prompt_text(&pool, &id).await.unwrap().contains("Goddag."));
+        assert!(load_prompt_text(&pool, &id)
+            .await
+            .unwrap()
+            .contains("Goddag."));
     }
 
     #[test]
