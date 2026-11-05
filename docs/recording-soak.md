@@ -62,7 +62,7 @@ survival. Ordinary CI continues to run the existing focused audio unit tests.
 `finish` (scan, verify every sample, encode `microphone.m4a`, `system.m4a` and
 `audio.mp4`, decode them again) is linear in the recording length. The three
 AAC encodes dominate, and FFmpeg's encoder uses one core each. They run side
-by side since #TBD; before, one after another. Measured on a 16-core Linux
+by side now; before, one after another. Measured on a 16-core Linux
 machine with other jobs running (single runs, so +-15 %):
 
 | Recording | Before (serial) | After (parallel) |
