@@ -7,7 +7,7 @@ use sqlx::SqlitePool;
 
 use super::embedder::StubEmbedder;
 use super::service::*;
-use super::store::{self, MemoryBackend, SecretBackend};
+use super::store::{self, MemoryBackend};
 use super::*;
 
 struct TestClock(Mutex<DateTime<Utc>>);

@@ -455,6 +455,11 @@ impl Shell {
                 cx,
             ))
             .child(setting_group(
+                strings::VOICEPRINT_TITLE,
+                voiceprint_lines(),
+                cx,
+            ))
+            .child(setting_group(
                 strings::DATA,
                 vec![strings::data_dir(&data_dir), strings::database(database)],
                 cx,
@@ -638,6 +643,20 @@ fn muted(text: &str, cx: &App) -> impl IntoElement {
         .text_size(typography::SM)
         .text_color(palette(cx).muted_foreground)
         .child(text.to_string())
+}
+
+/// The voiceprint explanation, Danish first and English below on the same
+/// page. Voiceprints are off by default and there is no switch yet, so the
+/// status line says off.
+fn voiceprint_lines() -> Vec<String> {
+    use tingskriver_core::voiceprint::texts;
+    let paragraphs = texts::explanation();
+    let mut lines = vec![strings::VOICEPRINT_STATUS_OFF.to_string()];
+    lines.extend(paragraphs.iter().map(|p| p.da.to_string()));
+    lines.push(texts::EN_TITLE.to_string());
+    lines.push(texts::EN_STATUS_OFF.to_string());
+    lines.extend(paragraphs.iter().map(|p| p.en.to_string()));
+    lines
 }
 
 fn setting_group(title: &str, lines: Vec<String>, cx: &App) -> impl IntoElement {

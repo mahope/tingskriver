@@ -138,7 +138,7 @@ mod tests {
     fn thresholds_start_at_the_anarlog_values_and_are_uncalibrated() {
         let t = Thresholds::default();
         assert_eq!((t.min_score, t.min_margin), (0.62, 0.08));
-        assert!(!THRESHOLDS_CALIBRATED_ON_DANISH);
+        assert!(!std::hint::black_box(THRESHOLDS_CALIBRATED_ON_DANISH));
     }
 
     #[test]

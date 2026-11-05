@@ -129,6 +129,19 @@ pub struct NamedSuggestion {
     pub person_name: String,
 }
 
+/// One row of the consent query, in column order.
+type ConsentRow = (
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+    i64,
+    String,
+    Option<String>,
+    i64,
+);
+
 pub struct VoiceprintService {
     pool: SqlitePool,
     backend: Arc<dyn SecretBackend>,
@@ -258,17 +271,7 @@ impl VoiceprintService {
     }
 
     pub async fn consents(&self) -> Result<Vec<ConsentRecord>> {
-        let rows: Vec<(
-            String,
-            String,
-            String,
-            String,
-            Option<String>,
-            i64,
-            String,
-            Option<String>,
-            i64,
-        )> = sqlx::query_as(
+        let rows: Vec<ConsentRow> = sqlx::query_as(
             "SELECT c.id, c.person_name, c.consented_at, c.method, c.note, c.text_version,
                         c.status, c.withdrawn_at,
                         (SELECT COUNT(*) FROM voiceprint_exemplars e WHERE e.consent_id = c.id)

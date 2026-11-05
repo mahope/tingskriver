@@ -31,3 +31,22 @@ pub use store::{CredentialManagerBackend, MemoryBackend, SecretBackend};
 
 #[cfg(test)]
 mod tests;
+
+/// Start the automatic deletion: once now and then hourly, which purges when
+/// a day has passed since the last run. Call once, when the database is
+/// open. Needs the core runtime ([`crate::runtime::set_handle`]).
+pub fn start_maintenance(pool: sqlx::SqlitePool) -> tokio::task::JoinHandle<()> {
+    crate::runtime::spawn(async move {
+        let service = VoiceprintService::new(
+            pool,
+            std::sync::Arc::new(CredentialManagerBackend),
+            std::sync::Arc::new(SystemClock),
+        );
+        loop {
+            if let Err(error) = service.purge_if_due().await {
+                log::warn!("voiceprint: automatic deletion failed: {error}");
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+        }
+    })
+}
