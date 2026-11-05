@@ -860,13 +860,13 @@ pub fn insert_text(text: &str, options: &InsertOptions) -> Result<(InsertMethod,
 }
 
 pub fn insert_output(text: &str, options: &InsertOptions, enter: bool) -> Result<(InsertMethod, Instant, Option<super::logic::spoken::FieldId>), String> {
-    insert_output_at(text, options, enter, foreground_window())
+    insert_output_at(text, options, enter, foreground_window(), None)
 }
 
-pub fn insert_output_at(text: &str, options: &InsertOptions, enter: bool, target: usize) -> Result<(InsertMethod, Instant, Option<super::logic::spoken::FieldId>), String> {
+pub fn insert_output_at(text: &str, options: &InsertOptions, enter: bool, target: usize, expected: Option<&super::logic::spoken::FieldId>) -> Result<(InsertMethod, Instant, Option<super::logic::spoken::FieldId>), String> {
     let _one_at_a_time = INSERT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     check_target(target)?;
-    let result = insert_text_inner(text, options, enter, target)?;
+    let result = insert_text_inner(text, options, enter, target, expected)?;
     if enter {
         if [VK_CONTROL, VK_LWIN, VK_RWIN, VK_MENU, VK_SHIFT].iter().any(|vk| key_is_down(*vk)) {
             return Err("Teksten er indsat; slip genvejstasterne før Enter".into());
@@ -900,13 +900,18 @@ fn check_target(target: usize) -> Result<(), String> {
     }
 }
 
-fn insert_text_inner(text: &str, options: &InsertOptions, enter: bool, target: usize) -> Result<(InsertMethod, Instant, Option<super::logic::spoken::FieldId>), String> {
+fn insert_text_inner(text: &str, options: &InsertOptions, enter: bool, target: usize, expected: Option<&super::logic::spoken::FieldId>) -> Result<(InsertMethod, Instant, Option<super::logic::spoken::FieldId>), String> {
     wait_for_modifiers_released(Duration::from_millis(1500));
     // Read before anything is touched: a password, read-only or disabled
     // field is refused here, with nothing put on the clipboard.
     let focus = super::target_win::focus();
     if let Some(focus) = &focus {
         super::logic::target_check::decide(&focus.probe).map_err(|r| r.message().to_string())?;
+    }
+    // `expected` is the field that had focus when dictation started: if the
+    // user moved to another field while the speech was processed, refuse.
+    if expected.is_some() {
+        super::logic::target_check::verify(expected, focus.as_ref()).map_err(|r| r.message().to_string())?;
     }
     let field = focus.map(|focus| focus.id);
     let typed = |text: &str| {

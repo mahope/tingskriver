@@ -49,3 +49,7 @@ Automation fake). Manual test on Windows:
 4. Dictate into an ordinary Notepad field and a browser text box: text appears.
 5. Start dictating in one field and click another before the text is
    inserted: nothing is inserted, the pill says "Feltet skiftede".
+6. Start dictating in a password field, then switch to another program before
+   the text is inserted: nothing is inserted and the dictation is still missing
+   from the history (the field is read when the shortcut is pressed, not only
+   at insertion).

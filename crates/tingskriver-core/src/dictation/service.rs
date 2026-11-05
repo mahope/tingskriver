@@ -22,7 +22,7 @@ use super::logic::hotkey::ChordSignal;
 use super::logic::order::Order;
 use super::logic::spoken::{self, FieldId, LastInsertion, VoiceCommand};
 use super::logic::timing::{self, Steps};
-use super::logic::target_check::Refusal;
+use super::logic::target_check::{Focus, Refusal};
 use super::overlay::{Overlay, OverlayState};
 use super::modes::{Context, Mode};
 use super::secrets;
@@ -393,6 +393,8 @@ struct Session {
     recorder: Recorder,
     target_app: Option<String>,
     target_window: usize,
+    /// The focused field when the shortcut was pressed.
+    start_focus: Option<Focus>,
     settings: DictationSettings,
     mode: Option<Mode>,
     /// Shortcut pressed until the microphone was open.
@@ -469,6 +471,7 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant, Optio
                         continue;
                     }
                     let target_window = foreground_window();
+                    let start_focus = focus_now();
                     let (target_app, window_class, title) = foreground_context();
                     let settings = service.settings();
                     let mode = settings.modes.select(&Context {
@@ -491,6 +494,7 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant, Optio
                                 recorder,
                                 target_app,
                                 target_window,
+                                start_focus,
                                 settings,
                                 mode,
                                 start_ms,
@@ -525,7 +529,7 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant, Optio
                                 service: service.clone(),
                                 ticket,
                             };
-                            service.process(samples, target_app, s.target_window, (s.settings, s.mode), at, start_ms, &turn).await;
+                            service.process(samples, target_app, s.target_window, s.start_focus, (s.settings, s.mode), at, start_ms, &turn).await;
                         });
                     }
                 }
@@ -794,6 +798,7 @@ impl Service {
         samples: Vec<f32>,
         target_app: Option<String>,
         target_window: usize,
+        start_focus: Option<Focus>,
         selection: (DictationSettings, Option<Mode>),
         released_at: Instant,
         start_ms: u64,
@@ -896,7 +901,7 @@ impl Service {
             paste_timeout: Duration::from_millis(settings.paste_timeout_ms),
             app: target_app.clone(),
         };
-        let inserted = insert(text.clone(), options, enter, target_window).await;
+        let inserted = insert(text.clone(), options, enter, target_window, start_focus.as_ref().map(|f| f.id.clone())).await;
         let mut refusal = None;
         let (insert_method, inserted_at) = match inserted {
             Ok((method, at, field)) => {
@@ -947,8 +952,11 @@ impl Service {
             insert_method.unwrap_or("none"),
         );
 
-        // Text refused by a password field is never kept, not even in the history.
-        if settings.history_enabled && !refusal.is_some_and(Refusal::keeps_text_out_of_history) {
+        // Text dictated into a password field is never kept, not even in the
+        // history, whatever made the insertion fail: the field is judged from
+        // when dictation started as well as from the insertion.
+        let from_password = start_focus.as_ref().is_some_and(|f| f.probe.password == Some(true));
+        if settings.history_enabled && !from_password && !refusal.is_some_and(Refusal::keeps_text_out_of_history) {
             self.save_history(&settings, &samples, text, target_app, style, transcript, latency_ms, audio_ms, insert_method)
                 .await;
         }
@@ -1072,15 +1080,15 @@ struct InsertOptions {
 }
 
 #[cfg(windows)]
-async fn insert(text: String, options: InsertOptions, enter: bool, target_window: usize) -> Result<(&'static str, Instant, Option<FieldId>), String> {
-    tokio::task::spawn_blocking(move || super::win::insert_output_at(&text, &options, enter, target_window))
+async fn insert(text: String, options: InsertOptions, enter: bool, target_window: usize, expected: Option<FieldId>) -> Result<(&'static str, Instant, Option<FieldId>), String> {
+    tokio::task::spawn_blocking(move || super::win::insert_output_at(&text, &options, enter, target_window, expected.as_ref()))
         .await
         .map_err(|e| e.to_string())?
         .map(|(method, at, field)| (method.as_str(), at, field))
 }
 
 #[cfg(not(windows))]
-async fn insert(_text: String, options: InsertOptions, _enter: bool, _target_window: usize) -> Result<(&'static str, Instant, Option<FieldId>), String> {
+async fn insert(_text: String, options: InsertOptions, _enter: bool, _target_window: usize, _expected: Option<FieldId>) -> Result<(&'static str, Instant, Option<FieldId>), String> {
     let _ = (options.restore_after, options.paste_timeout, options.app);
     Err("Indsættelse understøttes kun på Windows".to_string())
 }
@@ -1097,6 +1105,11 @@ async fn apply_edit(_plan: spoken::EditPlan) -> Result<(), String> {
     Err("Stemmekommandoer understøttes kun på Windows".to_string())
 }
 
+
+#[cfg(windows)]
+fn focus_now() -> Option<Focus> { super::target_win::focus() }
+#[cfg(not(windows))]
+fn focus_now() -> Option<Focus> { None }
 
 #[cfg(windows)]
 fn focused_field() -> Option<FieldId> { super::target_win::focused_field() }
