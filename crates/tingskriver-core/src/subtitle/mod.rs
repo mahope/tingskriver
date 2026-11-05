@@ -1,5 +1,6 @@
 //! Import of existing transcripts (`.vtt`, `.srt`) as meetings without audio.
 
+pub mod import;
 pub mod parser;
 
 pub use parser::{
