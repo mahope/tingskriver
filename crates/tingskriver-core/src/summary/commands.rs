@@ -590,7 +590,7 @@ pub async fn api_process_transcript(
     // unless the settings or the meeting say otherwise. A file that cannot be
     // read stops the report instead of silently writing it in another language.
     let languages = match &app_data_dir {
-        Some(dir) => match crate::meeting_language::MeetingLanguages::load(dir) {
+        Some(dir) => match crate::meeting_language::MeetingLanguages::load_async(dir.clone()).await {
             Ok(languages) => languages,
             Err(message) => {
                 let _ = SummaryProcessesRepository::update_process_failed(

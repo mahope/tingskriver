@@ -14,7 +14,7 @@ use gpui_component::{
     input::{Input, InputEvent, InputState, Textarea, TextareaState},
     sidebar::{Sidebar, SidebarHeader, SidebarMenu, SidebarMenuItem},
     spinner::Spinner,
-    v_flex, ActiveTheme, Icon, Root,
+    v_flex, ActiveTheme, Icon, Root, Selectable,
 };
 use gpui_kit_assets::IconName;
 use tingskriver_core::strings;
@@ -36,6 +36,10 @@ pub struct AppModel {
     /// Whether the first-frame time is still to be reported. Off for
     /// `--hidden`, where the window opens long after process start.
     pub report_first_frame: bool,
+    /// Main language, extra spoken languages and the report language.
+    pub languages: tingskriver_core::meeting_language::MeetingLanguages,
+    /// Why the language settings could not be read or saved.
+    pub language_error: Option<String>,
 }
 
 impl AppModel {
@@ -56,6 +60,41 @@ impl AppModel {
             clock,
             start_page: Page::Meetings,
             report_first_frame: true,
+            languages: Default::default(),
+            language_error: None,
+        }
+        .with_languages_loaded()
+    }
+
+    /// Reads the saved language settings. A broken file is shown on the
+    /// settings page and the defaults stay in use until the user saves.
+    fn with_languages_loaded(mut self) -> Self {
+        if let Some(dir) = &self.app_data_dir {
+            match tingskriver_core::meeting_language::MeetingLanguages::load(dir) {
+                Ok(languages) => self.languages = languages,
+                Err(error) => self.language_error = Some(strings::language_load_failed(&error)),
+            }
+        }
+        self
+    }
+
+    /// Applies a change to the language settings and saves it.
+    fn change_languages(
+        &mut self,
+        change: impl FnOnce(
+            tingskriver_core::meeting_language::MeetingLanguages,
+        ) -> Result<tingskriver_core::meeting_language::MeetingLanguages, String>,
+    ) {
+        let saved = match &self.app_data_dir {
+            Some(dir) => change(self.languages.clone()).and_then(|l| l.save(dir)),
+            None => Err(strings::UNKNOWN.to_string()),
+        };
+        match saved {
+            Ok(languages) => {
+                self.languages = languages;
+                self.language_error = None;
+            }
+            Err(error) => self.language_error = Some(strings::language_save_failed(&error)),
         }
     }
 
@@ -454,6 +493,7 @@ impl Shell {
                 vec![strings::appearance(mode)],
                 cx,
             ))
+            .child(self.language_group(cx))
             .child(setting_group(
                 strings::DATA,
                 vec![strings::data_dir(&data_dir), strings::database(database)],
@@ -488,6 +528,78 @@ impl Shell {
                     ),
             );
         page(strings::SETTINGS, None, body.into_any_element(), cx)
+    }
+
+    fn language_group(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        use tingskriver_core::meeting_language::{label, CHOICES};
+        let model = self.model.read(cx);
+        let languages = model.languages.clone();
+        let error = model.language_error.clone();
+        let primary_buttons = CHOICES.iter().enumerate().map(|(at, (code, _))| {
+            let code = *code;
+            let model = self.model.clone();
+            Button::new(("language-primary", at))
+                .label(label(code))
+                .selected(languages.primary == code)
+                .on_click(move |_, _, cx| {
+                    model.update(cx, |m, cx| {
+                        m.change_languages(|l| l.with_primary(code));
+                        cx.notify();
+                    })
+                })
+        });
+        let extra_buttons = CHOICES
+            .iter()
+            .enumerate()
+            .filter(|(_, (code, _))| *code != languages.primary)
+            .map(|(at, (code, _))| {
+                let code = *code;
+                let model = self.model.clone();
+                Button::new(("language-extra", at))
+                    .label(label(code))
+                    .selected(languages.extra.iter().any(|c| c == code))
+                    .on_click(move |_, _, cx| {
+                        model.update(cx, |m, cx| {
+                            m.change_languages(|l| l.with_extra_toggled(code));
+                            cx.notify();
+                        })
+                    })
+            });
+        let summary_model = self.model.clone();
+        let summary_button = Button::new("language-summary-primary")
+            .label(if languages.summary_in_primary {
+                strings::LANGUAGE_SUMMARY_ON
+            } else {
+                strings::LANGUAGE_SUMMARY_OFF
+            })
+            .selected(languages.summary_in_primary)
+            .on_click(move |_, _, cx| {
+                summary_model.update(cx, |m, cx| {
+                    m.change_languages(|mut l| {
+                        l.summary_in_primary = !l.summary_in_primary;
+                        Ok(l)
+                    });
+                    cx.notify();
+                })
+            });
+        v_flex()
+            .gap(space::SM)
+            .p(space::LG)
+            .rounded(theme::RADIUS_LG)
+            .border_1()
+            .border_color(palette(cx).border)
+            .bg(palette(cx).card)
+            .child(section_title(strings::LANGUAGES))
+            .child(muted(strings::LANGUAGE_PRIMARY, cx))
+            .child(muted(strings::LANGUAGE_PRIMARY_HELP, cx))
+            .child(h_flex().gap(space::SM).flex_wrap().children(primary_buttons))
+            .child(muted(strings::LANGUAGE_EXTRA, cx))
+            .child(muted(strings::LANGUAGE_EXTRA_HELP, cx))
+            .child(h_flex().gap(space::SM).flex_wrap().children(extra_buttons))
+            .child(summary_button)
+            .child(muted(strings::LANGUAGE_PROVIDERS, cx))
+            .child(muted(strings::LANGUAGE_NEW_MEETINGS, cx))
+            .children(error.map(|e| paragraph(&e, cx)))
     }
 
     fn database_error_page(&self, failure: &DbFailure, cx: &mut Context<Self>) -> AnyElement {

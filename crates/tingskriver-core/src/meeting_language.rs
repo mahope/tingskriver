@@ -37,6 +37,16 @@ pub const CHOICES: &[(&str, &str)] = &[
     ("fi", "finsk"),
 ];
 
+/// Capitalised Danish name for a button or label ("Dansk").
+pub fn label(code: &str) -> String {
+    let name = danish_name(code).unwrap_or(code);
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    }
+}
+
 /// Danish name of a selectable language code.
 pub fn danish_name(code: &str) -> Option<&'static str> {
     CHOICES.iter().find(|(c, _)| *c == code).map(|(_, n)| *n)
@@ -91,6 +101,24 @@ impl MeetingLanguages {
         Ok(self)
     }
 
+    /// Makes `code` the main language. If it was an extra language it stops
+    /// being one. Existing transcripts are not touched.
+    pub fn with_primary(mut self, code: &str) -> Result<Self, String> {
+        self.primary = code.to_string();
+        self.normalized()
+    }
+
+    /// Adds `code` to the extra languages, or removes it when present. The
+    /// main language cannot be an extra language.
+    pub fn with_extra_toggled(mut self, code: &str) -> Result<Self, String> {
+        if let Some(at) = self.extra.iter().position(|c| c == code) {
+            self.extra.remove(at);
+        } else {
+            self.extra.push(code.to_string());
+        }
+        self.normalized()
+    }
+
     /// The main language first, then the extra languages.
     pub fn transcription_languages(&self) -> Vec<String> {
         std::iter::once(self.primary.clone())
@@ -130,6 +158,8 @@ impl MeetingLanguages {
 
     /// Reads the settings. A missing file gives the defaults; an unreadable or
     /// invalid file is an error instead of silently changing the languages.
+    /// Blocking: async code uses [`Self::load_async`].
+    #[allow(clippy::disallowed_methods)]
     pub fn load(data_dir: &Path) -> Result<Self, String> {
         let path = data_dir.join(FILE);
         let text = match std::fs::read_to_string(&path) {
@@ -142,7 +172,15 @@ impl MeetingLanguages {
             .normalized()
     }
 
+    /// [`Self::load`] on a blocking worker.
+    pub async fn load_async(data_dir: std::path::PathBuf) -> Result<Self, String> {
+        tokio::task::spawn_blocking(move || Self::load(&data_dir))
+            .await
+            .map_err(|e| e.to_string())?
+    }
+
     /// Validates and writes the settings (temp file, then rename).
+    #[allow(clippy::disallowed_methods)]
     pub fn save(self, data_dir: &Path) -> Result<Self, String> {
         let settings = self.normalized()?;
         let json = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
@@ -261,6 +299,27 @@ mod tests {
         // Not selected, or not detectable: the main language.
         assert_eq!(l.summary_language(None, Some("de")), "da");
         assert_eq!(l.summary_language(None, None), "da");
+    }
+
+    #[test]
+    fn editing_helpers_keep_the_rules() {
+        let l = MeetingLanguages::default()
+            .with_extra_toggled("en")
+            .unwrap();
+        assert_eq!(l.extra, ["en"]);
+        // English becomes the main language: it leaves the extra list.
+        let l = l.with_primary("en").unwrap();
+        assert_eq!((l.primary.as_str(), l.extra.len()), ("en", 0));
+        // The main language cannot be added as an extra language.
+        assert!(l.clone().with_extra_toggled("en").unwrap().extra.is_empty());
+        let l = l
+            .with_extra_toggled("da")
+            .unwrap()
+            .with_extra_toggled("da")
+            .unwrap();
+        assert!(l.extra.is_empty());
+        assert!(MeetingLanguages::default().with_primary("xx").is_err());
+        assert_eq!(label("da"), "Dansk");
     }
 
     #[test]
