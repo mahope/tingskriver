@@ -13,6 +13,8 @@ use std::{
     time::Instant,
 };
 
+pub mod bench;
+
 const MAX_SECONDS: usize = 90;
 
 pub struct Sample {
