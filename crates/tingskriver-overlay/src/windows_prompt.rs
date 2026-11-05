@@ -428,6 +428,8 @@ struct Waiting {
 /// The prompt on screen and the Win32 objects it owns.
 struct Active {
     hwnd: HWND,
+    /// The host window that owns the global shortcuts (WM_HOTKEY goes to it).
+    host: HWND,
     model: PromptModel,
     layout: PromptLayout,
     monitor: Monitor,
@@ -448,7 +450,7 @@ impl Drop for Active {
         // SAFETY: our own window and GDI objects, on the thread that made them.
         unsafe {
             for shortcut_index in 0..Shortcut::ALL.len() {
-                UnregisterHotKey(self.hwnd, HOTKEY_BASE + shortcut_index as i32);
+                UnregisterHotKey(self.host, HOTKEY_BASE + shortcut_index as i32);
             }
             DestroyWindow(self.hwnd);
             for font in self.fonts {
@@ -503,7 +505,7 @@ impl Ui {
                         .as_ref()
                         .is_some_and(|a| a.model.request().id == id)
                     {
-                        self.active = None;
+                        self.release_active();
                     }
                 }
                 Command::Quit => {
@@ -557,9 +559,14 @@ impl Ui {
                         break;
                     };
                     self.set_held(false);
+                    let id = waiting.request.id;
                     match self.open(waiting.request, now) {
                         Ok(active) => self.active = Some(active),
-                        Err(e) => log::warn!("Prompt: {e}"),
+                        Err(e) => {
+                            // Tell the owner, or it waits for an answer forever.
+                            log::warn!("Prompt {id}: {e}");
+                            self.emit(PromptEvent::Dropped { id });
+                        }
                     }
                 }
                 Decision::Defer {
@@ -742,8 +749,10 @@ impl Ui {
             // Shortcuts that need no focus; a failure (taken by another app)
             // only costs that shortcut.
             for (i, shortcut) in Shortcut::ALL.iter().enumerate() {
+                // Registered on the host window, whose procedure handles
+                // WM_HOTKEY; the prompt window's procedure does not.
                 let ok = RegisterHotKey(
-                    hwnd,
+                    self.host,
                     HOTKEY_BASE + i as i32,
                     MOD_CONTROL | MOD_ALT | MOD_NOREPEAT,
                     shortcut.virtual_key(),
@@ -766,6 +775,7 @@ impl Ui {
 
             Ok(Active {
                 hwnd,
+                host: self.host,
                 model,
                 layout,
                 monitor,
@@ -806,10 +816,10 @@ impl Ui {
         }
     }
 
-    fn finish(&mut self, outcome: PromptOutcome) {
-        let Some(active) = self.active.take() else {
-            return;
-        };
+    /// Close the active prompt and, if it had keyboard focus, hand the
+    /// foreground back to the window the user came from. Returns the id.
+    fn release_active(&mut self) -> Option<PromptId> {
+        let active = self.active.take()?;
         let id = active.model.request().id;
         let give_back = active
             .has_keyboard_focus
@@ -823,6 +833,13 @@ impl Ui {
                 }
             }
         }
+        Some(id)
+    }
+
+    fn finish(&mut self, outcome: PromptOutcome) {
+        let Some(id) = self.release_active() else {
+            return;
+        };
         self.emit(PromptEvent::Answered { id, outcome });
         self.pump(Instant::now());
     }

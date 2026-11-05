@@ -24,13 +24,20 @@ prompt.cancel(id);                                         // withdraw it, no an
 for event in prompt.events().try_iter() {
     match event {
         PromptEvent::Answered { id, outcome } => { /* Chosen(action) | Dismissed | Expired(action) */ }
-        PromptEvent::Dropped { id } => { /* held back until out of date, never shown */ }
+        PromptEvent::Dropped { id } => { /* held back until out of date, never shown, also sent when the window could not be created */ }
         PromptEvent::Held(held) => core_overlay.set_prompt_held(held), // the pill's mark
     }
 }
 ```
 
 - One prompt is on screen at a time; further requests queue in order.
+- Nothing on `main` owns a `PromptWindow` yet (#59/#201 will). The owner must
+  forward `PromptEvent::Held` to `set_prompt_held` as above. The pill only
+  draws the mark while it is visible, so the owner should show it while a
+  prompt is held back; this is not wired and not proven.
+- Hover and keyboard focus pause the countdown with no upper limit. A prompt
+  stays until answered, cancelled or out of date (`ttl`), so give
+  "Er mødet slut?" a `ttl`.
 - `PromptRequest::ttl` is when the question is moot (a reminder: the meeting
   start). A prompt that is still held back at that time is dropped. A prompt
   that waited behind another one past its `ttl` is dropped too.

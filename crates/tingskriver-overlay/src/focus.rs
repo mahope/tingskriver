@@ -88,6 +88,8 @@ pub enum Decision {
 /// `state` is `None` when it could not be read. That fails open: a broken
 /// query must not swallow every prompt.
 pub fn decide(state: Option<NotificationState>, waited: Duration, ttl: Duration) -> Decision {
+    // `Unknown` (a state code this code does not know) fails open and shows
+    // the prompt, like a failed query; only states known to be quiet block.
     let blocked = state.filter(|s| s.blocks_prompts());
     let mark_pill = blocked == Some(NotificationState::QuietTime);
     // A question that is moot is never shown, blocked or not (it may also
