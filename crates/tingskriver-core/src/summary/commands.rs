@@ -454,6 +454,28 @@ pub async fn api_get_summary(
     }
 }
 
+/// The dictation dictionary's words, if dictation has a database. A missing or
+/// unreadable dictionary only means no preferred names.
+async fn dictionary_words(app_data_dir: &std::path::Path) -> Vec<String> {
+    let path = app_data_dir.join("dictation.sqlite");
+    if !path.exists() {
+        return Vec::new();
+    }
+    match crate::dictation::store::Store::open(&path).await {
+        Ok(store) => match store.dictionary().await {
+            Ok(words) => crate::summary::names::clean_names(words.into_iter().map(|w| w.word)),
+            Err(error) => {
+                log_info!("Dictionary unavailable for the summary: {}", error);
+                Vec::new()
+            }
+        },
+        Err(error) => {
+            log_info!("Dictionary unavailable for the summary: {}", error);
+            Vec::new()
+        }
+    }
+}
+
 /// Processes transcript and generates summary (Native SQLx implementation)
 ///
 /// Spawns a background task and returns immediately with process_id
@@ -526,6 +548,11 @@ pub async fn api_process_transcript(
     let meeting_id_clone = m_id.clone();
     // App data directory for the BuiltInAI provider
     let app_data_dir = app.app_data_dir().ok();
+    // Dictionary words are spelled exactly in the report and the title.
+    let preferred_names = match &app_data_dir {
+        Some(dir) => dictionary_words(dir).await,
+        None => Vec::new(),
+    };
     crate::runtime::spawn(async move {
         SummaryService::process_transcript_background(
             app_data_dir,
@@ -539,6 +566,7 @@ pub async fn api_process_transcript(
             final_prompt,
             final_template_id,
             summary_language,
+            preferred_names,
         )
         .await;
     });

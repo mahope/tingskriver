@@ -8,6 +8,8 @@ use crate::summary::processor::{
     clean_llm_markdown_detailed, extract_meeting_name_from_markdown, generate_meeting_summary,
     language_name_from_code, require_visible_markdown,
 };
+use crate::summary::names;
+use crate::summary::processor::QualityInputs;
 use crate::summary::templates::{self, Template};
 use crate::ollama::metadata::ModelMetadataCache;
 use chrono::{DateTime, Utc};
@@ -351,6 +353,7 @@ impl SummaryService {
         custom_prompt: String,
         template_id: String,
         summary_language: Option<String>,
+        preferred_names: Vec<String>,
     ) {
         let start_time = Instant::now();
         info!(
@@ -551,6 +554,15 @@ impl SummaryService {
             }),
         };
 
+        // A title is made only while the meeting has no title of the user's own.
+        let want_title = MeetingsRepository::title_is_replaceable(&pool, &meeting_id)
+            .await
+            .unwrap_or(false);
+        let quality_inputs = QualityInputs {
+            preferred_names,
+            want_title,
+        };
+
         let client = crate::http::client();
         let result = generate_meeting_summary(
             &client,
@@ -572,6 +584,7 @@ impl SummaryService {
             summary_language.as_deref(),
             detected_summary_language.as_deref(),
             cached_english.as_deref(),
+            &quality_inputs,
         )
         .await;
 
@@ -610,12 +623,19 @@ impl SummaryService {
                 .await
                 {
                     Ok(true) => {
-                        if let Some(name) =
+                        // The title comes from the finished report. If the title
+                        // call failed, the model's own heading is the fallback.
+                        let title = generated.title.clone().or_else(|| {
+                            if !want_title || !names::report_has_content(&generated.final_markdown) {
+                                return None;
+                            }
                             extract_meeting_name_from_markdown(&generated.final_markdown)
-                                .filter(|name| !name.is_empty())
-                        {
+                                .and_then(|heading| names::clean_title(&heading))
+                        });
+                        if let Some(title) = title {
+                            // Atomic: a title the user saved meanwhile stays.
                             if let Err(error) =
-                                MeetingsRepository::update_meeting_name(&pool, &meeting_id, &name)
+                                MeetingsRepository::set_generated_title(&pool, &meeting_id, &title)
                                     .await
                             {
                                 error!("Failed to update meeting name for {}: {}", meeting_id, error);

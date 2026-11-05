@@ -374,3 +374,28 @@ OpenRouter's model list is async in core and in the Tauri wrapper. Its
 single-worker fake-server test covers stalled headers, stalled bodies and
 concurrent core calls. `read_audio_file` has already been removed; playback
 uses the core playback API instead of JSON arrays of audio bytes.
+
+## Summary quality nets
+
+`summary/quality.rs` and `summary/names.rs` hold pure functions around the
+report model; `processor.rs` and `map_reduce.rs` use them.
+
+- **Minimum:** a transcript under 5 words or 160 characters of speech gets no
+  model call. The process fails with "For kort til referat: …"
+  (`quality::TOO_SHORT_MESSAGE`), which the UI shows as the reason.
+- **Length:** the report prompt gets a cap (a quarter of the transcript, floor
+  320 characters or 150 per template section, ceiling 10,000) and a paragraph
+  interval that grows with the transcript (`quality::length_policy`).
+- **Template start:** the answer must start with `# ` and its first section
+  must match the template's first within 30 % Levenshtein distance, after a
+  Unicode-aware normalisation (æøå are kept). If not, it is generated once more
+  with "IMPORTANT: Previous attempt failed. <feedback>"; the better attempt is
+  kept, so a usable report is never dropped.
+- **Preferred names:** dictionary words (and calendar attendee names, via
+  `names::attendee_names`) are added to the report and title prompts with the
+  rule "write them exactly like this".
+- **Title:** made from the finished report in a separate short call (one line,
+  at most 160 characters, `<EMPTY>` means none). `meetings.title_source` is
+  `user` for a title the user saved; a generated title is only written (in one
+  atomic UPDATE) while the title is empty, the default `Meeting …` name or an
+  earlier generated one.
