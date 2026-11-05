@@ -39,9 +39,10 @@ export function EmptyStateSummary({
       </p>
 
       {error && (
-        <p role="alert" className="mb-4 max-w-md rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
-          {error}
-        </p>
+        <div role="alert" className="mb-4 max-w-md rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          <p className="font-medium">Referatet kunne ikke laves. Mødet og transskriptet er gemt.</p>
+          <p className="mt-1">{error}</p>
+        </div>
       )}
 
       <TooltipProvider>
@@ -54,7 +55,7 @@ export function EmptyStateSummary({
                 disabled={!hasModel || isGenerating}
               >
                 <Sparkles className="w-4 h-4" />
-                {isGenerating ? 'Opsummerer…' : error ? 'Prøv igen' : 'Lav opsummering'}
+                {isGenerating ? 'Opsummerer…' : error ? 'Lav referat igen' : 'Lav opsummering'}
               </Button>
             </div>
           </TooltipTrigger>

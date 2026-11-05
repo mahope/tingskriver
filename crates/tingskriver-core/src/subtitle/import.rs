@@ -526,7 +526,9 @@ mod tests {
         let pool = pool().await;
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("team_moede.vtt");
-        std::fs::write(&path, format!("\u{feff}{VTT}")).unwrap();
+        tokio::fs::write(&path, format!("\u{feff}{VTT}"))
+            .await
+            .unwrap();
         let path = path.to_str().unwrap();
 
         let (first, wanted) = import_file_to_db(&pool, path).await.unwrap();
@@ -566,9 +568,11 @@ mod tests {
         let pool = pool().await;
         let dir = tempfile::tempdir().unwrap();
         let bad = dir.path().join("tom.srt");
-        std::fs::write(&bad, "ikke en undertekst\n").unwrap();
+        tokio::fs::write(&bad, "ikke en undertekst\n")
+            .await
+            .unwrap();
         let wrong = dir.path().join("lyd.mp3");
-        std::fs::write(&wrong, "x").unwrap();
+        tokio::fs::write(&wrong, "x").await.unwrap();
         assert!(import_file_to_db(&pool, bad.to_str().unwrap())
             .await
             .is_err());
