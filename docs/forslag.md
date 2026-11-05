@@ -51,3 +51,18 @@ store.create(NewProposal {
 ændringer», diff pr. forslag og knapperne Anvend, Afvis og Fortryd. Den skal
 monteres i mødedokumentet (#51); siden findes ikke på `main` endnu, så visningen er
 ikke koblet på navigationen.
+
+## Afgrænsning (åbne punkter, #205)
+
+- **Eksisterende skrivevej:** `summary::commands::api_save_meeting_summary` (Tauri,
+  udfases) skriver stadig direkte til referatet, når brugeren gemmer. GPUI-appen har
+  ingen genskab-referat-, MCP- eller assistentvej på `main` endnu; hver af dem skal
+  bruge `ProposalStore::create` fra start (#44, #88, #78, #105). Koblingen på
+  Tauri-stien er bevidst ikke lavet.
+- **Visning:** `ProposalReview` er endnu ikke monteret, fordi mødedokumentet (#51)
+  ikke findes på `main`. Skærmbilledtest, Om-/ændringslogpunkt og
+  skærmlæserrækkefølge (#73, #49) skal laves samtidig med monteringen.
+- **Udløb ved opstart** er koblet på `startup::open_database`. `close_session` skal
+  kaldes af chat/kommandotilstand, når de lukker.
+- **`UserConfirmed`:** konstruktøren er `pub`; testen `only_ui_code_creates_user_confirmed`
+  fejler, hvis andre filer end modulet og review-visningen kalder den.

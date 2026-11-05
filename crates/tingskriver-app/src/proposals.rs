@@ -10,7 +10,7 @@ use crate::{
     theme::{self, space, typography, Palette},
     ui::section_title,
 };
-use gpui::{div, prelude::*, AnyElement, Context, FontWeight, Window};
+use gpui::{div, prelude::*, AnyElement, Context, ElementId, FontWeight, Window};
 use gpui_component::{
     button::{Button, ButtonVariants},
     h_flex, v_flex, ActiveTheme,
@@ -134,14 +134,14 @@ impl ProposalReview {
         .detach();
     }
 
-    fn card(&self, index: usize, proposal: &Proposal, cx: &mut Context<Self>) -> AnyElement {
+    fn card(&self, proposal: &Proposal, cx: &mut Context<Self>) -> AnyElement {
         let palette = Palette::for_mode(cx.theme().mode);
         let id = proposal.id.clone();
         let pending = proposal.status == ProposalStatus::Pending;
         let applied = proposal.status == ProposalStatus::Applied;
         let lines = proposal.diff_lines();
         let mut diff = v_flex()
-            .id(("proposal-diff", index))
+            .id((ElementId::from("proposal-diff"), proposal.id.clone()))
             .max_h(DIFF_MAX_HEIGHT)
             .overflow_y_scroll()
             .rounded(theme::RADIUS)
@@ -208,7 +208,7 @@ impl ProposalReview {
                     let (apply_id, reject_id) = (id.clone(), id.clone());
                     buttons = buttons
                         .child(
-                            Button::new(("proposal-apply", index))
+                            Button::new((ElementId::from("proposal-apply"), id.clone()))
                                 .primary()
                                 .label(strings::PROPOSAL_APPLY)
                                 .on_click(cx.listener(move |view, _, _, cx| {
@@ -216,7 +216,7 @@ impl ProposalReview {
                                 })),
                         )
                         .child(
-                            Button::new(("proposal-reject", index))
+                            Button::new((ElementId::from("proposal-reject"), id.clone()))
                                 .label(strings::PROPOSAL_REJECT)
                                 .on_click(cx.listener(move |view, _, _, cx| {
                                     view.run(Action::Reject, reject_id.clone(), cx)
@@ -225,7 +225,7 @@ impl ProposalReview {
                 } else {
                     let undo_id = id.clone();
                     buttons = buttons.child(
-                        Button::new(("proposal-undo", index))
+                        Button::new((ElementId::from("proposal-undo"), id.clone()))
                             .label(strings::PROPOSAL_UNDO)
                             .on_click(cx.listener(move |view, _, _, cx| {
                                 view.run(Action::Undo, undo_id.clone(), cx)
@@ -311,8 +311,8 @@ impl Render for ProposalReview {
                         .child(strings::PROPOSALS_REVIEW_HELP),
                 );
         }
-        for (index, proposal) in pending.into_iter().chain(handled).enumerate() {
-            root = root.child(self.card(index, proposal, cx));
+        for proposal in pending.into_iter().chain(handled) {
+            root = root.child(self.card(proposal, cx));
         }
         root.into_any_element()
     }

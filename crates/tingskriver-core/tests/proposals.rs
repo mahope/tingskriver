@@ -434,3 +434,43 @@ async fn proposals_survive_reopening_the_database_file() {
     second.close().await;
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `UserConfirmed::from_ui_click` is `pub`, so convention is the only guard.
+/// This test makes the convention checkable: only the proposal module itself
+/// and the GPUI review view may create the token.
+#[test]
+fn only_ui_code_creates_user_confirmed() {
+    fn walk(dir: &std::path::Path, hits: &mut Vec<String>) {
+        for entry in std::fs::read_dir(dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, hits);
+            } else if path.extension().is_some_and(|e| e == "rs")
+                && std::fs::read_to_string(&path)
+                    .unwrap_or_default()
+                    .contains("from_ui_click")
+            {
+                hits.push(path.to_string_lossy().replace('\\', "/"));
+            }
+        }
+    }
+    let crates = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let mut hits = Vec::new();
+    for entry in std::fs::read_dir(&crates).unwrap().flatten() {
+        let src = entry.path().join("src");
+        if src.is_dir() {
+            walk(&src, &mut hits);
+        }
+    }
+    let unexpected: Vec<_> = hits
+        .iter()
+        .filter(|p| {
+            !p.ends_with("tingskriver-core/src/proposals/mod.rs")
+                && !p.ends_with("tingskriver-app/src/proposals.rs")
+        })
+        .collect();
+    assert!(
+        unexpected.is_empty(),
+        "AI paths must not confirm: {unexpected:?}"
+    );
+}

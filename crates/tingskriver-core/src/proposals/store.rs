@@ -114,7 +114,14 @@ impl ProposalStore {
 
     /// The number for the "N ventende ændringer" band.
     pub async fn pending_count(&self, meeting_id: &str) -> Result<usize> {
-        Ok(self.pending(meeting_id).await?.len())
+        self.refresh_stale(meeting_id).await?;
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM meeting_proposals WHERE meeting_id=? AND status='pending'",
+        )
+        .bind(meeting_id)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(count as usize)
     }
 
     /// Applies a pending proposal on the user's click. A proposal whose base
