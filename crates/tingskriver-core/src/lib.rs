@@ -70,6 +70,7 @@ pub mod strings;
 pub mod summary;
 pub mod transcript_merge;
 pub mod transcription_queue;
+pub mod voiceprint;
 pub mod vad_trim;
 pub mod wer;
 pub mod whisper_engine;

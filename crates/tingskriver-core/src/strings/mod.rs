@@ -65,6 +65,15 @@ catalogue! {
     DB_FAILED = "kunne ikke åbnes";
     NO_LOG = "ingen logfil (kun konsollen)";
     SETTINGS_LATER = "Indstillingerne flytter hertil i en senere version. Her kan du se, hvordan appen kører.";
+    VOICEPRINT_TITLE = "Stemmeaftryk";
+    VOICEPRINT_STATUS_OFF = "Slået fra. Tingskriver husker ingen stemmer.";
+    VOICEPRINT_STATUS_ON = "Slået til. Tingskriver husker kun stemmer for personer, du har samtykke fra.";
+    VOICEPRINT_WHAT = "Et stemmeaftryk er en række tal, der beskriver, hvordan en bestemt stemme lyder. Med et aftryk kan Tingskriver foreslå navnet på en deltager, der går igen, så du ikke skal skrive det hver gang.";
+    VOICEPRINT_LAW = "Et stemmeaftryk kan genkende en person og er derfor biometriske oplysninger. De har særlig stærk beskyttelse i GDPR (artikel 9), så du må kun gemme dem med personens samtykke.";
+    VOICEPRINT_LOCAL = "Aftrykkene ligger kun på denne pc, i Windows Legitimationsstyring. De sendes aldrig nogen steder hen, synkroniseres ikke og indgår ikke i eksport, aflevering, logfiler, diagnoserapporter eller sikkerhedskopier.";
+    VOICEPRINT_CONSENT = "Samtykke: Du må kun gemme en persons aftryk, når personen er informeret om det og har sagt ja. Du bekræfter det i appen for hver person. Samtykket kan trækkes tilbage når som helst, og så slettes personens aftryk med det samme.";
+    VOICEPRINT_DELETE = "Sletning: Du kan glemme én person eller alle på én gang. Aftryk, der ikke er genkendt i 30, 90 eller 180 dage (du vælger, standard er 90), slettes automatisk. Afinstallerer du med \"slet data\", fjernes de også.";
+    VOICEPRINT_SUGGEST = "Tingskriver navngiver aldrig automatisk. Du får et forslag, som du bekræfter med ét klik. Grænserne for, hvornår to stemmer ligner hinanden nok, er målt på engelsk og er ikke kalibreret til dansk. Forslag kan derfor være forkerte.";
     APPEARANCE = "Udseende";
     APPEARANCE_DETAIL = "Følger Windows' indstilling for lys og mørk tilstand. Lige nu: {value}.";
     DATA = "Data";
