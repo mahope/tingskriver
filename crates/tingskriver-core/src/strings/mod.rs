@@ -103,8 +103,12 @@ catalogue! {
     PROPOSAL_STATUS_EXPIRED = "Udløbet";
     PROPOSAL_STATUS_UNDONE = "Fortrudt";
     PROPOSAL_DIFF_ADDED = "Tilføjet";
+    PROPOSAL_SYMBOL_ADDED = "+";
+    PROPOSAL_SYMBOL_REMOVED = "−";
+    PROPOSAL_SYMBOL_UNCHANGED = " ";
+    PROPOSAL_LEGEND = "+ Tilføjet   − Fjernet";
+    PROPOSAL_TITLE = "{field}: {status}";
     PROPOSAL_DIFF_REMOVED = "Fjernet";
-    PROPOSAL_DIFF_UNCHANGED = "Uændret";
     PROPOSAL_NO_LINES = "Ingen linjer";
     PROPOSAL_STALE_REASON = "Forslaget blev afvist automatisk, fordi {value} er ændret, siden forslaget blev lavet. Bed om et nyt forslag.";
     PROPOSAL_STALE_NOTES = "noterne";
@@ -150,6 +154,12 @@ pub fn proposals_banner(count: usize) -> String {
     }
 }
 
+pub fn proposal_title(field: &str, status: &str) -> String {
+    PROPOSAL_TITLE
+        .replace("{field}", field)
+        .replace("{status}", status)
+}
+
 pub fn measure_model_label(provider: &str, model: &str, location: &str) -> String {
     MEASURE_MODEL_LABEL
         .replace("{provider}", provider)
@@ -177,5 +187,11 @@ mod tests {
     fn templates_replace_only_the_parameter() {
         assert_eq!(super::version("1.2.3"), "Version 1.2.3");
         assert_eq!(super::database("{value}"), "Database: {value}");
+    }
+
+    #[test]
+    fn proposal_banner_uses_singular_and_plural() {
+        assert_eq!(super::proposals_banner(1), "1 ventende ændring");
+        assert_eq!(super::proposals_banner(3), "3 ventende ændringer");
     }
 }
