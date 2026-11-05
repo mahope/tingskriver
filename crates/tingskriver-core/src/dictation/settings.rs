@@ -65,6 +65,10 @@ pub struct DictationSettings {
     pub format_addresses: bool,
     /// Three or more equal words in a row become one ("nej nej nej" → "nej").
     pub collapse_stutters: bool,
+    /// Run a script from the hook folder on the finished text (off by default).
+    pub text_hook_enabled: bool,
+    /// File name (`.cmd` or `.ps1`) inside the hook folder.
+    pub text_hook_script: String,
     pub modes: ModeCollection,
 }
 
@@ -99,6 +103,8 @@ impl Default for DictationSettings {
             format_numbers: true,
             format_addresses: true,
             collapse_stutters: true,
+            text_hook_enabled: false,
+            text_hook_script: String::new(),
             modes: ModeCollection::default(),
         }
     }
@@ -181,6 +187,12 @@ impl DictationSettings {
             s.style = Style::parse(&s.style).as_str().to_string();
         }
         self.app_styles.retain(|s| !s.process.is_empty());
+        self.text_hook_script = self.text_hook_script.trim().to_string();
+        if self.text_hook_enabled {
+            super::text_hook::script_path(Path::new(""), &self.text_hook_script)?;
+        } else if super::text_hook::script_path(Path::new(""), &self.text_hook_script).is_err() {
+            self.text_hook_script.clear();
+        }
         self.model_idle_minutes = self.model_idle_minutes.min(24 * 60);
         self.keep_warm_models = self
             .keep_warm_models
@@ -308,6 +320,21 @@ mod text_settings_tests {
         mode.provider = Some("syv".into());
         settings.apply_mode(&mode);
         assert_eq!(settings.engine, "local");
+    }
+
+    #[test]
+    fn new_text_options_have_safe_defaults_and_validate_the_hook() {
+        let old: DictationSettings = serde_json::from_str(r#"{"engine":"local"}"#).unwrap();
+        assert!(old.collapse_stutters);
+        assert!(!old.text_hook_enabled);
+        let on = DictationSettings { text_hook_enabled: true, ..Default::default() };
+        assert!(on.clone().normalized().is_err());
+        let on = DictationSettings { text_hook_script: "../x.cmd".into(), ..on };
+        assert!(on.normalized().is_err());
+        let ok = DictationSettings { text_hook_enabled: true, text_hook_script: " ret.ps1 ".into(), ..Default::default() };
+        assert_eq!(ok.normalized().unwrap().text_hook_script, "ret.ps1");
+        let off = DictationSettings { text_hook_script: "a&b.cmd".into(), ..Default::default() };
+        assert_eq!(off.normalized().unwrap().text_hook_script, "");
     }
 
     #[test]

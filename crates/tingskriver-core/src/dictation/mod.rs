@@ -16,6 +16,7 @@ pub mod service;
 pub mod settings;
 pub mod store;
 pub mod syv;
+pub mod text_hook;
 pub mod timings;
 pub mod warm;
 #[cfg(windows)]

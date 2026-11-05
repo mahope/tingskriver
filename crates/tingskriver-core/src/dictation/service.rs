@@ -888,6 +888,11 @@ impl Service {
             text = self.polish(&settings, mode.as_ref(), text).await;
             polish_ms = Some(polish_started.elapsed().as_millis() as u64);
         }
+        if settings.text_hook_enabled && !text.trim().is_empty() {
+            // Fail-open: on any failure `text` comes back unchanged.
+            let dir = super::text_hook::hook_dir(&self.app_data_dir);
+            text = super::text_hook::apply(&dir, &settings.text_hook_script, text).await;
+        }
         self.overlay.set(OverlayState::Hidden);
         if text.trim().is_empty() {
             log::info!("Dictation: transcript empty after cleanup");
