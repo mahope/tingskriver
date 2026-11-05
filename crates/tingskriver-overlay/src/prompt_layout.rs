@@ -202,6 +202,11 @@ impl PromptLayout {
     }
 }
 
+/// Width in physical pixels available to body text, for measuring it.
+pub fn text_width(scale: f32) -> i32 {
+    px(size::WIDTH - 2.0 * size::PADDING, scale)
+}
+
 /// Top-left corner for a `width` x `height` window at the bottom right of
 /// `work` (the monitor's work area, so clear of the taskbar). Away from the
 /// dictation pill, which sits at the bottom centre. Never outside `work`.
@@ -290,7 +295,7 @@ mod tests {
                 assert!(pair[0].x + pair[0].w < pair[1].x, "gap at {scale}");
             }
             let last = l.buttons.last().unwrap();
-            assert!(last.x + last.w <= l.width - 1);
+            assert!(last.x + last.w < l.width);
         }
     }
 

@@ -82,17 +82,21 @@ pub enum Decision {
 }
 
 /// Decide for a prompt that has waited `waited` of its `ttl` (the time after
-/// which the question is moot, for example the meeting start).
+/// which the question is moot, for example the meeting start). A prompt
+/// that is out of date is dropped whatever the state is.
 ///
 /// `state` is `None` when it could not be read. That fails open: a broken
 /// query must not swallow every prompt.
 pub fn decide(state: Option<NotificationState>, waited: Duration, ttl: Duration) -> Decision {
-    let Some(state) = state.filter(|s| s.blocks_prompts()) else {
-        return Decision::Show;
-    };
-    let mark_pill = state == NotificationState::QuietTime;
+    let blocked = state.filter(|s| s.blocks_prompts());
+    let mark_pill = blocked == Some(NotificationState::QuietTime);
+    // A question that is moot is never shown, blocked or not (it may also
+    // have waited behind another prompt).
     if waited >= ttl {
         return Decision::Drop { mark_pill };
+    }
+    if blocked.is_none() {
+        return Decision::Show;
     }
     Decision::Defer {
         retry_in: RETRY_EVERY.min(ttl - waited),
@@ -193,6 +197,15 @@ mod tests {
     fn an_unreadable_or_unknown_state_fails_open() {
         assert_eq!(decide(None, ZERO, TTL), Decision::Show);
         assert_eq!(decide(Some(Unknown(42)), ZERO, TTL), Decision::Show);
+    }
+
+    #[test]
+    fn a_moot_prompt_is_dropped_even_when_nothing_blocks() {
+        assert_eq!(
+            decide(Some(AcceptsNotifications), TTL, TTL),
+            Decision::Drop { mark_pill: false }
+        );
+        assert_eq!(decide(None, TTL, TTL), Decision::Drop { mark_pill: false });
     }
 
     #[test]

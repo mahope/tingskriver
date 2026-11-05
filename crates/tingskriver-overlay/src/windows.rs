@@ -184,6 +184,22 @@ impl CoreOverlay {
     }
 }
 
+impl CoreOverlay {
+    /// Mark the pill while a prompt is held back by Focus Assist (see
+    /// `windows_prompt::PromptWindow`).
+    pub fn set_prompt_held(&self, held: bool) {
+        if let Err(e) = tingskriver_core::dictation::overlay::Overlay::ensure(self) {
+            log::warn!("Overlay: {e}");
+            return;
+        }
+        if let Ok(slot) = self.overlay.lock() {
+            if let Some(overlay) = slot.as_ref() {
+                overlay.set_prompt_held(held);
+            }
+        }
+    }
+}
+
 impl tingskriver_core::dictation::overlay::Overlay for CoreOverlay {
     fn ensure(&self) -> Result<(), String> {
         let mut slot = self
@@ -323,9 +339,9 @@ fn with_ui(f: impl FnOnce(&mut Ui)) {
 
 /// The monitor the pill is on, chosen when it is shown.
 #[derive(Clone, Copy)]
-struct Monitor {
-    work: ScreenRect,
-    scale: f32,
+pub(crate) struct Monitor {
+    pub(crate) work: ScreenRect,
+    pub(crate) scale: f32,
 }
 
 struct Ui {
@@ -533,7 +549,7 @@ fn merge(a: Change, b: Change) -> Change {
 
 /// The monitor with the active window (where the user is typing), or the
 /// one under the mouse when no window is active, with its DPI scale.
-fn current_monitor() -> Monitor {
+pub(crate) fn current_monitor() -> Monitor {
     // SAFETY: plain Win32 queries with valid out-pointers.
     unsafe {
         let foreground = GetForegroundWindow();

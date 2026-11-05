@@ -22,6 +22,8 @@ pub mod theme;
 
 #[cfg(windows)]
 pub mod windows;
+#[cfg(windows)]
+pub mod windows_prompt;
 
 pub use model::PillState;
 use tingskriver_core::dictation::overlay::OverlayState;
