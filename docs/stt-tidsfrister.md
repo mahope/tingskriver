@@ -15,7 +15,7 @@ Prøv igen.`), og næste kald starter en frisk proces.
 
 | Enhed | Indlæsning af model | Kørsel, gulv | k |
 |-------|--------------------|--------------|---|
-| GPU   | 30 s               | 60 s         | 10 |
+| GPU   | 120 s              | 60 s         | 10 |
 | CPU   | 120 s              | 300 s        | 20 |
 
 Begrundelse:
@@ -27,6 +27,11 @@ Begrundelse:
   tal er langt under 1 × lydlængden på GPU og omkring 1–3 × på en svag CPU. k
   er med vilje 10 og 20: fristen skal fange et *hang*, ikke en langsom maskine,
   så en falsk timeout er værre end at vente lidt for længe.
+- **Indlæsning på GPU er 120 s, ikke Handys 30 s.** Et timeout under
+  indlæsning slår GPU'en fra resten af sessionen, og en kold Vulkan-shader-
+  kompilering eller en stor model fra en langsom disk kan overstige 30 s uden
+  at noget hænger. Der er ikke målt for vores modeller endnu; sænk først
+  tallet, når en måling findes.
 - **CPU er mere lempelig end GPU**, fordi en CPU uden AVX2 eller med få kerner
   kan være mange gange langsommere, og fordi GPU'en har et reelt alternativ
   (CPU'en) at falde tilbage til.
@@ -42,10 +47,14 @@ kode, kun idéen og værdierne er genimplementeret.
   prøves *det samme kald* én gang i en ren CPU-worker. GPU'en markeres
   utilgængelig, og resten af sessionen starter alle nye workere på CPU
   (`stt::gpu_unavailable()`). Flaget nulstilles ved genstart af appen.
+- En worker, der slet ikke kan startes (binæren mangler eller er blokeret af
+  fx antivirus), er ikke GPU'ens skyld: der er intet CPU-forsøg, og GPU'en
+  markeres ikke.
 - En worker, der svarer med en fejl (fx en model, der ikke kan indlæses), er
   hverken et hang eller et nedbrud: der er intet CPU-forsøg, og GPU'en markeres
   ikke.
-- Er enheden valgt eksplicit (`DevicePolicy::Gpu`), falder den aldrig tilbage.
+- Er enheden valgt eksplicit (`DevicePolicy::Gpu`; endnu ikke koblet til en
+  indstilling i appen, kun bevist i klientens tests), falder den aldrig tilbage.
   Fejlen vises, og næste kald prøver GPU'en igen.
 - Kun Whisper bruger GPU'en. Parakeet og VAD kører med `DevicePolicy::Cpu`,
   så de får CPU-fristerne og intet genforsøg.

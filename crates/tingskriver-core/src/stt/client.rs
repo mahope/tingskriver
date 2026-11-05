@@ -66,7 +66,7 @@ pub struct Deadlines {
 
 impl Deadlines {
     pub const GPU: Self = Self {
-        load_floor: Duration::from_secs(30),
+        load_floor: Duration::from_secs(120),
         run_floor: Duration::from_secs(60),
         factor: 10.0,
     };
@@ -182,6 +182,11 @@ impl Watchdog {
                     }
                 }
             });
+        if let Err(error) = &spawned {
+            log::warn!(
+                "STT: could not start the watchdog thread ({error}); no deadline for this call"
+            );
+        }
         Self {
             done: spawned.is_ok().then_some(done),
             expired,
@@ -203,6 +208,9 @@ impl Drop for Watchdog {
 enum Failure {
     Timeout,
     Crash,
+    /// The worker could not be started at all (missing or blocked binary).
+    /// The GPU is not to blame, so there is no CPU retry.
+    Spawn,
     /// The worker answered, but with an error. Not a hang or a crash.
     Rejected,
 }
@@ -333,7 +341,7 @@ impl Client {
         log_vulkan_policy_once(self.device);
         match self.start() {
             Ok(()) => Ok(()),
-            Err(failure) if self.can_fall_back() && !matches!(failure, Failure::Rejected) => {
+            Err(failure) if self.can_fall_back() && Self::worth_retrying(&failure) => {
                 log::warn!("STT: GPU worker failed to start ({failure:?}); retrying on the CPU");
                 self.mark_gpu_unavailable();
                 self.device = Device::Cpu;
@@ -343,17 +351,22 @@ impl Client {
         }
     }
 
+    /// Only a worker that started and then hung or died counts against the GPU.
+    fn worth_retrying(failure: &Failure) -> bool {
+        matches!(failure, Failure::Timeout | Failure::Crash)
+    }
+
     fn message(failure: Failure) -> String {
         match failure {
             Failure::Timeout => TIMEOUT_ERROR,
-            Failure::Crash | Failure::Rejected => CRASH_ERROR,
+            Failure::Crash | Failure::Rejected | Failure::Spawn => CRASH_ERROR,
         }
         .to_string()
     }
 
     fn start(&mut self) -> Result<(), Failure> {
         let mut command = self.command(self.device);
-        let mut child = command.spawn().map_err(|_| Failure::Crash)?;
+        let mut child = command.spawn().map_err(|_| Failure::Spawn)?;
         #[cfg(windows)]
         if job::assign(child.id()).is_err() {
             let _ = child.kill();
@@ -438,7 +451,7 @@ impl Client {
                 Ok(frame) => return Ok(frame),
                 Err(failure) => {
                     self.process.take();
-                    if !retried && self.can_fall_back() && !matches!(failure, Failure::Rejected) {
+                    if !retried && self.can_fall_back() && Self::worth_retrying(&failure) {
                         retried = true;
                         log::warn!(
                             "STT: GPU worker failed ({failure:?}); retrying once on the CPU"
@@ -636,13 +649,30 @@ while True:
     }
 
     #[test]
+    fn missing_worker_binary_does_not_mark_the_gpu_unavailable() {
+        let _guard = GPU_STATE.lock().unwrap_or_else(|e| e.into_inner());
+        GPU_UNAVAILABLE.store(false, Ordering::Relaxed);
+        let mut client = Client::unstarted(
+            PathBuf::from("/nonexistent/tingskriver-stt"),
+            b"init".to_vec(),
+            DevicePolicy::Auto,
+        );
+        client.gpu_capable = true;
+        assert_eq!(
+            client.start_with_fallback().err().as_deref(),
+            Some(CRASH_ERROR)
+        );
+        assert!(!gpu_unavailable());
+    }
+
+    #[test]
     fn deadline_scales_with_audio_and_has_a_floor() {
         let cpu = Deadlines::CPU;
         assert_eq!(cpu.limit(None), Duration::from_secs(120));
         assert_eq!(cpu.limit(Some(5.0)), Duration::from_secs(300));
         assert_eq!(cpu.limit(Some(60.0)), Duration::from_secs(1200));
         let gpu = Deadlines::GPU;
-        assert_eq!(gpu.limit(None), Duration::from_secs(30));
+        assert_eq!(gpu.limit(None), Duration::from_secs(120));
         assert_eq!(gpu.limit(Some(1.0)), Duration::from_secs(60));
         assert_eq!(gpu.limit(Some(60.0)), Duration::from_secs(600));
     }
