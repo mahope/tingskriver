@@ -77,6 +77,48 @@ catalogue! {
     LOG_FAILED = "Logfilen kunne ikke oprettes, så detaljerne står kun i konsollen.";
     DATABASE_FAILED = "Tingskriver kunne ikke åbne dine møder";
     RETRY = "Prøv igen";
+    PROPOSALS_TITLE = "Ventende ændringer";
+    PROPOSALS_ONE = "1 ventende ændring";
+    PROPOSALS_MANY = "{value} ventende ændringer";
+    PROPOSALS_EMPTY = "Ingen ventende ændringer";
+    PROPOSALS_EMPTY_HELP = "Når en assistent eller et værktøj foreslår en ændring af noter eller referat, kan du gennemgå den her. Intet ændres, før du trykker Anvend.";
+    PROPOSALS_REVIEW_HELP = "Gennemgå forslaget linje for linje. Dine noter og dit referat er uændrede, indtil du trykker Anvend.";
+    PROPOSALS_LOADING = "Indlæser forslag …";
+    PROPOSALS_LOAD_FAILED = "Forslagene kunne ikke indlæses.";
+    PROPOSAL_FIELD_NOTES = "Noter";
+    PROPOSAL_FIELD_SUMMARY = "Referat";
+    PROPOSAL_SOURCE = "Foreslået af: {value}";
+    PROPOSAL_SOURCE_REGENERATE = "genskabt referat";
+    PROPOSAL_SOURCE_ASSISTANT = "assistenten";
+    PROPOSAL_SOURCE_CHAT = "chatten";
+    PROPOSAL_SOURCE_COMMAND = "kommandotilstand";
+    PROPOSAL_SOURCE_MCP = "et eksternt værktøj (MCP)";
+    PROPOSAL_APPLY = "Anvend";
+    PROPOSAL_REJECT = "Afvis";
+    PROPOSAL_UNDO = "Fortryd";
+    PROPOSAL_STATUS_PENDING = "Venter";
+    PROPOSAL_STATUS_APPLIED = "Anvendt";
+    PROPOSAL_STATUS_REJECTED = "Afvist";
+    PROPOSAL_STATUS_STALE = "Forældet";
+    PROPOSAL_STATUS_EXPIRED = "Udløbet";
+    PROPOSAL_STATUS_UNDONE = "Fortrudt";
+    PROPOSAL_DIFF_ADDED = "Tilføjet";
+    PROPOSAL_DIFF_REMOVED = "Fjernet";
+    PROPOSAL_DIFF_UNCHANGED = "Uændret";
+    PROPOSAL_NO_LINES = "Ingen linjer";
+    PROPOSAL_STALE_REASON = "Forslaget blev afvist automatisk, fordi {value} er ændret, siden forslaget blev lavet. Bed om et nyt forslag.";
+    PROPOSAL_STALE_NOTES = "noterne";
+    PROPOSAL_STALE_SUMMARY = "referatet";
+    PROPOSAL_EXPIRED_REASON = "Forslaget udløb, da samtalen blev lukket.";
+    PROPOSAL_UNDO_CONFLICT = "Fortryd kan ikke gennemføres, fordi du har ændret de samme linjer, efter forslaget blev anvendt. Intet er ændret.";
+    PROPOSAL_NO_CHANGE = "Forslaget ændrer ikke noget.";
+    PROPOSAL_NOT_PENDING = "Forslaget er allerede behandlet.";
+    PROPOSAL_NOT_APPLIED = "Kun et anvendt forslag kan fortrydes.";
+    PROPOSAL_NOT_FOUND = "Forslaget findes ikke længere.";
+    PROPOSAL_EMPTY_SUMMARY = "Et tomt referat kan ikke anvendes.";
+    PROPOSAL_NO_SUMMARY = "Mødet har intet referat at ændre endnu.";
+    PROPOSAL_INVALID = "Forslagets indhold kunne ikke læses.";
+    PROPOSAL_FAILED = "Forslaget kunne ikke gemmes eller anvendes. Intet er ændret.";
 }
 
 macro_rules! parameterized {
@@ -94,6 +136,18 @@ parameterized! {
     data_dir => DATA_DIR;
     database => DATABASE;
     log_file => LOG_FILE;
+    proposals_many => PROPOSALS_MANY;
+    proposal_source => PROPOSAL_SOURCE;
+    proposal_stale_reason => PROPOSAL_STALE_REASON;
+}
+
+/// "1 ventende ændring" / "N ventende ændringer".
+pub fn proposals_banner(count: usize) -> String {
+    if count == 1 {
+        PROPOSALS_ONE.to_string()
+    } else {
+        proposals_many(&count.to_string())
+    }
 }
 
 pub fn measure_model_label(provider: &str, model: &str, location: &str) -> String {

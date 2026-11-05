@@ -24,40 +24,8 @@ impl NotesStore {
     }
     pub async fn load(&self, meeting_id: &str) -> anyhow::Result<Document> {
         self.migrate_one(meeting_id).await?;
-        let rows = sqlx::query(
-            "SELECT block_type,level,checked,text_markdown,created_offset_ms FROM meeting_note_blocks WHERE meeting_id=? ORDER BY position",
-        )
-        .bind(meeting_id)
-        .fetch_all(&self.pool)
-        .await?;
-        let mut doc = Document::default();
-        for row in rows {
-            let kind = match row.try_get::<&str, _>("block_type")? {
-                "paragraph" => super::BlockKind::Paragraph,
-                "heading" => super::BlockKind::Heading(row.try_get("level")?),
-                "bullet" => super::BlockKind::Bullet,
-                "numbered" => super::BlockKind::Numbered,
-                "checkbox" => super::BlockKind::Checkbox(row.try_get("checked")?),
-                _ => anyhow::bail!("Invalid stored note block type"),
-            };
-            let inline = markdown::parse(row.try_get("text_markdown")?)?;
-            let spans = inline
-                .blocks
-                .into_iter()
-                .next()
-                .map(|b| b.spans)
-                .unwrap_or_default();
-            let offset: Option<i64> = row.try_get("created_offset_ms")?;
-            doc.blocks.push(Block {
-                kind,
-                spans,
-                created_offset_ms: offset
-                    .map(u64::try_from)
-                    .transpose()
-                    .context("Invalid stored note offset")?,
-            });
-        }
-        Ok(doc)
+        let mut conn = self.pool.acquire().await?;
+        read_blocks(&mut conn, meeting_id).await
     }
     pub async fn notes_around(
         &self,
@@ -99,7 +67,48 @@ impl NotesStore {
         Ok(Some(unsupported))
     }
 }
-async fn write(
+/// Reads the stored blocks on `conn`, so callers can read inside their own
+/// transaction. Does not migrate legacy notes; use [`NotesStore::load`] first.
+pub(crate) async fn read_blocks(
+    conn: &mut sqlx::SqliteConnection,
+    meeting_id: &str,
+) -> anyhow::Result<Document> {
+    let rows = sqlx::query(
+            "SELECT block_type,level,checked,text_markdown,created_offset_ms FROM meeting_note_blocks WHERE meeting_id=? ORDER BY position",
+        )
+        .bind(meeting_id)
+        .fetch_all(&mut *conn)
+        .await?;
+    let mut doc = Document::default();
+    for row in rows {
+        let kind = match row.try_get::<&str, _>("block_type")? {
+            "paragraph" => super::BlockKind::Paragraph,
+            "heading" => super::BlockKind::Heading(row.try_get("level")?),
+            "bullet" => super::BlockKind::Bullet,
+            "numbered" => super::BlockKind::Numbered,
+            "checkbox" => super::BlockKind::Checkbox(row.try_get("checked")?),
+            _ => anyhow::bail!("Invalid stored note block type"),
+        };
+        let inline = markdown::parse(row.try_get("text_markdown")?)?;
+        let spans = inline
+            .blocks
+            .into_iter()
+            .next()
+            .map(|b| b.spans)
+            .unwrap_or_default();
+        let offset: Option<i64> = row.try_get("created_offset_ms")?;
+        doc.blocks.push(Block {
+            kind,
+            spans,
+            created_offset_ms: offset
+                .map(u64::try_from)
+                .transpose()
+                .context("Invalid stored note offset")?,
+        });
+    }
+    Ok(doc)
+}
+pub(crate) async fn write(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     id: &str,
     doc: &Document,
