@@ -15,6 +15,10 @@ pub struct JobSpec {
     pub system: Option<PathBuf>,
     pub microphone_label: String,
     pub language: String,
+    /// Extra spoken languages (issue #209). Jobs stored before this field
+    /// existed have none.
+    #[serde(default)]
+    pub extra_languages: Vec<String>,
     pub offset_ms: u64,
     /// Optional snapshot for "run again with another provider". Never keys.
     pub providers: Option<crate::providers::ProvidersConfig>,
@@ -28,9 +32,19 @@ impl JobSpec {
             system,
             microphone_label: "Mig".into(),
             language: "da".into(),
+            extra_languages: Vec::new(),
             offset_ms: 0,
             providers: None,
         }
+    }
+
+    /// Takes the main language and the extra spoken languages from the
+    /// settings (issue #209). Whoever creates a job calls this with
+    /// `MeetingLanguages::load_async`, so the choice reaches the provider.
+    pub fn with_languages(mut self, languages: &crate::meeting_language::MeetingLanguages) -> Self {
+        self.language = languages.primary.clone();
+        self.extra_languages = languages.extra.clone();
+        self
     }
 }
 

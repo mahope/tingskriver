@@ -54,6 +54,7 @@ mod http;
 pub mod install;
 pub mod logging;
 pub mod measurement;
+pub mod meeting_language;
 pub mod notes;
 pub mod ollama;
 pub mod openai;

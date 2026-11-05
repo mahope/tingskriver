@@ -1167,4 +1167,90 @@ mod tests {
         assert!(!cleaned.reasoning_stripped);
         assert_eq!(clean_llm_markdown_detailed(markdown).markdown, markdown);
     }
+
+    // -- issue #209: the language of the report ----------------------------
+
+    /// A Danish meeting in which most sentences are English.
+    fn mixed_danish_english_transcript() -> String {
+        let danish = "Vi starter mødet og kigger på planen for næste kvartal. ";
+        let english = "The release is blocked by the review of the billing service, \
+            and we need two more engineers to finish the migration before the deadline. ";
+        let mut text = String::new();
+        for _ in 0..8 {
+            text.push_str(english);
+            text.push_str(english);
+            text.push_str(danish);
+        }
+        text
+    }
+
+    async fn report_requests(
+        languages: &crate::meeting_language::MeetingLanguages,
+    ) -> (String, Vec<String>) {
+        use crate::providers::fake_server::{FakeServer, Reply};
+        let text = mixed_danish_english_transcript();
+        let detected = crate::summary::language_detection::detect_summary_language(std::slice::from_ref(&text))
+            .language;
+        let summary_language = languages.summary_language(None, detected.as_deref());
+        let reply = serde_json::json!({"choices": [{"message": {
+            "content": "# Referat\n\n## Beslutninger\n- Planen følges.\n"
+        }}]})
+        .to_string();
+        let server = FakeServer::start(vec![Reply::ok(reply)]).await;
+        let template = crate::summary::templates::get_template("daily_standup").unwrap();
+        let generated = generate_meeting_summary(
+            &Client::new(),
+            &LLMProvider::CustomOpenAI,
+            "fake-model",
+            "",
+            &text,
+            "",
+            "daily_standup",
+            &template,
+            100000,
+            None,
+            Some(&server.base_url),
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&summary_language),
+            detected.as_deref(),
+            None,
+            &QualityInputs { preferred_names: vec![], want_title: false },
+        )
+        .await
+        .expect("fake provider report");
+        (generated.final_markdown, server.requests())
+    }
+
+    #[tokio::test]
+    async fn danish_meeting_with_english_sentences_gets_a_danish_report() {
+        let languages = crate::meeting_language::MeetingLanguages {
+            extra: vec!["en".to_string()],
+            ..Default::default()
+        };
+        let (_, requests) = report_requests(&languages).await;
+        let last = requests.last().expect("a model call");
+        assert!(
+            last.contains("into Danish"),
+            "the final pass must be told to write Danish: {last}"
+        );
+        assert!(
+            !requests.iter().any(|r| r.contains("into English")),
+            "no pass may convert the report to English"
+        );
+    }
+
+    #[tokio::test]
+    async fn report_in_the_detected_language_only_when_the_setting_allows_it() {
+        let languages = crate::meeting_language::MeetingLanguages {
+            extra: vec!["en".to_string()],
+            summary_in_primary: false,
+            ..Default::default()
+        };
+        let (_, requests) = report_requests(&languages).await;
+        assert!(!requests.iter().any(|r| r.contains("into Danish")));
+    }
 }

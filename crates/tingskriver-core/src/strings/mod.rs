@@ -70,6 +70,20 @@ catalogue! {
     DATA = "Data";
     DATA_DIR = "Datamappe: {value}";
     DATABASE = "Database: {value}";
+    LANGUAGES = "Sprog";
+    LANGUAGE_PRIMARY = "Hovedsprog";
+    LANGUAGE_PRIMARY_HELP = "Bruges til referat og chat og er altid med som transskriptionssprog. Standard er dansk.";
+    LANGUAGE_EXTRA = "Ekstra talesprog";
+    LANGUAGE_EXTRA_HELP = "Sprog, der også tales i møderne, fx engelsk. De giver transskriptionen kontekst.";
+    LANGUAGE_SUMMARY_ON = "Skriv altid referat på hovedsproget: til";
+    LANGUAGE_SUMMARY_OFF = "Skriv altid referat på hovedsproget: fra (referatet følger det mest talte af de valgte sprog)";
+    LANGUAGE_PROVIDERS = "Hovedsproget og de ekstra talesprog sendes til Syv.ai og andre netudbydere som sprog og kontekst. Den lokale model bruger kun hovedsproget.";
+    LANGUAGE_NEW_MEETINGS = "Ændringer gælder nye optagelser og nye referater. Et eksisterende transskript oversættes ikke. Vil du have et referat på det nye sprog, så lav referatet om.";
+    LANGUAGE_SAVE_FAILED = "Sprogvalget kunne ikke gemmes: {value}";
+    LANGUAGE_CURRENT = "Valgt nu: hovedsprog {value}";
+    LANGUAGE_NO_EXTRA = "ingen ekstra";
+    LANGUAGE_EXTRA_LIST = "ekstra talesprog: {value}";
+    LANGUAGE_LOAD_FAILED = "Sprogindstillingerne kunne ikke læses: {value}";
     LOG = "Log";
     LOG_FILE = "Logfil: {value}";
     OPEN_LOG = "Åbn logmappen";
@@ -94,6 +108,10 @@ parameterized! {
     data_dir => DATA_DIR;
     database => DATABASE;
     log_file => LOG_FILE;
+    language_save_failed => LANGUAGE_SAVE_FAILED;
+    language_load_failed => LANGUAGE_LOAD_FAILED;
+    language_current => LANGUAGE_CURRENT;
+    language_extra_list => LANGUAGE_EXTRA_LIST;
 }
 
 pub fn measure_model_label(provider: &str, model: &str, location: &str) -> String {

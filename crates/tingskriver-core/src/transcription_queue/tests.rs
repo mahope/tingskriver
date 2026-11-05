@@ -604,3 +604,89 @@ async fn retries_increase_and_retry_after_is_a_lower_bound() {
     }
     assert!(queue.claim(i64::MAX).await.unwrap().is_none());
 }
+
+#[tokio::test]
+async fn extra_languages_reach_the_provider_and_old_jobs_still_load() {
+    use fake_server::{FakeServer, Reply};
+    // A job stored before the field existed.
+    let old = r#"{"meeting_id":"m","microphone":"mic.wav","system":null,"microphone_label":"Mig","language":"da","offset_ms":0,"providers":null}"#;
+    let old: JobSpec = serde_json::from_str(old).unwrap();
+    assert!(old.extra_languages.is_empty());
+
+    let server = FakeServer::start(vec![Reply::ok(
+        r#"{"text":"hej","segments":[{"start":0,"end":1,"text":"hej"}]}"#,
+    )])
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    let mic = dir.path().join("mic.wav");
+    std::fs::write(&mic, [1]).unwrap();
+    let queue = Queue::open_memory().await.unwrap();
+    let mut spec = JobSpec::new("m", mic, None);
+    spec.extra_languages = vec!["en".into()];
+    queue.enqueue(&spec, 0).await.unwrap();
+    queue
+        .run_once_at(
+            &service(dir.path()),
+            &remote_config(&server.base_url),
+            |_, _| async { panic!("remote only") },
+            |_| {},
+            0,
+        )
+        .await
+        .unwrap();
+    let request = &server.requests()[0];
+    assert!(request.contains("name=\"language\"\r\n\r\nda"));
+    assert!(request.contains("Samtalen foregår på dansk og engelsk."));
+    // The stored version keeps the languages it was made with.
+    let versions = queue.versions("m").await.unwrap();
+    assert_eq!(versions[0].spec.language, "da");
+    assert_eq!(versions[0].spec.extra_languages, ["en"]);
+}
+
+#[tokio::test]
+async fn changing_the_language_settings_leaves_stored_transcripts_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let queue = Queue::open_memory().await.unwrap();
+    queue
+        .enqueue(&JobSpec::new("m", dir.path().join("mic.wav"), None), 0)
+        .await
+        .unwrap();
+    let claimed = queue.claim(0).await.unwrap().unwrap();
+    let result = serde_json::json!({"language":"da","segments":[{"text":"hej"}]});
+    queue.complete(&claimed, &result).await.unwrap();
+
+    crate::meeting_language::MeetingLanguages {
+        primary: "en".into(),
+        extra: vec!["da".into()],
+        summary_in_primary: false,
+    }
+    .save(dir.path())
+    .unwrap();
+
+    let versions = queue.versions("m").await.unwrap();
+    assert_eq!(versions.len(), 1);
+    assert_eq!(versions[0].result, result);
+    assert_eq!(versions[0].spec.language, "da");
+}
+
+#[test]
+fn a_job_carries_the_language_settings_and_defaults_stay_danish() {
+    let plain = JobSpec::new("m", "mic.wav".into(), None);
+    let same = JobSpec::new("m", "mic.wav".into(), None)
+        .with_languages(&crate::meeting_language::MeetingLanguages::default());
+    assert_eq!(
+        (same.language.as_str(), same.extra_languages.len()),
+        ("da", 0)
+    );
+    assert_eq!(plain.language, same.language);
+
+    let spec = JobSpec::new("m", "mic.wav".into(), None).with_languages(
+        &crate::meeting_language::MeetingLanguages {
+            primary: "en".into(),
+            extra: vec!["da".into()],
+            summary_in_primary: true,
+        },
+    );
+    assert_eq!(spec.language, "en");
+    assert_eq!(spec.extra_languages, ["da"]);
+}
