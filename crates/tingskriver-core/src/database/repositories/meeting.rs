@@ -464,6 +464,15 @@ mod title_tests {
         }
     }
 
+    /// The default name is made in three places with this format; the GLOB in
+    /// `TITLE_REPLACEABLE` must keep matching it.
+    #[tokio::test]
+    async fn the_default_name_format_is_replaceable() {
+        let name = format!("Meeting {}", chrono::Local::now().format("%Y-%m-%d_%H-%M-%S"));
+        let pool = pool_with(&name, None).await;
+        assert!(MeetingsRepository::title_is_replaceable(&pool, "m").await.unwrap());
+    }
+
     #[tokio::test]
     async fn a_user_title_is_never_overwritten() {
         for (existing, source) in [

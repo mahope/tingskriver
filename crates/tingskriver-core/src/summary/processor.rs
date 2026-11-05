@@ -429,8 +429,12 @@ pub(crate) async fn generate_meeting_summary(
     if cancellation_token.is_some_and(CancellationToken::is_cancelled) {
         return Err("Summary generation was cancelled".to_string());
     }
-    // Too little speech for a report: no model call at all.
-    quality::check_eligibility(text).map_err(str::to_string)?;
+    // Too little speech for a report: no model call at all. A cached English
+    // report is reused as is, so a transcript edited shorter afterwards does
+    // not block translating it again.
+    if resolve_cached_english(cached_english, summary_language).is_none() {
+        quality::check_eligibility(text).map_err(str::to_string)?;
+    }
     let extra_rules = report_extra_rules(text, template, &quality_inputs.preferred_names);
     info!("Starting summary generation with provider: {:?}, model: {}", provider, model_name);
 
@@ -849,6 +853,37 @@ mod tests {
         .unwrap_err();
         assert_eq!(err, quality::TOO_SHORT_MESSAGE);
         assert!(quality::is_too_short_message(&err));
+    }
+
+    #[tokio::test]
+    async fn cached_english_report_skips_the_eligibility_check() {
+        let template = crate::summary::templates::get_template("daily_standup").unwrap();
+        let result = generate_meeting_summary(
+            &Client::new(),
+            &LLMProvider::Ollama,
+            "m",
+            "",
+            "[00:00:01] Hej",
+            "",
+            "daily_standup",
+            &template,
+            4000,
+            Some("http://127.0.0.1:9"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("da"),
+            Some("da"),
+            Some("# Meeting\n\nCached English report."),
+            &QualityInputs { preferred_names: vec![], want_title: false },
+        )
+        .await;
+        if let Err(err) = result {
+            assert!(!quality::is_too_short_message(&err), "{err}");
+        }
     }
 
     #[test]
