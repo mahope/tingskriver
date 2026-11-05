@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 pub struct Preferences {
     pub enabled: bool,
     pub weekly: bool,
+    // Missing keys must fail so corruption cannot reset the check interval.
+    #[serde(deserialize_with = "Option::deserialize")]
     pub last_check: Option<u64>,
 }
 
@@ -224,6 +226,13 @@ mod tests {
         .due(86500));
         assert!(serde_json::from_str::<Preferences>("broken").is_err());
         assert!(serde_json::from_str::<Preferences>("{}").is_err());
+        assert!(serde_json::from_str::<Preferences>(r#"{"enabled":true,"weekly":false}"#).is_err());
+        let defaults = Preferences::default();
+        assert_eq!(
+            serde_json::from_value::<Preferences>(serde_json::to_value(&defaults).unwrap())
+                .unwrap(),
+            defaults
+        );
     }
     #[test]
     fn recording_and_dictation_block_download_and_restart() {

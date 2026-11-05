@@ -139,7 +139,7 @@ fn read_preferences(bridge: &Bridge) -> Result<Preferences, String> {
             let dir = bridge
                 .app_data_dir()
                 .map_err(|_| tingskriver_core::strings::UPDATE_SETTINGS_INVALID.to_string())?;
-            match std::fs::metadata(dir.join(STORE)) {
+            match std::fs::symlink_metadata(dir.join(STORE)) {
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                     Ok(Preferences::default())
                 }
@@ -714,12 +714,19 @@ mod tests {
         let bridge = Bridge::new(dir.clone());
         assert!(read_preferences(&bridge).unwrap().enabled);
         std::fs::create_dir_all(&dir).unwrap();
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(dir.join("missing"), dir.join(STORE)).unwrap();
+            assert!(read_preferences(&bridge).is_err());
+            std::fs::remove_file(dir.join(STORE)).unwrap();
+        }
         for invalid in [
             "",
             " ",
             "{}",
             r#"{"preferences":{}}"#,
             r#"{"preferences":{"enabled":false}}"#,
+            r#"{"preferences":{"enabled":true,"weekly":false}}"#,
         ] {
             std::fs::write(dir.join(STORE), invalid).unwrap();
             assert_eq!(
