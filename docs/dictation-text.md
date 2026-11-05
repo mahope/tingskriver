@@ -73,11 +73,16 @@ stdin, and what it prints on stdout is inserted instead. It is off by default
   (`%APPDATA%\dk.mahoje.tingskriver` on Windows) and pick it in the dictation
   settings. The name may only have letters, digits, space, dot, dash and
   underscore, and the file must be in that folder.
-- `.cmd` runs as `cmd.exe /D /Q /C <file>`, `.ps1` as `powershell.exe -NoProfile
-  -NonInteractive -ExecutionPolicy Bypass -File <file>`. The text is never an
-  argument and never goes through a command line, so quotes, `%` and `$` in
-  dictated text are not expanded. Use `[Console]::InputEncoding`/`OutputEncoding`
-  set to UTF-8 in a `.ps1` script if the text has æøå.
+- `.cmd` runs as `cmd.exe /D /Q /S /C "chcp 65001>nul & "<file>""`, so the
+  script reads and writes UTF-8 (æøå work). `.ps1` runs as `powershell.exe
+  -NoProfile -NonInteractive -ExecutionPolicy Bypass -File <file>`. The text is
+  never an argument and never goes through a command line, so quotes, `%` and
+  `$` in dictated text are not expanded.
+- Windows PowerShell 5 uses the OEM code page for stdin and stdout, so a `.ps1`
+  script must set UTF-8 itself, or its answer is rejected as non-UTF-8 and the
+  original text is used. Start the script with
+  `[Console]::InputEncoding = [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)`.
+- Switching the hook on without choosing a script does nothing until one is chosen.
 - The script runs with the user's own rights. Only put scripts there that you trust.
 - 30 seconds is the limit; the script is then killed. One final line break in the
   answer is removed.

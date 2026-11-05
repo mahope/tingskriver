@@ -217,7 +217,9 @@ impl DictationSettings {
         self.channel = Channel::parse(&self.channel).as_str().to_string();
         self.sound_volume = self.sound_volume.min(100);
         self.text_hook_script = self.text_hook_script.trim().to_string();
-        if self.text_hook_enabled {
+        // Switching the hook on before a script is chosen is allowed (the
+        // hook then does nothing); a script name that is set must be valid.
+        if self.text_hook_enabled && !self.text_hook_script.is_empty() {
             super::text_hook::script_path(Path::new(""), &self.text_hook_script)?;
         } else if super::text_hook::script_path(Path::new(""), &self.text_hook_script).is_err() {
             self.text_hook_script.clear();
@@ -362,7 +364,7 @@ mod text_settings_tests {
         let loud = loud.normalized().unwrap();
         assert_eq!((loud.sound_volume, loud.channel.as_str(), loud.microphone.as_str()), (100, "right", "USB"));
         let on = DictationSettings { text_hook_enabled: true, ..Default::default() };
-        assert!(on.clone().normalized().is_err());
+        assert!(on.clone().normalized().unwrap().text_hook_enabled);
         let on = DictationSettings { text_hook_script: "../x.cmd".into(), ..on };
         assert!(on.normalized().is_err());
         let ok = DictationSettings { text_hook_enabled: true, text_hook_script: " ret.ps1 ".into(), ..Default::default() };

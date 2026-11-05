@@ -163,6 +163,10 @@ struct Kept {
 
 static KEPT: Mutex<Option<Kept>> = Mutex::new(None);
 
+/// Whether the settings want the stream kept open. Switching it off during a
+/// dictation cannot close the stream then, so the recording closes it when it ends.
+static KEEP_WANTED: AtomicBool = AtomicBool::new(false);
+
 fn kept() -> std::sync::MutexGuard<'static, Option<Kept>> {
     KEPT.lock().unwrap_or_else(|p| p.into_inner())
 }
@@ -174,6 +178,7 @@ pub fn warm_up(options: &CaptureOptions) {
     if !options.keep_open || super::service::is_dictating() {
         return;
     }
+    KEEP_WANTED.store(true, Ordering::Release);
     let mut slot = kept();
     if let Err(e) = ensure_kept(&mut slot, options) {
         log::warn!("Dictation microphone could not be kept open: {e}");
@@ -183,6 +188,7 @@ pub fn warm_up(options: &CaptureOptions) {
 /// Close the kept-open stream (keep open switched off), so the microphone
 /// indicator goes out.
 pub fn release() {
+    KEEP_WANTED.store(false, Ordering::Release);
     if super::service::is_dictating() {
         return;
     }
@@ -218,6 +224,7 @@ impl Recorder {
     /// audio may take longer, see [`Recorder::first_audio_at`].
     pub fn start(options: &CaptureOptions) -> Result<Recorder, String> {
         if options.keep_open {
+            KEEP_WANTED.store(true, Ordering::Release);
             let mut slot = kept();
             ensure_kept(&mut slot, options)?;
             let handle = &slot.as_ref().ok_or("Mikrofonen er ikke åben")?.handle;
@@ -276,6 +283,10 @@ impl Drop for Recorder {
     fn drop(&mut self) {
         drop(self.owned.take());
         self.shared.armed.store(false, Ordering::Release);
+        // Keep open was switched off during this dictation: close the stream now.
+        if !KEEP_WANTED.load(Ordering::Acquire) {
+            kept().take();
+        }
     }
 }
 

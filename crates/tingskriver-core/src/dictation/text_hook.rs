@@ -70,8 +70,17 @@ pub async fn list_scripts(dir: &Path) -> Vec<String> {
     names
 }
 
+/// How to start a script: the program, ordinary arguments, and (Windows only)
+/// a raw command-line tail that bypasses Rust's argument quoting.
+#[derive(Debug, PartialEq)]
+struct Launch {
+    program: String,
+    args: Vec<String>,
+    raw_args: Option<String>,
+}
+
 /// Program and arguments that start the script at `path`.
-fn launcher(path: &Path) -> (String, Vec<String>) {
+fn launcher(path: &Path) -> Launch {
     let path = path.to_string_lossy().into_owned();
     if path.to_ascii_lowercase().ends_with(".ps1") {
         let args = [
@@ -84,18 +93,31 @@ fn launcher(path: &Path) -> (String, Vec<String>) {
         ];
         let mut args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
         args.push(path);
-        ("powershell.exe".to_string(), args)
+        Launch {
+            program: "powershell.exe".to_string(),
+            args,
+            raw_args: None,
+        }
     } else {
-        (
-            "cmd.exe".to_string(),
-            vec!["/D".into(), "/Q".into(), "/C".into(), path],
-        )
+        // cmd.exe reads and writes stdin/stdout in the OEM code page, which
+        // garbles æøå. `chcp 65001` switches the console to UTF-8 first. With
+        // `/S` only the outermost quotes are stripped, so the quoted path keeps
+        // its quotes and `&`, `(`, `)` or `^` in the folder name are harmless.
+        Launch {
+            program: "cmd.exe".to_string(),
+            args: Vec::new(),
+            raw_args: Some(format!("/D /Q /S /C \"chcp 65001>nul & \"{path}\"\"")),
+        }
     }
 }
 
 /// Run the hook script `name` from `dir` on `text`. Always returns text to
 /// insert: the script's answer, or `text` itself on any failure.
 pub async fn apply(dir: &Path, name: &str, text: String) -> String {
+    if name.trim().is_empty() {
+        // Switched on but no script chosen yet: nothing to run.
+        return text;
+    }
     let path = match script_path(dir, name) {
         Ok(path) => path,
         Err(e) => {
@@ -110,15 +132,15 @@ pub async fn apply(dir: &Path, name: &str, text: String) -> String {
             return text;
         }
     }
-    let (program, args) = launcher(&path);
-    run(&program, &args, text, TIMEOUT).await
+    let launch = launcher(&path);
+    run(&launch, text, TIMEOUT).await
 }
 
 /// Start `program`, give it `text` on stdin and return its stdout with one
 /// final line break removed; `text` itself on any failure.
-async fn run(program: &str, args: &[String], text: String, timeout: Duration) -> String {
+async fn run(launch: &Launch, text: String, timeout: Duration) -> String {
     let started = Instant::now();
-    match run_inner(program, args, &text, timeout).await {
+    match run_inner(launch, &text, timeout).await {
         Ok(out) => {
             log::info!(
                 "Dictation text hook finished in {} ms",
@@ -136,21 +158,21 @@ async fn run(program: &str, args: &[String], text: String, timeout: Duration) ->
     }
 }
 
-async fn run_inner(
-    program: &str,
-    args: &[String],
-    text: &str,
-    timeout: Duration,
-) -> Result<String, &'static str> {
-    let mut command = Command::new(program);
+async fn run_inner(launch: &Launch, text: &str, timeout: Duration) -> Result<String, &'static str> {
+    let mut command = Command::new(&launch.program);
     command
-        .args(args)
+        .args(&launch.args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .kill_on_drop(true);
     #[cfg(windows)]
-    command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    {
+        if let Some(raw) = &launch.raw_args {
+            command.raw_arg(raw);
+        }
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
     let mut child = command.spawn().map_err(|_| "could not start")?;
     let mut stdin = child.stdin.take().ok_or("no stdin")?;
     let mut stdout = child.stdout.take().ok_or("no stdout")?;
@@ -205,13 +227,16 @@ async fn run_inner(
 mod tests {
     use super::*;
 
-    fn sh(script: &str) -> (String, Vec<String>) {
-        ("sh".to_string(), vec!["-c".to_string(), script.to_string()])
+    fn sh(script: &str) -> Launch {
+        Launch {
+            program: "sh".to_string(),
+            args: vec!["-c".to_string(), script.to_string()],
+            raw_args: None,
+        }
     }
 
     async fn run_sh(script: &str, text: &str, timeout: Duration) -> String {
-        let (program, args) = sh(script);
-        run(&program, &args, text.to_string(), timeout).await
+        run(&sh(script), text.to_string(), timeout).await
     }
 
     #[tokio::test]
@@ -242,10 +267,12 @@ mod tests {
         assert_eq!(run_sh("echo andet; exit 3", text, TIMEOUT).await, text);
         assert_eq!(run_sh("true", text, TIMEOUT).await, text);
         assert_eq!(run_sh("printf '\\377\\376'", text, TIMEOUT).await, text);
-        assert_eq!(
-            run("/findes/ikke", &[], text.to_string(), TIMEOUT).await,
-            text
-        );
+        let missing = Launch {
+            program: "/findes/ikke".to_string(),
+            args: Vec::new(),
+            raw_args: None,
+        };
+        assert_eq!(run(&missing, text.to_string(), TIMEOUT).await, text);
     }
 
     #[tokio::test]
@@ -304,14 +331,28 @@ mod name_tests {
 
     #[test]
     fn launchers_pass_the_path_and_never_the_text() {
-        let (program, args) = launcher(Path::new("h/a.ps1"));
-        assert_eq!(program, "powershell.exe");
-        assert_eq!(args.last().map(String::as_str), Some("h/a.ps1"));
-        assert!(args.contains(&"-NonInteractive".to_string()));
-        let (program, args) = launcher(Path::new("h/a.cmd"));
+        let ps = launcher(Path::new("h/a.ps1"));
+        assert_eq!(ps.program, "powershell.exe");
+        assert_eq!(ps.args.last().map(String::as_str), Some("h/a.ps1"));
+        assert!(ps.args.contains(&"-NonInteractive".to_string()));
+        assert!(ps.raw_args.is_none());
+        let cmd = launcher(Path::new("h/a.cmd"));
+        assert_eq!(cmd.program, "cmd.exe");
+        assert!(cmd.args.is_empty());
+        assert!(cmd.raw_args.is_some());
+    }
+
+    #[test]
+    fn cmd_runs_in_utf8_and_keeps_the_quoted_path_whole() {
+        // A folder name with cmd.exe metacharacters stays inside the quotes.
+        let launch = launcher(Path::new(
+            r"C:\Users\Mads (privat) & co\hooks\ret tekst.cmd",
+        ));
         assert_eq!(
-            (program.as_str(), args.last().map(String::as_str)),
-            ("cmd.exe", Some("h/a.cmd"))
+            launch.raw_args.as_deref(),
+            Some(
+                r##"/D /Q /S /C "chcp 65001>nul & "C:\Users\Mads (privat) & co\hooks\ret tekst.cmd"""##
+            )
         );
     }
 
