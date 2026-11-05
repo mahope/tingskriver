@@ -289,6 +289,26 @@ pub fn backup_database(database_path: &Path, backup_root: &Path) -> io::Result<O
     Ok(copy_database(database_path, backup_root)?.map(|(folder, _)| folder))
 }
 
+/// Rename a folder, retrying briefly. On Windows a virus scanner or the
+/// indexer can hold a freshly written file for a moment, which makes the
+/// rename fail with "access denied" although it succeeds a moment later.
+#[allow(clippy::disallowed_methods)] // Synchronous disk worker.
+fn rename_with_retry(from: &Path, to: &Path) -> io::Result<()> {
+    const ATTEMPTS: u32 = 10;
+    let mut attempt = 1;
+    loop {
+        match fs::rename(from, to) {
+            Ok(()) => return Ok(()),
+            Err(e) if attempt >= ATTEMPTS => return Err(e),
+            Err(e) => {
+                log::debug!("Rename {} failed (attempt {attempt}): {e}", from.display());
+                std::thread::sleep(std::time::Duration::from_millis(100 * u64::from(attempt)));
+                attempt += 1;
+            }
+        }
+    }
+}
+
 /// [`backup_database`], and whether this call made the copy.
 #[allow(clippy::disallowed_methods)]
 fn copy_database(database_path: &Path, backup_root: &Path) -> io::Result<Option<(PathBuf, bool)>> {
@@ -316,7 +336,7 @@ fn copy_database(database_path: &Path, backup_root: &Path) -> io::Result<Option<
             Some(name) => fs::copy(file, partial.join(name)).map(|_| ()),
             None => Ok(()),
         })
-        .and_then(|()| fs::rename(&partial, &folder));
+        .and_then(|()| rename_with_retry(&partial, &folder));
     if let Err(e) = copied {
         // Give the space back now: on a full disk the half copy is what
         // stands between the user and the next recording.
