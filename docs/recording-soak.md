@@ -57,6 +57,28 @@ startup/recovery dialogs or transcription. It proves process-crash recovery,
 not power-loss
 survival. Ordinary CI continues to run the existing focused audio unit tests.
 
+## Time budget after the recording
+
+`finish` (scan, verify every sample, encode `microphone.m4a`, `system.m4a` and
+`audio.mp4`, decode them again) is linear in the recording length. The three
+AAC encodes dominate, and FFmpeg's encoder uses one core each. They run side
+by side since #TBD; before, one after another. Measured on a 16-core Linux
+machine with other jobs running (single runs, so +-15 %):
+
+| Recording | Before (serial) | After (parallel) |
+|-----------|-----------------|------------------|
+| 10 min    | 36-39 s         | not measured     |
+| 20 min    | 70-83 s         | not measured     |
+| 30 min    | 119-120 s       | 51-55 s          |
+
+That extrapolates to 700-740 s for three hours before and about 310-330 s
+after. The old script allowed `finish` 600 s, so it sat at the limit and
+failed on the night of 2026-11-05 although the code was unchanged on that
+path (the encode path has no diff between the commit before #164 and `main`).
+`recover` and `finish` now get 1800 s: the limit only has to catch a hang.
+The job's `timeout-minutes: 345` still covers 3 h + 1.5 h of recording, both
+limits and the build.
+
 ## Manual hardware variant (Windows)
 
 Use only synthetic audio, never real voices. Play a generated continuous tone
