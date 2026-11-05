@@ -143,3 +143,37 @@ to retain the new privacy boundary. Do not delete shared databases as rollback.
 
 Refs #105
 Refs #169
+
+## Review follow-up: HTTP deadlines
+
+Metadata requests retain their ten-second total deadline. Inference uses the
+provider's configured or function-specific budget; legacy summary generation
+retains its 300-second budget. Legacy Syv.ai transcription retains 60 seconds;
+Ollama model pulls and deletion retain 600 and 30 seconds. Direct model downloads
+instead bound connection setup,
+response headers and each idle body read to ten seconds, without limiting the
+overall transfer duration. Regression tests cover a twelve-second healthy
+transfer and inference response, summary generation beyond ten seconds, and
+preservation of provider defaults and explicit limits.
+
+The OpenRouter fake server reads and validates complete request headers before
+responding, including requests split across TCP reads.
+
+Review verification:
+
+- The provider-budget regression failed before the fix (300 seconds became 10),
+  and the healthy-transfer regression failed after ten seconds before the fix.
+- `cargo check --locked -p tingskriver-core -p tingskriver-mcp`: passed.
+- `cargo test --locked -p tingskriver-core healthy_`: two passed; both real-time
+  fake-server scenarios take twelve seconds.
+- `cargo test --locked -p tingskriver-core -p tingskriver-mcp`: 840 passed,
+  zero failed, ten ignored (including doctests).
+- `cargo test --locked --workspace`: blocked by the missing packaged
+  `binaries/llama-helper-x86_64-unknown-linux-gnu` sidecar. The same command on
+  unmodified review base `7191e8c` fails for the same reason.
+- `cargo clippy --locked -p tingskriver-core -p tingskriver-mcp --all-targets -- -D warnings`:
+  still fails on existing diagnostics. Comparing the unmodified review base with
+  this change removes exactly the two OpenRouter `unused_io_amount` diagnostics
+  (139 to 137 lib-test errors), with no new diagnostics.
+- Both review findings were accepted and addressed. No P3 findings were supplied.
+  No dependencies were added, and no application installation was changed.
