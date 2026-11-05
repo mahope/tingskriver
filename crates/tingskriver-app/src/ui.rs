@@ -78,24 +78,45 @@ impl AppModel {
         self
     }
 
-    /// Applies a change to the language settings and saves it.
+    /// Applies a change to the language settings and saves it on the runtime,
+    /// so the window thread never waits for the disk. A failed save is shown
+    /// on the settings page.
     fn change_languages(
         &mut self,
+        cx: &mut Context<Self>,
         change: impl FnOnce(
             tingskriver_core::meeting_language::MeetingLanguages,
-        ) -> Result<tingskriver_core::meeting_language::MeetingLanguages, String>,
+        )
+            -> Result<tingskriver_core::meeting_language::MeetingLanguages, String>,
     ) {
-        let saved = match &self.app_data_dir {
-            Some(dir) => change(self.languages.clone()).and_then(|l| l.save(dir)),
-            None => Err(strings::UNKNOWN.to_string()),
+        let Some(dir) = self.app_data_dir.clone() else {
+            self.language_error = Some(strings::language_save_failed(strings::UNKNOWN));
+            return;
         };
-        match saved {
-            Ok(languages) => {
-                self.languages = languages;
-                self.language_error = None;
+        let languages = match change(self.languages.clone()).and_then(|l| l.normalized()) {
+            Ok(languages) => languages,
+            Err(error) => {
+                self.language_error = Some(strings::language_save_failed(&error));
+                return;
             }
-            Err(error) => self.language_error = Some(strings::language_save_failed(&error)),
-        }
+        };
+        self.languages = languages.clone();
+        self.language_error = None;
+        let task = self.runtime.spawn_blocking(move || languages.save(&dir));
+        cx.spawn(async move |this, cx| {
+            let failure = match task.await {
+                Ok(Ok(_)) => None,
+                Ok(Err(error)) => Some(error),
+                Err(error) => Some(error.to_string()),
+            };
+            if let Some(error) = failure {
+                let _ = this.update(cx, |m, cx| {
+                    m.language_error = Some(strings::language_save_failed(&error));
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
     }
 
     fn log_dir(&self) -> Option<PathBuf> {
@@ -543,7 +564,7 @@ impl Shell {
                 .selected(languages.primary == code)
                 .on_click(move |_, _, cx| {
                     model.update(cx, |m, cx| {
-                        m.change_languages(|l| l.with_primary(code));
+                        m.change_languages(cx, |l| l.with_primary(code));
                         cx.notify();
                     })
                 })
@@ -560,7 +581,7 @@ impl Shell {
                     .selected(languages.extra.iter().any(|c| c == code))
                     .on_click(move |_, _, cx| {
                         model.update(cx, |m, cx| {
-                            m.change_languages(|l| l.with_extra_toggled(code));
+                            m.change_languages(cx, |l| l.with_extra_toggled(code));
                             cx.notify();
                         })
                     })
@@ -575,13 +596,27 @@ impl Shell {
             .selected(languages.summary_in_primary)
             .on_click(move |_, _, cx| {
                 summary_model.update(cx, |m, cx| {
-                    m.change_languages(|mut l| {
+                    m.change_languages(cx, |mut l| {
                         l.summary_in_primary = !l.summary_in_primary;
                         Ok(l)
                     });
                     cx.notify();
                 })
             });
+        // The selection is also written out, so it does not rest on the
+        // button highlight alone (screen readers, high contrast).
+        let current = {
+            let extra: Vec<String> = languages.extra.iter().map(|c| label(c)).collect();
+            let extra = if extra.is_empty() {
+                "ingen ekstra".to_string()
+            } else {
+                extra.join(", ")
+            };
+            strings::language_current(&format!(
+                "hovedsprog {}, ekstra talesprog: {extra}",
+                label(&languages.primary)
+            ))
+        };
         v_flex()
             .gap(space::SM)
             .p(space::LG)
@@ -590,9 +625,15 @@ impl Shell {
             .border_color(palette(cx).border)
             .bg(palette(cx).card)
             .child(section_title(strings::LANGUAGES))
+            .child(paragraph(&current, cx))
             .child(muted(strings::LANGUAGE_PRIMARY, cx))
             .child(muted(strings::LANGUAGE_PRIMARY_HELP, cx))
-            .child(h_flex().gap(space::SM).flex_wrap().children(primary_buttons))
+            .child(
+                h_flex()
+                    .gap(space::SM)
+                    .flex_wrap()
+                    .children(primary_buttons),
+            )
             .child(muted(strings::LANGUAGE_EXTRA, cx))
             .child(muted(strings::LANGUAGE_EXTRA_HELP, cx))
             .child(h_flex().gap(space::SM).flex_wrap().children(extra_buttons))

@@ -324,6 +324,21 @@ impl SummaryService {
         detection.language
     }
 
+    /// Report language and detected transcript language. The meeting's own
+    /// choice wins; otherwise the language settings decide (the main language,
+    /// Danish by default). A language detected in the transcript only counts
+    /// when the settings allow reports in another language.
+    fn resolve_summary_language(
+        languages: &crate::meeting_language::MeetingLanguages,
+        meeting_choice: Option<&str>,
+        stored_detection: Option<String>,
+        text: &str,
+    ) -> (String, Option<String>) {
+        let detected = stored_detection.or_else(|| Self::detect_summary_language_from_text(text));
+        let language = languages.summary_language(meeting_choice, detected.as_deref());
+        (language, detected)
+    }
+
     /// Processes transcript in the background and generates summary
     ///
     /// This function is designed to be spawned as an async task and does not block
@@ -484,21 +499,18 @@ impl SummaryService {
         };
 
 
-        let detected_summary_language =
-            Self::read_detected_summary_language(&pool, &meeting_id)
-                .await
-                .or_else(|| Self::detect_summary_language_from_text(&text));
+        let stored_language = Self::read_detected_summary_language(&pool, &meeting_id).await;
+        let (summary_language, detected_summary_language) = Self::resolve_summary_language(
+            &languages,
+            summary_language.as_deref(),
+            stored_language,
+            &text,
+        );
 
         if let Some(code) = &detected_summary_language {
             info!("📝 Detected transcript summary language: {}", code);
         }
-
-        // The meeting's own choice wins; otherwise the language settings
-        // decide (the main language, Danish by default).
-        let summary_language = Some(languages.summary_language(
-            summary_language.as_deref(),
-            detected_summary_language.as_deref(),
-        ));
+        let summary_language = Some(summary_language);
         if let Some(code) = &summary_language {
             info!("📝 Summary language: {}", code);
         }
@@ -1135,5 +1147,44 @@ mod tests {
     fn test_extract_cached_english_from_malformed_json_errors() {
         let raw = r#"{ not valid json"#;
         assert!(extract_cached_english_markdown(raw, &sample_cache_source(), Some("de")).is_err());
+    }
+
+    fn mostly_english_transcript() -> String {
+        "The release is blocked by the review of the billing service, and we need two \
+         more engineers to finish the migration before the deadline. "
+            .repeat(12)
+    }
+
+    #[test]
+    fn report_language_follows_the_main_language_not_the_detected_one() {
+        let languages = crate::meeting_language::MeetingLanguages {
+            extra: vec!["en".into()],
+            ..Default::default()
+        };
+        let text = mostly_english_transcript();
+        let (language, detected) =
+            SummaryService::resolve_summary_language(&languages, None, None, &text);
+        assert_eq!(detected.as_deref(), Some("en"));
+        assert_eq!(language, "da");
+    }
+
+    #[test]
+    fn report_language_follows_the_detected_one_only_when_allowed() {
+        let languages = crate::meeting_language::MeetingLanguages {
+            extra: vec!["en".into()],
+            summary_in_primary: false,
+            ..Default::default()
+        };
+        let text = mostly_english_transcript();
+        let (language, _) = SummaryService::resolve_summary_language(&languages, None, None, &text);
+        assert_eq!(language, "en");
+    }
+
+    #[test]
+    fn the_meetings_own_language_choice_wins() {
+        let languages = crate::meeting_language::MeetingLanguages::default();
+        let (language, _) =
+            SummaryService::resolve_summary_language(&languages, Some("sv"), Some("en".into()), "");
+        assert_eq!(language, "sv");
     }
 }

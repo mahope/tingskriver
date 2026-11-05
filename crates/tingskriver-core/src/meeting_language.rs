@@ -186,7 +186,13 @@ impl MeetingLanguages {
         let json = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
         let path = data_dir.join(FILE);
         let temp = data_dir.join(format!("{FILE}.tmp"));
-        std::fs::write(&temp, json).map_err(|e| format!("Kunne ikke gemme sproget: {e}"))?;
+        let write = |temp: &Path| -> std::io::Result<()> {
+            use std::io::Write;
+            let mut file = std::fs::File::create(temp)?;
+            file.write_all(json.as_bytes())?;
+            file.sync_all()
+        };
+        write(&temp).map_err(|e| format!("Kunne ikke gemme sproget: {e}"))?;
         std::fs::rename(&temp, &path).map_err(|e| format!("Kunne ikke gemme sproget: {e}"))?;
         Ok(settings)
     }

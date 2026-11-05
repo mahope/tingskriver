@@ -37,6 +37,15 @@ impl JobSpec {
             providers: None,
         }
     }
+
+    /// Takes the main language and the extra spoken languages from the
+    /// settings (issue #209). Whoever creates a job calls this with
+    /// `MeetingLanguages::load_async`, so the choice reaches the provider.
+    pub fn with_languages(mut self, languages: &crate::meeting_language::MeetingLanguages) -> Self {
+        self.language = languages.primary.clone();
+        self.extra_languages = languages.extra.clone();
+        self
+    }
 }
 
 #[derive(Clone, Debug)]

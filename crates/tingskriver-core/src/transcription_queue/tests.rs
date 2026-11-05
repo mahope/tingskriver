@@ -668,3 +668,25 @@ async fn changing_the_language_settings_leaves_stored_transcripts_alone() {
     assert_eq!(versions[0].result, result);
     assert_eq!(versions[0].spec.language, "da");
 }
+
+#[test]
+fn a_job_carries_the_language_settings_and_defaults_stay_danish() {
+    let plain = JobSpec::new("m", "mic.wav".into(), None);
+    let same = JobSpec::new("m", "mic.wav".into(), None)
+        .with_languages(&crate::meeting_language::MeetingLanguages::default());
+    assert_eq!(
+        (same.language.as_str(), same.extra_languages.len()),
+        ("da", 0)
+    );
+    assert_eq!(plain.language, same.language);
+
+    let spec = JobSpec::new("m", "mic.wav".into(), None).with_languages(
+        &crate::meeting_language::MeetingLanguages {
+            primary: "en".into(),
+            extra: vec!["da".into()],
+            summary_in_primary: true,
+        },
+    );
+    assert_eq!(spec.language, "en");
+    assert_eq!(spec.extra_languages, ["da"]);
+}
