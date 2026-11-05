@@ -17,9 +17,13 @@
 - [ ] Manual testing performed
 - [ ] All tests pass
 
+## Components (GPUI app)
+Reused or new component, and why (see docs/design.md; "No UI change" if none):
+
 ## Documentation
 - [ ] Documentation updated
 - [ ] No documentation needed
+- [ ] docs/design.md updated if a component's responsibility or an experience changed
 
 ## Checklist
 - [ ] Code follows project style
