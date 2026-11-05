@@ -14,6 +14,9 @@ The initial check waits 60 seconds; the app also checks when the interval expire
 while it stays in the tray. Turning checks off prevents manual and automatic
 checks and new downloads. An already started network operation may finish.
 Downloaded packages remain staged for the next start.
+Only an absent settings file uses the enabled default. Existing empty or
+incomplete settings produce an error and block feed calls instead of silently
+enabling checks.
 
 **Om → Søg efter opdateringer** checks immediately when enabled. Nothing is
 downloaded until **Hent og installér**. Progress is shown as a percentage.

@@ -2,7 +2,6 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
 pub struct Preferences {
     pub enabled: bool,
     pub weekly: bool,
@@ -224,6 +223,7 @@ mod tests {
         }
         .due(86500));
         assert!(serde_json::from_str::<Preferences>("broken").is_err());
+        assert!(serde_json::from_str::<Preferences>("{}").is_err());
     }
     #[test]
     fn recording_and_dictation_block_download_and_restart() {

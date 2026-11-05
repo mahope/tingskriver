@@ -125,13 +125,27 @@ pub fn preferences() -> Result<Preferences, String> {
     let bridge = BRIDGE
         .get()
         .ok_or(tingskriver_core::strings::UPDATE_SETTINGS_UNAVAILABLE)?;
+    read_preferences(bridge)
+}
+
+fn read_preferences(bridge: &Bridge) -> Result<Preferences, String> {
     match bridge
         .read_setting(STORE, KEY)
         .map_err(|_| tingskriver_core::strings::UPDATE_SETTINGS_INVALID.to_string())?
     {
         Some(value) => serde_json::from_value(value)
             .map_err(|_| tingskriver_core::strings::UPDATE_SETTINGS_INVALID.into()),
-        None => Ok(Preferences::default()),
+        None => {
+            let dir = bridge
+                .app_data_dir()
+                .map_err(|_| tingskriver_core::strings::UPDATE_SETTINGS_INVALID.to_string())?;
+            match std::fs::metadata(dir.join(STORE)) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    Ok(Preferences::default())
+                }
+                _ => Err(tingskriver_core::strings::UPDATE_SETTINGS_INVALID.into()),
+            }
+        }
     }
 }
 
@@ -686,6 +700,46 @@ mod platform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_missing_preferences_file_uses_the_enabled_default() {
+        let dir = std::env::temp_dir().join(format!(
+            "update-preferences-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let bridge = Bridge::new(dir.clone());
+        assert!(read_preferences(&bridge).unwrap().enabled);
+        std::fs::create_dir_all(&dir).unwrap();
+        for invalid in [
+            "",
+            " ",
+            "{}",
+            r#"{"preferences":{}}"#,
+            r#"{"preferences":{"enabled":false}}"#,
+        ] {
+            std::fs::write(dir.join(STORE), invalid).unwrap();
+            assert_eq!(
+                read_preferences(&bridge).unwrap_err(),
+                tingskriver_core::strings::UPDATE_SETTINGS_INVALID
+            );
+        }
+        let prefs = Preferences {
+            enabled: false,
+            weekly: true,
+            last_check: Some(42),
+        };
+        bridge
+            .write_setting(STORE, KEY, serde_json::to_value(&prefs).unwrap())
+            .unwrap();
+        let restored = read_preferences(&bridge).unwrap();
+        assert_eq!(restored, prefs);
+        assert!(!restored.due(u64::MAX));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn dev_builds_follow_pre_releases_and_releases_do_not() {
