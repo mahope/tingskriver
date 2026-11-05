@@ -52,6 +52,10 @@ pub enum DbInitError {
     /// The schema could not be brought up to date.
     #[error("database migration failed: {}", .0.detail)]
     Migration(DbFailureInfo),
+    /// The database was written by a newer Tingskriver than this one. It is
+    /// left untouched.
+    #[error("database was created by a newer version: {}", .0.detail)]
+    NewerDatabase(DbFailureInfo),
     /// Anything else: no access to the folder, file cannot be created, ...
     #[error("database could not be opened: {}", .0.detail)]
     Other(DbFailureInfo),
@@ -64,6 +68,8 @@ pub enum DbFailureKind {
     Corrupt,
     DiskFull,
     Migration,
+    /// The database has migrations this build does not know.
+    NewerDatabase,
     Other,
 }
 
@@ -74,6 +80,7 @@ impl DbInitError {
             DbFailureKind::Corrupt => Self::Corrupt(info),
             DbFailureKind::DiskFull => Self::DiskFull(info),
             DbFailureKind::Migration => Self::Migration(info),
+            DbFailureKind::NewerDatabase => Self::NewerDatabase(info),
             DbFailureKind::Other => Self::Other(info),
         }
     }
@@ -84,6 +91,7 @@ impl DbInitError {
             Self::Corrupt(_) => DbFailureKind::Corrupt,
             Self::DiskFull(_) => DbFailureKind::DiskFull,
             Self::Migration(_) => DbFailureKind::Migration,
+            Self::NewerDatabase(_) => DbFailureKind::NewerDatabase,
             Self::Other(_) => DbFailureKind::Other,
         }
     }
@@ -94,6 +102,7 @@ impl DbInitError {
             | Self::Corrupt(info)
             | Self::DiskFull(info)
             | Self::Migration(info)
+            | Self::NewerDatabase(info)
             | Self::Other(info) => info,
         }
     }
@@ -104,6 +113,7 @@ impl DbInitError {
             | Self::Corrupt(info)
             | Self::DiskFull(info)
             | Self::Migration(info)
+            | Self::NewerDatabase(info)
             | Self::Other(info) => info,
         }
     }
@@ -135,6 +145,9 @@ impl DbInitError {
             DbFailureKind::Corrupt => "Databasefilen er beskadiget.",
             DbFailureKind::DiskFull => "Disken er fuld.",
             DbFailureKind::Migration => "Databasen kunne ikke opdateres til den nye version.",
+            DbFailureKind::NewerDatabase => {
+                "Databasen er oprettet af en nyere Tingskriver. Opdatér Tingskriver."
+            }
             DbFailureKind::Other => "Databasen kunne ikke åbnes.",
         }
     }
@@ -157,6 +170,9 @@ impl DbInitError {
             }
             DbFailureKind::Migration => {
                 "Der er taget en kopi af databasen. Send logfilen til udvikleren."
+            }
+            DbFailureKind::NewerDatabase => {
+                "Dine møder er urørte, og databasen er ikke ændret. Installér den nyeste Tingskriver, og start den igen. Du kan også bruge en ældre kopi fra mappen med sikkerhedskopier, hvis du bevidst har rullet tilbage."
             }
             DbFailureKind::Other => {
                 "Tjek at mappen ikke er skrivebeskyttet, og start Tingskriver igen. Sker det igen, så send logfilen til udvikleren."
@@ -228,6 +244,8 @@ pub fn kind_from_sqlx(error: &sqlx::Error) -> DbFailureKind {
 pub fn kind_from_migrate(error: &sqlx::migrate::MigrateError) -> DbFailureKind {
     use sqlx::migrate::MigrateError;
     match error {
+        // Applied in the database, unknown to this build: a newer Tingskriver.
+        MigrateError::VersionMissing(_) => DbFailureKind::NewerDatabase,
         MigrateError::Execute(inner) | MigrateError::ExecuteMigration(inner, _) => {
             match kind_from_sqlx(inner) {
                 DbFailureKind::Other => DbFailureKind::Migration,
@@ -236,6 +254,53 @@ pub fn kind_from_migrate(error: &sqlx::migrate::MigrateError) -> DbFailureKind {
         }
         _ => DbFailureKind::Migration,
     }
+}
+
+/// Look into an existing database without changing it, and return the
+/// migration versions it has applied that this build does not know. Opens the
+/// file read-only in the journal mode it already has (so SQLite has nothing
+/// to convert) and never runs a migration. Errors (no table yet, locked,
+/// damaged) give `None`: the normal open reports those with their own kind.
+pub async fn unknown_applied_migrations(database_path: &Path, known: &[i64]) -> Option<Vec<i64>> {
+    use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode};
+    use sqlx::{Connection, SqliteConnection};
+
+    // Bytes 18 and 19 of the header are 2 for a database in WAL mode.
+    let mut header = [0u8; 20];
+    {
+        use std::io::Read;
+        #[allow(clippy::disallowed_methods)]
+        let mut file = fs::File::open(database_path).ok()?;
+        file.read_exact(&mut header).ok()?;
+    }
+    let mode = if header[18] == 2 {
+        SqliteJournalMode::Wal
+    } else {
+        SqliteJournalMode::Delete
+    };
+    // Closed cleanly: no -wal and no -journal. Then nobody else has the file
+    // open, and `immutable` reads it without SQLite creating `-shm` and
+    // `-wal` next to it. With either present the file is opened normally
+    // (read-only) so the committed data in them is seen.
+    let [_, wal, _, journal] = database_files(database_path);
+    let closed_cleanly = !wal.exists() && !journal.exists();
+    let options = SqliteConnectOptions::new()
+        .filename(database_path)
+        .read_only(true)
+        .immutable(closed_cleanly)
+        .journal_mode(mode);
+    let mut connection = SqliteConnection::connect_with(&options).await.ok()?;
+    let applied: Result<Vec<i64>, _> = sqlx::query_scalar("SELECT version FROM _sqlx_migrations")
+        .fetch_all(&mut connection)
+        .await;
+    let _ = connection.close().await;
+    let mut unknown: Vec<i64> = applied
+        .ok()?
+        .into_iter()
+        .filter(|version| !known.contains(version))
+        .collect();
+    unknown.sort_unstable();
+    Some(unknown)
 }
 
 /// Last resort when an error carries no code: SQLite's own messages.
@@ -541,6 +606,21 @@ mod tests {
         assert!(!DbInitError::new(DbFailureKind::DiskFull, info("x")).wants_backup());
         assert!(DbInitError::new(DbFailureKind::Corrupt, info("x")).wants_backup());
         assert!(DbInitError::new(DbFailureKind::Migration, info("x")).wants_backup());
+    }
+
+    #[test]
+    fn newer_database_is_not_copied_and_says_so_in_danish() {
+        let error = DbInitError::new(DbFailureKind::NewerDatabase, info("x"));
+        assert!(!error.wants_backup());
+        assert_eq!(
+            error.summary_da(),
+            "Databasen er oprettet af en nyere Tingskriver. Opdatér Tingskriver."
+        );
+        assert_eq!(error.kind(), DbFailureKind::NewerDatabase);
+        let json = serde_json::to_value(&error).unwrap();
+        assert_eq!(json["kind"], "newer_database");
+        let missing = sqlx::migrate::MigrateError::VersionMissing(1);
+        assert_eq!(kind_from_migrate(&missing), DbFailureKind::NewerDatabase);
     }
 
     #[test]

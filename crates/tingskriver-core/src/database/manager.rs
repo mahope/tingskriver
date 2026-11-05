@@ -70,13 +70,27 @@ impl DatabaseManager {
             log::info!("Creating database at {}", database_path.display());
         }
 
+        // A database from a newer Tingskriver is refused before anything
+        // connects to it in write mode: the file must stay as it is.
+        let migrator = sqlx::migrate!("./migrations");
+        let known: Vec<i64> = migrator.iter().map(|m| m.version).collect();
+        if let Some(unknown) = super::init::unknown_applied_migrations(database_path, &known).await
+        {
+            if !unknown.is_empty() {
+                return Err(fail(
+                    DbFailureKind::NewerDatabase,
+                    format!("migrations unknown to this version: {unknown:?}"),
+                ));
+            }
+        }
+
         let options = connect_options(database_path, busy_timeout).create_if_missing(true);
         let pool = SqlitePoolOptions::new()
             .connect_with(options)
             .await
             .map_err(|e| fail(kind_from_sqlx(&e), e.to_string()))?;
 
-        if let Err(e) = sqlx::migrate!("./migrations").run(&pool).await {
+        if let Err(e) = migrator.run(&pool).await {
             pool.close().await;
             return Err(fail(kind_from_migrate(&e), e.to_string()));
         }

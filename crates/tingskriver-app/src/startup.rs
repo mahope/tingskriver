@@ -142,7 +142,12 @@ pub struct DbFailure {
 impl DbFailure {
     pub fn from_error(detail: &str, database_path: PathBuf) -> Self {
         let lower = detail.to_lowercase();
-        let (summary, advice) = if lower.contains("locked") || lower.contains("busy") {
+        let (summary, advice) = if lower.contains("created by a newer version") {
+            (
+                "Databasen er oprettet af en nyere Tingskriver. Opdatér Tingskriver.",
+                "Dine møder er urørte, og databasen er ikke ændret. Installér den nyeste Tingskriver, og start den igen.",
+            )
+        } else if lower.contains("locked") || lower.contains("busy") {
             (
                 "Databasen er låst af et andet program.",
                 "Luk andre vinduer med Tingskriver (også den gamle app), og prøv igen.",
@@ -296,6 +301,10 @@ mod tests {
             (
                 "while executing migrations: error returned from database",
                 "opdateres",
+            ),
+            (
+                "database was created by a newer version: migrations unknown to this version: [1]",
+                "nyere Tingskriver",
             ),
             ("Permission denied (os error 13)", "adgang"),
             ("something else", "kunne ikke åbnes"),
