@@ -34,9 +34,6 @@ permissions:
 env:
   GH_TOKEN: ${{ github.token }}
   DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
-  # Stable versions (no suffix) need the manual performance sign-off in
-  # docs/release-checkliste.md; opt in with the variable AUTO_RELEASE_STABLE=true.
-  ALLOW_STABLE: ${{ vars.AUTO_RELEASE_STABLE == 'true' }}
 
 jobs:
   release:
@@ -57,10 +54,7 @@ jobs:
 
       - name: Plan
         id: plan
-        run: |
-          flags=""
-          if [ "$ALLOW_STABLE" = "true" ]; then flags="--allow-stable"; fi
-          python3 scripts/auto_release.py plan $flags
+        run: python3 scripts/auto_release.py plan
 
       - name: Summary
         if: ${{ always() }}
@@ -78,27 +72,29 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Dry run
-        if: ${{ steps.plan.outputs.release == 'true' && env.DRY_RUN == 'true' }}
-        env:
-          VERSION: ${{ steps.plan.outputs.version }}
-          PREVIOUS: ${{ steps.plan.outputs.previous }}
-        run: |
-          python3 scripts/auto_release.py changelog --version "$VERSION" --since "$PREVIOUS" --out "$RUNNER_TEMP/changelog-$VERSION.md" | tee -a "$GITHUB_STEP_SUMMARY"
-          echo "Dry run: would release $VERSION. Nothing was changed."
-
-      - name: Bump version and write changelog
-        if: ${{ steps.plan.outputs.release == 'true' && env.DRY_RUN != 'true' }}
+      # Runs in a dry run too, so the cargo step is exercised before the first real release.
+      - name: Bump version
+        if: ${{ steps.plan.outputs.release == 'true' }}
         env:
           VERSION: ${{ steps.plan.outputs.version }}
           CURRENT: ${{ steps.plan.outputs.current }}
-          PREVIOUS: ${{ steps.plan.outputs.previous }}
         run: |
           set -euo pipefail
           python3 scripts/auto_release.py bump --version "$VERSION"
           cargo update --workspace
           python3 scripts/auto_release.py check-bump --old "$CURRENT" --new "$VERSION"
-          python3 scripts/auto_release.py changelog --version "$VERSION" --since "$PREVIOUS" --out "docs/changelog/$VERSION.md"
+          git diff --stat
+
+      - name: Write changelog
+        if: ${{ steps.plan.outputs.release == 'true' }}
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+          PREVIOUS: ${{ steps.plan.outputs.previous }}
+        run: |
+          set -euo pipefail
+          if [ "$DRY_RUN" = "true" ]; then out="$RUNNER_TEMP/changelog-$VERSION.md"; else out="docs/changelog/$VERSION.md"; fi
+          python3 scripts/auto_release.py changelog --version "$VERSION" --since "$PREVIOUS" --out "$out" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$DRY_RUN" = "true" ]; then echo "Dry run: would release $VERSION. Nothing was committed, tagged or published."; fi
 
       # The push fails when main moved since the CI check; nothing is tagged then,
       # and the next run starts over.

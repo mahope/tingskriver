@@ -1,6 +1,6 @@
 # Release-checkliste
 
-Denne liste gælder stabile udgivelser. Forudgivelser (`x.y.z-dev.N`) udgives automatisk hver 8. time, når `main` har ændringer og grøn CI, og går uden om den manuelle ydeevnemåling; se [auto-release.md](auto-release.md). Stabile versioner udgives ikke automatisk, medmindre variablen `AUTO_RELEASE_STABLE` er sat til `true`.
+Denne liste gælder stabile udgivelser. Forudgivelser (`x.y.z-dev.N`) udgives automatisk hver 8. time, når `main` har ændringer og grøn CI, og går uden om den manuelle ydeevnemåling; se [auto-release.md](auto-release.md). Stabile versioner udgives aldrig automatisk.
 
 ## Ydeevne før hver release
 
