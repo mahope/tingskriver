@@ -88,8 +88,8 @@ beregningssekund, højere er hurtigere), `wer` og `score` (kun med `--reference`
 og `peak_rss_mb` (Linux: procesens spidshukommelse, som aldrig falder, så kør én
 model pr. proces for et rent tal). `--repeat` er 1–100; én fejlet kørsel gør hele
 modellens måling til `failed`, så der aldrig rapporteres delvise statistikker.
-Afslutningskode: 0 alt målt, 1 mindst én model sprunget over eller fejlet,
-2 ugyldige argumenter eller lyd. Som Målingssiden udelader loadtid fra
+Afslutningskode: 0 alt målt, 1 mindst én model fejlet, 3 ingen fejlet men mindst
+én model sprunget over (ikke installeret), 2 ugyldige argumenter eller lyd. Som Målingssiden udelader loadtid fra
 ventetiden; `load_ms` er med separat. Ingen lyd, facit eller tekst skrives til
 uddata eller logs.
 
@@ -99,7 +99,10 @@ følgende, derfor `--repeat`). Kør `--repeat 5` og brug `median_ms` til
 sammenligning.
 
 Test uden modeller: `cargo test --locked -p tingskriver-core measurement::bench --lib`
-(median/bedste, argumenter, WER kun med facit, fejlede kørsler).
+(median/bedste, argumenter, WER kun med facit, fejlede kørsler, afslutningskoder,
+manglende model giver `skipped`). Selve motorkørslen og "samme tal som Målingssiden"
+er ikke dækket af automatiske tests, fordi de kræver installerede modeller: det
+skal bevises med en kørsel af begge veje på en maskine med en model.
 
 Målingsside og indstillinger er uændrede: kommandolinjen er et udviklerværktøj og
 vises ikke i appen. Hvis Mads vil se tallene i appen, skal Målingssiden læse de

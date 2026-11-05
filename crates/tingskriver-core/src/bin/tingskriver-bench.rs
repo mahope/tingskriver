@@ -46,7 +46,7 @@ async fn main() {
             eprintln!("{message}");
             exit(2);
         }
-        None => exit(2),
+        None => unreachable!("parse_args requires --file unless --list-models"),
     };
     let reference = match &opts.reference {
         Some(path) => match std::fs::read_to_string(path) {
@@ -72,7 +72,7 @@ async fn main() {
             .await,
         );
     }
-    let failed = results.iter().any(|r| r.status != "completed");
+    let code = bench::exit_code(&results);
     let report = bench::new_report(sample.duration_seconds(), opts.repeat, results);
     if opts.json {
         println!(
@@ -82,7 +82,7 @@ async fn main() {
     } else {
         print!("{}", bench::render_text(&report));
     }
-    if failed {
-        exit(1);
+    if code != 0 {
+        exit(code);
     }
 }

@@ -131,8 +131,20 @@ pub struct Report {
     pub results: Vec<ModelReport>,
 }
 
+/// Process exit code: 1 if any model failed, 3 if none failed but some were
+/// skipped (not installed), else 0. 2 is reserved for invalid arguments or audio.
+pub fn exit_code(results: &[ModelReport]) -> i32 {
+    if results.iter().any(|r| r.status == "failed") {
+        1
+    } else if results.iter().any(|r| r.status == "skipped") {
+        3
+    } else {
+        0
+    }
+}
+
+/// Engine routing shared with the Måling page.
 pub fn engine_for(model: &str) -> &'static str {
-    // Same routing as the Måling page.
     if model.starts_with("parakeet-") {
         "parakeet"
     } else {
@@ -353,6 +365,28 @@ mod tests {
         assert!(parse_args(&a(&["--file", "x", "--model", "m", "--repeat", "101"])).is_err());
         assert!(parse_args(&a(&["--bogus"])).is_err());
         assert!(parse_args(&a(&["--file"])).is_err());
+    }
+
+    #[test]
+    fn exit_code_separates_skipped_from_failed() {
+        let r = |status: &'static str| {
+            let mut m = finish_report("m", "whisper", None, Err(()), 1.0, None);
+            m.status = status;
+            m
+        };
+        assert_eq!(exit_code(&[]), 0);
+        assert_eq!(exit_code(&[r("completed")]), 0);
+        assert_eq!(exit_code(&[r("completed"), r("skipped")]), 3);
+        assert_eq!(exit_code(&[r("skipped"), r("failed")]), 1);
+    }
+
+    #[tokio::test]
+    async fn missing_model_is_skipped_without_downloading() {
+        let dir = std::env::temp_dir().join("tingskriver-bench-no-models");
+        let sample = Sample::from_samples(vec![0.1; 16_000]).unwrap();
+        let r = run_model("large-v3-turbo", &dir, &sample, 1, None).await;
+        assert_eq!(r.status, "skipped");
+        assert!(r.timing.is_none());
     }
 
     #[test]

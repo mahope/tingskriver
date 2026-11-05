@@ -266,11 +266,7 @@ pub async fn run(
         if link.kind.requires_key() && link.key.is_none() {
             row.message = "Sprunget over: API-nøgle mangler.".into();
         } else if link.kind == ProviderKind::Local {
-            let engine = if link.model.starts_with("parakeet-") {
-                "parakeet"
-            } else {
-                "whisper"
-            };
+            let engine = bench::engine_for(&link.model);
             // Loading is excluded from inference latency and never downloads models.
             match ModelEngine::load(engine, models_dir.to_path_buf(), link.model.clone()).await {
                 Err(_) => {

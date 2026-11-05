@@ -15,18 +15,18 @@ FLEURS, oplæst tale) og **vores målinger** (ikke udført).
 | parakeet-tdt-0.6b-v3 (nu) | 18,41 % (NVIDIA-kort), 18,64 % (Handy) | ikke målt | ikke målt | ikke målt | CC-BY-4.0 |
 | canary-1b-v2 | 11,25 % (NVIDIA-kort), 11,34 % (Handy) | ikke målt | ikke målt | ikke målt | CC-BY-4.0 |
 | Parakeet Ultra | 15,98 % (Handy); moondream angiver ikke dansk alene | ikke målt | ikke målt | ikke målt | CC-BY-4.0 |
-| Whisper large-v3-turbo | 13,60 % (Handy) | ikke målt | ikke målt | ikke målt | MIT (modelkort); Handy angiver Apache-2.0 |
+| Whisper large-v3-turbo | 13,60 % (Handy) | ikke målt | ikke målt | ikke målt | MIT (modelkort) eller Apache-2.0 (Handy): uverificeret, tjek modelkortet før levering |
 | Whisper large-v3 (reference) | 12,48 % (Handy) | ikke målt | ikke målt | ikke målt | Apache-2.0 (Handy) |
 
 Handys tal er målt på Q8_0 GGUF via transcribe.cpp på en Ryzen 4750U og siger
 intet om vores ONNX-bygning. Handys katalogdata er ikke kopieret ind i repoet; kun
 de tal, issuet selv citerer, er gengivet.
 
-Målt på agent-worker (Linux, CPU): **intet**. Maskinen har 4 kerner og 7 GB RAM
-(ikke 16 GB), der findes ingen installerede modeller, og der er intet dansk lydsæt
-at måle på. Jeg hentede ingen modelfiler (op til 1,6 GB pr. model) til en måling
-uden facit. Tal fra agent-worker ville under alle omstændigheder aldrig gælde for
-Mads' pc.
+Målt på en Linux/CPU-agent: **intet**. Agentmaskinen havde ingen installerede
+modeller og for lidt hukommelse til de største, og der er intet dansk lydsæt at
+måle på. Jeg hentede ingen modelfiler (op til 1,6 GB pr. model) til en måling
+uden facit. Tal fra en agentmaskine ville under alle omstændigheder aldrig gælde
+for Mads' pc.
 
 ## Kommandoer til Mads (Windows, ved et færdigt testsæt fra #30)
 
