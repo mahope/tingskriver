@@ -10,7 +10,6 @@ use tokio_util::sync::CancellationToken;
 use whisper_rs::{WhisperContext, WhisperContextParameters, FullParams, SamplingStrategy};
 use serde::{Serialize, Deserialize};
 use anyhow::{Result, anyhow};
-use reqwest::Client;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use crate::config::WHISPER_MODEL_CATALOG;
@@ -1306,16 +1305,14 @@ impl WhisperEngine {
             }
         }
 
-        let client = Client::builder()
-            .timeout(crate::http::TIMEOUT)
-            .connect_timeout(crate::http::TIMEOUT)
+        let client = crate::http::download_client_builder()
             .user_agent(concat!("Tingskriver/", env!("CARGO_PKG_VERSION")))
             .build()
             .map_err(|e| anyhow!("Failed to create download client: {}", e))?;
         let response = tokio::select! {
             biased;
             _ = active_download.cancellation.cancelled() => return Err(DownloadCancelled.into()),
-            response = client.get(model_url).send() => response
+            response = crate::http::send_download(client.get(model_url)) => response
                 .map_err(|e| anyhow!("Failed to start download: {}", e))?,
         };
 
@@ -1342,7 +1339,8 @@ impl WhisperEngine {
             let chunk_result = tokio::select! {
                 biased;
                 _ = active_download.cancellation.cancelled() => return Err(DownloadCancelled.into()),
-                chunk_result = stream.next() => chunk_result,
+                chunk_result = tokio::time::timeout(crate::http::TIMEOUT, stream.next()) =>
+                    chunk_result.map_err(|_| anyhow!("Download stalled while reading body"))?,
             };
 
             let Some(chunk_result) = chunk_result else {

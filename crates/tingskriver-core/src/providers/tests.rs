@@ -84,7 +84,7 @@ fn http() -> reqwest::Client {
 }
 
 #[test]
-fn remote_http_deadlines_are_capped_but_shorter_limits_are_preserved() {
+fn remote_http_deadlines_preserve_function_defaults_and_configured_limits() {
     let mut remote = link("remote", "http://127.0.0.1:1", None);
     for function in [
         Function::Dictation,
@@ -94,10 +94,10 @@ fn remote_http_deadlines_are_capped_but_shorter_limits_are_preserved() {
     ] {
         remote.function = function;
         remote.timeout = None;
-        assert!(remote.remote_timeout() <= Duration::from_secs(10));
+        assert_eq!(remote.remote_timeout(), function.default_remote_timeout());
         remote.timeout = Some(Duration::from_secs(300));
-        assert_eq!(remote.remote_timeout(), Duration::from_secs(10));
-        assert_eq!(remote.attempt_timeout(), Some(Duration::from_secs(10)));
+        assert_eq!(remote.remote_timeout(), Duration::from_secs(300));
+        assert_eq!(remote.attempt_timeout(), Some(Duration::from_secs(300)));
         remote.timeout = Some(Duration::from_millis(500));
         assert_eq!(remote.remote_timeout(), Duration::from_millis(500));
     }

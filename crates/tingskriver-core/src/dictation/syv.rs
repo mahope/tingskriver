@@ -1,6 +1,6 @@
 //! Syv.ai client (OpenAI-compatible `/audio/transcriptions`).
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use reqwest::multipart::{Form, Part};
 use serde::Deserialize;
@@ -66,7 +66,7 @@ pub async fn transcribe_in(
         .post(format!("{}/audio/transcriptions", endpoint.trim_end_matches('/')))
         .bearer_auth(api_key)
         .multipart(form)
-        .timeout(crate::http::TIMEOUT)
+        .timeout(Duration::from_secs(60))
         .send()
         .await
         .map_err(|e| format!("Syv.ai kunne ikke nås: {}", e.without_url()))?;

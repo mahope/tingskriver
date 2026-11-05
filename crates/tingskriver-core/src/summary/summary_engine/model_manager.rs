@@ -6,7 +6,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
-use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tokio::fs::{self, OpenOptions};
 use tokio::io::{AsyncWriteExt, BufWriter};
@@ -469,11 +468,9 @@ impl ModelManager {
         };
 
         // Download the file with optimized client settings
-        let client = Client::builder()
+        let client = crate::http::download_client_builder()
             .tcp_nodelay(true) // Disable Nagle's algorithm for faster streaming
             .pool_max_idle_per_host(1) // Keep connection alive
-            .timeout(crate::http::TIMEOUT)
-            .connect_timeout(crate::http::TIMEOUT)
             .build()
             .map_err(|e| anyhow!("Failed to create HTTP client: {}", e))?;
 
@@ -488,8 +485,7 @@ impl ModelManager {
             request = request.header("Range", format!("bytes={}-", existing_size));
         }
 
-        let response = request
-            .send()
+        let response = crate::http::send_download(request)
             .await
             .map_err(|e| anyhow!("Failed to start download: {}", e))?;
 

@@ -38,7 +38,6 @@ impl ResolvedLink {
     pub fn remote_timeout(&self) -> Duration {
         self.timeout
             .unwrap_or_else(|| self.function.default_remote_timeout())
-            .min(crate::http::TIMEOUT)
     }
 
     /// The limit the chain enforces around the whole attempt.
@@ -67,7 +66,13 @@ impl ResolvedLink {
 
 /// Shared HTTP client (connection pool) for all providers.
 pub fn http_client() -> reqwest::Client {
-    crate::http::client()
+    static CLIENT: once_cell::sync::Lazy<reqwest::Client> = once_cell::sync::Lazy::new(|| {
+        reqwest::Client::builder()
+            .connect_timeout(crate::http::TIMEOUT)
+            .build()
+            .expect("failed to build provider HTTP client")
+    });
+    CLIENT.clone()
 }
 
 #[derive(Clone, Debug, Default)]

@@ -6,7 +6,7 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-const REQUEST_TIMEOUT_DURATION: Duration = crate::http::TIMEOUT;
+const REQUEST_TIMEOUT_DURATION: Duration = Duration::from_secs(300);
 
 async fn await_or_cancel<T>(
     operation: impl Future<Output = T>,
@@ -634,6 +634,48 @@ mod tests {
             reqwest::StatusCode::INTERNAL_SERVER_ERROR,
             r#"{"error":"think value \"none\" is not supported"}"#,
         ));
+    }
+
+    #[tokio::test]
+    async fn healthy_summary_can_exceed_ten_seconds() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            read_http_request(&mut stream).await;
+            tokio::time::sleep(Duration::from_secs(12)).await;
+            let body = r#"{"choices":[{"message":{"content":"test summary"}}]}"#;
+            stream
+                .write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
+        });
+        let completion = generate_summary(
+            &crate::http::client(),
+            &LLMProvider::CustomOpenAI,
+            "model",
+            "",
+            "system",
+            "user",
+            None,
+            Some(&endpoint),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(completion.content, "test summary");
+        server.await.unwrap();
     }
 
     #[tokio::test]
