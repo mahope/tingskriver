@@ -81,7 +81,7 @@ som vores motor forventer) og `beshkenadze/parakeet-ultra-onnx` (kun fp16-encode
 1. Vores `ParakeetEngine` kontrollerer eksakte filstørrelser og kender kun de to
    v2/v3-modeller; en ny modelspecifikation (navn, størrelser, kilde) kræves.
 2. Encoderen i `int8/` er kvantiseret med `MatMulNBits` (ONNX Runtime-udvidelse),
-   ikke som istupakovs v3-int8. Den skal prøves med ONNX Runtime 1.22 (vores
+   formentlig ikke som istupakovs v3-int8 (ikke kontrolleret). Den skal prøves med ONNX Runtime 1.22 (vores
    version), ikke antaget.
 3. Eksporterne er enkeltpersoners tredjepartsbygninger af et nyt, hurtigt
    ændrende repo (moondream, september 2026). Kildekontrol og versionslåsning
