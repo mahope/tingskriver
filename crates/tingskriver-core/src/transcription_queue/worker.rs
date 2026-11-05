@@ -64,8 +64,8 @@ impl Queue {
         )
         .await;
         match result {
-            Ok(value) => {
-                self.complete(&job, &value).await?;
+            Ok(mut value) => {
+                self.complete_carrying_over(&job, &mut value).await?;
                 emit(event(&job, "completed", None, None));
             }
             Err(retry_after) => {
@@ -81,6 +81,32 @@ impl Queue {
             }
         }
         Ok(true)
+    }
+}
+
+impl Queue {
+    /// Complete `job`; if the meeting already has a current version of this
+    /// chunk, keep its confirmed names and corrections and reject a truncated
+    /// rerun. The result is stored either way, and the old version untouched.
+    async fn complete_carrying_over(&self, job: &Job, value: &mut serde_json::Value) -> Result<()> {
+        let Some(previous) = self
+            .current_version(&job.spec.meeting_id, job.spec.offset_ms)
+            .await?
+        else {
+            return self.complete(job, value).await;
+        };
+        let names = self.speaker_names(&previous.job_id).await?;
+        let corrections = self.speaker_corrections(&previous.job_id).await?;
+        super::carry::apply(
+            &super::carry::Previous {
+                job_id: &previous.job_id,
+                result: &previous.result,
+                corrections: &corrections,
+            },
+            value,
+        );
+        self.complete_with(job, value, Some((&names, &corrections)))
+            .await
     }
 }
 

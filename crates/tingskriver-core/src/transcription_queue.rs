@@ -1,5 +1,6 @@
 //! Durable post-meeting jobs. See `docs/transcription-queue.md` for host wiring.
 
+mod carry;
 mod store;
 mod worker;
 
