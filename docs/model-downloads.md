@@ -26,12 +26,24 @@ Installed models are checked against the manifest before they are loaded. The ha
 computed once and remembered in `<name>.verified` (size and modification time); a changed
 file is hashed again. A mismatch marks the model as corrupted and it is not loaded.
 
+Caveat: the remembered result trusts size and modification time. A file changed in place
+with the same length and a restored modification time is not hashed again. That needs
+write access to the models folder, so it is not a defence against local tampering, only
+against damaged or swapped downloads.
+
+Migration: a Whisper model downloaded before pinning (from `resolve/main`, possibly another
+revision) must now match the pinned size and SHA-256. If it does not, it is shown as
+corrupted and the user has to download it again (up to about 3 GB for `large-v3`). This is
+intentional: an unverifiable file is not loaded. The UI should explain it in the changelog
+and next to the model list (see the report on #181 and #174).
+
 ## Sources and the reserve mirror
 
 `sources` is tried in order: the first is the upstream repository pinned to `revision`.
 Further entries are reserve mirrors, plain URLs with the same file names. The
 `github-release` entries point at the release `modeller-v1` of this repository. **The
-release assets must be uploaded for that mirror to work** (same file names as in the
+release `modeller-v1` does not exist yet (checked 2026-11-05: 404), so the mirror is not
+live until someone with release rights creates it and uploads the assets** (same file names as in the
 manifest, or `remote_name` for files whose upstream name differs). Until then the mirror
 answers 404 and the download simply reports that no source delivered the file. The mirror
 is only contacted after the first source has failed. There is no telemetry.

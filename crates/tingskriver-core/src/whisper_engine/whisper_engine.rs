@@ -1,22 +1,20 @@
 // Commit name to recover the serial whisper engine processing for smaller meetings [Slower processing but dooes not fail] - "before parallel processing implementation"
 
-use super::acceleration::{whisper_context_acceleration_for, WhisperCompiledBackend};
-use crate::config::WHISPER_MODEL_CATALOG;
-use crate::model_download::{
-    self, FileEntry, ProgressSink, Source, TransferError, TransferOptions,
-};
-use anyhow::{anyhow, Result};
-use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
+use std::path::{PathBuf};
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
-use tokio::fs;
 use tokio::sync::{watch, Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
-use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
+use whisper_rs::{WhisperContext, WhisperContextParameters, FullParams, SamplingStrategy};
+use serde::{Serialize, Deserialize};
+use anyhow::{Result, anyhow};
+use async_trait::async_trait;
+use tokio::fs;
+use crate::config::WHISPER_MODEL_CATALOG;
+use crate::model_download::{self, FileEntry, ProgressSink, Source, TransferError, TransferOptions};
+use super::acceleration::{whisper_context_acceleration_for, WhisperCompiledBackend};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ModelStatus {
