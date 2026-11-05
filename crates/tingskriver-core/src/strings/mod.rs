@@ -80,7 +80,9 @@ catalogue! {
     LANGUAGE_PROVIDERS = "Hovedsproget og de ekstra talesprog sendes til Syv.ai og andre netudbydere som sprog og kontekst. Den lokale model bruger kun hovedsproget.";
     LANGUAGE_NEW_MEETINGS = "Ændringer gælder nye optagelser og nye referater. Et eksisterende transskript oversættes ikke. Vil du have et referat på det nye sprog, så lav referatet om.";
     LANGUAGE_SAVE_FAILED = "Sprogvalget kunne ikke gemmes: {value}";
-    LANGUAGE_CURRENT = "Valgt nu: {value}";
+    LANGUAGE_CURRENT = "Valgt nu: hovedsprog {value}";
+    LANGUAGE_NO_EXTRA = "ingen ekstra";
+    LANGUAGE_EXTRA_LIST = "ekstra talesprog: {value}";
     LANGUAGE_LOAD_FAILED = "Sprogindstillingerne kunne ikke læses: {value}";
     LOG = "Log";
     LOG_FILE = "Logfil: {value}";
@@ -109,6 +111,7 @@ parameterized! {
     language_save_failed => LANGUAGE_SAVE_FAILED;
     language_load_failed => LANGUAGE_LOAD_FAILED;
     language_current => LANGUAGE_CURRENT;
+    language_extra_list => LANGUAGE_EXTRA_LIST;
 }
 
 pub fn measure_model_label(provider: &str, model: &str, location: &str) -> String {

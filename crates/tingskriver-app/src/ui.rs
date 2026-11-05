@@ -608,13 +608,14 @@ impl Shell {
         let current = {
             let extra: Vec<String> = languages.extra.iter().map(|c| label(c)).collect();
             let extra = if extra.is_empty() {
-                "ingen ekstra".to_string()
+                strings::LANGUAGE_NO_EXTRA.to_string()
             } else {
                 extra.join(", ")
             };
             strings::language_current(&format!(
-                "hovedsprog {}, ekstra talesprog: {extra}",
-                label(&languages.primary)
+                "{}, {}",
+                label(&languages.primary),
+                strings::language_extra_list(&extra)
             ))
         };
         v_flex()
