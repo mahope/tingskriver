@@ -19,7 +19,10 @@ This reproduces that class of failure before merge (#192):
 import pathlib
 import sys
 
-import yaml
+try:
+    import yaml
+except ImportError:
+    sys.exit("check-workflows.py needs PyYAML: pip install pyyaml (or apt install python3-yaml)")
 
 LEVEL = {"none": 0, "read": 1, "write": 2}
 
