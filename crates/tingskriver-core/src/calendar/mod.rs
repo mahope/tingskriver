@@ -1,14 +1,23 @@
 //! Private ICS calendars. Parsing and matching do not perform I/O.
+mod autostart;
 mod cache;
 mod fetch;
 mod ics;
+mod ignored;
+mod links;
 mod matching;
 mod recurrence;
 mod timezone;
 
+pub use autostart::{
+    auto_start_action, should_auto_start, should_remind, AutoRecordMode, AutoStartAction, MicHold,
+    SkipReason, StartDecision, EARLY_JOIN_WINDOW, GRACE, REMINDER_LEAD,
+};
 use chrono::{DateTime, Utc};
 pub use fetch::{Calendar, RefreshOutcome};
 pub use ics::parse;
+pub use ignored::IgnoredEvents;
+pub use links::{find_meeting_link, MeetingLink, Platform};
 pub use matching::match_meeting;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -86,13 +95,31 @@ pub enum CalendarError {
     Cache,
 }
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Attendee {
     pub name: Option<String>,
     pub email: String,
     #[serde(default)]
     pub declined: bool,
+    /// The address is one of `own_addresses`.
+    #[serde(default)]
+    pub is_self: bool,
 }
+/// The user's own answer to an invitation. `Unknown` means the feed says
+/// nothing about the user (no matching ATTENDEE or ORGANIZER, or no
+/// `own_addresses` configured); it never starts a recording.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OwnStatus {
+    Organizer,
+    Accepted,
+    Tentative,
+    NeedsAction,
+    Declined,
+    #[default]
+    Unknown,
+}
+
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Event {
     pub uid: String,
@@ -101,4 +128,32 @@ pub struct Event {
     pub start: DateTime<Utc>,
     pub end: DateTime<Utc>,
     pub all_day: bool,
+    /// Meeting link from URL, LOCATION or DESCRIPTION (known platforms only).
+    #[serde(default)]
+    pub meeting_link: Option<MeetingLink>,
+    #[serde(default)]
+    pub own_status: OwnStatus,
+    /// Part of a recurring series (master or one of its overrides).
+    #[serde(default)]
+    pub recurring: bool,
+    /// Start of the occurrence in the series before any move (RECURRENCE-ID);
+    /// equals `start` for everything else. Keys "ignore this event".
+    #[serde(default)]
+    pub original_start: Option<DateTime<Utc>>,
+}
+impl Default for Event {
+    fn default() -> Self {
+        Self {
+            uid: String::new(),
+            title: String::new(),
+            attendees: Vec::new(),
+            start: DateTime::UNIX_EPOCH,
+            end: DateTime::UNIX_EPOCH,
+            all_day: false,
+            meeting_link: None,
+            own_status: OwnStatus::Unknown,
+            recurring: false,
+            original_start: None,
+        }
+    }
 }
