@@ -1,147 +1,56 @@
 # Tingskriver Privacy Policy
 
-*Last updated: [Current Date]*
+*Last updated: 5 November 2026. Applies to the current Tingskriver app (GPUI) and, where noted, the Tauri app it replaces.*
 
-## Our Privacy-First Commitment
+Tingskriver records, transcribes and summarizes meetings on your own computer. There is no Tingskriver server, no account, no analytics and no telemetry: the project operates nothing that receives your data. This page lists every feature that makes a network request, what leaves your machine, to whom, and how to turn it off. Everything not in the table stays on your machine.
 
-Tingskriver is built on the principle that your meeting data should remain private and under your control. This privacy policy explains how we handle data in our open-source meeting assistant.
+This table is the single source of truth for the in-app privacy page (#84) and for the removal of the last analytics code (#42). A test (`crates/tingskriver-core/tests/privacy_policy.rs`) fails when the code contains a host that this page does not name.
 
-## Data Processing Philosophy
+## What leaves your machine
 
-### Local-First Processing
-- **Meeting transcription**: Processed entirely on your device using local Whisper models
-- **Audio recordings**: Never transmitted to external servers
-- **Meeting content**: Remains on your infrastructure
-- **AI summaries**: Generated locally or through your chosen LLM provider
+| Feature | What leaves the machine | To whom | How to turn it off |
+|---|---|---|---|
+| Recording | Nothing. Audio is saved as files in the app's data folder. | Nobody | Always local |
+| Meeting transcription with the built-in models (Whisper, Parakeet) | Nothing | Nobody | Always local |
+| Download of speech and summary models (only when you start a download) | A standard HTTPS request: your IP address and the requested file name. No meeting data. | `huggingface.co` (Whisper, Parakeet v2, Gemma and Qwen models) and `meetily.towardsgeneralintelligence.com` (Parakeet v3) | Do not download; models you copy into the models folder yourself need no network |
+| Summaries with the built-in model (default) | Nothing | Nobody | Default |
+| Summaries, assistant and dictation polish through an AI provider you add to a chain | The transcript text (or dictated text) and your prompt | The provider you chose: Syv.ai (`platform.syv.ai`), OpenAI (`api.openai.com`), OdinCore (`api.odincore.ai`), a custom OpenAI-compatible address you type in, or Ollama (`localhost:11434` unless you point it elsewhere). The Tauri app also supports Anthropic (`api.anthropic.com`), Groq (`api.groq.com`), OpenRouter (`openrouter.ai`) and Google Gemini's OpenAI-compatible endpoint (`generativelanguage.googleapis.com`). | Keep the chain on the built-in model, or remove the provider and its API key. A provider that needs a key is never called without one. |
+| Dictation with Syv.ai (engine "auto" and a Syv.ai key saved) | The recorded dictation clip as WAV, your dictionary words as a hint, and the language | `platform.syv.ai` (or the Syv.ai address set in dictation settings) | Set the dictation engine to "local", or delete the key. With no key, dictation runs locally. |
+| Calendar (private ICS address) | A request for the calendar file, with the ETag from the last fetch. Redirects are not followed. Titles and participants are read on your machine and are not sent anywhere. | The host of the ICS address you pasted (for example Google or Microsoft). The address is stored in Windows Credential Manager. | Delete the saved address; this removes the stored credential |
+| Approved delivery of a meeting | The transcript, approved summary, notes and metadata (no audio) when you approve an export. Channel webhooks get an abbreviated summary. | The folder, webhook (generic, Slack, Discord or Teams) or SSH/SFTP server you configured | Off by default. "Kun lokal" and "Privat tilstand" block every delivery, including tests and queued retries. See [delivery](docs/delivery.md). |
+| Update check | A standard HTTPS request for the list of releases and, when a newer version exists, the download: your IP address and the version in the request. No meeting data, no identifier. The first check runs about a minute after start, then every six hours. | GitHub (`github.com`, and `api.github.com` for the release list of the Tauri app and its move to the new app) | Set the environment variable `TINGSKRIVER_UPDATE_FEED=off`. There is no switch in the app yet. |
+| Logs and crash dumps | Nothing; both stay on your computer. | Nobody | See below |
 
-### Your Data Ownership
-- You own all meeting data, transcripts, and recordings
-- Data is stored locally on your device
-- No vendor lock-in - export your data anytime
-- Complete control over data retention and deletion
+Sending to a provider or a webhook only happens when you configure it. Those services have their own privacy policies; Tingskriver does not control what they do with the data.
 
-## Usage Analytics
+## Keep a meeting entirely local
 
-### What We Collect
-Usage analytics is optional and off by default. When you choose to enable it, Tingskriver collects minimal, anonymized usage data:
+1. Use the built-in models for transcription and summaries (the default for summaries).
+2. Set the dictation engine to "local" or do not enter a Syv.ai key.
+3. Do not add an AI provider, a calendar address or a delivery target, or switch on "Kun lokal" and "Privat tilstand".
+4. Download the models once, or copy them into the models folder, and set `TINGSKRIVER_UPDATE_FEED=off` if you do not want update checks.
 
-**Application Usage:**
-- Feature usage patterns (which tools you use most)
-- Session duration and frequency
-- Performance metrics (transcription success rates, error frequencies)
-- UI interaction patterns (button clicks, navigation flows)
+## Where your data is stored
 
-**Technical Metrics:**
-- Application version and platform information
-- Error logs and crash reports (anonymized)
-- Performance benchmarks (processing times, resource usage)
+Meetings, transcripts, summaries and settings are in a local database and audio files in the app's data folder. They are ordinary files protected by your Windows account's file permissions; Tingskriver does not encrypt them itself. API keys and webhook addresses are stored in Windows Credential Manager; SSH private keys stay in your own key files.
 
-### What We DON'T Collect
-We never collect:
-- ❌ Meeting content, transcripts, or recordings
-- ❌ Personal information or identifiable data
-- ❌ File names, meeting titles, or metadata
-- ❌ Audio data or voice patterns
-- ❌ Participant names or contact information
-- ❌ LLM conversations or AI-generated content
+You can delete a meeting in the app, which removes it from the database. When you uninstall, you can choose to delete the data folder and the log folder as well. If the database cannot be opened at startup, a copy is placed in `backups` in the data folder before the error is shown; nothing is deleted.
 
-### Why We Collect This Data
-When enabled, analytics helps us with:
-- **Product Quality**: Identifying and fixing bugs that impact user experience
-- **Performance Optimization**: Understanding resource usage and system bottlenecks
-- **Security**: Detecting potential security issues and vulnerabilities
-- **Feature Development**: Making data-driven decisions about new features
-- **Open Source Sustainability**: Ensuring the project meets user needs effectively
+## Logs and crash dumps
 
-### Analytics Implementation
-- **Provider**: PostHog (privacy-focused analytics platform)
-- **Default**: Off by default; analytics starts only after you enable it in settings
-- **Anonymization**: All data linked to generated user IDs only - no personal identification
-- **Data retention**: 12 months maximum, then automatically deleted
-- **Encryption**: All data encrypted in transit using industry-standard protocols
-- **Location**: Data processed in accordance with PostHog's privacy policy
-- **Access Control**: Strictly limited to core development team members
+- **Log**: `%LOCALAPPDATA%\dk.mahoje.tingskriver\logs`, at most three files of 5 MB. It records what the app did (startup, devices, errors, panics with a backtrace), not what was said in a meeting. Before a line is written, e-mail addresses, IP addresses, UUIDs, API keys and tokens, webhook addresses and your Windows profile folder are replaced by placeholders such as `[EMAIL]`, `[IP]` and `[HOME]`. Meeting titles, participant names and transcript text are not logged at all, and a test checks the code that handles them. Device-follow lines (`[DEVICE_FOLLOW]`) are written unchanged because they are used for troubleshooting; they contain device names. Read a log before you attach it to a public issue.
+- **Crash dumps**: when Tingskriver crashes in native code, Windows Error Reporting writes a minidump (`DumpType` 1: threads, call stacks and loaded modules, no full memory) to `%LOCALAPPDATA%\dk.mahoje.tingskriver\dumps`, at most five. The app sets this up with the per-user registry key `HKCU\Software\Microsoft\Windows\Windows Error Reporting\LocalDumps\tingskriver.exe`. A minidump holds the program's state at the moment of the crash and can contain fragments of what it was working on. They are not masked. On by default; turn it off under Settings > Preferences > "Gem nedbrudsfiler", which removes the registry key.
+- Neither is uploaded. You decide whether to send one to the developer.
 
-## User-Approved Delivery
+## Changes to this policy
 
-If you explicitly configure a delivery target and approve a meeting export,
-Tingskriver can send the transcript, approved summary, notes and structured
-metadata to your chosen folder, webhook or SSH/SFTP server. Channel webhooks
-receive an abbreviated summary. Audio is not included in these exports.
-Delivery is disabled by default. Delivery's local-only and private settings
-block tests, new exports and queued retries, including folder exports.
-Webhook addresses are stored in the system credential store; SSH private keys
-remain in their key files. Failed exports remain in the local queue until they
-succeed; completed payloads are removed from that queue. See
-[delivery documentation](docs/delivery.md) for consent and retry behavior.
+Every release is checked against the table: a new host or provider in the code must be added here before release (see the [release checklist](docs/release-checkliste.md)). Changes appear in this file's history in the GitHub repository and in the release notes.
 
-## Logs and Crash Dumps
+## Contact
 
-Tingskriver keeps a log file and, after a crash, a crash dump on your own computer. Neither is uploaded or sent anywhere; you decide whether to send one to the developer.
-
-- **Log**: `%LOCALAPPDATA%\dk.mahoje.tingskriver\logs`, at most three files of 5 MB. It records what the app did (startup, devices, errors, panics with a backtrace), not what was said in a meeting.
-- **Crash dumps**: when Tingskriver crashes in native code, Windows Error Reporting writes a minidump (`DumpType` 1: threads, call stacks and loaded modules, no full memory) to `%LOCALAPPDATA%\dk.mahoje.tingskriver\dumps`, at most five. The app sets this up with the per-user registry key `HKCU\Software\Microsoft\Windows\Windows Error Reporting\LocalDumps\tingskriver.exe`. A minidump holds the program's state at the moment of the crash and can contain fragments of what it was working on. On by default; turn it off under Settings > Preferences > "Gem nedbrudsfiler", which removes the registry key.
-- **Database backups**: if the database cannot be opened at startup, a copy is placed in `backups` in the app's data folder before the error is shown. Nothing is deleted.
-
-## Third-Party Services
-
-### LLM Providers (Optional)
-If you choose to use external LLM providers:
-- **Anthropic Claude**: Subject to Anthropic's privacy policy
-- **Groq**: Subject to Groq's privacy policy
-- **Local Ollama**: Processed entirely on your device
-
-### Analytics Service (Optional)
-- **PostHog**: Used for usage analytics when enabled
-- **Data**: Only anonymized usage patterns, no meeting content
-- **Control**: Completely optional, off by default, and user-controlled
-
-## Your Privacy Rights
-
-### Data Control
-- **Access**: View all data stored locally on your device
-- **Export**: Export your data in standard formats
-- **Delete**: Remove all data from your device
-
-
-### Analytics Transparency
-- **Open source**: Full analytics implementation available for review in our source code
-- **Opt-in**: New and existing installs have analytics disabled until you turn it on
-- **Questions**: Contact us for any analytics-related concerns
-
-## Data Security
-
-### Local Security
-- Data encrypted at rest using your device's security features
-- No transmission of sensitive meeting data
-- Standard file system permissions protect your data
-
-### Open Source Transparency
-- Full source code available for security review
-- Community-audited privacy implementations
-- No hidden data collection or tracking
-
-## Changes to This Policy
-
-We will notify users of any material changes to this privacy policy through:
-- Updates to this document in our GitHub repository
-- Release notes for application updates
-- In-app notifications for significant privacy changes
-
-## Contact Us
-
-For privacy-related questions or concerns:
 - **GitHub Issues**: [Create an issue](https://github.com/mahope/tingskriver/issues)
 - **Community**: [Discord](https://discord.gg/crRymMQBFH)
 
-## Open Source Commitment
+## Open source
 
-As an open-source project under MIT license, you can:
-- Review our complete privacy implementation
-- Modify data handling to meet your requirements
-- Deploy entirely on your own infrastructure
-- Contribute to privacy improvements
-
----
-
-*This privacy policy applies to Tingskriver v0.0.5 and later versions. For enterprise deployments, additional privacy controls may be available.*
+Tingskriver is MIT licensed. You can review exactly what the app does, change it, and run it on your own infrastructure.
