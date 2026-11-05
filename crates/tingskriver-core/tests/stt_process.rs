@@ -105,3 +105,43 @@ fn ort_failure_child() {
     assert_eq!(result.backend, Backend::Energy);
     assert!(!result.samples.is_empty());
 }
+
+#[cfg(debug_assertions)]
+fn exchange_with_fault(fault: &str, device: &str, frames: u64) -> Vec<bool> {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tingskriver-stt"))
+        .env("TINGSKRIVER_STT_FAULT", fault)
+        .env("TINGSKRIVER_STT_DEVICE", device)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut input = BufWriter::new(child.stdin.take().unwrap());
+    let mut output = BufReader::new(child.stdout.take().unwrap());
+    let echo = serde_json::to_vec(&Request::Echo).unwrap();
+    let mut answered = Vec::new();
+    for id in 1..=frames {
+        let sent = ipc::write_frame(&mut input, id, &echo, &[0.5]).is_ok();
+        answered.push(sent && matches!(ipc::read_frame(&mut output), Ok(Some(_))));
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    answered
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn real_worker_dies_where_the_fault_says() {
+    // abort@load: the first request (the model load) kills the worker.
+    assert_eq!(exchange_with_fault("abort@load", "gpu", 1), [false]);
+    // abort@run: the load answers, the next request kills it.
+    assert_eq!(exchange_with_fault("segv@run", "gpu", 2), [true, false]);
+    // abort@init: it never answers.
+    assert_eq!(exchange_with_fault("abort@init", "gpu", 1), [false]);
+    // :gpu faults leave a CPU worker alone.
+    assert_eq!(
+        exchange_with_fault("abort@load:gpu", "cpu", 2),
+        [true, true]
+    );
+    assert_eq!(exchange_with_fault("abort@load:gpu", "gpu", 1), [false]);
+}
