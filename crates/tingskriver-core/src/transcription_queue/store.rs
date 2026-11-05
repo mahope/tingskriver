@@ -15,6 +15,10 @@ pub struct JobSpec {
     pub system: Option<PathBuf>,
     pub microphone_label: String,
     pub language: String,
+    /// Extra spoken languages (issue #209). Jobs stored before this field
+    /// existed have none.
+    #[serde(default)]
+    pub extra_languages: Vec<String>,
     pub offset_ms: u64,
     /// Optional snapshot for "run again with another provider". Never keys.
     pub providers: Option<crate::providers::ProvidersConfig>,
@@ -28,6 +32,7 @@ impl JobSpec {
             system,
             microphone_label: "Mig".into(),
             language: "da".into(),
+            extra_languages: Vec::new(),
             offset_ms: 0,
             providers: None,
         }

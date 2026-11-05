@@ -586,6 +586,23 @@ pub async fn api_process_transcript(
     let meeting_id_clone = m_id.clone();
     // App data directory for the BuiltInAI provider
     let app_data_dir = app.app_data_dir().ok();
+    // Languages of the meeting: the report is written in the main language
+    // unless the settings or the meeting say otherwise. A file that cannot be
+    // read stops the report instead of silently writing it in another language.
+    let languages = match &app_data_dir {
+        Some(dir) => match crate::meeting_language::MeetingLanguages::load(dir) {
+            Ok(languages) => languages,
+            Err(message) => {
+                let _ = SummaryProcessesRepository::update_process_failed(
+                    &pool, &m_id, started_at, &message,
+                )
+                .await;
+                SummaryService::cleanup_cancellation_token(&m_id, started_at);
+                return Err(message);
+            }
+        },
+        None => crate::meeting_language::MeetingLanguages::default(),
+    };
     // Dictionary words are spelled exactly in the report and the title.
     let mut preferred_names = match &app_data_dir {
         Some(dir) => dictionary_words(dir).await,
@@ -607,6 +624,7 @@ pub async fn api_process_transcript(
             final_prompt,
             final_template_id,
             summary_language,
+            languages,
             preferred_names,
         )
         .await;

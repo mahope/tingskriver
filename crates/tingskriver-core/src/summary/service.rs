@@ -135,9 +135,6 @@ fn template_cache_fingerprint(template: &Template) -> String {
     stable_text_fingerprint(&rendered_template)
 }
 
-/// Summary language when the meeting has no explicit choice.
-const DEFAULT_SUMMARY_LANGUAGE: &str = "da";
-
 fn normalise_summary_language_for_cache(summary_language: Option<&str>) -> Option<String> {
     language_name_from_code(summary_language?.trim()).map(str::to_string)
 }
@@ -256,7 +253,7 @@ impl SummaryService {
     }
 
     /// Cleans up only the matching generation token after processing completes.
-    fn cleanup_cancellation_token(meeting_id: &str, started_at: DateTime<Utc>) {
+    pub(crate) fn cleanup_cancellation_token(meeting_id: &str, started_at: DateTime<Utc>) {
         let mut registry = CANCELLATION_REGISTRY
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -353,6 +350,7 @@ impl SummaryService {
         custom_prompt: String,
         template_id: String,
         summary_language: Option<String>,
+        languages: crate::meeting_language::MeetingLanguages,
         preferred_names: Vec<String>,
     ) {
         let start_time = Instant::now();
@@ -360,9 +358,6 @@ impl SummaryService {
             "Starting background processing for meeting_id: {}",
             meeting_id
         );
-        // Summaries are Danish unless the meeting says otherwise.
-        let summary_language = summary_language.or_else(|| Some(DEFAULT_SUMMARY_LANGUAGE.to_string()));
-
         // Parse provider
         let provider = match LLMProvider::from_str(&model_provider) {
             Ok(p) => p,
@@ -489,10 +484,6 @@ impl SummaryService {
         };
 
 
-        if let Some(code) = &summary_language {
-            info!("📝 Summary language preference: {}", code);
-        }
-
         let detected_summary_language =
             Self::read_detected_summary_language(&pool, &meeting_id)
                 .await
@@ -500,6 +491,16 @@ impl SummaryService {
 
         if let Some(code) = &detected_summary_language {
             info!("📝 Detected transcript summary language: {}", code);
+        }
+
+        // The meeting's own choice wins; otherwise the language settings
+        // decide (the main language, Danish by default).
+        let summary_language = Some(languages.summary_language(
+            summary_language.as_deref(),
+            detected_summary_language.as_deref(),
+        ));
+        if let Some(code) = &summary_language {
+            info!("📝 Summary language: {}", code);
         }
 
         let template = match templates::get_template(&template_id) {

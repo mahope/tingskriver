@@ -53,6 +53,7 @@ pub mod host;
 mod http;
 pub mod install;
 pub mod logging;
+pub mod meeting_language;
 pub mod measurement;
 pub mod notes;
 pub mod ollama;
