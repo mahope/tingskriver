@@ -45,6 +45,8 @@ pub mod render_follow;   // Which playback device the system-audio loopback foll
 pub mod windows_endpoint_notifier;
 #[cfg(target_os = "windows")]
 pub mod windows_device_follower;
+#[cfg(target_os = "windows")]
+pub mod windows_render_sessions;
 pub mod playback_monitor; // NEW: Playback device detection for BT warnings
 
 // Transcription module (provider abstraction, engine management, worker pool)

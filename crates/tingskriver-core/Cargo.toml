@@ -83,6 +83,9 @@ windows = { version = "0.61", features = [
     "Win32_Graphics_Gdi",
     # Dictation: which field inside a browser or Electron app has focus ("slet det")
     "Win32_UI_Accessibility",
+    # Which output device another process plays to (audio sessions, friendly names)
+    "Win32_Devices_FunctionDiscovery", "Win32_UI_Shell_PropertiesSystem",
+    "Win32_System_Com_StructuredStorage",
 ] }
 windows-core = "0.61"
 
