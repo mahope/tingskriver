@@ -53,18 +53,24 @@ export function TranscriptButtonGroup({
           <span className="hidden @[22rem]:inline">Kopiér</span>
         </Button>
 
-        <Button
-          size="sm"
-          variant="outline"
-          className="px-2 @[22rem]:px-4"
-          onClick={() => {
-            onOpenMeetingFolder();
-          }}
-          title="Åbn mappen med optagelsen"
-        >
-          <FolderOpen className="@[22rem]:mr-2" size={18} />
-          <span className="hidden @[22rem]:inline">Optagelse</span>
-        </Button>
+        {meetingFolderPath ? (
+          <Button
+            size="sm"
+            variant="outline"
+            className="px-2 @[22rem]:px-4"
+            onClick={() => {
+              onOpenMeetingFolder();
+            }}
+            title="Åbn mappen med optagelsen"
+          >
+            <FolderOpen className="@[22rem]:mr-2" size={18} />
+            <span className="hidden @[22rem]:inline">Optagelse</span>
+          </Button>
+        ) : (
+          <span className="px-3 text-sm text-muted-foreground self-center">
+            Mødet har ingen lyd, kun et importeret transskript.
+          </span>
+        )}
 
         {betaFeatures.importAndRetranscribe && meetingId && meetingFolderPath && (
           <Button

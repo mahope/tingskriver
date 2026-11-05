@@ -22,9 +22,10 @@ import { loadBetaFeatures } from '@/types/betaFeatures'
 import { DownloadProgressToastProvider } from '@/components/shared/DownloadProgressToast'
 import { UpdateCheckProvider } from '@/components/UpdateCheckProvider'
 import { RecordingPostProcessingProvider } from '@/contexts/RecordingPostProcessingProvider'
-import { ImportAudioDialog, ImportDropOverlay } from '@/components/ImportAudio'
+import { ImportAudioDialog, ImportDropOverlay, TranscriptDropBridge, IMPORT_TRANSCRIPT_EVENT } from '@/components/ImportAudio'
 import { ImportDialogProvider } from '@/contexts/ImportDialogContext'
 import { isAudioExtension, getAudioFormatsDisplayList } from '@/constants/audioFormats'
+import { isSubtitleExtension } from '@/constants/subtitleFormats'
 import { DatabaseGate } from '@/components/DatabaseGate'
 
 
@@ -141,11 +142,21 @@ export default function RootLayout({
 
   // Handle file drop for audio import
   const handleFileDrop = useCallback((paths: string[]) => {
+    // Transcripts (.vtt/.srt) are not a beta feature.
+    const subtitleFile = paths.find(p => {
+      const ext = p.split('.').pop()?.toLowerCase();
+      return !!ext && isSubtitleExtension(ext);
+    });
+    if (subtitleFile) {
+      window.dispatchEvent(new CustomEvent(IMPORT_TRANSCRIPT_EVENT, { detail: subtitleFile }));
+      return;
+    }
+
     // Check if beta features are enabled (read from localStorage directly since we're outside ConfigProvider)
     const betaFeatures = loadBetaFeatures();
 
     if (!betaFeatures.importAndRetranscribe) {
-      toast.error('Funktionen er slået fra', {
+      toast.error('Lydimport er slået fra', {
         description: 'Slå "Importér lyd og transskribér igen" til under Indstillinger > Beta.'
       });
       return;
@@ -162,8 +173,8 @@ export default function RootLayout({
       setImportFilePath(audioFile);
       setShowImportDialog(true);
     } else if (paths.length > 0) {
-      toast.error('Slip en lydfil', {
-        description: `Understøttede formater: ${getAudioFormatsDisplayList()}`
+      toast.error('Slip en lydfil eller en undertekstfil', {
+        description: `Understøttede formater: ${getAudioFormatsDisplayList()}, .vtt og .srt`
       });
     }
   }, []);
@@ -178,9 +189,7 @@ export default function RootLayout({
     const setupListeners = async () => {
       // Drag enter/over - show overlay only if beta feature is enabled
       const unlistenDragEnter = await listen('tauri://drag-enter', () => {
-        if (loadBetaFeatures().importAndRetranscribe) {
-          setShowDropOverlay(true);
-        }
+        setShowDropOverlay(true);
       });
       if (cleanedUpRef.current) {
         unlistenDragEnter();
@@ -270,6 +279,7 @@ export default function RootLayout({
                                 </div>
                               )}
                               {/* Import audio overlay and dialog */}
+                              <TranscriptDropBridge />
                               <ImportDropOverlay visible={showDropOverlay} />
                               <ConditionalImportDialog
                                 showImportDialog={showImportDialog}

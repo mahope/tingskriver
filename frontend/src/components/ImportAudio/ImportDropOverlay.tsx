@@ -19,8 +19,8 @@ export function ImportDropOverlay({ visible }: ImportDropOverlayProps) {
                       p-12 text-center bg-card
                       transform scale-100 transition-transform">
         <Upload className="h-16 w-16 text-primary mx-auto mb-4" />
-        <p className="text-xl font-medium text-foreground">Slip lydfilen for at importere den</p>
-        <p className="text-sm text-muted-foreground mt-2">{getAudioFormatsDisplayList()}</p>
+        <p className="text-xl font-medium text-foreground">Slip filen for at importere den</p>
+        <p className="text-sm text-muted-foreground mt-2">{getAudioFormatsDisplayList()} eller undertekster (.vtt, .srt)</p>
       </div>
     </div>
   );
