@@ -12,7 +12,7 @@
 
 ## Response time and model
 
-Not measured yet: the build machine has no local model. Budget is five key-point calls plus one overview call, each capped at 512 tokens and 45 s, and cached calls cost nothing after the first run. Measure on a real PC with the built-in model and Ollama and record the numbers here.
+Model choice: the default is a local provider (Ollama or the built-in model); the caller passes the provider, and nothing leaves the PC unless the user picks a cloud one. A small instruct model is enough, since each call only summarises one set of minutes into three lines. Response time is not measured yet: the build machine has no local model, so this part of #204 stays open (`Refs #204`). Budget is five key-point calls plus one overview call, each capped at 512 tokens and 45 s, and cached calls cost nothing after the first run. Measure on a real PC with the built-in model and Ollama and record the numbers here.
 
 ## Wiring (open)
 

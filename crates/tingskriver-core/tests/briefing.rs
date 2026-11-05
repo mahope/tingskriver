@@ -251,3 +251,45 @@ async fn sqlite_cache_roundtrip_and_migration() {
     c.put("k", "w").await.unwrap();
     assert_eq!(c.get("k").await.unwrap().as_deref(), Some("w"));
 }
+
+/// Fails for one named minutes text, otherwise like `Fake`.
+struct Flaky {
+    bad: &'static str,
+    all: bool,
+}
+
+#[async_trait]
+impl Briefer for Flaky {
+    fn model_id(&self) -> String {
+        "flaky:1".into()
+    }
+    async fn key_points(&self, _title: &str, minutes: &str) -> Result<Vec<String>, BriefError> {
+        if self.all || minutes.contains(self.bad) {
+            return Err(BriefError::Model("tidsgrænsen blev nået".into()));
+        }
+        Ok(vec!["et".into()])
+    }
+    async fn overview(&self, m: &[MeetingPoints]) -> Result<String, BriefError> {
+        Ok(format!("Samlet over {} møder", m.len()))
+    }
+}
+
+#[tokio::test]
+async fn one_failing_meeting_is_skipped() {
+    let h = history();
+    let bad = h.iter().find(|m| m.id == "s6").unwrap().minutes.clone();
+    let bad: &'static str = Box::leak(bad.into_boxed_str());
+    let f = Flaky { bad, all: false };
+    let b = build_brief(&upcoming(), &h, &f, &InMemoryCache::default())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(b.meetings.len(), 4);
+}
+
+#[tokio::test]
+async fn all_meetings_failing_is_an_error() {
+    let f = Flaky { bad: "", all: true };
+    let r = build_brief(&upcoming(), &history(), &f, &InMemoryCache::default()).await;
+    assert!(matches!(r, Err(BriefError::Model(_))));
+}

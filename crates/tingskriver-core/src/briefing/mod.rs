@@ -157,8 +157,7 @@ pub fn hash(parts: &[&str]) -> String {
 
 fn points_key(model: &str, meeting: &PastMeeting) -> String {
     format!(
-        "points:{}:{}",
-        meeting.id,
+        "points:{}",
         hash(&[
             &PROMPT_VERSION.to_string(),
             model,
@@ -192,6 +191,7 @@ pub async fn build_brief(
     }
     let model = briefer.model_id();
     let mut meetings = Vec::new();
+    let mut last_error = None;
     for (meeting, relation) in ranked {
         let key = points_key(&model, &meeting);
         let cached = cache
@@ -201,7 +201,16 @@ pub async fn build_brief(
         let points = match cached {
             Some(points) => points,
             None => {
-                let mut points = briefer.key_points(&meeting.title, &meeting.minutes).await?;
+                // One slow or failing minutes text must not remove the brief
+                // for the others; fail only if every meeting fails.
+                let mut points = match briefer.key_points(&meeting.title, &meeting.minutes).await
+                {
+                    Ok(points) => points,
+                    Err(e) => {
+                        last_error = Some(e);
+                        continue;
+                    }
+                };
                 points.retain(|p| !p.trim().is_empty());
                 points.truncate(MAX_POINTS);
                 cache
@@ -225,6 +234,9 @@ pub async fn build_brief(
         });
     }
     if meetings.is_empty() {
+        if let Some(e) = last_error {
+            return Err(e);
+        }
         return Ok(None);
     }
     let key = overview_key(&model, &meetings);
