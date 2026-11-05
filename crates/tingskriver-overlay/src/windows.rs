@@ -55,6 +55,7 @@ pub const SHOW_BUDGET: Duration = Duration::from_millis(50);
 enum Command {
     State(PillState, Instant),
     Level(f32),
+    PromptHeld(bool),
     Show(Instant),
     Hide,
     Quit,
@@ -128,6 +129,11 @@ impl Overlay {
     /// Update the input level while listening (0.0..=1.0).
     pub fn set_level(&self, level: f32) {
         self.send(Command::Level(level));
+    }
+
+    /// Mark the pill while a prompt is held back by Focus Assist.
+    pub fn set_prompt_held(&self, held: bool) {
+        self.send(Command::PromptHeld(held));
     }
 
     /// Show the current state again after [`Overlay::hide`].
@@ -360,6 +366,7 @@ impl Ui {
                     self.pill.set_level(level);
                     (Change::None, None)
                 }
+                Command::PromptHeld(held) => (self.pill.set_prompt_held(held), None),
                 Command::Show(at) => (self.pill.show(now), Some(at)),
                 Command::Hide => (self.pill.hide(now), None),
                 Command::Quit => {
