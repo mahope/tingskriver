@@ -635,7 +635,11 @@ async fn run_rerun(queue: &Queue, dir: &std::path::Path, system: Vec<Seg>, now: 
             &service(dir),
             &remote_config(&server.base_url),
             |_, _| async { panic!("remote only") },
-            |_| {},
+            |e| {
+                if e.status == "completed" {
+                    *LAST_REJECTED.lock().unwrap() = e.rejected;
+                }
+            },
             now,
         )
         .await
@@ -643,6 +647,8 @@ async fn run_rerun(queue: &Queue, dir: &std::path::Path, system: Vec<Seg>, now: 
     assert!(ran);
     id
 }
+
+static LAST_REJECTED: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
 fn speakers(version: &Version) -> Vec<String> {
     version.result["segments"]
@@ -784,6 +790,21 @@ async fn truncated_rerun_is_stored_but_never_becomes_current() {
     );
     let first = run_rerun(&queue, dir.path(), vec![(0.0, 60.0, long, Some("a"))], 0).await;
     let second = run_rerun(&queue, dir.path(), vec![(0.0, 5.0, "Blåbær", Some("a"))], 1).await;
+    let event_text = LAST_REJECTED.lock().unwrap().clone();
+    assert_eq!(
+        event_text.as_deref(),
+        Some(crate::strings::TRANSCRIPT_TRUNCATED)
+    );
+    let status = queue.statuses().await.unwrap();
+    assert_eq!(
+        status
+            .iter()
+            .find(|e| e.job_id == second)
+            .unwrap()
+            .rejected
+            .as_deref(),
+        Some(crate::strings::TRANSCRIPT_TRUNCATED)
+    );
     let versions = queue.versions("m").await.unwrap();
     assert_eq!(versions.len(), 2, "the short result is still stored");
     let rejected = versions.iter().find(|v| v.job_id == second).unwrap();

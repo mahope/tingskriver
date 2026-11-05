@@ -4,7 +4,7 @@
 use serde_json::{json, Value};
 
 use crate::transcript_merge::reconcile::{
-    is_truncated, reconcile_speakers, transfer_corrections, Correction, SpeakerSpan,
+    is_truncated, reconcile_speakers_reserving, transfer_corrections, Correction, SpeakerSpan,
 };
 use crate::transcript_merge::NUMBERED_SPEAKER_PREFIX;
 
@@ -13,6 +13,7 @@ pub(super) struct Previous<'a> {
     pub job_id: &'a str,
     pub result: &'a Value,
     pub corrections: &'a [Correction],
+    pub names: &'a [(usize, String)],
 }
 
 fn number(label: &str) -> Option<usize> {
@@ -66,7 +67,13 @@ fn spans(result: &Value) -> Vec<SpeakerSpan> {
 /// result stays a stored version in both cases.
 pub(super) fn apply(previous: &Previous, new: &mut Value) {
     let old_spans = spans(previous.result);
-    let mapping = reconcile_speakers(&old_spans, &spans(new));
+    let reserved: Vec<usize> = previous
+        .names
+        .iter()
+        .map(|(n, _)| *n)
+        .chain(previous.corrections.iter().map(|c| c.nummer))
+        .collect();
+    let mapping = reconcile_speakers_reserving(&old_spans, &spans(new), &reserved);
     let ranges: Vec<_> = segments(new)
         .iter()
         .filter(|s| is_system(s))

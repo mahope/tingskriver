@@ -82,6 +82,12 @@ same chunk (same `offset_ms`), the new result is reconciled with it
   Danish `message`) and is never current. `current_version(meeting, offset)`
   returns the newest version that is not rejected; `Version::is_rejected()`
   tells the UI to show the message. The comparison is Unicode-aware (æøå count).
+  The `completed` queue event (and `statuses()`) carries the same Danish text
+  in `rejected`, so the host can show it without reading the stored result.
+- Only system segments labelled "Taler N" are renumbered; an undiarised system
+  side ("Ukendt taler") is left as is, and corrections do not apply to it.
+  Names and corrections are copied as they are, also for numbers the new
+  version does not use, so a later rerun can map back to them.
 
 ## Scope and verification
 
@@ -91,7 +97,7 @@ recording-stop enqueueing, the local model loader, event forwarding and the
 recording/retranscription paths are unchanged. This is not yet an automatic
 end-to-end queue in the desktop app.
 
-Run `cargo test --locked -p tingskriver-core transcription_queue transcript_merge`. Tests cover
+Run `cargo test --locked -p tingskriver-core -- transcription_queue transcript_merge`. Tests cover
 HTTP 500/429/hanging responses, bounded retries, speaker merging, explicit
 Danish local requests, preserved versions and forced termination of a separate
 process after its SQLite claim is committed. Local inference itself needs an

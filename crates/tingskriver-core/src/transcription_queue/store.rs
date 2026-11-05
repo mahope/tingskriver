@@ -104,6 +104,8 @@ impl Queue {
                 job_id TEXT NOT NULL, start_ms INTEGER NOT NULL, end_ms INTEGER NOT NULL,
                 speaker INTEGER NOT NULL
             );
+            CREATE INDEX IF NOT EXISTS transcription_speaker_corrections_job
+                ON transcription_speaker_corrections(job_id);
             CREATE TABLE IF NOT EXISTS transcription_provider_cooldowns (
                 provider_id TEXT PRIMARY KEY, until INTEGER NOT NULL
             );",
@@ -295,7 +297,7 @@ impl Queue {
     }
 
     pub async fn statuses(&self) -> Result<Vec<super::QueueEvent>> {
-        let rows = sqlx::query("SELECT id,meeting_id,status,attempts,next_attempt FROM transcription_jobs ORDER BY created_at,rowid")
+        let rows = sqlx::query("SELECT id,meeting_id,status,attempts,next_attempt,result FROM transcription_jobs ORDER BY created_at,rowid")
             .fetch_all(&self.pool).await?;
         rows.into_iter()
             .map(|row| {
@@ -310,6 +312,10 @@ impl Queue {
                         None
                     },
                     track: None,
+                    rejected: row
+                        .try_get::<Option<String>, _>("result")?
+                        .and_then(|r| serde_json::from_str::<serde_json::Value>(&r).ok())
+                        .and_then(|v| v["rejected"]["message"].as_str().map(str::to_string)),
                 })
             })
             .collect()
