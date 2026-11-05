@@ -57,14 +57,30 @@ fn is_exempt(host: &str) -> bool {
         || host.ends_with(".eksempel.com")
 }
 
-/// Hosts in string literals of non-test code (everything after the first
-/// `#[cfg(test)]` of a file is test code; comments are skipped).
+/// Hosts in string literals of non-test code. Only `#[cfg(test)]` modules
+/// (which end with a `}` in column 0, as rustfmt writes them) are skipped,
+/// so code after a test module is still scanned; comments are skipped too.
 fn hosts_in(src: &str) -> Vec<String> {
     let url = Regex::new(r"https?://([A-Za-z0-9][A-Za-z0-9.-]*)").unwrap();
-    let code = src.split("#[cfg(test)]").next().unwrap_or(src);
     let mut hosts = Vec::new();
-    for line in code.lines() {
-        if line.trim_start().starts_with("//") {
+    let mut lines = src.lines();
+    while let Some(line) = lines.next() {
+        let trimmed = line.trim_start();
+        if trimmed == "#[cfg(test)]" {
+            let mut item = lines.next().unwrap_or("").trim_start();
+            while item.starts_with("#[") {
+                item = lines.next().unwrap_or("").trim_start();
+            }
+            if item.starts_with("mod ") && item.ends_with('{') {
+                for inner in lines.by_ref() {
+                    if inner == "}" {
+                        break;
+                    }
+                }
+            }
+            continue;
+        }
+        if trimmed.starts_with("//") {
             continue;
         }
         for caps in url.captures_iter(line) {
@@ -129,4 +145,10 @@ const B: &str = "http://localhost:1234";"#;
         ["new-provider.invalid2.net"]
     );
     assert!(undocumented("`new-provider.invalid2.net`", &hosts).is_empty());
+}
+
+#[test]
+fn code_after_a_test_module_is_still_scanned() {
+    let src = "#[cfg(test)]\nmod tests {\n    const T: &str = \"https://only-in-tests.invalid2.net\";\n}\n\nconst P: &str = \"https://after-tests.invalid2.net\";\n";
+    assert_eq!(hosts_in(src), ["after-tests.invalid2.net"]);
 }

@@ -85,7 +85,7 @@ pub async fn api_get_template_details(
         sections: section_titles,
     };
 
-    info!("Retrieved template details for '{}'", details.name);
+    info!("Retrieved details for template '{}'", details.id);
 
     Ok(details)
 }
@@ -106,7 +106,7 @@ pub async fn api_validate_template(
 
     match templates::validate_and_parse_template(&template_json) {
         Ok(template) => {
-            info!("Template '{}' validated successfully", template.name);
+            info!("Custom template validated successfully");
             Ok(template.name)
         }
         Err(e) => {

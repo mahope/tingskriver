@@ -27,9 +27,7 @@ const GUARDED: &[&str] = &[
     "src/dictation",
     "src/notes",
     "src/database",
-    "src/audio/import.rs",
-    "src/audio/recording_commands.rs",
-    "src/audio/recording_preferences.rs",
+    "src/audio",
     "src/whisper_engine/commands.rs",
     "src/parakeet_engine/commands.rs",
 ];
@@ -38,7 +36,7 @@ const MACROS: &str = r"\b(?:log::)?(?:log_)?(?:info|warn|error|debug|trace)!\s*\
 
 /// Values that are free text or can hold it, as identifiers in the
 /// arguments of a log macro.
-const FORBIDDEN: &str = r"(?i)\b(title|meeting_title|meeting_name|attendees?|participants?|organizer|emails?|ics\w*|address|webhook\w*|endpoint|api_key|secret|password|transcript_text|summary_text|speaker_name|folder_path|source_path|file_path|response_text|body|prompt|content)\b";
+const FORBIDDEN: &str = r"(?i)\b(title|meeting_title|meeting_name|attendees?|participants?|organizer|emails?|ics\w*|address|webhook\w*|endpoint|api_key|secret|password|transcript_text|summary_text|speaker_name|folder_path|source_path|file_path|response_text|body|prompt|content|template_name|(?:details|template)\.name|custom_name)\b";
 
 fn rust_files(path: &Path, out: &mut Vec<PathBuf>) {
     if path.is_file() {

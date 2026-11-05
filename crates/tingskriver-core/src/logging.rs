@@ -151,10 +151,10 @@ fn patterns() -> &'static Patterns {
             ),
             ipv4: re(r"\b\d{1,3}(?:\.\d{1,3}){3}\b"),
             ipv6_full: re(r"\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\b"),
-            ipv6_short: re(
-                r"(?:\b(?:[0-9A-Fa-f]{1,4}:){1,6}|(?:\b[0-9A-Fa-f]{1,4})?):(?::[0-9A-Fa-f]{1,4}){1,6}\b",
+            ipv6_short: re(r"(?:\b(?:[0-9A-Fa-f]{1,4}:){1,7}|:)(?::[0-9A-Fa-f]{1,4}){1,7}\b"),
+            other_user: re(
+                r#"(?i)(\b[a-z]:[\\/]+users[\\/]+|(?:^|[\s"'=(\[])/home/|(?:^|[\s"'=(\[])/Users/)[^\\/\s"':;,)\]]+"#,
             ),
-            other_user: re(r#"(?i)(\b[a-z]:[\\/]+users[\\/]+|/home/|/Users/)[^\\/\s"':;,)\]]+"#),
         }
     });
     &PATTERNS
@@ -246,7 +246,23 @@ impl Redactor {
             })
             .into_owned();
         s = p.ipv6_full.replace_all(&s, "[IP]").into_owned();
-        s = p.ipv6_short.replace_all(&s, "[IP]").into_owned();
+        let text = s.clone();
+        s = p
+            .ipv6_short
+            .replace_all(&text, |caps: &regex::Captures| {
+                let m = caps.get(0).expect("whole match");
+                let before = text[..m.start()].chars().next_back();
+                // `Type::add` and `a::b::c` are Rust paths, not addresses: a
+                // match that starts with `::` right after a word character
+                // or a colon, or runs into another `::`, is left alone.
+                let path_like = m.as_str().starts_with("::")
+                    && before.is_some_and(|c| c.is_alphanumeric() || c == '_' || c == ':');
+                if path_like || text[m.end()..].starts_with("::") {
+                    return m.as_str().to_string();
+                }
+                "[IP]".to_string()
+            })
+            .into_owned();
         s
     }
 }
@@ -581,6 +597,7 @@ mod tests {
                 "2001:db8::8a2e:370:7334",
             ),
             ("peer ::1 connected", "::1"),
+            ("peer 2001:db8:85a3::8a2e:370:7334 up", "85a3"),
             (
                 "id 123e4567-e89b-42d3-a456-426614174000 saved",
                 "123e4567-e89b-42d3-a456-426614174000",
@@ -640,6 +657,8 @@ mod tests {
             "model loaded at 10:30:15 in 2 ms, max_tokens=2048",
             "tingskriver_core::audio::pipeline: dropped 3 chunks",
             "Windows 10.0.26100.1 build 300.400.500.600",
+            "calling Type::add and x::bad and Foo::bad, a::b::c",
+            "GET https://example.invalid/home/dashboard",
         ] {
             assert_eq!(r.redact(line), line);
         }
