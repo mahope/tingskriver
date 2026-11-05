@@ -119,14 +119,22 @@ pub async fn serve(host: HostHandle, delivery: Delivery) -> Result<(), String> {
         use std::os::unix::fs::PermissionsExt;
         let path = socket_path(&host.app_data_dir()?);
         let parent = path.parent().ok_or("MCP-mappen mangler")?;
-        std::fs::create_dir_all(parent).map_err(|_| "MCP-mappen kunne ikke oprettes")?;
-        std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|_| "MCP-mappen kunne ikke oprettes")?;
+        tokio::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))
+            .await
             .map_err(|_| "MCP-mappen kunne ikke beskyttes")?;
-        if path.exists() {
+        if tokio::fs::try_exists(&path)
+            .await
+            .map_err(|_| "MCP-kanalen kunne ikke undersøges")?
+        {
             if tokio::net::UnixStream::connect(&path).await.is_ok() {
                 return Err("MCP-kanalen er allerede åben".into());
             }
-            std::fs::remove_file(&path).map_err(|_| "Den gamle MCP-kanal kunne ikke fjernes")?;
+            tokio::fs::remove_file(&path)
+                .await
+                .map_err(|_| "Den gamle MCP-kanal kunne ikke fjernes")?;
         }
         let listener =
             tokio::net::UnixListener::bind(path).map_err(|_| "MCP-kanalen kunne ikke åbnes")?;

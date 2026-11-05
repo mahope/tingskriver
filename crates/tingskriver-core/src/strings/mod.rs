@@ -16,7 +16,8 @@ catalogue! {
     MCP_PRIVACY = "MCP er slået fra som standard. Når du aktiverer det, kan en klient læse de møder og datadele, du tillader. Data kan derefter forlade computeren via AI-værktøjets udbyder. Alt giver også adgang til dikteringer og optagelseshandlinger. Handlinger kan ændre noter, danne referater og aflevere data via appens valgte mål. Aflevering kræver alle datadele. Slukning afbryder nye kald, men tilbagekalder ikke allerede delte data eller igangværende handlinger.";
     MCP_ENABLE = "Aktivér MCP-serveren";
     MCP_DISABLED = "Stoppet: MCP-adgang er slået fra.";
-    MCP_AVAILABLE = "Klar: klienten starter serveren via stdio. Ingen netværksport.";
+    MCP_AVAILABLE = "Stoppet og klar: klienten starter serveren via stdio. Ingen netværksport.";
+    MCP_ACTIVE = "Kører: en klient har startet MCP-serveren via stdio. Ingen netværksport.";
     MCP_RUNNING = "Kørende klientprocesser ved seneste statusopdatering: {value}. Ingen netværksport. Slukning blokerer nye datakald; klienten ejer processen.";
     MCP_MISSING = "Fejl: MCP-programmet mangler. Geninstallér Tingskriver.";
     MCP_LOADING = "Indlæser MCP-indstillinger …";

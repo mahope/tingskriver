@@ -23,6 +23,12 @@ async fn fixture() -> SqlitePool {
 async fn data_switches_apply_to_every_read_surface_and_live_reader() {
     use tingskriver_core::mcp::{save_settings, Settings};
     let pool = fixture().await;
+    sqlx::query("INSERT INTO meeting_notes(meeting_id,notes_markdown,created_at,updated_at) VALUES ('visible','SECRET note','','')").execute(&pool).await.unwrap();
+    sqlx::query("UPDATE summary_processes SET result=?")
+        .bind(r##"{"markdown":"# Opgaver\n- [ ] SECRET task"}"##)
+        .execute(&pool)
+        .await
+        .unwrap();
     sqlx::query("UPDATE transcripts SET speaker='SECRET speaker'")
         .execute(&pool)
         .await
@@ -57,6 +63,31 @@ async fn data_switches_apply_to_every_read_surface_and_live_reader() {
         reader.get_meeting("visible", &[]).await.unwrap()["transskript"][0]["speaker"],
         "SECRET speaker"
     );
+    assert_eq!(reader.list_tasks(true).await.unwrap().len(), 1);
+    assert!(reader
+        .get_meeting("visible", &[])
+        .await
+        .unwrap()
+        .get("noter")
+        .is_none());
+    assert!(reader
+        .search("SECRET")
+        .await
+        .unwrap()
+        .iter()
+        .any(|hit| hit["source"] == "summary"));
+    value.notes = true;
+    value.summary = false;
+    value.transcript = false;
+    save_settings(&pool, value).await.unwrap();
+    assert_eq!(
+        reader.get_meeting("visible", &[]).await.unwrap()["noter"],
+        "SECRET note"
+    );
+    assert!(reader.list_tasks(true).await.unwrap().is_empty());
+    let hits = reader.search("SECRET").await.unwrap();
+    assert!(!hits.is_empty());
+    assert!(hits.iter().all(|hit| hit["source"] == "note"));
     assert!(reader.get_meeting("hidden", &[]).await.is_err());
     value.enabled = false;
     save_settings(&pool, value).await.unwrap();

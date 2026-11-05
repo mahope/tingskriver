@@ -804,6 +804,7 @@ impl Shell {
             {
                 strings::MCP_DISABLED
             }
+            Some(_) if state.mcp_running > 0 => strings::MCP_ACTIVE,
             Some(_) => strings::MCP_AVAILABLE,
         };
         body = body.child(
@@ -1208,25 +1209,6 @@ fn empty_state(icon: IconName, title: &str, text: &str, cx: &App) -> AnyElement 
         .into_any_element()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn navigation_is_danish_and_ordered() {
-        let labels: Vec<_> = Page::ALL.iter().map(|p| p.label()).collect();
-        assert_eq!(labels, ["Møder", "Diktering", "Måling", "Indstillinger"]);
-    }
-
-    #[test]
-    fn pages_can_be_named_on_the_command_line() {
-        assert_eq!(Page::from_arg("settings"), Some(Page::Settings));
-        assert_eq!(Page::from_arg("Diktering"), Some(Page::Dictation));
-        assert_eq!(Page::from_arg("møder"), Some(Page::Meetings));
-        assert_eq!(Page::from_arg("assistent"), None);
-    }
-}
-
 fn save_mcp_controls(
     model: Entity<AppModel>,
     value: tingskriver_core::mcp::Settings,
@@ -1258,4 +1240,23 @@ fn save_mcp_controls(
         });
     })
     .detach();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn navigation_is_danish_and_ordered() {
+        let labels: Vec<_> = Page::ALL.iter().map(|p| p.label()).collect();
+        assert_eq!(labels, ["Møder", "Diktering", "Måling", "Indstillinger"]);
+    }
+
+    #[test]
+    fn pages_can_be_named_on_the_command_line() {
+        assert_eq!(Page::from_arg("settings"), Some(Page::Settings));
+        assert_eq!(Page::from_arg("Diktering"), Some(Page::Dictation));
+        assert_eq!(Page::from_arg("møder"), Some(Page::Meetings));
+        assert_eq!(Page::from_arg("assistent"), None);
+    }
 }
