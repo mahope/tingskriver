@@ -91,6 +91,13 @@ registers at startup.
   The safety-copy space check resolves the nearest existing ancestor and
   canonicalizes mount points too, including Windows verbatim drive paths,
   so it works before the backup directory exists.
+- Committed writes are announced as sets of table names by SQLite hooks
+  (`database::changes`, `db.changes()`): update hook collects, commit hook
+  sends, rollback hook clears. A list subscribes with
+  `keep_fresh(db.changes().subscribe(), &["meetings"], quiet, max_wait, reload)`,
+  which merges bursts into one reload. Listen on base tables, not on
+  `search_fts`; see the module comment for the limits. `generation()` is a
+  plain counter for readers that only need "something changed".
 - Connections use WAL, `synchronous=NORMAL`, `busy_timeout=5s` and foreign
   keys (`database::manager::connect_options`).
 - The Tauri app opens the database in a background task after the window is
