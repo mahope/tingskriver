@@ -157,7 +157,8 @@ impl Delivery {
     }
 
     /// Write-only optional HMAC key for a webhook target. `None` removes it.
-    /// Like the address, it cannot change while the target has unfinished jobs.
+    /// It cannot change while jobs are queued or running; a failed job may be
+    /// retried after the key is corrected. Keys with surrounding whitespace are refused.
     pub async fn set_signing_secret(&self, id: &str, secret: Option<String>) -> Result<(), Error> {
         let _guard = self.gate.lock().await;
         let target = self.target(id).await?;
@@ -165,13 +166,17 @@ impl Delivery {
             return Err(Error::Invalid);
         }
         let pending: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM delivery_jobs WHERE target_id = ? AND status != 'completed'",
+            "SELECT COUNT(*) FROM delivery_jobs WHERE target_id = ? AND status IN ('pending', 'running')",
         )
         .bind(id)
         .fetch_one(&self.pool)
         .await
         .map_err(|_| Error::Storage)?;
         if pending > 0 {
+            return Err(Error::Invalid);
+        }
+        // The receiver must use the exact same bytes, so never trim silently.
+        if secret.as_deref().is_some_and(|s| s.trim() != s) {
             return Err(Error::Invalid);
         }
         let keys = self.keys.clone();

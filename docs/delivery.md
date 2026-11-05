@@ -44,8 +44,7 @@ Credential Manager in Tauri), never in configuration, queue or status responses.
 The settings do not read them back. On platforms without a credential-store
 implementation, saving a webhook fails closed. Folder/SSH still work. SSH key
 material stays in OpenSSH key files, not the database. Errors are fixed Danish
-messages, never URLs, HTTP response bodies or SSH stderr. No runtime dependency
-was added besides the already locked RustCrypto `hmac` and `sha2` (used only for signing).
+messages, never URLs, HTTP response bodies or SSH stderr. The only new direct dependencies are `hmac` and `sha2` (RustCrypto, already in `Cargo.lock`, used only for signing).
 
 ## Signed webhooks
 
@@ -111,8 +110,10 @@ function verify(secret, headers, rawBody, toleranceSeconds = 300) {
 
 Rust receivers can use `tingskriver_core::delivery::signing::verify`. The GPUI
 settings page does not exist on `main` yet; the signing-secret field (write-only,
-with a "set / not set" state and a clear action) must be added there and in
-Tauri's `delivery_*` commands.
+with a "set / not set" state and a clear action) must be added there. Tauri
+exposes `delivery_set_signing_secret` (`null` clears) and
+`delivery_has_signing_secret`. Keys with leading or trailing whitespace are
+refused, and the key can be changed while only failed jobs remain.
 
 ## Queue and consent
 

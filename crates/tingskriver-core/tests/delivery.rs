@@ -812,3 +812,34 @@ async fn signing_secret_requires_webhook_target_and_no_pending_jobs() {
         Err(Error::Invalid)
     );
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn signing_secret_with_surrounding_whitespace_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let service = Delivery::open(
+        &dir.path().join("queue"),
+        Arc::new(MemoryKeyStore::default()),
+    )
+    .await
+    .unwrap();
+    service
+        .save_target(
+            Target {
+                id: "hook".into(),
+                name: "Webhook".into(),
+                destination: Destination::Webhook {
+                    format: WebhookFormat::Json,
+                },
+            },
+            Some("http://127.0.0.1:9/synthetic".into()),
+        )
+        .await
+        .unwrap();
+    for bad in [" abc", "abc ", "abc\n", "  "] {
+        assert_eq!(
+            service.set_signing_secret("hook", Some(bad.into())).await,
+            Err(Error::Invalid)
+        );
+    }
+    assert!(!service.has_signing_secret("hook").await.unwrap());
+}

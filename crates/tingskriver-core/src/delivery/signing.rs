@@ -58,7 +58,10 @@ pub fn verify(
     now: i64,
     tolerance_secs: i64,
 ) -> Result<(), VerifyError> {
-    if (now - timestamp).abs() > tolerance_secs {
+    if now
+        .checked_sub(timestamp)
+        .map_or(true, |d| d.unsigned_abs() > tolerance_secs.max(0) as u64)
+    {
         return Err(VerifyError::Stale);
     }
     let tag = signature
