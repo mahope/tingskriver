@@ -5,6 +5,8 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use super::logic::app_style::{self, AppStyleRule};
+use super::capture::CaptureOptions;
+use super::logic::audio::Channel;
 use super::logic::cleanup::Style;
 use super::logic::hotkey::Chord;
 use super::logic::modes;
@@ -63,6 +65,23 @@ pub struct DictationSettings {
     pub language: String,
     pub format_numbers: bool,
     pub format_addresses: bool,
+    /// Three or more equal words in a row become one ("nej nej nej" → "nej").
+    pub collapse_stutters: bool,
+    /// Input device for dictation (empty = the Windows default). Meetings keep their own.
+    pub microphone: String,
+    /// "mix", "left" or "right".
+    pub channel: String,
+    /// Keep the microphone open between dictations (faster start; Windows
+    /// shows the microphone indicator all the time).
+    pub keep_mic_open: bool,
+    /// Play a sound when dictation is ready and when it stops.
+    pub sound_enabled: bool,
+    /// Volume of the sounds, 0-100.
+    pub sound_volume: u32,
+    /// Run a script from the hook folder on the finished text (off by default).
+    pub text_hook_enabled: bool,
+    /// File name (`.cmd` or `.ps1`) inside the hook folder.
+    pub text_hook_script: String,
     pub modes: ModeCollection,
 }
 
@@ -96,6 +115,14 @@ impl Default for DictationSettings {
             language: DEFAULT_LANGUAGE.into(),
             format_numbers: true,
             format_addresses: true,
+            collapse_stutters: true,
+            microphone: String::new(),
+            channel: Channel::Mix.as_str().to_string(),
+            keep_mic_open: false,
+            sound_enabled: false,
+            sound_volume: 40,
+            text_hook_enabled: false,
+            text_hook_script: String::new(),
             modes: ModeCollection::default(),
         }
     }
@@ -143,6 +170,14 @@ impl DictationSettings {
             .collect()
     }
 
+    pub fn capture_options(&self) -> CaptureOptions {
+        CaptureOptions {
+            microphone: self.microphone.trim().to_string(),
+            channel: Channel::parse(&self.channel),
+            keep_open: self.keep_mic_open,
+        }
+    }
+
     pub fn residency_policy(&self) -> Policy {
         Policy::from_minutes(self.model_idle_minutes, self.keep_warm_models.clone())
     }
@@ -178,6 +213,17 @@ impl DictationSettings {
             s.style = Style::parse(&s.style).as_str().to_string();
         }
         self.app_styles.retain(|s| !s.process.is_empty());
+        self.microphone = self.microphone.trim().to_string();
+        self.channel = Channel::parse(&self.channel).as_str().to_string();
+        self.sound_volume = self.sound_volume.min(100);
+        self.text_hook_script = self.text_hook_script.trim().to_string();
+        // Switching the hook on before a script is chosen is allowed (the
+        // hook then does nothing); a script name that is set must be valid.
+        if self.text_hook_enabled && !self.text_hook_script.is_empty() {
+            super::text_hook::script_path(Path::new(""), &self.text_hook_script)?;
+        } else if super::text_hook::script_path(Path::new(""), &self.text_hook_script).is_err() {
+            self.text_hook_script.clear();
+        }
         self.model_idle_minutes = self.model_idle_minutes.min(24 * 60);
         self.keep_warm_models = self
             .keep_warm_models
@@ -305,6 +351,26 @@ mod text_settings_tests {
         mode.provider = Some("syv".into());
         settings.apply_mode(&mode);
         assert_eq!(settings.engine, "local");
+    }
+
+    #[test]
+    fn new_text_options_have_safe_defaults_and_validate_the_hook() {
+        let old: DictationSettings = serde_json::from_str(r#"{"engine":"local"}"#).unwrap();
+        assert!(old.collapse_stutters);
+        assert!(!old.text_hook_enabled);
+        assert_eq!((old.microphone.as_str(), old.channel.as_str()), ("", "mix"));
+        assert!(!old.keep_mic_open && !old.sound_enabled);
+        let loud = DictationSettings { sound_volume: 500, channel: "RIGHT".into(), microphone: " USB ".into(), ..Default::default() };
+        let loud = loud.normalized().unwrap();
+        assert_eq!((loud.sound_volume, loud.channel.as_str(), loud.microphone.as_str()), (100, "right", "USB"));
+        let on = DictationSettings { text_hook_enabled: true, ..Default::default() };
+        assert!(on.clone().normalized().unwrap().text_hook_enabled);
+        let on = DictationSettings { text_hook_script: "../x.cmd".into(), ..on };
+        assert!(on.normalized().is_err());
+        let ok = DictationSettings { text_hook_enabled: true, text_hook_script: " ret.ps1 ".into(), ..Default::default() };
+        assert_eq!(ok.normalized().unwrap().text_hook_script, "ret.ps1");
+        let off = DictationSettings { text_hook_script: "a&b.cmd".into(), ..Default::default() };
+        assert_eq!(off.normalized().unwrap().text_hook_script, "");
     }
 
     #[test]

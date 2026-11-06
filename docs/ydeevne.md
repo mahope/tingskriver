@@ -53,6 +53,7 @@ Scriptet stopper uden at røre appen, hvis:
 - **Ægte koldstart.** Windows' filcache er varm efter første start. Første start i en kørsel er en koldstart-proxy. Et rigtigt koldt tal kræver `-KunKoldstart -KoldLog` lige efter en genstart, gentaget fem gange.
 - **Hukommelse efter et 30 min møde.** Kræver et rigtigt møde. Optag selv, og kør `scripts\maal-ydeevne.ps1 -KunHukommelse` lige efter, mens appen stadig kører. Det starter, lukker og ændrer ikke noget.
 - **Optagelse af to spor** (budget 400 MB): kræver instrumentering i appen, som ikke findes endnu. **Tid fra tastetryk til optagelse** (budget 150 ms) står i `dictation_timings.start_ms` fra den version, der indeholder #12.
+- **Hold mikrofonen åben (#211).** `start_ms` måles nu til første ikke-tomme lydbuffer, ikke til `stream.play()`. Sammenligningen kræver to kørsler på en rigtig pc: diktér mindst 20 gange med "Hold mikrofonen åben" slået fra og 20 gange med den slået til (noter tidspunktet for skiftet), og beregn p50 af `start_ms` i `dictation_timings` for hvert interval af `created_at`. Hold-åben skal give den laveste p50.
 - **Dikteringstid kræver dikteringer.** Diktér mindst 20 gange, helst 10 af dem på omkring 15 s, før scriptet køres.
 - **Vindue der starter skjult i tray** bliver aldrig synligt. Scriptet melder det og tæller tiden ikke med.
 

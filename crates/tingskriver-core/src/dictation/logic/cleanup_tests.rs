@@ -850,3 +850,65 @@ fn english_terms_survive_mixed_sentences() {
     assert!(sentences >= 30, "only {sentences} sentences");
     assert!(kept * 100 >= total * 90, "kept {kept} of {total}: {lost:?}");
 }
+
+// ---------------------------------------------------------------------------
+// Stutters (#213): three or more equal words become one
+// ---------------------------------------------------------------------------
+
+#[test]
+fn three_or_more_equal_words_are_collapsed() {
+    assert_eq!(normal("nej nej nej nej"), "Nej");
+    assert_eq!(normal("jeg jeg jeg vil gerne"), "Jeg vil gerne");
+    assert_eq!(normal("Nej, nej, nej, det gør jeg ikke"), "Nej, det gør jeg ikke");
+    assert_eq!(normal("det er NEJ nej Nej"), "Det er NEJ");
+}
+
+#[test]
+fn two_equal_words_are_kept() {
+    assert_eq!(normal("meget meget god"), "Meget meget god");
+    assert_eq!(normal("nej nej"), "Nej nej");
+}
+
+#[test]
+fn numbers_are_never_collapsed() {
+    let rules = Rules::default();
+    let off = Options {
+        format_numbers: false,
+        ..Options::new(Style::Normal, &rules)
+    };
+    assert_eq!(clean_with("nul nul nul", &off).text, "Nul nul nul");
+    assert_eq!(clean_with("tre tre tre", &off).text, "Tre tre tre");
+    assert_eq!(clean_with("2 2 2", &off).text, "2 2 2");
+}
+
+#[test]
+fn dictionary_words_are_never_collapsed() {
+    let mut r = Rules::default();
+    r.replacements.push(Replacement {
+        from: "bla".into(),
+        to: "bla".into(),
+        keep_english: false,
+    });
+    r.replacements.push(Replacement {
+        from: "yes".into(),
+        to: "yes".into(),
+        keep_english: true,
+    });
+    assert_eq!(clean("bla bla bla", Style::Normal, &r), "Bla bla bla");
+    assert_eq!(clean("yes yes yes", Style::Normal, &r), "yes yes yes");
+}
+
+#[test]
+fn stutter_collapsing_can_be_switched_off() {
+    let rules = Rules::default();
+    let off = Options {
+        collapse_stutters: false,
+        ..Options::new(Style::Normal, &rules)
+    };
+    assert_eq!(clean_with("nej nej nej nej", &off).text, "Nej nej nej nej");
+}
+
+#[test]
+fn raw_style_keeps_repeated_words() {
+    assert_eq!(raw("ls ls ls"), "ls ls ls");
+}

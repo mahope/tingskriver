@@ -20,6 +20,14 @@ export interface DictationSettings {
   historyEnabled: boolean;
   keepAudio: boolean;
   restoreClipboardMs: number;
+  collapseStutters: boolean;
+  microphone: string;
+  channel: 'mix' | 'left' | 'right';
+  keepMicOpen: boolean;
+  soundEnabled: boolean;
+  soundVolume: number;
+  textHookEnabled: boolean;
+  textHookScript: string;
   appStyles: AppStyleSetting[];
 }
 
@@ -62,6 +70,8 @@ export const HISTORY_CHANGED_EVENT = 'dictation-history-changed';
 export const dictationApi = {
   getSettings: () => invoke<DictationSettings>('dictation_get_settings'),
   saveSettings: (settings: DictationSettings) => invoke<DictationSettings>('dictation_save_settings', { settings }),
+  listMicrophones: () => invoke<string[]>('dictation_list_microphones'),
+  listHookScripts: () => invoke<{ folder: string; scripts: string[] }>('dictation_list_hook_scripts'),
   getStatus: () => invoke<DictationStatus>('dictation_get_status'),
   setSyvKey: (key: string) => invoke<void>('dictation_set_syv_key', { key }),
   deleteSyvKey: () => invoke<void>('dictation_delete_syv_key'),

@@ -734,6 +734,11 @@ fn may_start(word: &str) -> bool {
         || CVR_CUES.contains(&word)
 }
 
+/// True for words that can be part of a spoken number, date or time.
+pub(super) fn is_number_word(word: &str) -> bool {
+    may_start(word)
+}
+
 /// Format every number in `tokens`.
 pub(super) fn format(tokens: Vec<Tok>) -> Vec<Tok> {
     let tokens = join_abbreviations(tokens);
