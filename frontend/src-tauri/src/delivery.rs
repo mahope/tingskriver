@@ -8,7 +8,7 @@ use tokio::sync::OnceCell;
 
 static SERVICE: OnceCell<Delivery> = OnceCell::const_new();
 
-async fn service(app: &AppHandle) -> Result<&'static Delivery, String> {
+pub(crate) async fn service(app: &AppHandle) -> Result<&'static Delivery, String> {
     SERVICE
         .get_or_try_init(|| async {
             let dir = app

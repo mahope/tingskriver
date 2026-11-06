@@ -1,6 +1,7 @@
 import { ModelConfig } from "@/components/ModelSettingsModal";
 import { PreferenceSettings } from "@/components/PreferenceSettings";
 import { DeliverySettings } from "@/components/delivery/DeliverySettings";
+import { McpSettings } from "@/components/mcp/McpSettings";
 import { DeviceSelection } from "@/components/DeviceSelection";
 import { LanguageSelection } from "@/components/LanguageSelection";
 import { TranscriptSettings } from "@/components/TranscriptSettings";
@@ -69,6 +70,7 @@ export function SettingsModals({
         <div className="space-y-8">
           <PreferenceSettings />
           <DeliverySettings />
+          <McpSettings />
 
           <div className="border-t border-border pt-8">
             <h4 className="font-serif text-lg font-semibold text-foreground mb-4">AI-model til opsummeringer</h4>

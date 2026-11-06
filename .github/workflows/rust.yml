@@ -72,6 +72,8 @@ jobs:
         run: |
           cargo build --locked -p tingskriver-core --bin tingskriver-stt
           cp target/debug/tingskriver-stt.exe frontend/src-tauri/binaries/tingskriver-stt-x86_64-pc-windows-msvc.exe
+          cargo build --locked -p tingskriver-mcp
+          cp target/debug/tingskriver-mcp.exe frontend/src-tauri/binaries/tingskriver-mcp-x86_64-pc-windows-msvc.exe
 
       - name: Build workspace
         shell: bash
@@ -143,6 +145,8 @@ jobs:
       - name: Test tingskriver-core
         run: .github/scripts/annotate-errors.sh cargo test --locked -p tingskriver-core
 
+      - name: Test MCP stdio server
+        run: .github/scripts/annotate-errors.sh cargo test --locked -p tingskriver-mcp
       - name: Verify core I/O lint rejects blocking calls
         run: bash scripts/check-async-io-guard.sh
 
@@ -183,7 +187,7 @@ jobs:
 
       - name: Build tingskriver-app (release)
         shell: bash
-        run: .github/scripts/annotate-errors.sh cargo build --release --locked -p tingskriver-app -p tingskriver-core --bin tingskriver-app --bin tingskriver-stt
+        run: .github/scripts/annotate-errors.sh cargo build --release --locked -p tingskriver-app -p tingskriver-core -p tingskriver-mcp --bin tingskriver-app --bin tingskriver-stt --bin tingskriver-mcp
 
       # Same pinned runtime and archive checksum as the Tauri bundler.
       - name: Stage ONNX Runtime for the isolated speech worker
@@ -204,6 +208,7 @@ jobs:
           path: |
             target/release/tingskriver-app.exe
             target/release/tingskriver-stt.exe
+            target/release/tingskriver-mcp.exe
             target/release/onnxruntime.dll
             target/release/onnxruntime_providers_shared.dll
             target/release/onnxruntime-LICENSE.txt

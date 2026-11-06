@@ -9,6 +9,7 @@ import { TranscriptSettings } from '@/components/TranscriptSettings';
 import { RecordingSettings } from '@/components/RecordingSettings';
 import { PreferenceSettings } from '@/components/PreferenceSettings';
 import { DeliverySettings } from '@/components/delivery/DeliverySettings';
+import { McpSettings } from '@/components/mcp/McpSettings';
 import { SummaryModelSettings } from '@/components/SummaryModelSettings';
 import { BetaSettings } from '@/components/BetaSettings';
 import { DictationSettings } from '@/components/dictation/DictationSettings';
@@ -122,6 +123,7 @@ export default function SettingsPage() {
             <TabsContent value="general">
               <PreferenceSettings />
               <DeliverySettings />
+              <McpSettings />
             </TabsContent>
             <TabsContent value="recording">
               <RecordingSettings />

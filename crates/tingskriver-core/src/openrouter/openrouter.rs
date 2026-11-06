@@ -86,6 +86,15 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
+    async fn read_http_headers(socket: &mut tokio::net::TcpStream) {
+        let mut request = Vec::new();
+        while !request.ends_with(b"\r\n\r\n") {
+            assert!(request.len() < 16 * 1024, "request headers too large");
+            request.push(socket.read_u8().await.expect("incomplete request headers"));
+        }
+        assert!(request.starts_with(b"GET /models HTTP/1.1\r\n"));
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn stalled_model_list_times_out_without_blocking_core() {
         for stalled_body in [false, true] {
@@ -93,8 +102,7 @@ mod tests {
             let url = format!("http://{}/models", listener.local_addr().unwrap());
             let server = tokio::spawn(async move {
                 let (mut socket, _) = listener.accept().await.unwrap();
-                let mut request = [0; 4096];
-                socket.read(&mut request).await.unwrap();
+                read_http_headers(&mut socket).await;
                 if stalled_body {
                     socket
                         .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\n")
@@ -111,8 +119,7 @@ mod tests {
                 let url = format!("http://{}/models", listener.local_addr().unwrap());
                 let server = tokio::spawn(async move {
                     let (mut socket, _) = listener.accept().await.unwrap();
-                    let mut request = [0; 4096];
-                    socket.read(&mut request).await.unwrap();
+                    read_http_headers(&mut socket).await;
                     let body = r#"{"data":[{"id":"test","top_provider":{"context_length":42},"pricing":{"prompt":"0.1"}}]}"#;
                     socket
                         .write_all(

@@ -288,7 +288,7 @@ pub async fn pull_ollama_model(
     let response = client
         .post(&url)
         .json(&payload)
-        .timeout(crate::http::TIMEOUT)
+        .timeout(Duration::from_secs(600))
         .send()
         .await
         .map_err(|e| {
@@ -447,7 +447,7 @@ pub async fn delete_ollama_model(
     let response = client
         .delete(&url)
         .json(&payload)
-        .timeout(crate::http::TIMEOUT)
+        .timeout(Duration::from_secs(30))
         .send()
         .await
         .map_err(|e| {

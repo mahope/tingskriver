@@ -14,7 +14,7 @@ use gpui_component::{
     input::{Input, InputEvent, InputState, Textarea, TextareaState},
     sidebar::{Sidebar, SidebarHeader, SidebarMenu, SidebarMenuItem},
     spinner::Spinner,
-    v_flex, ActiveTheme, Icon, Root,
+    v_flex, ActiveTheme, Disableable, Icon, Root, Selectable, WindowExt,
 };
 use gpui_kit_assets::IconName;
 use tingskriver_core::strings;
@@ -36,6 +36,14 @@ pub struct AppModel {
     /// Whether the first-frame time is still to be reported. Off for
     /// `--hidden`, where the window opens long after process start.
     pub report_first_frame: bool,
+    mcp_access: Option<tingskriver_core::mcp::Access>,
+    mcp_message: String,
+    mcp_controls: Option<tingskriver_core::mcp::Settings>,
+    mcp_pending: bool,
+    mcp_running: usize,
+    mcp_log: Option<Result<Vec<tingskriver_core::mcp_audit::Entry>, String>>,
+    sharing_meetings: Option<Result<Vec<tingskriver_core::mcp::SharingMeeting>, String>>,
+    sharing_pending: bool,
 }
 
 impl AppModel {
@@ -56,6 +64,14 @@ impl AppModel {
             clock,
             start_page: Page::Meetings,
             report_first_frame: true,
+            mcp_access: None,
+            mcp_message: String::new(),
+            mcp_controls: None,
+            mcp_pending: false,
+            mcp_running: 0,
+            mcp_log: None,
+            sharing_meetings: None,
+            sharing_pending: false,
         }
     }
 
@@ -91,6 +107,7 @@ pub fn load_database(cx: &mut App) {
     let model = model(cx);
     let (runtime, dir) = model.update(cx, |m, cx| {
         m.db = DbState::Loading;
+        m.sharing_meetings = None;
         cx.notify();
         (m.runtime.clone(), m.app_data_dir.clone())
     });
@@ -121,6 +138,68 @@ pub fn load_database(cx: &mut App) {
             DbState::Failed(_) => "failed",
             DbState::Loading => "loading",
         };
+        let mcp_access = if let DbState::Ready(db) = &state {
+            let reader = tingskriver_core::mcp::Reader::new(db.pool().clone());
+            runtime
+                .spawn(async move { reader.selected_access().await })
+                .await
+                .ok()
+                .and_then(Result::ok)
+        } else {
+            None
+        };
+        let mcp_controls = if let DbState::Ready(db) = &state {
+            let pool = db.pool().clone();
+            runtime
+                .spawn(async move { tingskriver_core::mcp::settings(&pool).await })
+                .await
+                .ok()
+                .and_then(Result::ok)
+        } else {
+            None
+        };
+        let mcp_log = if let Some(dir) = model.update(cx, |m, _| m.app_data_dir.clone()) {
+            Some(
+                runtime
+                    .spawn(async move { tingskriver_core::mcp_audit::recent(&dir).await })
+                    .await
+                    .unwrap_or_else(|_| Err(strings::MCP_FAILED.into())),
+            )
+        } else {
+            None
+        };
+        let mcp_running = runtime
+            .spawn_blocking(|| {
+                std::env::current_exe()
+                    .ok()
+                    .and_then(|p| {
+                        p.parent().map(|p| {
+                            p.join(if cfg!(windows) {
+                                "tingskriver-mcp.exe"
+                            } else {
+                                "tingskriver-mcp"
+                            })
+                        })
+                    })
+                    .map(|exe| tingskriver_core::mcp_probe::running_servers(&exe))
+                    .unwrap_or(0)
+            })
+            .await
+            .unwrap_or(0);
+        let sharing_meetings = if let DbState::Ready(db) = &state {
+            let pool = db.pool().clone();
+            Some(
+                match runtime
+                    .spawn(async move { tingskriver_core::mcp::sharing_meetings(&pool).await })
+                    .await
+                {
+                    Ok(result) => result,
+                    Err(_) => Err(strings::MCP_SAVE_FAILED.into()),
+                },
+            )
+        } else {
+            None
+        };
         model.update(cx, |m, cx| {
             log::info!(
                 "startup: database {outcome} after {} ms ({} ms after process start)",
@@ -128,6 +207,11 @@ pub fn load_database(cx: &mut App) {
                 m.clock.elapsed().as_millis()
             );
             m.db = state;
+            m.mcp_access = mcp_access;
+            m.mcp_controls = mcp_controls;
+            m.mcp_log = mcp_log;
+            m.mcp_running = mcp_running;
+            m.sharing_meetings = sharing_meetings;
             cx.notify();
         });
     })
@@ -151,6 +235,19 @@ pub fn show_main_window(cx: &mut App) {
             let log_path = model(cx).read(cx).log_path.clone();
             crate::crash::window_failed(&error, log_path.as_deref())
         }
+    }
+}
+
+pub fn show_mcp_action(action: String, cx: &mut App) {
+    show_main_window(cx);
+    if let Some(handle) = cx.global::<Globals>().main_window {
+        let _ = handle.update(cx, |_, window, cx| {
+            window.push_notification(
+                gpui_component::notification::Notification::info(strings::mcp_action(&action))
+                    .in_app_and_system(),
+                cx,
+            );
+        });
     }
 }
 
@@ -369,15 +466,108 @@ impl Shell {
                 strings::FIRST_MEETING,
                 cx,
             ),
-            DbState::Ready(_) => empty_state(
-                IconName::Inbox,
-                strings::NO_MEETINGS_YET,
-                strings::MEETINGS_LATER,
-                cx,
-            ),
+            DbState::Ready(_) => self.meeting_sharing(cx),
             DbState::Failed(_) => div().into_any_element(),
         };
         page(strings::MEETINGS, None, body, cx)
+    }
+
+    fn meeting_sharing(&self, cx: &mut Context<Self>) -> AnyElement {
+        let state = self.model.read(cx);
+        let mut body = v_flex()
+            .gap(space::SM)
+            .child(paragraph(strings::MCP_PRIVACY, cx))
+            .child(
+                Button::new("refresh-meetings")
+                    .label(strings::MCP_REFRESH)
+                    .disabled(state.sharing_pending)
+                    .on_click(|_, _, cx| load_database(cx)),
+            )
+            .child(
+                div()
+                    .id("mcp-result")
+                    .role(gpui::Role::Status)
+                    .aria_label(state.mcp_message.clone())
+                    .child(paragraph(&state.mcp_message, cx)),
+            );
+        match &state.sharing_meetings {
+            None => body = body.child(loading(strings::LOADING_MEETINGS, cx)),
+            Some(Err(error)) => body = body.child(paragraph(error, cx)),
+            Some(Ok(meetings)) if meetings.is_empty() => {
+                body = body.child(paragraph(strings::NO_MEETINGS, cx));
+            }
+            Some(Ok(meetings)) => {
+                for (index, meeting) in meetings.iter().enumerate() {
+                    let model = self.model.clone();
+                    let id = meeting.id.clone();
+                    let shared = !meeting.shared;
+                    body = body.child(
+                        v_flex()
+                            .gap(space::SM)
+                            .child(paragraph(&meeting.title, cx))
+                            .child(
+                                Button::new(("share-meeting", index))
+                                    .label(if meeting.shared {
+                                        strings::MCP_UNSHARE
+                                    } else {
+                                        strings::MCP_SHARE
+                                    })
+                                    .selected(meeting.shared)
+                                    .disabled(state.sharing_pending)
+                                    .on_click(move |_, _, cx| {
+                                        let model = model.clone();
+                                        let id = id.clone();
+                                        let task = model.update(cx, |state, cx| {
+                                            if state.sharing_pending {
+                                                return None;
+                                            }
+                                            let DbState::Ready(db) = &state.db else {
+                                                return None;
+                                            };
+                                            let pool = db.pool().clone();
+                                            state.sharing_pending = true;
+                                            cx.notify();
+                                            Some(state.runtime.spawn(async move {
+                                                let result = tingskriver_core::mcp::set_shared(
+                                                    &pool, &id, shared,
+                                                )
+                                                .await;
+                                                (id, result)
+                                            }))
+                                        });
+                                        let Some(task) = task else {
+                                            return;
+                                        };
+                                        cx.spawn(async move |cx| {
+                                            let result = task.await;
+                                            model.update(cx, |state, cx| {
+                                                state.sharing_pending = false;
+                                                if let Ok((id, Ok(()))) = result {
+                                                    if let Some(Ok(meetings)) =
+                                                        &mut state.sharing_meetings
+                                                    {
+                                                        if let Some(meeting) =
+                                                            meetings.iter_mut().find(|m| m.id == id)
+                                                        {
+                                                            meeting.shared = shared;
+                                                        }
+                                                    }
+                                                    state.mcp_message = strings::MCP_SAVED.into();
+                                                } else {
+                                                    state.mcp_message =
+                                                        strings::MCP_SAVE_FAILED.into();
+                                                }
+                                                cx.notify();
+                                            });
+                                        })
+                                        .detach();
+                                    }),
+                            ),
+                    );
+                }
+            }
+        }
+        body.into_any_element()
     }
 
     fn dictation_page(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -448,7 +638,8 @@ impl Shell {
 
         let body = v_flex()
             .gap(space::XL)
-            .child(paragraph(strings::SETTINGS_LATER, cx))
+            .child(paragraph(strings::SETTINGS_MCP_HELP, cx))
+            .child(self.mcp_settings(cx))
             .child(setting_group(
                 strings::APPEARANCE,
                 vec![strings::appearance(mode)],
@@ -488,6 +679,333 @@ impl Shell {
                     ),
             );
         page(strings::SETTINGS, None, body.into_any_element(), cx)
+    }
+
+    fn mcp_settings(&self, cx: &mut Context<Self>) -> AnyElement {
+        use tingskriver_core::mcp::Access;
+        let state = self.model.read(cx);
+        let current = state.mcp_access;
+        let mut controls = h_flex().gap(space::SM).flex_wrap();
+        for (index, (access, label)) in [
+            (Access::Marked, strings::MCP_MARKED),
+            (Access::Metadata, strings::MCP_METADATA),
+            (Access::All, strings::MCP_ALL),
+            (Access::Off, strings::MCP_OFF),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let model = self.model.clone();
+            controls = controls.child(
+                Button::new(("mcp-access", index))
+                    .label(label)
+                    .selected(current == Some(access))
+                    .toggled(current == Some(access))
+                    .accessibility_label(label)
+                    .disabled(current.is_none() || state.mcp_pending)
+                    .on_click(move |_, _, cx| {
+                        let model = model.clone();
+                        let state = model.read(cx);
+                        let DbState::Ready(db) = &state.db else {
+                            return;
+                        };
+                        let pool = db.pool().clone();
+                        let task = state.runtime.spawn(async move {
+                            tingskriver_core::mcp::set_access(&pool, access).await
+                        });
+                        model.update(cx, |state, cx| {
+                            state.mcp_pending = true;
+                            cx.notify();
+                        });
+                        cx.spawn(async move |cx| {
+                            let result = task.await;
+                            model.update(cx, |state, cx| {
+                                state.mcp_pending = false;
+                                if matches!(result, Ok(Ok(()))) {
+                                    state.mcp_access = Some(access);
+                                    state.mcp_message = strings::MCP_SAVED.into();
+                                } else {
+                                    state.mcp_message = strings::MCP_SAVE_FAILED.into();
+                                }
+                                cx.notify();
+                            });
+                        })
+                        .detach();
+                    }),
+            );
+        }
+        let mut body = v_flex()
+            .gap(space::SM)
+            .child(section_title(strings::MCP_TITLE))
+            .child(paragraph(strings::MCP_PRIVACY, cx))
+            .child(controls)
+            .child(
+                div()
+                    .id("mcp-result")
+                    .role(gpui::Role::Status)
+                    .aria_label(state.mcp_message.clone())
+                    .child(paragraph(&state.mcp_message, cx)),
+            );
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(parent) = exe.parent() {
+                let path = parent.join(if cfg!(windows) {
+                    "tingskriver-mcp.exe"
+                } else {
+                    "tingskriver-mcp"
+                });
+                if let Ok(quoted) = serde_json::to_string(&path.to_string_lossy()) {
+                    for (index, (label, text)) in [
+                        (
+                            strings::MCP_COPY_CLAUDE,
+                            strings::mcp_claude_command(&path.to_string_lossy()),
+                        ),
+                        (strings::MCP_COPY_CODEX, strings::mcp_codex_config(&quoted)),
+                    ]
+                    .into_iter()
+                    .enumerate()
+                    {
+                        body = body.child(
+                            Button::new(("mcp-copy", index))
+                                .label(label)
+                                .disabled(!path.is_file())
+                                .on_click(move |_, window, cx| {
+                                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                        text.clone(),
+                                    ));
+                                    window.push_notification(strings::MCP_COPIED, cx);
+                                }),
+                        );
+                    }
+                }
+            }
+        }
+        self.mcp_details(body, cx).into_any_element()
+    }
+
+    fn mcp_details(&self, mut body: gpui::Div, cx: &mut Context<Self>) -> gpui::Div {
+        let state = self.model.read(cx);
+        let exe = std::env::current_exe().ok().and_then(|p| {
+            p.parent().map(|p| {
+                p.join(if cfg!(windows) {
+                    "tingskriver-mcp.exe"
+                } else {
+                    "tingskriver-mcp"
+                })
+            })
+        });
+        let exists = exe.as_ref().is_some_and(|p| p.is_file());
+        let status = match state.mcp_controls {
+            None if matches!(state.db, DbState::Loading) => strings::MCP_LOADING,
+            None => strings::MCP_LOAD_FAILED,
+            Some(_) if !exists => strings::MCP_MISSING,
+            Some(value)
+                if !value.enabled
+                    || state.mcp_access == Some(tingskriver_core::mcp::Access::Off) =>
+            {
+                strings::MCP_DISABLED
+            }
+            Some(_) if state.mcp_running > 0 => strings::MCP_ACTIVE,
+            Some(_) => strings::MCP_AVAILABLE,
+        };
+        body = body.child(
+            div()
+                .id("mcp-status")
+                .role(gpui::Role::Status)
+                .aria_label(status)
+                .child(paragraph(status, cx)),
+        );
+        if state.mcp_running > 0 {
+            body = body.child(paragraph(
+                &strings::MCP_RUNNING.replace("{value}", &state.mcp_running.to_string()),
+                cx,
+            ));
+        }
+        if let Some(path) = &exe {
+            body = body.child(paragraph(
+                &strings::MCP_PATH.replace("{value}", &path.display().to_string()),
+                cx,
+            ));
+        }
+        if let Some(value) = state.mcp_controls {
+            let mut toggles = h_flex().gap(space::SM).flex_wrap();
+            for (index, (label, active)) in [
+                (strings::MCP_ENABLE, value.enabled),
+                (strings::MCP_NOTES, value.notes),
+                (strings::MCP_SUMMARY, value.summary),
+                (strings::MCP_TRANSCRIPT, value.transcript),
+                (strings::MCP_PARTICIPANTS, value.participants),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let model = self.model.clone();
+                toggles = toggles.child(
+                    Button::new(("mcp-data", index))
+                        .label(label)
+                        .accessibility_label(label)
+                        .selected(active)
+                        .toggled(active)
+                        .disabled(state.mcp_pending)
+                        .on_click(move |_, _, cx| {
+                            let mut updated = value;
+                            match index {
+                                0 => updated.enabled = !active,
+                                1 => updated.notes = !active,
+                                2 => updated.summary = !active,
+                                3 => updated.transcript = !active,
+                                _ => updated.participants = !active,
+                            }
+                            save_mcp_controls(model.clone(), updated, cx);
+                        }),
+                );
+            }
+            body = body
+                .child(paragraph(strings::MCP_DATA_HELP, cx))
+                .child(toggles);
+        }
+        if let Some(Ok(meetings)) = &state.sharing_meetings {
+            body = body.child(paragraph(
+                &strings::MCP_SHARED_COUNT.replace(
+                    "{value}",
+                    &meetings.iter().filter(|m| m.shared).count().to_string(),
+                ),
+                cx,
+            ));
+        }
+        body = body.child(
+            Button::new("mcp-open-meetings")
+                .label(strings::MCP_OPEN_MEETINGS)
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.page = Page::Meetings;
+                    cx.notify();
+                })),
+        );
+        let model = self.model.clone();
+        let dir = state.app_data_dir.clone();
+        let test_exe = exe.clone();
+        body = body.child(
+            Button::new("mcp-test")
+                .label(strings::MCP_TEST)
+                .disabled(state.mcp_pending || !exists || dir.is_none())
+                .on_click(move |_, _, cx| {
+                    let (Some(exe), Some(dir)) = (test_exe.clone(), dir.clone()) else {
+                        return;
+                    };
+                    let task = model.update(cx, |state, cx| {
+                        state.mcp_pending = true;
+                        state.mcp_message = strings::MCP_TESTING.into();
+                        cx.notify();
+                        state.runtime.spawn(async move {
+                            tingskriver_core::mcp_probe::test_connection(&exe, &dir).await
+                        })
+                    });
+                    let model = model.clone();
+                    cx.spawn(async move |cx| {
+                        let result = task.await;
+                        model.update(cx, |state, cx| {
+                            state.mcp_pending = false;
+                            state.mcp_message = match result {
+                                Ok(Ok(())) => strings::MCP_TEST_OK.into(),
+                                Ok(Err(error)) => error,
+                                Err(_) => strings::MCP_FAILED.into(),
+                            };
+                            cx.notify();
+                        });
+                    })
+                    .detach();
+                }),
+        );
+        body = body.child(section_title(strings::MCP_TOOLS));
+        for tool in tingskriver_core::mcp_audit::TOOLS {
+            body = body.child(paragraph(tool, cx));
+        }
+        body = body.child(paragraph(strings::MCP_LOG, cx));
+        let mut buttons = h_flex().gap(space::SM);
+        for (index, (label, clear)) in [
+            (strings::MCP_LOG_REFRESH, false),
+            (strings::MCP_LOG_CLEAR, true),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let model = self.model.clone();
+            let exe = exe.clone();
+            buttons = buttons.child(
+                Button::new(("mcp-log", index))
+                    .label(label)
+                    .disabled(state.mcp_pending || state.app_data_dir.is_none())
+                    .on_click(move |_, _, cx| {
+                        let task = model.update(cx, |state, cx| {
+                            let dir = state
+                                .app_data_dir
+                                .clone()
+                                .expect("button requires data directory");
+                            state.mcp_pending = true;
+                            cx.notify();
+                            let exe = exe.clone();
+                            state.runtime.spawn(async move {
+                                if clear {
+                                    tingskriver_core::mcp_audit::clear(&dir).await?;
+                                }
+                                let entries = tingskriver_core::mcp_audit::recent(&dir).await?;
+                                let running = tokio::task::spawn_blocking(move || {
+                                    exe.map(|exe| {
+                                        tingskriver_core::mcp_probe::running_servers(&exe)
+                                    })
+                                    .unwrap_or(0)
+                                })
+                                .await
+                                .unwrap_or(0);
+                                Ok::<_, String>((entries, running))
+                            })
+                        });
+                        let model = model.clone();
+                        cx.spawn(async move |cx| {
+                            let result = task
+                                .await
+                                .unwrap_or_else(|_| Err(strings::MCP_FAILED.into()));
+                            model.update(cx, |state, cx| {
+                                state.mcp_pending = false;
+                                if clear && result.is_ok() {
+                                    state.mcp_message = strings::MCP_LOG_CLEARED.into();
+                                }
+                                state.mcp_log = Some(result.map(|(entries, running)| {
+                                    state.mcp_running = running;
+                                    entries
+                                }));
+                                cx.notify();
+                            });
+                        })
+                        .detach();
+                    }),
+            );
+        }
+        body = body.child(buttons);
+        match &state.mcp_log {
+            Some(Err(error)) => body = body.child(paragraph(error, cx)),
+            Some(Ok(entries)) if !entries.is_empty() => {
+                for entry in entries {
+                    let text = strings::MCP_LOG_ENTRY
+                        .replace("{time}", &entry.time)
+                        .replace("{tool}", &entry.tool)
+                        .replace(
+                            "{id}",
+                            entry.meeting_id.as_deref().unwrap_or(strings::MCP_NO_ID),
+                        )
+                        .replace(
+                            "{result}",
+                            if entry.success {
+                                strings::MCP_OK
+                            } else {
+                                strings::MCP_FAILED
+                            },
+                        );
+                    body = body.child(paragraph(&text, cx));
+                }
+            }
+            _ => body = body.child(paragraph(strings::MCP_LOG_EMPTY, cx)),
+        }
+        body
     }
 
     fn database_error_page(&self, failure: &DbFailure, cx: &mut Context<Self>) -> AnyElement {
@@ -689,6 +1207,39 @@ fn empty_state(icon: IconName, title: &str, text: &str, cx: &App) -> AnyElement 
                 .child(text.to_string()),
         )
         .into_any_element()
+}
+
+fn save_mcp_controls(
+    model: Entity<AppModel>,
+    value: tingskriver_core::mcp::Settings,
+    cx: &mut App,
+) {
+    let state = model.read(cx);
+    let DbState::Ready(db) = &state.db else {
+        return;
+    };
+    let pool = db.pool().clone();
+    let task = state
+        .runtime
+        .spawn(async move { tingskriver_core::mcp::save_settings(&pool, value).await });
+    model.update(cx, |state, cx| {
+        state.mcp_pending = true;
+        cx.notify();
+    });
+    cx.spawn(async move |cx| {
+        let result = task.await;
+        model.update(cx, |state, cx| {
+            state.mcp_pending = false;
+            if matches!(result, Ok(Ok(()))) {
+                state.mcp_controls = Some(value);
+                state.mcp_message = strings::MCP_SAVED.into();
+            } else {
+                state.mcp_message = strings::MCP_SAVE_FAILED.into();
+            }
+            cx.notify();
+        });
+    })
+    .detach();
 }
 
 #[cfg(test)]

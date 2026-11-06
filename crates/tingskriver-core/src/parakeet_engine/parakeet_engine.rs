@@ -763,7 +763,7 @@ impl ParakeetEngine {
         tokio::select! {
             biased;
             _ = active_download.cancellation.cancelled() => Err(DownloadCancelled.into()),
-            response = request.send() => response
+            response = crate::http::send_download(request) => response
                 .map_err(|error| anyhow!("Failed to start download for {}: {}", file_url, error)),
         }
     }
@@ -921,11 +921,9 @@ impl ParakeetEngine {
             .await
             .map_err(|error| anyhow!("Failed to create model directory: {}", error))?;
 
-        let client = reqwest::Client::builder()
+        let client = crate::http::download_client_builder()
             .tcp_nodelay(true)
             .pool_max_idle_per_host(1)
-            .timeout(crate::http::TIMEOUT)
-            .connect_timeout(crate::http::TIMEOUT)
             .build()
             .map_err(|error| anyhow!("Failed to create HTTP client: {}", error))?;
         let total_bytes: u64 = artifacts.iter().map(|artifact| artifact.exact_bytes).sum();
