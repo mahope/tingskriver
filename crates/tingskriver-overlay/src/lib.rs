@@ -8,17 +8,25 @@
 //!
 //! - [`model`]: states, timing and bar history (any OS, tested)
 //! - [`layout`], [`render`], [`text`]: geometry and drawing (any OS, tested)
+//! - [`prompt`], [`prompt_layout`], [`focus`]: the prompt window's model,
+//!   geometry and Focus Assist decision (any OS, tested); `windows_prompt` is
+//!   its Win32 window (Windows). See `docs/promptvindue.md`.
 //! - `windows`: the window itself, [`windows::Overlay`] and
 //!   [`windows::CoreOverlay`] for the dictation service in core (Windows)
 
+pub mod focus;
 pub mod layout;
 pub mod model;
+pub mod prompt;
+pub mod prompt_layout;
 pub mod render;
 pub mod text;
 pub mod theme;
 
 #[cfg(windows)]
 pub mod windows;
+#[cfg(windows)]
+pub mod windows_prompt;
 
 pub use model::PillState;
 use tingskriver_core::dictation::overlay::OverlayState;

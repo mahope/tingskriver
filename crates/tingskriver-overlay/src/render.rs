@@ -122,6 +122,17 @@ impl Renderer {
             }
         }
 
+        if frame.prompt_held {
+            // A small amber dot on the pill's top-right edge.
+            fill_circle(
+                &mut pixmap,
+                layout.pill_x + layout.pill_w - 6.0 * s,
+                layout.pill_y + 6.0 * s,
+                3.5 * s,
+                theme::WARNING.color(),
+            );
+        }
+
         if let Some(font) = &mut self.font {
             let (ascent, descent) = font.vertical_metrics(layout.font_px);
             // Centre the ink box of a typical lowercase-and-capitals line.
@@ -364,5 +375,33 @@ mod tests {
         let mut out = [0u8; 4];
         to_bgra(&p, &mut out);
         assert_eq!(out, [30, 20, 10, 255]);
+    }
+
+    #[test]
+    fn a_held_prompt_draws_an_amber_dot_on_the_pill() {
+        let mut r = Renderer::with_font(None);
+        for scale in [1.0, 1.5, 2.0] {
+            let plain = frame(PillState::Processing);
+            let held = Frame {
+                prompt_held: true,
+                ..plain.clone()
+            };
+            let (a, l) = r.render(&plain, scale);
+            let (b, _) = r.render(&held, scale);
+            let x = (l.pill_x + l.pill_w - 6.0 * scale) as u32;
+            let y = (l.pill_y + 6.0 * scale) as u32;
+            let [pr, _, pb, _] = pixel(&b, x, y);
+            assert!(
+                pr > 200 && pb < 140,
+                "amber at {scale}: {:?}",
+                pixel(&b, x, y)
+            );
+            assert_ne!(pixel(&a, x, y), pixel(&b, x, y));
+            // Nothing else moved: the left half is identical.
+            assert_eq!(
+                pixel(&a, l.pill_x as u32 + 4, y),
+                pixel(&b, l.pill_x as u32 + 4, y)
+            );
+        }
     }
 }

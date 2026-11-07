@@ -145,6 +145,8 @@ pub struct Frame {
     pub spinner: f32,
     /// Window opacity, 0.0..=1.0 (fade-out).
     pub opacity: f32,
+    /// A prompt is held back by Focus Assist: the pill carries a mark.
+    pub prompt_held: bool,
 }
 
 /// The pill's state machine. All methods take the current time, so tests
@@ -162,6 +164,7 @@ pub struct Pill {
     history: [f32; size::BAR_COUNT],
     last_step: Instant,
     reduced_motion: bool,
+    prompt_held: bool,
 }
 
 impl Pill {
@@ -177,6 +180,7 @@ impl Pill {
             history: [0.0; size::BAR_COUNT],
             last_step: now,
             reduced_motion: false,
+            prompt_held: false,
         }
     }
 
@@ -223,6 +227,20 @@ impl Pill {
         }
         self.enabled = self.state != PillState::Idle;
         self.apply_visibility(now, previous)
+    }
+
+    /// A prompt is (not) held back by Focus Assist. The pill shows a mark
+    /// while it is visible; hidden, there is nothing to redraw.
+    pub fn set_prompt_held(&mut self, held: bool) -> Change {
+        if self.prompt_held == held {
+            return Change::None;
+        }
+        self.prompt_held = held;
+        if self.is_visible() {
+            Change::Redraw
+        } else {
+            Change::None
+        }
     }
 
     /// Update only the input level (cheap, no state change).
@@ -354,6 +372,7 @@ impl Pill {
             look,
             spinner,
             opacity,
+            prompt_held: self.prompt_held,
         })
     }
 }
@@ -583,5 +602,18 @@ mod tests {
         assert_eq!(pill.state(), &listening(1.0));
         let heights = bar_heights(&[2.0; size::BAR_COUNT]);
         assert!(heights.iter().all(|&h| h <= size::BAR_MAX));
+    }
+
+    #[test]
+    fn a_held_prompt_marks_a_visible_pill_only() {
+        let t = Instant::now();
+        let mut pill = Pill::new(t);
+        // Hidden: remembered, nothing to redraw.
+        assert_eq!(pill.set_prompt_held(true), Change::None);
+        pill.set_state(listening(0.2), t);
+        assert!(pill.frame(t).unwrap().prompt_held);
+        assert_eq!(pill.set_prompt_held(true), Change::None, "unchanged");
+        assert_eq!(pill.set_prompt_held(false), Change::Redraw);
+        assert!(!pill.frame(t).unwrap().prompt_held);
     }
 }

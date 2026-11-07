@@ -59,6 +59,8 @@ pub const BORDER: Hsl = Hsl::new(222.0, 12.0, 22.0);
 pub const PRIMARY: Hsl = Hsl::new(214.0, 75.0, 72.0);
 pub const DESTRUCTIVE: Hsl = Hsl::new(4.0, 75.0, 62.0);
 pub const SUCCESS: Hsl = Hsl::new(150.0, 45.0, 56.0);
+/// Marks a prompt held back by Focus Assist (amber).
+pub const WARNING: Hsl = Hsl::new(38.0, 90.0, 60.0);
 pub const RECORDING: Hsl = Hsl::new(4.0, 75.0, 62.0);
 
 /// Opacity of the pill background (`hsl(var(--card) / 0.96)`).
