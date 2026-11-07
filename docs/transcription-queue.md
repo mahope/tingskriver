@@ -61,6 +61,34 @@ chunks have separate jobs/versions: aggregation and selection of a complete
 meeting version remain the host's responsibility. A retry may re-submit a
 previously successful track if the other track failed.
 
+## Speaker names and truncated reruns
+
+When a job completes and the meeting already has a *current* version of the
+same chunk (same `offset_ms`), the new result is reconciled with it
+(`transcript_merge::reconcile`, a reimplementation of the idea in anarlog's
+`batch_refine`, MIT, Fastrepl, Inc.):
+
+- New system speaker numbers ("Taler N") are mapped to the old numbers by
+  summed time overlap. A new speaker keeps an old number only from 0.6 of its
+  own time; the mapping is one-to-one and a collision goes to the best match.
+  Everyone else gets the lowest number no old speaker used, so a number never
+  silently changes owner and a speaker below 0.6 stays unnamed.
+- Names confirmed with `set_speaker_name(job_id, number, name)` and corrections
+  stored with `add_speaker_correction` are copied to the new version in the
+  same transaction as the result. A correction is moved to a new segment when
+  it covers at least 0.6 of it, and overrides the provider's clustering.
+- If the new text loses at least 200 letters/digits and keeps under 50 %, the
+  result is stored as a version with `rejected` (`reason: "truncated"` and a
+  Danish `message`) and is never current. `current_version(meeting, offset)`
+  returns the newest version that is not rejected; `Version::is_rejected()`
+  tells the UI to show the message. The comparison is Unicode-aware (æøå count).
+  The `completed` queue event (and `statuses()`) carries the same Danish text
+  in `rejected`, so the host can show it without reading the stored result.
+- Only system segments labelled "Taler N" are renumbered; an undiarised system
+  side ("Ukendt taler") is left as is, and corrections do not apply to it.
+  Names and corrections are copied as they are, also for numbers the new
+  version does not use, so a later rerun can map back to them.
+
 ## Scope and verification
 
 This change supplies the core API and tests only. App startup/shutdown wiring,
@@ -69,7 +97,7 @@ recording-stop enqueueing, the local model loader, event forwarding and the
 recording/retranscription paths are unchanged. This is not yet an automatic
 end-to-end queue in the desktop app.
 
-Run `cargo test --locked -p tingskriver-core transcription_queue`. Tests cover
+Run `cargo test --locked -p tingskriver-core -- transcription_queue transcript_merge`. Tests cover
 HTTP 500/429/hanging responses, bounded retries, speaker merging, explicit
 Danish local requests, preserved versions and forced termination of a separate
 process after its SQLite claim is committed. Local inference itself needs an

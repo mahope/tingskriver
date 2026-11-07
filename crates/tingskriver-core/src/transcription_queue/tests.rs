@@ -604,3 +604,226 @@ async fn retries_increase_and_retry_after_is_a_lower_bound() {
     }
     assert!(queue.claim(i64::MAX).await.unwrap().is_none());
 }
+
+type Seg = (f64, f64, &'static str, Option<&'static str>);
+
+/// Run one more job for meeting "m" against a fake remote provider that
+/// returns no microphone speech and `system` (with diarization) for the
+/// system track.
+async fn run_rerun(queue: &Queue, dir: &std::path::Path, system: Vec<Seg>, now: i64) -> String {
+    use fake_server::{FakeServer, Reply};
+    let segments: Vec<_> = system
+        .iter()
+        .map(|&(start, end, text, speaker)| {
+            serde_json::json!({"start": start, "end": end, "text": text, "speaker": speaker})
+        })
+        .collect();
+    let body = serde_json::json!({"text": "x", "segments": segments}).to_string();
+    let server = FakeServer::start(vec![
+        Reply::ok(r#"{"text":"","segments":[]}"#),
+        Reply::ok(&body),
+    ])
+    .await;
+    let mic = dir.join("mic.wav");
+    std::fs::write(&mic, [1]).unwrap();
+    let id = queue
+        .enqueue(&JobSpec::new("m", mic.clone(), Some(mic)), now)
+        .await
+        .unwrap();
+    let ran = queue
+        .run_once_at(
+            &service(dir),
+            &remote_config(&server.base_url),
+            |_, _| async { panic!("remote only") },
+            |e| {
+                if e.status == "completed" {
+                    *LAST_REJECTED.lock().unwrap() = e.rejected;
+                }
+            },
+            now,
+        )
+        .await
+        .unwrap();
+    assert!(ran);
+    id
+}
+
+static LAST_REJECTED: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+fn speakers(version: &Version) -> Vec<String> {
+    version.result["segments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["speaker"].as_str().unwrap().to_string())
+        .collect()
+}
+
+#[tokio::test]
+async fn confirmed_names_follow_renumbered_speakers_on_rerun() {
+    let dir = tempfile::tempdir().unwrap();
+    let queue = Queue::open_memory().await.unwrap();
+    // First run: Anna is Taler 1, Bo is Taler 2.
+    let first = run_rerun(
+        &queue,
+        dir.path(),
+        vec![
+            (2.0, 10.0, "Hej", Some("a")),
+            (10.0, 20.0, "Dav", Some("b")),
+        ],
+        0,
+    )
+    .await;
+    queue.set_speaker_name(&first, 1, "Anna").await.unwrap();
+    queue.set_speaker_name(&first, 2, "Bo").await.unwrap();
+    // Rerun: Bo is now heard first, so the provider numbers Bo as Taler 1 and
+    // Anna as Taler 2, and the boundaries have moved a little.
+    let second = run_rerun(
+        &queue,
+        dir.path(),
+        vec![
+            (0.0, 1.0, "Hallo", Some("x")),
+            (2.0, 9.5, "Hej", Some("y")),
+            (10.0, 20.0, "Dav", Some("x")),
+        ],
+        1,
+    )
+    .await;
+    let versions = queue.versions("m").await.unwrap();
+    let new = versions.iter().find(|v| v.job_id == second).unwrap();
+    // Without reconciliation this would read Taler 1, Taler 2, Taler 1.
+    assert_eq!(speakers(new), ["Taler 2", "Taler 1", "Taler 2"]);
+    assert!(!new.is_rejected());
+    let names = queue.speaker_names(&second).await.unwrap();
+    assert_eq!(names, [(1, "Anna".to_string()), (2, "Bo".to_string())]);
+    assert_eq!(
+        queue.current_version("m", 0).await.unwrap().unwrap().job_id,
+        second
+    );
+    // The first version is untouched.
+    assert_eq!(speakers(&versions[0]), ["Taler 1", "Taler 2"]);
+}
+
+#[tokio::test]
+async fn speaker_with_too_little_overlap_stays_unnamed() {
+    let dir = tempfile::tempdir().unwrap();
+    let queue = Queue::open_memory().await.unwrap();
+    let first = run_rerun(
+        &queue,
+        dir.path(),
+        vec![
+            (0.0, 10.0, "Hej", Some("a")),
+            (10.0, 20.0, "Dav", Some("b")),
+        ],
+        0,
+    )
+    .await;
+    queue.set_speaker_name(&first, 1, "Anna").await.unwrap();
+    // One merged speaker covers both: 50 % overlap with each old speaker.
+    let second = run_rerun(
+        &queue,
+        dir.path(),
+        vec![(0.0, 20.0, "Hej dav", Some("x"))],
+        1,
+    )
+    .await;
+    let new = queue.current_version("m", 0).await.unwrap().unwrap();
+    assert_eq!(new.job_id, second);
+    assert_eq!(speakers(&new), ["Taler 3"]);
+    assert!(!speakers(&new).contains(&"Taler 1".to_string()));
+    // Anna's name stays with number 1, which nobody in this version uses.
+    assert_eq!(
+        queue.speaker_names(&second).await.unwrap(),
+        [(1, "Anna".to_string())]
+    );
+}
+
+#[tokio::test]
+async fn manual_corrections_move_to_the_new_words() {
+    let dir = tempfile::tempdir().unwrap();
+    let queue = Queue::open_memory().await.unwrap();
+    let first = run_rerun(
+        &queue,
+        dir.path(),
+        vec![
+            (0.0, 10.0, "Hej", Some("a")),
+            (10.0, 20.0, "Dav", Some("a")),
+        ],
+        0,
+    )
+    .await;
+    // The provider lumped both together; the user says 10-20 s was someone else.
+    queue
+        .add_speaker_correction(
+            &first,
+            crate::transcript_merge::reconcile::SpeakerSpan {
+                start_ms: 10_000,
+                slut_ms: 20_000,
+                nummer: 2,
+            },
+        )
+        .await
+        .unwrap();
+    let second = run_rerun(
+        &queue,
+        dir.path(),
+        vec![(0.0, 9.0, "Hej", Some("a")), (11.0, 19.0, "Dav", Some("a"))],
+        1,
+    )
+    .await;
+    let new = queue.current_version("m", 0).await.unwrap().unwrap();
+    assert_eq!(new.job_id, second);
+    assert_eq!(speakers(&new), ["Taler 1", "Taler 2"]);
+    assert_eq!(queue.speaker_corrections(&second).await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn truncated_rerun_is_stored_but_never_becomes_current() {
+    let dir = tempfile::tempdir().unwrap();
+    let queue = Queue::open_memory().await.unwrap();
+    let long: &'static str = Box::leak(
+        "Blåbærgrød på Ærø og øl. "
+            .repeat(30)
+            .trim()
+            .to_string()
+            .into_boxed_str(),
+    );
+    let first = run_rerun(&queue, dir.path(), vec![(0.0, 60.0, long, Some("a"))], 0).await;
+    let second = run_rerun(&queue, dir.path(), vec![(0.0, 5.0, "Blåbær", Some("a"))], 1).await;
+    let event_text = LAST_REJECTED.lock().unwrap().clone();
+    assert_eq!(
+        event_text.as_deref(),
+        Some(crate::strings::TRANSCRIPT_TRUNCATED)
+    );
+    let status = queue.statuses().await.unwrap();
+    assert_eq!(
+        status
+            .iter()
+            .find(|e| e.job_id == second)
+            .unwrap()
+            .rejected
+            .as_deref(),
+        Some(crate::strings::TRANSCRIPT_TRUNCATED)
+    );
+    let versions = queue.versions("m").await.unwrap();
+    assert_eq!(versions.len(), 2, "the short result is still stored");
+    let rejected = versions.iter().find(|v| v.job_id == second).unwrap();
+    assert!(rejected.is_rejected());
+    assert_eq!(rejected.result["rejected"]["reason"], "truncated");
+    assert!(rejected.result["rejected"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("væsentligt kortere"));
+    assert_eq!(
+        queue.current_version("m", 0).await.unwrap().unwrap().job_id,
+        first
+    );
+    // The old result is unchanged.
+    assert_eq!(versions[0].result["segments"][0]["text"], long);
+    // A complete third run compares with the first, not the rejected one.
+    let third = run_rerun(&queue, dir.path(), vec![(0.0, 60.0, long, Some("a"))], 2).await;
+    assert_eq!(
+        queue.current_version("m", 0).await.unwrap().unwrap().job_id,
+        third
+    );
+}
