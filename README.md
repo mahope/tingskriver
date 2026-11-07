@@ -93,7 +93,7 @@ Se [målemetoden](docs/ydeevne.md) og [release-checklisten](docs/release-checkli
 - Udviklingen foregår her på GitHub: [mahope/tingskriver](https://github.com/mahope/tingskriver). Issues og pull requests er velkomne.
 - Et tag på formen `v*` bygger en udgivelse på GitHub Actions og lægger installationsfilen på GitHub Releases.
 - Pushes til andre grene end `main` bygger uden at lave en udgivelse.
-- Byggevejledning: [docs/BUILDING.md](docs/BUILDING.md). Frontenden ligger i `frontend/` (Tauri 2, Next.js, Rust).
+- Byggevejledning: [docs/BUILDING.md](docs/BUILDING.md). GPUI-appen ligger i `crates/`; den ældre Tauri-app, der udfases, ligger i `frontend/`. Bidrag: [CONTRIBUTING.md](CONTRIBUTING.md) og [AGENTS.md](AGENTS.md).
 - Logfiler: `%LOCALAPPDATA%\dk.mahoje.tingskriver\logs\` (`tingskriver.log`, roterer ved 5 MB, de to seneste filer gemmes også). Åbn mappen fra Indstillinger under "Logfiler". Enhedsskift står som `[DEVICE_FOLLOW]`-linjer med tidsstempel.
 - Lange optagelser: import og gen-transskription deler ved pauser med overlap, samler ud fra ordtider og gemmer hvert færdigt svar, så en afbrudt kørsel kan genoptages. Se [profiler, checkpoints og testbegrænsninger](docs/transcription-chunks.md).
 - Test af diktering: `cargo test -p tingskriver-core dictation` (renskrivning, genvej, dobbelttryk, reservevalg, SQLite-lager og Syv.ai-kaldet mod en falsk server; kører på Linux og i CI).
@@ -166,7 +166,7 @@ Tingskriver is a fork of [Meetily](https://github.com/Zackriya-Solutions/meetily
 - Development happens here on GitHub: [mahope/tingskriver](https://github.com/mahope/tingskriver). Issues and pull requests are welcome.
 - Pushing a `v*` tag builds a release on GitHub Actions and publishes the installer on GitHub Releases.
 - Pushes to branches other than `main` build without creating a release.
-- Build instructions: [docs/BUILDING.md](docs/BUILDING.md). The app lives in `frontend/` (Tauri 2, Next.js, Rust).
+- Build instructions: [docs/BUILDING.md](docs/BUILDING.md). The GPUI app lives in `crates/`; the older Tauri app, which is being phased out, lives in `frontend/`. Contributing: [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md).
 - Log files: `%LOCALAPPDATA%\dk.mahoje.tingskriver\logs\` (`tingskriver.log`, rotates at 5 MB, the two previous files are kept). Open the folder from Settings under "Logfiler". Device switches appear as `[DEVICE_FOLLOW]` lines with timestamps.
 - Testing dictation: `cargo test -p tingskriver-core dictation` (cleanup, shortcut, double tap, fallback decisions, the SQLite store and the Syv.ai request against a fake server; runs on Linux and in CI).
 - No usage analytics or telemetry is collected.

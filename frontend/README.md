@@ -1,6 +1,6 @@
 # Tingskriver - Frontend
 
-A modern desktop application for recording, transcribing, and analyzing meetings with AI assistance. Built with Next.js and Tauri for a native desktop experience.
+A modern desktop application for recording, transcribing, and analyzing meetings with AI assistance. This is the older Tauri app, which is being phased out in favour of the GPUI app in `crates/tingskriver-app`.
 
 ## Features
 
@@ -31,7 +31,7 @@ A modern desktop application for recording, transcribing, and analyzing meetings
 
 ```
 /frontend
-├── src/                   # Next.js frontend code
+├── src/                   # React frontend code
 ├── src-tauri/             # Rust backend for Tauri
 ├── public/                # Static assets
 └── package.json           # Project dependencies
@@ -64,7 +64,7 @@ Use `pnpm install --frozen-lockfile` to install the committed dependency set. Wh
 2. Clone the repository and navigate to the frontend directory:
    ```bash
    git clone https://github.com/mahope/tingskriver
-   cd meeting-minutes/frontend
+   cd tingskriver/frontend
    ```
   
 
@@ -84,7 +84,7 @@ Use `pnpm install --frozen-lockfile` to install the committed dependency set. Wh
 2. Clone the repository and navigate to the frontend directory:
    ```cmd
    git clone https://github.com/mahope/tingskriver
-   cd meeting-minutes/frontend
+   cd tingskriver/frontend
    ```
 
 3. Install dependencies:
@@ -141,8 +141,8 @@ For build and acceleration details, see:
 
 ## Development
 
-### Frontend (Next.js)
-- The frontend is built with Next.js and Tailwind CSS
+### Frontend (React)
+- The frontend is built with React and Tailwind CSS
 - Source code is in the `src/` directory
 - To run only the frontend: `pnpm run dev`
 
