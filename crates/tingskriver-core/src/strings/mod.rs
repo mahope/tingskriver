@@ -75,6 +75,9 @@ catalogue! {
     OPEN_LOG = "Åbn logmappen";
     QUIT = "Afslut Tingskriver";
     LOG_FAILED = "Logfilen kunne ikke oprettes, så detaljerne står kun i konsollen.";
+    MODEL_HASH_MISMATCH = "Modelfilen {value} har ikke den forventede kontrolsum (SHA-256) og er slettet. Prøv at hente den igen.";
+    MODEL_INSTALLED_MISMATCH = "Modelfilen {value} har ikke den forventede kontrolsum (SHA-256) og indlæses ikke. Slet modellen, og hent den igen.";
+    MODEL_DOWNLOAD_FAILED = "Modelfilen {value} kunne ikke hentes. Tjek forbindelsen, og prøv igen.";
     DATABASE_FAILED = "Tingskriver kunne ikke åbne dine møder";
     RETRY = "Prøv igen";
 }
@@ -94,6 +97,9 @@ parameterized! {
     data_dir => DATA_DIR;
     database => DATABASE;
     log_file => LOG_FILE;
+    model_hash_mismatch => MODEL_HASH_MISMATCH;
+    model_installed_mismatch => MODEL_INSTALLED_MISMATCH;
+    model_download_failed => MODEL_DOWNLOAD_FAILED;
 }
 
 pub fn measure_model_label(provider: &str, model: &str, location: &str) -> String {
