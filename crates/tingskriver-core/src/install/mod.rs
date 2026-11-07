@@ -15,6 +15,21 @@ mod win;
 
 use std::path::Path;
 
+/// Delete every Credential Manager entry whose target starts with `prefix`
+/// and return how many went. Used by "forget all voiceprints". Nothing is
+/// stored off Windows, so the count is 0 there.
+pub fn delete_credentials_with_prefix(prefix: &str) -> Result<usize, String> {
+    #[cfg(windows)]
+    {
+        win::delete_credentials_with_prefix(prefix)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = prefix;
+        Ok(0)
+    }
+}
+
 /// After the first install: start with Windows and tidy up after earlier
 /// builds. `exe` is the installed app.
 pub fn after_install(exe: &Path) -> Vec<String> {
