@@ -202,7 +202,18 @@ pub async fn open_database(app_data_dir: PathBuf) -> DbState {
         }
     }
     match DatabaseManager::new_from_app_data_dir(&app_data_dir).await {
-        Ok(db) => DbState::Ready(db),
+        Ok(db) => {
+            // No chat or command session survives a restart (#205).
+            match tingskriver_core::proposals::ProposalStore::new(db.pool().clone())
+                .expire_orphaned_sessions()
+                .await
+            {
+                Ok(count) if count > 0 => log::info!("Expired {count} orphaned AI proposals"),
+                Ok(_) => {}
+                Err(error) => log::warn!("Could not expire orphaned AI proposals: {error}"),
+            }
+            DbState::Ready(db)
+        }
         Err(error) => {
             log::error!(
                 "Database at {} failed to open: {error}",

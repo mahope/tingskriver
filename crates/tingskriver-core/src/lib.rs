@@ -61,6 +61,7 @@ pub mod openrouter;
 pub mod parakeet_engine;
 pub mod paths;
 pub mod playback;
+pub mod proposals;
 pub mod providers;
 pub mod recover;
 pub mod runtime;
