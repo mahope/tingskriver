@@ -318,8 +318,8 @@ pub async fn start_recording_with_meeting_name(
     meeting_name: Option<String>,
 ) -> Result<(), String> {
     info!(
-        "Starting recording with default devices, meeting: {:?}",
-        meeting_name
+        "Starting recording with default devices, named meeting: {}",
+        meeting_name.is_some()
     );
 
     let engine_lifecycle_guard = super::common::acquire_engine_lifecycle_lock().await;
@@ -454,8 +454,8 @@ pub async fn start_recording_with_devices_and_meeting(
     meeting_name: Option<String>,
 ) -> Result<(), String> {
     info!(
-        "Starting recording with specific devices: mic={:?}, system={:?}, meeting={:?}",
-        mic_device_name, system_device_name, meeting_name
+        "Starting recording with specific devices: mic={:?}, system={:?}, named meeting: {}",
+        mic_device_name, system_device_name, meeting_name.is_some()
     );
 
     let engine_lifecycle_guard = super::common::acquire_engine_lifecycle_lock().await;

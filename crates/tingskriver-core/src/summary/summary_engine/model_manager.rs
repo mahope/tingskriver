@@ -451,7 +451,7 @@ impl ModelManager {
         }
 
         log::info!("Downloading from: {}", model_def.download_url);
-        log::info!("Saving to: {}", file_path.display());
+        log::info!("Saving model file");
 
         // Create models directory if needed
         if !self.models_dir.exists() {
@@ -829,7 +829,7 @@ impl ModelManager {
 
         if file_path.exists() {
             fs::remove_file(&file_path).await?;
-            log::info!("Deleted model file: {}", file_path.display());
+            log::info!("Deleted model file");
         }
 
         // Update status

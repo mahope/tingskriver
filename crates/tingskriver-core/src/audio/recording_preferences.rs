@@ -226,7 +226,7 @@ pub async fn open_recordings_folder(app: HostHandle) -> Result<(), String> {
             .map_err(|e| format!("Failed to open folder: {}", e))?;
     }
 
-    info!("Opened recordings folder: {}", folder_path);
+    info!("Opened recordings folder");
     Ok(())
 }
 

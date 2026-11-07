@@ -30,6 +30,20 @@ PowerShell 5.1.
 - [ ] Mads godkender reference-resultatet før udgivelse. Mere end 20 % forværring
   af blot én fælles måling stopper releasen. Præcis 20 % accepteres.
 
+## Privatlivspolitik før hver release
+
+[PRIVACY_POLICY.md](../PRIVACY_POLICY.md) skal beskrive, hvad koden faktisk gør.
+
+- [ ] `cargo test -p tingskriver-core --test privacy_policy --test log_privacy_guard`
+  er grøn. Den første fejler, hvis koden indeholder en ekstern vært, som ikke står i
+  tabellen; den anden, hvis et logkald udskriver en titel, et deltagernavn, en sti
+  eller en adresse.
+- [ ] Nye funktioner, udbydere, downloadkilder eller opdateringskilder står i
+  tabellen med funktion, hvad der forlader maskinen, til hvem og hvordan det slås fra.
+  Ændringer uden en adresse i koden (fx en ny type SSH-mål eller webhook) tjekkes
+  ved gennemlæsning, for testen ser kun adresser i koden.
+- [ ] Datoen øverst i politikken er opdateret, hvis tabellen er ændret.
+
 ## Første baseline og fejl
 
 `docs/ydeevne-baseline.json` har indtil første måling `status: "ikke_maalt"` og
