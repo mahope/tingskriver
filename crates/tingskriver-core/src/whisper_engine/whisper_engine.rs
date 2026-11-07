@@ -350,12 +350,13 @@ impl WhisperEngine {
                 // PERFORMANCE OPTIMIZATION: Use comprehensive hardware profile for optimal GPU configuration
                 let hardware_profile = crate::audio::HardwareProfile::detect();
                 let adaptive_config = hardware_profile.get_whisper_config();
+                let force_cpu = crate::diagnose::cpu_required() || crate::stt::worker_forced_cpu();
                 let acceleration = whisper_context_acceleration_for(
                     WhisperCompiledBackend::current(),
                     hardware_profile.gpu_type,
                     hardware_profile.performance_tier,
                 )
-                .with_diagnose_policy(crate::diagnose::cpu_required());
+                .with_diagnose_policy(force_cpu);
 
                 let context_param = WhisperContextParameters {
                     use_gpu: acceleration.use_gpu,

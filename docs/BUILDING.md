@@ -441,6 +441,10 @@ and reloads the model on the next call. Parakeet retains its two-instance pool;
 Whisper starts a second worker only when the first is busy. Dropping a client
 kills and reaps its worker; Windows also uses a kill-on-close Job Object.
 
+Deadlines, the one-time CPU retry and the Vulkan layer policy are described in
+[stt-tidsfrister.md](stt-tidsfrister.md) (`TINGSKRIVER_STT_DEVICE`,
+`TINGSKRIVER_KEEP_VULKAN_IMPLICIT_LAYERS`, debug-only `TINGSKRIVER_STT_FAULT`).
+
 ONNX Runtime starts in the worker, never during app startup. Set
 `TINGSKRIVER_STT_FORCE_ORT_FAILURE=1` for a failure test: automatic VAD selection
 falls back to the existing energy detector, and Syv.ai remains available. Local

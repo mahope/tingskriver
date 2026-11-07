@@ -144,6 +144,8 @@ Meetings and dictation share the Parakeet and Whisper engines in core.
   private stdin/stdout pipes with request IDs and raw f32 PCM. A worker crash
   fails the current call in Danish; the next call restarts and reloads it.
   Silero also runs there; failed startup selects energy VAD in core.
+  Calls have deadlines and a GPU worker is retried once on the CPU, see
+  [stt-tidsfrister.md](stt-tidsfrister.md).
 - Inference never runs on an app tokio worker or under an engine lock.
   Whisper keeps one warm process and lazily starts a second for overlapping
   calls. An ONNX session needs `&mut`, so Parakeet keeps a pool of up to two loaded
