@@ -140,6 +140,9 @@ jobs:
       - name: GPUI version lock
         run: python3 scripts/check-gpui-lock.py
 
+      - name: GPUI design document
+        run: python3 scripts/check-design-doc.py
+
       - name: Test tingskriver-core
         run: .github/scripts/annotate-errors.sh cargo test --locked -p tingskriver-core
 

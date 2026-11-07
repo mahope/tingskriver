@@ -37,6 +37,15 @@ Thank you for your interest in contributing to Tingskriver! This document provid
 5. Ensure all tests pass
 6. Update documentation if necessary
 
+### GPUI components
+
+Before you build or change a screen in `crates/tingskriver-app`, read
+[docs/design.md](docs/design.md): reuse an existing component, extend it if a
+state is missing, create a new one only if nothing covers the need, and
+check its consumers before changing a shared one. Update the document when a
+responsibility or an experience changes (`python3 scripts/check-design-doc.py`
+checks the component list).
+
 ### Issue Creation
 
 Before starting work on a new feature or bug fix:
