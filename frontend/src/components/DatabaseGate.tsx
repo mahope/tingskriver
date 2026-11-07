@@ -19,7 +19,7 @@ type DatabaseStatus =
   | { state: 'ready' }
   | {
       state: 'failed'
-      error: { kind: 'locked' | 'corrupt' | 'disk_full' | 'migration' | 'other'; info: DbFailureInfo }
+      error: { kind: 'locked' | 'corrupt' | 'disk_full' | 'migration' | 'newer_database' | 'other'; info: DbFailureInfo }
       summary: string
       advice: string
     }

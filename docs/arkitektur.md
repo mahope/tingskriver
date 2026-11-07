@@ -81,11 +81,13 @@ registers at startup.
   from process start; the Tauri app marks `process start`, `tray ready`,
   `DB ready` and `window ready`, so `grep Startup:` gives the timeline.
 - `DatabaseManager::open(app_data_dir)` never panics. It returns
-  `DbInitError` (`Locked`, `Corrupt`, `DiskFull`, `Migration`, `Other`) with
+  `DbInitError` (`Locked`, `Corrupt`, `DiskFull`, `Migration`, `NewerDatabase`, `Other`) with
   the database path, the log file and, for corrupt databases and failed
   migrations, a copy of the database and its `-wal`/`-shm` files in
   `backups/`. Nothing deletes `-wal` or `-shm` files: a WAL holds committed
-  transactions. `summary_da()` and `advice_da()` give the error page text.
+  transactions. A database from a newer Tingskriver is refused before it is
+  opened for writing and is never copied or changed, see
+  [database-migrationer.md](database-migrationer.md). `summary_da()` and `advice_da()` give the error page text.
   The safety-copy space check resolves the nearest existing ancestor and
   canonicalizes mount points too, including Windows verbatim drive paths,
   so it works before the backup directory exists.
