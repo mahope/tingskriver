@@ -49,6 +49,8 @@ ndarray = "0.16"
 ort = { version = "2.0.0-rc.10" }  # ONNX Runtime for Parakeet models
 sysinfo = "0.32"
 thiserror = "2.0.16"
+hmac = "0.12"
+sha2 = "0.10"
 
 [features]
 # GPU/BLAS backends for whisper-rs; the Tauri crate forwards its features here.
