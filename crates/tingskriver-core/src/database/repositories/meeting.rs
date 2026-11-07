@@ -277,8 +277,9 @@ impl MeetingsRepository {
 
         let now = Utc::now().naive_utc();
 
+        // A title typed by the user is never replaced by a generated one.
         let rows_affected =
-            sqlx::query("UPDATE meetings SET title = ?, updated_at = ? WHERE id = ?")
+            sqlx::query("UPDATE meetings SET title = ?, title_source = 'user', updated_at = ? WHERE id = ?")
                 .bind(new_title)
                 .bind(now)
                 .bind(meeting_id)
@@ -288,6 +289,54 @@ impl MeetingsRepository {
             transaction.rollback().await?;
             return Ok(false);
         }
+        transaction.commit().await?;
+        Ok(true)
+    }
+
+    /// SQL condition: the title may be replaced by a generated one. It is
+    /// atomic with the update, so a title the user saves while the summary is
+    /// being made is not overwritten.
+    const TITLE_REPLACEABLE: &'static str = "(title_source = 'auto' OR (title_source IS NULL AND (trim(title) = '' OR title GLOB 'Meeting [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]_[0-9][0-9]-[0-9][0-9]-[0-9][0-9]')))";
+
+    /// True if the meeting exists and its title is still empty, the default
+    /// name or an earlier generated title (not one the user chose).
+    pub async fn title_is_replaceable(pool: &SqlitePool, meeting_id: &str) -> Result<bool, SqlxError> {
+        let sql = format!("SELECT COUNT(*) FROM meetings WHERE id = ? AND {}", Self::TITLE_REPLACEABLE);
+        let count: i64 = sqlx::query_scalar(&sql).bind(meeting_id).fetch_one(pool).await?;
+        Ok(count > 0)
+    }
+
+    /// Stores a title made from the finished report, only if the title is
+    /// still replaceable. Returns whether it was written.
+    pub async fn set_generated_title(
+        pool: &SqlitePool,
+        meeting_id: &str,
+        title: &str,
+    ) -> Result<bool, SqlxError> {
+        let title = title.trim();
+        if title.is_empty() {
+            return Ok(false);
+        }
+        let mut transaction = pool.begin().await?;
+        let sql = format!(
+            "UPDATE meetings SET title = ?, title_source = 'auto', updated_at = ? WHERE id = ? AND {}",
+            Self::TITLE_REPLACEABLE
+        );
+        let updated = sqlx::query(&sql)
+            .bind(title)
+            .bind(Utc::now())
+            .bind(meeting_id)
+            .execute(&mut *transaction)
+            .await?;
+        if updated.rows_affected() == 0 {
+            transaction.rollback().await?;
+            return Ok(false);
+        }
+        sqlx::query("UPDATE transcript_chunks SET meeting_name = ? WHERE meeting_id = ?")
+            .bind(title)
+            .bind(meeting_id)
+            .execute(&mut *transaction)
+            .await?;
         transaction.commit().await?;
         Ok(true)
     }
@@ -367,4 +416,89 @@ async fn delete_meeting_with_transaction(
         .await?;
 
     Ok(result.rows_affected() > 0)
+}
+
+#[cfg(test)]
+mod title_tests {
+    use super::*;
+
+    async fn pool_with(title: &str, source: Option<&str>) -> SqlitePool {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(
+            "CREATE TABLE meetings (id TEXT PRIMARY KEY, title TEXT NOT NULL, created_at TEXT, updated_at TEXT, folder_path TEXT, title_source TEXT)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("CREATE TABLE transcript_chunks (meeting_id TEXT, meeting_name TEXT)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO meetings (id, title, title_source) VALUES ('m', ?, ?)")
+            .bind(title)
+            .bind(source)
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool
+    }
+
+    async fn title(pool: &SqlitePool) -> String {
+        sqlx::query_scalar("SELECT title FROM meetings WHERE id = 'm'")
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn default_and_generated_titles_are_replaced() {
+        for (existing, source) in [
+            ("Meeting 2026-11-05_08-25-23", None),
+            ("  ", None),
+            ("Tidligere titel", Some("auto")),
+        ] {
+            let pool = pool_with(existing, source).await;
+            assert!(MeetingsRepository::title_is_replaceable(&pool, "m").await.unwrap());
+            assert!(MeetingsRepository::set_generated_title(&pool, "m", "Budgetmøde").await.unwrap());
+            assert_eq!(title(&pool).await, "Budgetmøde");
+        }
+    }
+
+    /// The default name is made in three places with this format; the GLOB in
+    /// `TITLE_REPLACEABLE` must keep matching it.
+    #[tokio::test]
+    async fn the_default_name_format_is_replaceable() {
+        let name = format!("Meeting {}", chrono::Local::now().format("%Y-%m-%d_%H-%M-%S"));
+        let pool = pool_with(&name, None).await;
+        assert!(MeetingsRepository::title_is_replaceable(&pool, "m").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn a_user_title_is_never_overwritten() {
+        for (existing, source) in [
+            ("Min egen titel", Some("user")),
+            ("Meeting 2026-11-05_08-25-23", Some("user")),
+            ("Gammel omdøbning", None),
+        ] {
+            let pool = pool_with(existing, source).await;
+            assert!(!MeetingsRepository::title_is_replaceable(&pool, "m").await.unwrap());
+            assert!(!MeetingsRepository::set_generated_title(&pool, "m", "Genereret").await.unwrap());
+            assert_eq!(title(&pool).await, existing);
+        }
+    }
+
+    #[tokio::test]
+    async fn saving_a_title_by_hand_blocks_a_later_generated_title() {
+        let pool = pool_with("Meeting 2026-11-05_08-25-23", None).await;
+        assert!(MeetingsRepository::update_meeting_title(&pool, "m", "Mit navn").await.unwrap());
+        assert!(!MeetingsRepository::set_generated_title(&pool, "m", "Genereret").await.unwrap());
+        assert_eq!(title(&pool).await, "Mit navn");
+    }
+
+    #[tokio::test]
+    async fn empty_generated_title_changes_nothing() {
+        let pool = pool_with("Meeting 2026-11-05_08-25-23", None).await;
+        assert!(!MeetingsRepository::set_generated_title(&pool, "m", "  ").await.unwrap());
+        assert_eq!(title(&pool).await, "Meeting 2026-11-05_08-25-23");
+    }
 }

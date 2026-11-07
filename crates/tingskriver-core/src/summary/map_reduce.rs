@@ -248,9 +248,24 @@ pub async fn english_report<M: Model + ?Sized>(
     template: &super::templates::Template,
     custom: &str,
 ) -> Result<Prepared, String> {
-    let system = super::processor::build_final_report_system_prompt(
+    english_report_with(model, budget, text, template, custom, "").await
+}
+
+/// As `english_report`, with extra prompt rules (length, preferred names). The
+/// final answer must start like the template; if not it is generated once more
+/// with feedback and the better attempt is kept.
+pub async fn english_report_with<M: Model + ?Sized>(
+    model: &mut M,
+    budget: &Budget,
+    text: &str,
+    template: &super::templates::Template,
+    custom: &str,
+    extra_rules: &str,
+) -> Result<Prepared, String> {
+    let system = super::processor::build_final_report_system_prompt_with(
         &template.to_section_instructions(),
         &template.to_markdown_structure(),
+        extra_rules,
     );
     // Transcript persistence currently provides one timestamped segment per line.
     let segments = text.lines().map(str::to_owned).collect::<Vec<_>>();
@@ -259,7 +274,19 @@ pub async fn english_report<M: Model + ?Sized>(
     if !budget.fits(&system, &input) {
         return Err("Final report exceeds context budget".into());
     }
-    prepared.content = model.generate(Phase::Final, &system, &input).await?;
+    let first = model.generate(Phase::Final, &system, &input).await?;
+    let checked = super::quality::check_with_one_retry(first, template, |feedback| {
+        let retry_system = super::quality::retry_system_prompt(&system, &feedback);
+        let model = &mut *model;
+        async move {
+            if !budget.fits(&retry_system, &input) {
+                return Err("Retry exceeds context budget".to_string());
+            }
+            model.generate(Phase::Final, &retry_system, &input).await
+        }
+    })
+    .await;
+    prepared.content = checked.markdown;
     Ok(prepared)
 }
 

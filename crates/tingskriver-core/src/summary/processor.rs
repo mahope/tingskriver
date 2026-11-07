@@ -1,4 +1,6 @@
 use crate::summary::llm_client::{generate_summary, LLMProvider};
+use crate::summary::names;
+use crate::summary::quality;
 use crate::summary::templates::Template;
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -226,10 +228,26 @@ fn build_combine_summary_user_prompt(combined_text: &str) -> String {
         "{ENGLISH_BASE_SUMMARY_INSTRUCTION}\n\nThe following are consecutive summaries of a meeting. Combine them into a single, coherent, and detailed narrative summary that retains all important details, organized logically. Do not include reasoning, self-correction, or meta-commentary — output only the summary content.\n\n<summaries>\n{combined_text}\n</summaries>"
     )
 }
+#[cfg(test)]
 pub(crate) fn build_final_report_system_prompt(
     section_instructions: &str,
     clean_template_markdown: &str,
 ) -> String {
+    build_final_report_system_prompt_with(section_instructions, clean_template_markdown, "")
+}
+
+/// The final report prompt with extra rules (length guidance, preferred names)
+/// placed after the section instructions.
+pub(crate) fn build_final_report_system_prompt_with(
+    section_instructions: &str,
+    clean_template_markdown: &str,
+    extra_rules: &str,
+) -> String {
+    let extra_rules = if extra_rules.trim().is_empty() {
+        String::new()
+    } else {
+        format!("\n\n{}", extra_rules.trim())
+    };
     format!(
         r#"You are an expert meeting summarizer. Generate a final meeting report by filling in the provided Markdown template based on the source text.
 
@@ -244,7 +262,7 @@ pub(crate) fn build_final_report_system_prompt(
 8. If unsure about something, omit it.
 
 **SECTION-SPECIFIC INSTRUCTIONS:**
-{section_instructions}
+{section_instructions}{extra_rules}
 
 <template>
 {clean_template_markdown}
@@ -351,8 +369,33 @@ pub fn extract_meeting_name_from_markdown(markdown: &str) -> Option<String> {
         .map(|line| line.trim_start_matches("# ").trim().to_string())
 }
 
+/// Rules added to the report prompt: length guidance from the transcript and
+/// the preferred names (dictionary words, calendar attendees).
+pub(crate) fn report_extra_rules(text: &str, template: &Template, preferred_names: &[String]) -> String {
+    let policy = quality::length_policy(quality::spoken_chars(text), template.sections.len());
+    let mut rules = quality::length_guidance(&policy);
+    let names = names::preferred_names_block(preferred_names);
+    if !names.is_empty() {
+        rules.push_str("\n\n");
+        rules.push_str(&names);
+    }
+    rules
+}
+
+/// What the caller adds beyond the transcript.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct QualityInputs {
+    /// Dictionary words and attendee names to spell exactly.
+    pub preferred_names: Vec<String>,
+    /// Make a title from the finished report. False when the meeting already
+    /// has a title the user chose.
+    pub want_title: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct GeneratedMeetingSummary {
+    /// Title made from the finished report, if wanted and the report has content.
+    pub title: Option<String>,
     pub final_markdown: String,
     pub english_markdown: String,
     pub successful_chunk_count: i64,
@@ -381,10 +424,18 @@ pub(crate) async fn generate_meeting_summary(
     summary_language: Option<&str>,
     detected_transcript_language: Option<&str>,
     cached_english: Option<&str>,
+    quality_inputs: &QualityInputs,
 ) -> Result<GeneratedMeetingSummary, String> {
     if cancellation_token.is_some_and(CancellationToken::is_cancelled) {
         return Err("Summary generation was cancelled".to_string());
     }
+    // Too little speech for a report: no model call at all. A cached English
+    // report is reused as is, so a transcript edited shorter afterwards does
+    // not block translating it again.
+    if resolve_cached_english(cached_english, summary_language).is_none() {
+        quality::check_eligibility(text).map_err(str::to_string)?;
+    }
+    let extra_rules = report_extra_rules(text, template, &quality_inputs.preferred_names);
     info!("Starting summary generation with provider: {:?}, model: {}", provider, model_name);
 
     let total_tokens = rough_token_count(text);
@@ -402,8 +453,8 @@ pub(crate) async fn generate_meeting_summary(
             };
             let budget = super::map_reduce::Budget::for_model(model_name)
                 .map_err(|_| "Den valgte lokale model kendes ikke.".to_string())?;
-            let report = super::map_reduce::english_report(
-                &mut model, &budget, text, template, custom_prompt,
+            let report = super::map_reduce::english_report_with(
+                &mut model, &budget, text, template, custom_prompt, &extra_rules,
             )
             .await
             .map_err(|_| {
@@ -513,9 +564,10 @@ pub(crate) async fn generate_meeting_summary(
             }
 
             info!("Generating final markdown report with template: {}", template_id);
-            let final_system_prompt = build_final_report_system_prompt(
+            let final_system_prompt = build_final_report_system_prompt_with(
                 &template.to_section_instructions(),
                 &template.to_markdown_structure(),
+                &extra_rules,
             );
             let mut final_user_prompt =
                 format!("<transcript_chunks>\n{content_to_summarize}\n</transcript_chunks>\n");
@@ -533,7 +585,40 @@ pub(crate) async fn generate_meeting_summary(
             let cleaned = clean_llm_markdown_detailed(&completion.content);
             stage_reasoning_stripped |= completion.reasoning_stripped || cleaned.reasoning_stripped;
             require_visible_markdown("Final summary", &cleaned)?;
-            (cleaned.markdown, successful_chunk_count, stage_reasoning_stripped)
+            // The answer must follow the template; if not, one retry with
+            // feedback, keeping the better attempt.
+            let retry_stripped = std::sync::atomic::AtomicBool::new(false);
+            let checked = quality::check_with_one_retry(cleaned.markdown, template, |feedback| {
+                let retry_system = quality::retry_system_prompt(&final_system_prompt, &feedback);
+                let retry_stripped = &retry_stripped;
+                async move {
+                    let completion = generate_summary(
+                        client, provider, model_name, api_key, &retry_system, &final_user_prompt,
+                        ollama_endpoint, custom_openai_endpoint, max_tokens, temperature, top_p,
+                        app_data_dir, cancellation_token,
+                    )
+                    .await?;
+                    let cleaned = clean_llm_markdown_detailed(&completion.content);
+                    retry_stripped.store(
+                        completion.reasoning_stripped || cleaned.reasoning_stripped,
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+                    require_visible_markdown("Final summary retry", &cleaned)?;
+                    Ok(cleaned.markdown)
+                }
+            })
+            .await;
+            if cancellation_token.is_some_and(CancellationToken::is_cancelled) {
+                return Err("Summary generation was cancelled".to_string());
+            }
+            if checked.retried {
+                warn!(
+                    "Report did not follow the template start; retried once (valid after retry: {})",
+                    checked.valid
+                );
+            }
+            stage_reasoning_stripped |= retry_stripped.load(std::sync::atomic::Ordering::Relaxed);
+            (checked.markdown, successful_chunk_count, stage_reasoning_stripped)
         };
 
     let (final_markdown, normalization_fallback) =
@@ -567,13 +652,83 @@ pub(crate) async fn generate_meeting_summary(
             FinalLanguageAction::ReturnEnglish => (english_markdown.clone(), false),
         };
 
+    let title = if quality_inputs.want_title {
+        generate_report_title(
+            client, provider, model_name, api_key, &final_markdown, summary_language,
+            &quality_inputs.preferred_names, ollama_endpoint, custom_openai_endpoint,
+            temperature, top_p, app_data_dir, cancellation_token,
+        )
+        .await
+    } else {
+        None
+    };
+
     Ok(GeneratedMeetingSummary {
+        title,
         final_markdown,
         english_markdown,
         successful_chunk_count,
         reasoning_stripped,
         normalization_fallback,
     })
+}
+
+/// Makes the meeting title from the finished report: short, one line, in the
+/// summary language. A failure or an empty report gives `None` (the meeting
+/// keeps its name); it never fails the summary.
+#[allow(clippy::too_many_arguments)]
+async fn generate_report_title(
+    client: &Client,
+    provider: &LLMProvider,
+    model_name: &str,
+    api_key: &str,
+    report: &str,
+    summary_language: Option<&str>,
+    preferred_names: &[String],
+    ollama_endpoint: Option<&str>,
+    custom_openai_endpoint: Option<&str>,
+    temperature: Option<f32>,
+    top_p: Option<f32>,
+    app_data_dir: Option<&PathBuf>,
+    cancellation_token: Option<&CancellationToken>,
+) -> Option<String> {
+    if !names::report_has_content(report) {
+        return None;
+    }
+    let language = summary_language
+        .and_then(language_name_from_code)
+        .unwrap_or("Danish");
+    let system = names::title_system_prompt(language, preferred_names);
+    let user = names::title_user_prompt(report);
+    let raw = if provider == &LLMProvider::BuiltInAI {
+        let data_dir = app_data_dir?;
+        crate::summary::summary_engine::client::generate_with_builtin(
+            data_dir, model_name, &system, &user, cancellation_token,
+        )
+        .await
+        .map_err(|e| e.to_string())
+    } else {
+        generate_summary(
+            client, provider, model_name, api_key, &system, &user, ollama_endpoint,
+            custom_openai_endpoint, Some(names::TITLE_MAX_TOKENS), temperature, top_p,
+            app_data_dir, cancellation_token,
+        )
+        .await
+        .map(|completion| completion.content)
+    };
+    match raw {
+        Ok(raw) => {
+            let cleaned = clean_llm_markdown_detailed(&raw);
+            if contains_reasoning_marker(&cleaned.markdown) {
+                return None;
+            }
+            names::title_for_report(report, &cleaned.markdown)
+        }
+        Err(error) => {
+            warn!("Title generation failed; the meeting keeps its name: {error}");
+            None
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -666,6 +821,79 @@ async fn normalize_markdown_to_english(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn too_short_transcript_makes_no_model_call() {
+        // The endpoint is unreachable on purpose: a model call would fail with
+        // a different error than the "too short" reason.
+        let template = crate::summary::templates::get_template("daily_standup").unwrap();
+        let err = generate_meeting_summary(
+            &Client::new(),
+            &LLMProvider::Ollama,
+            "m",
+            "",
+            "[00:00:01] Hej med dig",
+            "",
+            "daily_standup",
+            &template,
+            4000,
+            Some("http://127.0.0.1:9"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("da"),
+            Some("da"),
+            None,
+            &QualityInputs { preferred_names: vec![], want_title: true },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, quality::TOO_SHORT_MESSAGE);
+        assert!(quality::is_too_short_message(&err));
+    }
+
+    #[tokio::test]
+    async fn cached_english_report_skips_the_eligibility_check() {
+        let template = crate::summary::templates::get_template("daily_standup").unwrap();
+        let result = generate_meeting_summary(
+            &Client::new(),
+            &LLMProvider::Ollama,
+            "m",
+            "",
+            "[00:00:01] Hej",
+            "",
+            "daily_standup",
+            &template,
+            4000,
+            Some("http://127.0.0.1:9"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("da"),
+            Some("da"),
+            Some("# Meeting\n\nCached English report."),
+            &QualityInputs { preferred_names: vec![], want_title: false },
+        )
+        .await;
+        if let Err(err) = result {
+            assert!(!quality::is_too_short_message(&err), "{err}");
+        }
+    }
+
+    #[test]
+    fn report_prompt_carries_length_and_names() {
+        let template = crate::summary::templates::get_template("daily_standup").unwrap();
+        let rules = report_extra_rules(&"ord ".repeat(100), &template, &["Åse Ørsted".to_string()]);
+        let prompt = build_final_report_system_prompt_with("S", "T", &rules);
+        assert!(prompt.contains("LENGTH") && prompt.contains("- Åse Ørsted"));
+        assert!(build_final_report_system_prompt("S", "T").contains("<template>\nT"));
+    }
 
     #[test]
     fn chunk_text_preserves_content_after_early_sentence_boundary() {

@@ -45,6 +45,10 @@ pub struct SummaryResponse {
     pub end: Option<String>,
     pub data: Option<serde_json::Value>,
     pub error: Option<String>,
+    /// Machine-readable reason for a failed run that is not an error the user
+    /// can retry away, e.g. `"too_short"` (the meeting has too little speech).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -407,6 +411,10 @@ pub async fn api_get_summary(
                 }
             };
 
+            let reason = error
+                .as_deref()
+                .filter(|e| crate::summary::quality::is_too_short_message(e))
+                .map(|_| "too_short".to_string());
             let response = SummaryResponse {
                 status: status.clone(),
                 meeting_name,
@@ -417,6 +425,7 @@ pub async fn api_get_summary(
                 end: process.end_time.map(|time| time.to_rfc3339()),
                 data,
                 error,
+                reason,
             };
 
             log_info!(
@@ -445,11 +454,62 @@ pub async fn api_get_summary(
                 end: None,
                 data: None,
                 error: None,
+                reason: None,
             })
         }
         Err(e) => {
             log_error!("Error retrieving summary for {}: {}", meeting_id, e);
             Err(format!("Failed to retrieve summary: {}", e))
+        }
+    }
+}
+
+/// Names of the attendees of the calendar event the meeting took place in,
+/// read from the local calendar cache only (no network). Missing calendar,
+/// credential or event only means no extra names.
+async fn calendar_attendee_names(
+    pool: &sqlx::SqlitePool,
+    meeting_id: &str,
+) -> Vec<String> {
+    use crate::calendar::{Calendar, CalendarConfig, IcsAddress};
+    let Ok(Some(meeting)) = MeetingsRepository::get_meeting_metadata(pool, meeting_id).await else {
+        return Vec::new();
+    };
+    let at = meeting.created_at.0;
+    let Ok(Some(address)) = IcsAddress::load() else {
+        return Vec::new();
+    };
+    let Ok(calendar) = Calendar::open(address, CalendarConfig::default()).await else {
+        return Vec::new();
+    };
+    let event = calendar
+        .events_around(at)
+        .into_iter()
+        .filter(|e| !e.all_day && e.start <= at + Duration::minutes(10) && e.end > at)
+        .min_by_key(|e| ((e.start - at).num_seconds().abs(), e.uid.clone()));
+    event
+        .map(|e| crate::summary::names::attendee_names(&e))
+        .unwrap_or_default()
+}
+
+/// The dictation dictionary's words, if dictation has a database. A missing or
+/// unreadable dictionary only means no preferred names.
+async fn dictionary_words(app_data_dir: &std::path::Path) -> Vec<String> {
+    let path = app_data_dir.join("dictation.sqlite");
+    if !path.exists() {
+        return Vec::new();
+    }
+    match crate::dictation::store::Store::open(&path).await {
+        Ok(store) => match store.dictionary().await {
+            Ok(words) => crate::summary::names::clean_names(words.into_iter().map(|w| w.word)),
+            Err(error) => {
+                log_info!("Dictionary unavailable for the summary: {}", error);
+                Vec::new()
+            }
+        },
+        Err(error) => {
+            log_info!("Dictionary unavailable for the summary: {}", error);
+            Vec::new()
         }
     }
 }
@@ -526,6 +586,14 @@ pub async fn api_process_transcript(
     let meeting_id_clone = m_id.clone();
     // App data directory for the BuiltInAI provider
     let app_data_dir = app.app_data_dir().ok();
+    // Dictionary words are spelled exactly in the report and the title.
+    let mut preferred_names = match &app_data_dir {
+        Some(dir) => dictionary_words(dir).await,
+        None => Vec::new(),
+    };
+    // ...and so are the attendee names from the calendar event of the meeting.
+    preferred_names.extend(calendar_attendee_names(&pool, &m_id).await);
+    let preferred_names = crate::summary::names::clean_names(preferred_names);
     crate::runtime::spawn(async move {
         SummaryService::process_transcript_background(
             app_data_dir,
@@ -539,6 +607,7 @@ pub async fn api_process_transcript(
             final_prompt,
             final_template_id,
             summary_language,
+            preferred_names,
         )
         .await;
     });
