@@ -7,6 +7,13 @@ import subprocess
 import time
 
 
+# Finishing a three-hour recording encodes three AAC files and verifies them.
+# Measured at about 0.03 s of work per recorded second on a developer machine
+# (about 0.07 s before the outputs were encoded side by side), so the limit
+# only has to catch a hang, not police speed.
+POST_STEP_TIMEOUT = 1800
+
+
 def check_memory(values):
     assert values and max(values) - values[0] < 100_000_000, 'RAM growth >= 100 MB'
 
@@ -52,14 +59,14 @@ def run(binary, root, seconds, crash=False, interval=300):
             if crash and elapsed >= seconds / 2:
                 child.kill()
                 child.wait(timeout=10)
-                subprocess.run([str(binary), 'recover', str(folder), str(elapsed)], check=True, timeout=600)
+                subprocess.run([str(binary), 'recover', str(folder), str(elapsed)], check=True, timeout=POST_STEP_TIMEOUT)
                 return
             assert elapsed < seconds + 60, 'recorder timeout'
             time.sleep(0.05)
         assert not crash, 'recorder exited before forced stop'
         assert child.returncode == 0, f'recorder failed: {child.returncode}'
         assert final_measured, 'recorder exited without final memory measurement'
-        subprocess.run([str(binary), 'finish', str(folder), str(seconds)], check=True, timeout=600)
+        subprocess.run([str(binary), 'finish', str(folder), str(seconds)], check=True, timeout=POST_STEP_TIMEOUT)
     finally:
         if child.poll() is None:
             child.kill()

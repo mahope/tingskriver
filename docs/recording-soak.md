@@ -57,6 +57,41 @@ startup/recovery dialogs or transcription. It proves process-crash recovery,
 not power-loss
 survival. Ordinary CI continues to run the existing focused audio unit tests.
 
+## Time budget after the recording
+
+`finish` (scan, verify every sample, encode `microphone.m4a`, `system.m4a` and
+`audio.mp4`, decode them again) is linear in the recording length. The three
+AAC encodes dominate, and FFmpeg's encoder uses one core each. They run side
+by side now; before, one after another. Measured on a 16-core Linux
+machine with other jobs running (single runs, so +-15 %):
+
+| Recording | Before (serial) | After (parallel) |
+|-----------|-----------------|------------------|
+| 4.5 min   | not measured    | 8.6 s            |
+| 9 min     | not measured    | 16.9 s           |
+| 10 min    | 36-39 s         | not measured     |
+| 20 min    | 70-83 s         | not measured     |
+| 30 min    | 119-120 s       | 51-55 s          |
+
+The after column is 0.029-0.032 s per recorded second at 4.5, 9 and 30 minutes
+(the two short runs were measured side by side), so no non-linear effect shows
+up in that range. That extrapolates to 700-740 s for three hours before and
+about 310-350 s after. The extrapolation is a factor of 6 beyond the longest
+measurement, and a GitHub runner with fewer cores would encode the three
+streams less in parallel, which is why the limit is 1800 s and not close to
+the estimate. The old script allowed `finish` 600 s, so it sat at the limit and
+failed on the night of 2026-11-05 although the code was unchanged on that
+path (the encode path has no diff between the commit before #164 and `main`).
+`recover` and `finish` now get 1800 s: the limit only has to catch a hang.
+`recover` was not timed separately; it runs the same scan and encode path.
+Stopping `finish` early cannot lose audio: raw tracks are deleted only after
+the outputs verify as `ok`, outputs are written to `.{name}.tmp` files and
+renamed, and a killed run leaves the raw tracks plus stale temp files that the
+next run overwrites. The three encodes use one core each, so on a small machine
+they compete with other work after stop but never with the capture itself.
+The job's `timeout-minutes: 345` still covers 3 h + 1.5 h of recording, both
+limits and the build.
+
 ## Manual hardware variant (Windows)
 
 Use only synthetic audio, never real voices. Play a generated continuous tone
