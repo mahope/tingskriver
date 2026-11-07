@@ -153,6 +153,70 @@ started elevated anyway, the log warns and the tray shows the problem ring
 with "Kører som administrator, så genveje og indsættelse virker ikke i alle
 programmer".
 
+## Sleep, lock and logoff during a recording
+
+A closed laptop must not leave a broken audio file or hours of nothing.
+`win.rs` makes a second, hidden **top-level** window (`TingskriverStroem`) on
+the host thread. It has to be top-level: `WM_QUERYENDSESSION` and
+`WM_ENDSESSION` are broadcast to top-level windows only, never to the
+message-only host window. The window registers
+`RegisterSuspendResumeNotification` (suspend and resume) and
+`WTSRegisterSessionNotification` (lock and unlock). `power::event_from_message`
+turns the messages into `PowerEvent`s, and the sink calls
+`tingskriver_core::audio::power::PowerController::handle` **on the thread
+that got the message**. Windows waits for the window procedure, so the
+recording is saved before the machine sleeps.
+
+| Windows says | Event | While recording |
+|---|---|---|
+| `PBT_APMSUSPEND` | `Suspend` | Stop, save, mark `ended_by: "sleep"`, flush the database. Budget 2 s. |
+| `WM_QUERYENDSESSION` | `QueryEndSession` | Log only, answer TRUE (never veto). Another program may still veto, so nothing is cut. |
+| `WM_ENDSESSION`, `wParam` 1 | `EndSession { ending: true }` | Stop, save, mark `ended_by: "logoff"`, flush the database. Budget 4.5 s. |
+| `WM_ENDSESSION`, `wParam` 0 | `EndSession { ending: false }` | Log only: the logoff was cancelled and the recording goes on. |
+| `WTS_SESSION_LOCK` / `UNLOCK` | `Lock` / `Unlock` | Log only. A locked screen is an ordinary meeting. |
+| `PBT_APMRESUMEAUTOMATIC` or `PBT_APMRESUMESUSPEND` | `Resume` | Tell the user once that the meeting ended (event `recording-interrupted`). **Never starts a recording.** |
+
+The stop is the normal one (`stop_recording_for_power`): capture stops, the
+writer drains and commits, so the raw tracks (`.checkpoints/`, committed every
+second) are complete and `recording-stopped` carries `ended_by`. `metadata.json`
+gets `ended_by` (`sleep` or `logoff`) and `ended_at` in the same write that sets
+`status: completed`. The encode and the check from #26 (`microphone.m4a`,
+`system.m4a`, `audio.mp4`) run in the background afterwards. If the machine
+sleeps first, they go on after it wakes. If the process is ended by a logoff,
+`finalize_pending_at_startup` finishes them at the next start; the raw tracks
+stay until the check says `ok`. If saving does not finish inside the budget,
+the log says so, the user is still told on resume (audio "not confirmed") and saving goes on in the background; the stop and the database flush share one budget; a hard cut still costs
+only the seconds since the last checkpoint (#6).
+
+Known limit: the flush (`wal_checkpoint`) covers what is already committed.
+The meeting row is written by the UI listener of `recording-stopped`, a moment
+later, so a logoff can end the process before it exists. The meeting folder
+with `metadata.json` and the audio is kept either way and is found again by
+the recovery at the next start.
+
+The user sees it in the app: the **Møder** page shows a card "Et møde blev
+afsluttet af systemet" with the cause, the time, what happened to the audio
+(`ok`: whole until the interruption; `delvis`: partly saved, raw tracks kept;
+`fejlet`: not finalised, raw tracks kept; unknown: not confirmed in time) and
+that no new recording starts by itself. The notice is also written to
+`interrupted-recording.json` in the data folder, so a logoff is explained at
+the next start; "Forstået" removes it.
+
+Log lines (one per event, `tingskriver-app.log`):
+
+```
+power: PBT_APMSUSPEND at 2026-11-05T10:00:00+01:00; recording=true; action=FinishRecording(Sleep)
+power: recording ended by sleep at 2026-11-05T10:00:00+01:00; audio ok; folder saved: true
+power: database flushed to disk
+power: PBT_APMRESUMEAUTOMATIC at 2026-11-05T10:20:10+01:00; recording=false; action=AnnounceResume
+power: telling the user that the meeting ended (sleep)
+```
+
+Tests: `audio::power` (decisions, order, notice text and file) in core;
+`power` in the host (message mapping, and a fake `PowerSource` showing that
+the recording is saved before "the machine sleeps"). The Win32 window itself
+can only be tried on Windows (below).
+
 ## Manual test on Windows
 
 Use the `tingskriver-app-windows-x64` artifact from the branch's Rust
@@ -191,3 +255,39 @@ the tray says so.
    the icon.
 7. **No keys in the log.** Type a sentence in Notepad with the app running,
    then search `tingskriver-app.log` for a word of it: not there.
+
+### Sleep, lock and logoff during a recording (#179)
+
+Needs a build where a recording can be started in the process that runs the
+host. The GPUI shell has no "Ny optagelse" yet (the tray entry only opens the
+window), so the steps with a recording wait for the meeting page; steps 8 and 9
+work today. Use a copy of the data (`TINGSKRIVER_DATA_DIR`) and a short test
+meeting. After each step, read the `power:` lines in `tingskriver-app.log`.
+
+8. **Lock and unlock, idle.** Win+L, unlock. Log: `WTS_SESSION_LOCK` and
+   `WTS_SESSION_UNLOCK`, both `action=LogOnly`.
+9. **Sleep, idle.** Start menu → Sleep, wake. Log: `PBT_APMSUSPEND` with
+   `recording=false` and `action=LogOnly`, then `PBT_APMRESUMEAUTOMATIC`. No
+   notice in the app, no new recording.
+10. **Lock during a recording.** Record, Win+L, wait a minute, unlock. The
+    recording is still running and the audio has no gap beyond the lock.
+11. **Sleep during a recording.** Record 1 minute of speech, close the lid (or
+    Sleep). After waking: no recording runs; the Møder page shows "Et møde
+    blev afsluttet af systemet", cause "dvale", the time and "Lyden er gemt
+    og hel indtil afbrydelsen". Log: suspend with `recording=true`,
+    `recording ended by sleep`, `database flushed`, resume, `telling the
+    user`. `metadata.json` of the meeting has `"ended_by": "sleep"`. After a
+    minute `audio.mp4` exists, plays to the moment of sleep, and
+    the `.checkpoints` folder is gone (status `ok`). Nothing records after waking.
+12. **Logoff during a recording.** Record 1 minute, sign out, sign in. The app
+    (started at sign-in) shows the same card with cause "logget af". Log:
+    `WM_QUERYENDSESSION`, `WM_ENDSESSION (ending)`, `recording ended by
+    logoff`. `ended_by` is `logoff`. If `audio.mp4` is missing, it appears
+    within a minute of the start (`finalize_pending_at_startup`).
+13. **Cancelled logoff.** Open Notepad with unsaved text, record, sign out, and
+    choose "Annuller"/stay when Windows asks about the unsaved text. Log:
+    `WM_QUERYENDSESSION`, and if `WM_ENDSESSION (cancelled)` arrives, the
+    recording goes on. (If Windows ended the session anyway, step 12 applies.)
+14. **Shortened recording.** A recording that sleep cut short is marked in
+    three places: the card in the app, `ended_by`/`ended_at` in `metadata.json`
+    and the `ended_by` field of the `recording-stopped` event.

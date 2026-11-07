@@ -243,6 +243,15 @@ impl DatabaseManager {
         }
     }
 
+    /// Move every committed change into the main database file without
+    /// closing anything (before sleep or logoff, issue #179).
+    pub async fn checkpoint(&self) -> Result<()> {
+        sqlx::query("PRAGMA wal_checkpoint(FULL)")
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     /// Checkpoint the WAL and close the pool, on application shutdown:
     /// every committed change is then in the main database file. SQLite
     /// itself removes the `-wal` and `-shm` files when the last connection

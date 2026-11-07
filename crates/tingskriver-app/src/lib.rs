@@ -107,6 +107,8 @@ pub fn run() {
         }
     };
     let bridge = host.as_ref().map(|h| h.bridge().clone());
+    // Core's events, for the notice that sleep or logoff ended a meeting.
+    let events = bridge.as_ref().map(|b| b.subscribe());
     // With a tray icon, closing the window hides the app to the tray.
     let keep_running = host.as_ref().is_some_and(Host::has_tray);
 
@@ -153,6 +155,21 @@ pub fn run() {
             }
             ui::init(model, cx);
 
+            if let Some(mut events) = events {
+                cx.spawn(async move |cx| {
+                    while let Some(event) = events.recv().await {
+                        if event.name != "recording-interrupted" {
+                            continue;
+                        }
+                        match serde_json::from_str(&event.payload_json) {
+                            Ok(notice) => cx.update(|cx| ui::set_interrupted(notice, cx)),
+                            Err(e) => log::warn!("recording-interrupted: unreadable payload: {e}"),
+                        }
+                    }
+                })
+                .detach();
+            }
+
             if let Some(mut messages) = messages {
                 cx.spawn(async move |cx| {
                     while let Some(message) = messages.recv().await {
@@ -193,6 +210,7 @@ pub fn run() {
                 ui::show_main_window(cx);
             }
             ui::load_database(cx);
+            ui::load_interrupted(cx);
         });
     // Remove the tray icon, the shortcuts and the hook before the runtime goes.
     drop(host);

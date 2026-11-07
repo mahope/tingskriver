@@ -9,7 +9,7 @@
 use std::cell::RefCell;
 use std::ptr::{null, null_mut};
 use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::{Arc, Once};
+use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -18,21 +18,29 @@ use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::Foundation::{
-    GetLastError, ERROR_HOTKEY_ALREADY_REGISTERED, HWND, LPARAM, LRESULT, WPARAM,
+    GetLastError, ERROR_CLASS_ALREADY_EXISTS, ERROR_HOTKEY_ALREADY_REGISTERED, HWND, LPARAM,
+    LRESULT, WPARAM,
 };
 use windows_sys::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows_sys::Win32::System::Power::{
+    RegisterSuspendResumeNotification, UnregisterSuspendResumeNotification, HPOWERNOTIFY,
+};
+use windows_sys::Win32::System::RemoteDesktop::{
+    WTSRegisterSessionNotification, WTSUnRegisterSessionNotification, NOTIFY_FOR_THIS_SESSION,
+};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{RegisterHotKey, UnregisterHotKey};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW, PostMessageW,
-    PostQuitMessage, RegisterClassExW, TranslateMessage, HWND_MESSAGE, MSG, WM_APP, WM_CLOSE,
-    WM_DESTROY, WM_HOTKEY, WNDCLASSEXW,
+    PostQuitMessage, RegisterClassExW, TranslateMessage, DEVICE_NOTIFY_WINDOW_HANDLE, HWND_MESSAGE,
+    MSG, WM_APP, WM_CLOSE, WM_DESTROY, WM_HOTKEY, WNDCLASSEXW, WNDPROC,
 };
 
 use crate::hotkeys::{Hotkeys, RegisterError, Registrar};
 use crate::icon;
+use crate::power::{self, PowerSink};
 use crate::status::{IconState, MenuEntry, TrayStatus};
 use crate::watch::Wanted;
 use crate::Trigger;
@@ -56,12 +64,12 @@ pub(crate) struct HostThread {
 }
 
 impl HostThread {
-    pub fn start(sink: Sink) -> Result<HostThread, String> {
+    pub fn start(sink: Sink, power: PowerSink) -> Result<HostThread, String> {
         let (tx, rx) = channel();
         let (ready_tx, ready_rx) = channel::<Result<(isize, bool), String>>();
         let thread = std::thread::Builder::new()
             .name("tingskriver-host".into())
-            .spawn(move || host_thread(rx, sink, ready_tx))
+            .spawn(move || host_thread(rx, sink, power, ready_tx))
             .map_err(|e| format!("could not start the host thread: {e}"))?;
         match ready_rx.recv_timeout(Duration::from_secs(10)) {
             Ok(Ok((hwnd, has_tray))) => Ok(HostThread {
@@ -168,10 +176,97 @@ struct State {
     icon: Option<IconState>,
     tooltip: String,
     hotkeys: Hotkeys<Win32Registrar>,
+    session: Option<PowerWindow>,
 }
 
 thread_local! {
     static STATE: RefCell<Option<State>> = const { RefCell::new(None) };
+    static POWER: RefCell<Option<PowerSink>> = const { RefCell::new(None) };
+}
+
+/// A hidden top-level window for sleep, lock and logoff (issue #179).
+/// `WM_QUERYENDSESSION` and `WM_ENDSESSION` are broadcast to top-level
+/// windows only, so the message-only host window cannot get them.
+struct PowerWindow {
+    hwnd: HWND,
+    suspend: HPOWERNOTIFY,
+    sessions: bool,
+}
+
+impl PowerWindow {
+    fn create(sink: PowerSink) -> Option<PowerWindow> {
+        POWER.with(|p| *p.borrow_mut() = Some(sink));
+        let hwnd =
+            match create_hidden_window("TingskriverStroem\0", null_mut(), Some(power_wndproc)) {
+                Ok(hwnd) => hwnd,
+                Err(e) => {
+                    log::error!("power: window for sleep and logoff could not be created: {e}");
+                    return None;
+                }
+            };
+        // SAFETY: the window belongs to this thread; both registrations are
+        // undone in `Drop`.
+        let (suspend, sessions) = unsafe {
+            (
+                RegisterSuspendResumeNotification(hwnd, DEVICE_NOTIFY_WINDOW_HANDLE),
+                WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION) != 0,
+            )
+        };
+        if suspend == 0 {
+            log::error!(
+                "power: sleep notifications could not be registered: {}",
+                unsafe { GetLastError() }
+            );
+        }
+        if !sessions {
+            log::warn!("power: lock and unlock notifications could not be registered");
+        }
+        log::info!("power: listening for sleep, resume, lock, unlock and logoff");
+        Some(PowerWindow {
+            hwnd,
+            suspend,
+            sessions,
+        })
+    }
+}
+
+impl Drop for PowerWindow {
+    fn drop(&mut self) {
+        // SAFETY: undoing what `create` did, on the same thread.
+        unsafe {
+            if self.suspend != 0 {
+                UnregisterSuspendResumeNotification(self.suspend);
+            }
+            if self.sessions {
+                WTSUnRegisterSessionNotification(self.hwnd);
+            }
+            DestroyWindow(self.hwnd);
+        }
+        POWER.with(|p| p.borrow_mut().take());
+    }
+}
+
+/// Messages for the power window. The sink saves the recording before it
+/// returns; Windows waits for this function, so that is what keeps the
+/// machine awake long enough.
+unsafe extern "system" fn power_wndproc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    let Some(event) = power::event_from_message(msg, wparam) else {
+        return DefWindowProcW(hwnd, msg, wparam, lparam);
+    };
+    // Clone first, so the borrow is over while the sink works.
+    if let Some(sink) = POWER.with(|p| p.borrow().clone()) {
+        sink(event);
+    }
+    match msg {
+        // Never veto a logoff or sleep; TRUE lets it go ahead.
+        power::WM_QUERYENDSESSION | power::WM_POWERBROADCAST => 1,
+        _ => 0,
+    }
 }
 
 fn menu_id(entry: MenuEntry) -> &'static str {
@@ -197,6 +292,7 @@ fn tray_icon(state: IconState) -> Option<Icon> {
 fn host_thread(
     commands: Receiver<Command>,
     sink: Sink,
+    power: PowerSink,
     ready: Sender<Result<(isize, bool), String>>,
 ) {
     let hwnd = match create_window() {
@@ -262,6 +358,7 @@ fn host_thread(
     };
 
     let has_tray = tray.is_some();
+    let session = PowerWindow::create(power);
     STATE.with(|s| {
         *s.borrow_mut() = Some(State {
             commands,
@@ -271,6 +368,7 @@ fn host_thread(
             icon: Some(status.icon()),
             tooltip,
             hotkeys: Hotkeys::new(Win32Registrar { hwnd }),
+            session,
         })
     });
     let _ = ready.send(Ok((hwnd as isize, has_tray)));
@@ -289,19 +387,30 @@ fn host_thread(
 }
 
 fn create_window() -> Result<HWND, String> {
-    static REGISTER: Once = Once::new();
-    let class: Vec<u16> = "TingskriverVaert\0".encode_utf16().collect();
-    // SAFETY: the class name outlives the calls; `wndproc` has the right signature.
+    create_hidden_window("TingskriverVaert\0", HWND_MESSAGE, Some(wndproc))
+}
+
+/// A hidden window of `class_name` (NUL-terminated); `parent` is
+/// `HWND_MESSAGE` for a message-only window, null for a top-level one.
+fn create_hidden_window(class_name: &str, parent: HWND, proc: WNDPROC) -> Result<HWND, String> {
+    let class: Vec<u16> = class_name.encode_utf16().collect();
+    // SAFETY: the class name outlives the calls; `proc` has the right signature.
     unsafe {
         let instance = GetModuleHandleW(null());
-        REGISTER.call_once(|| {
-            let mut wc: WNDCLASSEXW = std::mem::zeroed();
-            wc.cbSize = std::mem::size_of::<WNDCLASSEXW>() as u32;
-            wc.lpfnWndProc = Some(wndproc);
-            wc.hInstance = instance;
-            wc.lpszClassName = class.as_ptr();
-            RegisterClassExW(&wc);
-        });
+        let mut wc: WNDCLASSEXW = std::mem::zeroed();
+        wc.cbSize = std::mem::size_of::<WNDCLASSEXW>() as u32;
+        wc.lpfnWndProc = proc;
+        wc.hInstance = instance;
+        wc.lpszClassName = class.as_ptr();
+        // A second window of the same class finds it registered, which is
+        // fine; any other failure is real and would only show up later as a
+        // window that cannot be created.
+        if RegisterClassExW(&wc) == 0 {
+            let error = GetLastError();
+            if error != ERROR_CLASS_ALREADY_EXISTS {
+                return Err(format!("RegisterClassExW failed: error {error}"));
+            }
+        }
         let hwnd = CreateWindowExW(
             0,
             class.as_ptr(),
@@ -311,7 +420,7 @@ fn create_window() -> Result<HWND, String> {
             0,
             0,
             0,
-            HWND_MESSAGE,
+            parent,
             null_mut(),
             instance,
             null(),
@@ -353,6 +462,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             STATE.with(|s| {
                 if let Some(state) = s.borrow_mut().as_mut() {
                     state.hotkeys.clear();
+                    // Unregisters the sleep notifications and destroys its window.
+                    state.session.take();
                     // Remove the icon now, not when the thread's locals go.
                     state.tray.take();
                 }
@@ -433,7 +544,7 @@ mod tests {
 
     #[test]
     fn host_thread_registers_and_swaps_shortcuts_while_running() {
-        let thread = HostThread::start(Arc::new(|_| {})).expect("host thread");
+        let thread = HostThread::start(Arc::new(|_| {}), Arc::new(|_| {})).expect("host thread");
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()

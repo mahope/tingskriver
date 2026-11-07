@@ -23,6 +23,7 @@
 pub mod bridge;
 pub mod hotkeys;
 pub mod icon;
+pub mod power;
 pub mod status;
 pub mod watch;
 #[cfg(windows)]
@@ -113,15 +114,26 @@ impl Host {
             move |trigger: Trigger| handle_trigger(trigger, &handle, &runtime, &requests)
         };
 
+        // Sleep and logoff end a running recording first (issue #179).
+        let power_sink: power::PowerSink = {
+            let controller = Arc::new(tingskriver_core::audio::power::PowerController::new(
+                tingskriver_core::audio::power::CoreSession::new(handle.clone(), runtime.clone()),
+            ));
+            Arc::new(move |event| controller.handle(event))
+        };
+
         #[cfg(windows)]
         {
-            match win::HostThread::start(Arc::new(on_trigger)) {
+            match win::HostThread::start(Arc::new(on_trigger), power_sink) {
                 Ok(thread) => host.thread = Some(Arc::new(thread)),
                 Err(e) => log::error!("Tray and shortcuts could not start: {e}"),
             }
         }
         #[cfg(not(windows))]
-        drop(on_trigger);
+        {
+            drop(on_trigger);
+            drop(power_sink);
+        }
 
         // Two hooks on Ctrl+Win would insert every dictation twice.
         if old_app_running(process_names()) {

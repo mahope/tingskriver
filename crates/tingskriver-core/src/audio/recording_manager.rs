@@ -389,6 +389,11 @@ impl RecordingManager {
         self.state.has_fatal_error()
     }
 
+    /// Sleep or logoff ends this recording: `metadata.json` will say so.
+    pub fn set_ended_by(&mut self, cause: &str, at: &str) {
+        self.recording_saver.set_ended_by(cause, at);
+    }
+
     /// Set the meeting name for this recording session
     pub fn set_meeting_name(&mut self, name: Option<String>) {
         self.recording_saver.set_meeting_name(name);
