@@ -57,6 +57,41 @@ startup/recovery dialogs or transcription. It proves process-crash recovery,
 not power-loss
 survival. Ordinary CI continues to run the existing focused audio unit tests.
 
+## Channel isolation with pilot tones (#189)
+
+Tones that find gaps do not find leakage between the channels. The
+`recording_soak isolation` mode records three phases through the same production
+capture and writer: both pilots (523 Hz on the microphone, 997 Hz on the system),
+only the microphone pilot, only the system pilot. It then analyses the saved
+tracks (`audio::isolation`) and prints the isolation per phase in dB, the clipped
+share and the duration difference. A muted or mis-routed channel fails as a missing
+pilot, not as a good isolation. The recording is never touched: the analysis reads
+the finished files.
+
+The microphone track passes through the production capture filters (high-pass,
+noise suppression, loudness normalisation in `pipeline.rs`) before it is saved, and
+the analysis measures what is saved. A normaliser can raise the microphone pilot and
+a noise suppressor can dampen a pure tone, so read the reported pilot level and
+isolation figures with that in mind; they have not been compared with and without
+the filters yet.
+
+```sh
+cargo run --locked -p tingskriver-core --example recording_soak -- \
+  isolation /tmp/isolation 2 docs/kanalisolation-graenser.json
+```
+
+`scripts/recording-soak.py` runs it after the soak variants (`--isolation-seconds`,
+default 3 per phase, 0 skips it); the `Rust` workflow runs it on every push. The
+thresholds are only in `docs/kanalisolation-graenser.json`, which the tools and
+[the release checklist](release-checkliste.md#kanalisolation-før-hver-release) share.
+
+For a recording from a real machine, run the `kanalisolation` example on the two
+saved WAV tracks and the phase times (`both:0:10 mic:10:20 system:20:30`); it exits
+0 for pass, 1 for leakage/clipping/duration and 2 for unusable input, and `--json`
+prints the report as JSON. `scripts/tests/test_kanalisolation.py` runs it on clean
+and leaking WAV fixtures (`KANALISOLATION_BINARY`). The method is inspired by the
+anarlog Linux audio test (MIT, Fastrepl, Inc.); no code is copied.
+
 ## Manual hardware variant (Windows)
 
 Use only synthetic audio, never real voices. Play a generated continuous tone

@@ -26,6 +26,7 @@ pub mod recording_manager;
 pub mod recording_commands;
 pub mod recording_preferences;
 pub mod recording_saver;
+pub mod isolation;          // Pilot-tone channel isolation between the two tracks
 pub mod incremental_saver;  // Crash recovery and cleanup commands for the raw tracks
 pub mod track_writer;       // One track written continuously as WAV segments
 pub mod recording_writer;   // Writer thread: capture -> bounded channel -> track files
