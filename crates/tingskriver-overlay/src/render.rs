@@ -207,8 +207,10 @@ fn draw_spinner(pixmap: &mut Pixmap, cx: f32, cy: f32, s: f32, turn: f32) {
         ..Stroke::default()
     };
     let r = (size::INDICATOR - size::SPINNER_STROKE) * s / 2.0;
-    let mut paint = Paint::default();
-    paint.anti_alias = true;
+    let mut paint = Paint {
+        anti_alias: true,
+        ..Paint::default()
+    };
 
     if let Some(ring) = PathBuilder::from_circle(cx, cy, r) {
         paint.set_color(theme::MUTED_FOREGROUND.with_alpha(0.4));
@@ -241,8 +243,10 @@ fn draw_check(pixmap: &mut Pixmap, cx: f32, cy: f32, s: f32) {
     pb.line_to(cx - u * 0.25, cy + u * 0.6);
     pb.line_to(cx + u * 0.85, cy - u * 0.55);
     let Some(path) = pb.finish() else { return };
-    let mut paint = Paint::default();
-    paint.anti_alias = true;
+    let mut paint = Paint {
+        anti_alias: true,
+        ..Paint::default()
+    };
     paint.set_color(theme::SUCCESS.color());
     let stroke = Stroke {
         width: size::CHECK_STROKE * s,
