@@ -405,17 +405,30 @@ uses the core playback API instead of JSON arrays of audio bytes.
 
 The pure `dictation::logic::identifiers` token pass runs only for `Style::Raw`,
 using the style already selected by `app_style` and dictation modes. It runs
-before spoken punctuation and leaves literal words, snippets and dictionary
-replacements protected. A trailing `camel case`, `snake case`, `kebab case` or
-`pascal case` formats the preceding plain-word phrase up to punctuation (also
-accepted as `camelCase`, `snake_case`, `kebab-case`, `PascalCase`). For example,
-`get user id camel case` becomes `getUserId`, `index punktum ts` becomes
-`index.ts`, and `git commit bindestreg m` becomes `git commit -m`.
+before spoken punctuation, after hesitation removal, and leaves literal words,
+snippets and dictionary replacements protected. A trailing `camel case`,
+`snake case`, `kebab case` or `pascal case` formats at most the three preceding
+plain words (also accepted as `camelCase`, `snake_case`, `kebab-case`,
+`PascalCase`). The scan stops at symbols, protected tokens and any word in the
+active spoken-command table, including words in multiword commands. Parts are
+lowercased before the requested casing is applied. This is a bounded heuristic:
+earlier words remain unchanged, even when they belong to a longer identifier.
+
+For example, `lav en variabel get user id camel case` becomes
+`lav en variabel getUserId`. `punktum` joins a filename only when the next word
+has at most four ASCII letters or digits and is not a spoken-command word:
+`index punktum ts` becomes `index.ts`, while `fix login punktum tilføj test`
+becomes `fix login. tilføj test`. Short prose words can still look like file
+extensions under this heuristic. `bindestreg` before an alphanumeric flag
+produces `-`, and two consecutive occurrences produce `--`, with a space
+before the flag: `ls bindestreg la` becomes `ls -la` and
+`cargo build bindestreg bindestreg release` becomes `cargo build --release`.
+Flag words are protected from subsequent casing commands.
 No application detection or I/O lives in this pass, so it can move to a text
 crate independently of desktop hosts.
 
-The 20-case `cleanup::tests::code_identifiers` table covers the four casing
-styles, filenames, command flags, paths, Danish words and unchanged input.
-With the identifier pass bypassed, 4 of 20 cases match; with it enabled,
-20 of 20 match. Separate tests cover normal-style isolation, application
-style overrides and protected literal, dictionary and snippet text.
+The `cleanup::tests::code_identifiers` and regression tests cover the four
+casing styles, bounded phrases, spoken-command boundaries, hesitations,
+filenames, prose punctuation, command flags, paths and Danish words. Separate
+tests cover normal-style isolation, application style overrides and protected
+literal, dictionary and snippet text.
