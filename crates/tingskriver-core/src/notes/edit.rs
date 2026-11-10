@@ -1,5 +1,6 @@
 //! In-memory editing only. Positions count extended graphemes across span boundaries.
 use super::{markdown, Block, BlockKind, Document, Span};
+use std::time::{Duration, Instant};
 use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
@@ -29,13 +30,14 @@ struct State {
     bold: bool,
     italic: bool,
 }
-/// Each modifying call is one undo step, including replacement of a selection.
+/// Consecutive typing is grouped by word and pauses; other edits are separate steps.
 /// History includes the selection and the style used for subsequent insertion.
 /// The document always contains at least one (possibly empty) paragraph.
 pub struct Editor {
     state: State,
     undo: Vec<State>,
     redo: Vec<State>,
+    typing: Option<(Instant, Selection)>,
 }
 impl Editor {
     pub fn new(document: Document) -> Self {
@@ -52,6 +54,7 @@ impl Editor {
             },
             undo: Vec::new(),
             redo: Vec::new(),
+            typing: None,
         }
     }
     pub fn document(&self) -> &Document {
@@ -73,6 +76,7 @@ impl Editor {
                 "Invalid note grapheme"
             );
         }
+        self.typing = None;
         self.state.selection = selection;
         // Continue the style immediately before the focus, or the first span at start.
         let p = selection.focus;
@@ -89,11 +93,15 @@ impl Editor {
         Ok(())
     }
     fn change(&mut self, edit: impl FnOnce(&mut Self)) {
+        self.typing = None;
         let before = self.state.clone();
         edit(self);
         self.state.document = self.document().canonical();
         if before != self.state {
             self.undo.push(before);
+            if self.undo.len() > 500 {
+                self.undo.remove(0);
+            }
             self.redo.clear();
         }
     }
@@ -153,6 +161,14 @@ impl Editor {
     }
     /// Insert typed text and recognize a shortcut only when it fills a paragraph.
     pub fn type_text(&mut self, input: &str) {
+        let now = Instant::now();
+        let word = input.unicode_words().next().is_some() && input.split_word_bounds().count() == 1;
+        let join = word
+            && self.typing.is_some_and(|(time, selection)| {
+                now.duration_since(time) < Duration::from_millis(1000)
+                    && selection == self.selection()
+            });
+        let prior_undo = if join { self.undo.pop() } else { None };
         self.change(|e| {
             e.replace(input);
             let p = e.selection().focus;
@@ -166,6 +182,8 @@ impl Editor {
             }
             let kind = match t.as_str() {
                 "# " => BlockKind::Heading(1),
+                "## " => BlockKind::Heading(2),
+                "### " => BlockKind::Heading(3),
                 "- " => BlockKind::Bullet,
                 "[] " => BlockKind::Checkbox(false),
                 "1. " => BlockKind::Numbered,
@@ -175,12 +193,22 @@ impl Editor {
             block.spans.clear();
             e.collapse(p.block, 0);
         });
+        if let Some(before) = prior_undo {
+            self.undo.pop();
+            self.undo.push(before);
+        }
+        self.typing = word.then_some((now, self.selection()));
     }
     pub fn enter(&mut self) {
         self.change(|e| {
             e.replace("");
             let p = e.selection().focus;
             let block = &e.document().blocks[p.block];
+            if p.grapheme == 0 && !text(block).is_empty() {
+                e.state.document.blocks.insert(p.block, empty_block());
+                e.collapse(p.block + 1, 0);
+                return;
+            }
             let list = matches!(
                 block.kind,
                 BlockKind::Bullet | BlockKind::Numbered | BlockKind::Checkbox(_)
@@ -213,6 +241,13 @@ impl Editor {
                 e.state.document.blocks[a.block].kind = BlockKind::Paragraph;
             } else if a.block > 0 {
                 let previous = &e.document().blocks[a.block - 1];
+                if text(previous).is_empty() && previous.created_offset_ms.is_none() {
+                    let current = e.document().blocks[a.block].clone();
+                    e.state.document.blocks[a.block - 1].kind = current.kind;
+                    e.state.document.blocks[a.block - 1].created_offset_ms =
+                        current.created_offset_ms;
+                }
+                let previous = &e.document().blocks[a.block - 1];
                 e.state.selection.anchor = Position {
                     block: a.block - 1,
                     grapheme: text(previous).graphemes(true).count(),
@@ -234,10 +269,11 @@ impl Editor {
                 return;
             }
             let selected = e.selected_blocks();
-            let enabled = !selected.iter().flat_map(|b| &b.spans).all(|s| match style {
-                Style::Bold => s.bold,
-                Style::Italic => s.italic,
-            });
+            let enabled = !selected.iter().any(|b| !b.spans.is_empty())
+                || !selected.iter().flat_map(|b| &b.spans).all(|s| match style {
+                    Style::Bold => s.bold,
+                    Style::Italic => s.italic,
+                });
             for i in a.block..=b.block {
                 let block = &e.document().blocks[i];
                 let start = if i == a.block {
@@ -307,6 +343,7 @@ impl Editor {
         copied
     }
     pub fn undo(&mut self) -> bool {
+        self.typing = None;
         if let Some(state) = self.undo.pop() {
             self.redo.push(std::mem::replace(&mut self.state, state));
             true
@@ -315,6 +352,7 @@ impl Editor {
         }
     }
     pub fn redo(&mut self) -> bool {
+        self.typing = None;
         if let Some(state) = self.redo.pop() {
             self.undo.push(std::mem::replace(&mut self.state, state));
             true
@@ -356,4 +394,26 @@ fn slice(block: &Block, start: usize, end: usize) -> Vec<Span> {
         offset += s.text.len();
     }
     spans
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn notes_typing_pause_and_other_operations_start_new_groups() {
+        let mut e = Editor::new(Document::default());
+        e.type_text("a");
+        e.typing.as_mut().unwrap().0 = Instant::now() - Duration::from_secs(2);
+        e.type_text("b");
+        assert!(e.undo());
+        assert_eq!(text(&e.document().blocks[0]), "a");
+        e.type_text("c");
+        e.insert_plain_text("d");
+        e.type_text("e");
+        assert!(e.undo());
+        assert_eq!(text(&e.document().blocks[0]), "acd");
+        assert!(e.undo());
+        assert_eq!(text(&e.document().blocks[0]), "ac");
+    }
 }
