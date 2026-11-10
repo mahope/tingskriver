@@ -30,7 +30,7 @@ pub(super) fn format(tokens: Vec<Tok>, style: Style) -> Vec<Tok> {
                     t.plain_word().is_none()
                         || matches!(
                             t.plain_word().as_deref(),
-                            Some("komma" | "semikolon" | "kolon" | "punktum" | "ny linje")
+                            Some("komma" | "semikolon" | "kolon" | "punktum")
                         )
                 })
                 .map_or(0, |index| index + 1);

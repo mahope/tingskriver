@@ -961,6 +961,8 @@ fn identifiers_leave_normal_danish_alone() {
     for (input, expected) in [
         ("get user id camel case", "Get user id camel case"),
         ("vi taler om snake case", "Vi taler om snake case"),
+        ("index punktum ts", "Index. Ts"),
+        ("git commit bindestreg m", "Git commit-m"),
         ("hej verden", "Hej verden"),
     ] {
         assert_eq!(normal(input), expected, "{input}");

@@ -400,3 +400,16 @@ OpenRouter's model list is async in core and in the Tauri wrapper. Its
 single-worker fake-server test covers stalled headers, stalled bodies and
 concurrent core calls. `read_audio_file` has already been removed; playback
 uses the core playback API instead of JSON arrays of audio bytes.
+
+## Code dictation identifiers
+
+The pure `dictation::logic::identifiers` token pass runs only for `Style::Raw`,
+using the style already selected by `app_style` and dictation modes. It runs
+before spoken punctuation and leaves literal words, snippets and dictionary
+replacements protected. A trailing `camel case`, `snake case`, `kebab case` or
+`pascal case` formats the preceding plain-word phrase up to punctuation (also
+accepted as `camelCase`, `snake_case`, `kebab-case`, `PascalCase`). For example,
+`get user id camel case` becomes `getUserId`, `index punktum ts` becomes
+`index.ts`, and `git commit bindestreg m` becomes `git commit -m`.
+No application detection or I/O lives in this pass, so it can move to a text
+crate independently of desktop hosts.
