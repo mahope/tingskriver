@@ -53,7 +53,10 @@ export function ImportDialogProvider({ children, onOpen }: ImportDialogProviderP
   }, [onOpen, betaFeatures]);
 
   const importTranscript = useCallback(async (filePath?: string | null) => {
-    if (importingRef.current) return;
+    if (importingRef.current) {
+      toast.info('Der er allerede en import i gang. Vent, til den er færdig.');
+      return;
+    }
     importingRef.current = true;
     try {
       const path = filePath ?? await invoke<string | null>('select_subtitle_file_command');

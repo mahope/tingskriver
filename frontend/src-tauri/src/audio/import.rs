@@ -22,7 +22,10 @@ pub async fn select_and_validate_audio_command<R: Runtime>(
         app_clone
             .dialog()
             .file()
-            .add_filter("Audio Files", &AUDIO_EXTENSIONS.iter().map(|s| *s).collect::<Vec<_>>())
+            .add_filter(
+                "Audio Files",
+                &AUDIO_EXTENSIONS.iter().map(|s| *s).collect::<Vec<_>>(),
+            )
             .blocking_pick_file()
     })
     .await
@@ -62,7 +65,15 @@ pub async fn start_import_audio_command<R: Runtime>(
     model: Option<String>,
     provider: Option<String>,
 ) -> Result<ImportStarted, String> {
-    tingskriver_core::audio::import::start_import_audio_command(crate::core_bridge::host(&app), source_path, title, language, model, provider).await
+    tingskriver_core::audio::import::start_import_audio_command(
+        crate::core_bridge::host(&app),
+        source_path,
+        title,
+        language,
+        model,
+        provider,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -96,7 +107,7 @@ pub async fn regenerate_summary_command<R: Runtime>(
     app: AppHandle<R>,
     state: tauri::State<'_, crate::state::AppState>,
     meeting_id: String,
-) -> Result<(), String> {
+) -> Result<tingskriver_core::summary::commands::ProcessTranscriptResponse, String> {
     tingskriver_core::subtitle::import::start_summary_for_meeting(
         crate::core_bridge::host(&app),
         &state,

@@ -177,3 +177,14 @@ describe('paginated transcript request ownership', () => {
     expect(requests).toHaveLength(1);
   });
 });
+
+test('retains imported speaker names in virtualized segments', async () => {
+  await show('A');
+  await resolve(request('metadata', 'A'), { ...metadata('A'), is_imported: true });
+  const result = page('Spoken words');
+  await resolve(request('transcripts', 'A'), {
+    ...result, transcripts: [{ ...result.transcripts[0], speaker: 'Anna Testesen' }],
+  });
+  expect(state.segments[0].speaker).toBe('Anna Testesen');
+  expect(state.metadata?.is_imported).toBe(true);
+});

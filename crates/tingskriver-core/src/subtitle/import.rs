@@ -243,7 +243,7 @@ pub async fn start_summary_for_meeting(
     app: HostHandle,
     state: &AppState,
     meeting_id: &str,
-) -> Result<(), String> {
+) -> Result<crate::summary::commands::ProcessTranscriptResponse, String> {
     let (provider, model, text) = prepare_summary(state.db_manager.pool(), meeting_id).await?;
     crate::summary::commands::api_process_transcript(
         app,
@@ -260,7 +260,6 @@ pub async fn start_summary_for_meeting(
         None,
     )
     .await
-    .map(|_| ())
 }
 
 /// True when the meeting has no summary that is finished or running: no
@@ -400,6 +399,26 @@ mod tests {
         .fetch_all(&pool)
         .await
         .unwrap();
+        let details =
+            crate::database::repositories::meeting::MeetingsRepository::get_meeting(&pool, &id)
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            details.transcripts[0].speaker.as_deref(),
+            Some("Anna Testesen")
+        );
+        let metadata =
+            crate::database::repositories::meeting::MeetingsRepository::get_meeting_metadata(
+                &pool, &id,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(metadata.import_key.is_some());
+        let (page, _) = crate::database::repositories::meeting::MeetingsRepository::get_meeting_transcripts_paginated(&pool, &id, 10, 0)
+            .await.unwrap();
+        assert_eq!(page[0].speaker.as_deref(), Some("Anna Testesen"));
         assert_eq!(rows.len(), 2);
         assert_eq!(
             rows[0],

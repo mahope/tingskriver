@@ -69,6 +69,7 @@ interface UseSummaryGenerationProps {
   meeting: {
     id: string;
     created_at: string;
+    is_imported?: boolean;
   };
   transcripts: Transcript[];
   modelConfig: ModelConfig;
@@ -304,17 +305,19 @@ export function useSummaryGeneration({
         return;
       }
 
-      const result = await invokeTauri<ProcessTranscriptResponse>('api_process_transcript', {
-        text: transcriptText,
-        model: modelConfig.provider,
-        modelName: modelConfig.model,
-        meetingId: meeting.id,
-        chunkSize: 40000,
-        overlap: 1000,
-        customPrompt,
-        templateId: selectedTemplate,
-        summaryLanguage,
-      });
+      const result = meeting.is_imported
+        ? await invokeTauri<ProcessTranscriptResponse>('regenerate_summary_command', { meetingId: meeting.id })
+        : await invokeTauri<ProcessTranscriptResponse>('api_process_transcript', {
+          text: transcriptText,
+          model: modelConfig.provider,
+          modelName: modelConfig.model,
+          meetingId: meeting.id,
+          chunkSize: 40000,
+          overlap: 1000,
+          customPrompt,
+          templateId: selectedTemplate,
+          summaryLanguage,
+        });
       const processId = result.process_id;
       if (!mountedRef.current || visibleMeetingIdRef.current !== meeting.id) return;
       if (generationId !== generationIdRef.current) {
@@ -330,6 +333,7 @@ export function useSummaryGeneration({
     }
   }, [
     failGeneration,
+    meeting.is_imported,
     meeting.id,
     modelConfig,
     onMeetingUpdated,
@@ -385,7 +389,7 @@ export function useSummaryGeneration({
 
     return {
       transcriptText: allTranscripts
-        .map((transcript) => `${formatTime(transcript.audio_start_time, transcript.timestamp)} ${transcript.text}`)
+        .map((transcript) => `${formatTime(transcript.audio_start_time, transcript.timestamp)} ${transcript.speaker && !['mic', 'system'].includes(transcript.speaker) ? `${transcript.speaker}: ` : ''}${transcript.text}`)
         .join('\n'),
       transcriptTexts: allTranscripts.map((transcript) => transcript.text),
     };
