@@ -24,6 +24,14 @@ on:
 permissions:
   contents: read
 
+# A newer push to the same branch supersedes a running or queued older run
+# (33 runs were queued at once on 5/11-26). main keeps every run. The event
+# is part of the group so the push run of the newest commit is never
+# cancelled by its pull request run.
+concurrency:
+  group: wer-${{ github.event_name }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: ${{ github.ref_name != 'main' }}
+
 env:
   CARGO_TARGET_DIR: /home/runner/wer-target
   CARGO_INCREMENTAL: 0
