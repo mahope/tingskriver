@@ -278,6 +278,8 @@ fn handle_trigger(
                     let pill = overlay();
                     let state = if error == dictation::rerun::AUDIO_UNAVAILABLE_MESSAGE {
                         OverlayState::Refused(dictation::rerun::AUDIO_UNAVAILABLE_MESSAGE)
+                    } else if error == dictation::rerun::CLOUD_REFUSED_MESSAGE {
+                        OverlayState::Refused(dictation::rerun::CLOUD_REFUSED_MESSAGE)
                     } else {
                         OverlayState::Error
                     };

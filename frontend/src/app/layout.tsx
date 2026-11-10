@@ -1,7 +1,6 @@
 'use client'
 
 import './globals.css'
-import { RerunComparison } from '@/components/dictation/RerunComparison'
 import localFont from 'next/font/local'
 import Sidebar from '@/components/Sidebar'
 import { SidebarProvider } from '@/components/Sidebar/SidebarProvider'
@@ -260,7 +259,6 @@ export default function RootLayout({
                             <ImportDialogProvider onOpen={handleOpenImportDialog}>
                               {/* Download progress toast provider - listens for background downloads */}
                               <DownloadProgressToastProvider />
-                              <RerunComparison />
 
                               {/* Show onboarding or main app */}
                               {showOnboarding ? (

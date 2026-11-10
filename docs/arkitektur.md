@@ -130,12 +130,15 @@ The injected async provider makes this path testable without credentials.
 The optional `InsertLast` and `RerunLast` shortcuts are stored as `insertLast`
 and `rerunLast` in `shortcuts.json`. The host dispatches them to the core
 `dictation::rerun` module. Reinsertion uses the existing Windows target checks.
-Rerun switches between local Parakeet and Syv; local-only settings prevent cloud reruns.
+Rerun switches between local Parakeet and Syv. History stores the resolved provider,
+Syv model and language. Local-only settings and local-only or unknown original
+providers prevent cloud reruns, including legacy entries with no saved provider.
+Syv reruns reuse the saved model and language.
 The local path ensures Parakeet is ready before inference, reloading an idle-unloaded model.
 Missing audio produces a Danish pill message and no insertion.
 
 A successful rerun emits `dictation-rerun-comparison` through `AppHost`, with
-`historyId`, `before`, `after` and `changed`. Both shells listen globally and
+`historyId`, `before`, `after` and `changed`. Only the GPUI host emits and handles this event to
 show the original and new text with an explicit changed/unchanged status,
 bringing the window forward even when it was hidden. Closing the comparison
 discards it without inserting or overwriting anything. Shortcut settings controls
