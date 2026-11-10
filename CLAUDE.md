@@ -67,6 +67,6 @@ Put the logic in `crates/tingskriver-core` as a plain function (take a `HostHand
 - Rust uses `anyhow::Result`. Use `perf_debug!()`/`perf_trace!()` for hot-path logging (zero cost in release).
 - Share state across async tasks with `Arc<RwLock<T>>`, simple flags with `Arc<AtomicBool>`.
 - Audio devices are called "microphone" and "system" (not "input"/"output").
-- Use Tauri/GPUI path APIs, never hard-coded paths. Models live in `%APPDATA%\Tingskriver\models` in production and `frontend/models/` in development.
+- Use Tauri/GPUI path APIs, never hard-coded paths. Models live in `%APPDATA%\dk.mahoje.tingskriver\models` in production (`app_data_dir().join("models")`, see `tingskriver_core::paths`) and `frontend/models/` in development.
 - Branches: `main` is stable; work on `fix/*`, `enhance/*` or `issue/<n>-*` and open a PR to `main` ([CONTRIBUTING.md](CONTRIBUTING.md)).
 - The repository is public: no secrets, personal data or private paths. Test with synthetic fixtures ([docs/testing.md](docs/testing.md)).

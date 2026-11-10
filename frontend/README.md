@@ -31,7 +31,7 @@ A modern desktop application for recording, transcribing, and analyzing meetings
 
 ```
 /frontend
-├── src/                   # React frontend code
+├── src/                   # Next.js frontend code
 ├── src-tauri/             # Rust backend for Tauri
 ├── public/                # Static assets
 └── package.json           # Project dependencies
@@ -141,8 +141,8 @@ For build and acceleration details, see:
 
 ## Development
 
-### Frontend (React)
-- The frontend is built with React and Tailwind CSS
+### Frontend (Next.js, Tauri app, being phased out)
+- The frontend is built with Next.js 14 (React 18) and Tailwind CSS
 - Source code is in the `src/` directory
 - To run only the frontend: `pnpm run dev`
 

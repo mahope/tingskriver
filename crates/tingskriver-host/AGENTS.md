@@ -16,7 +16,7 @@ Det, der ikke må vente på GPUI's event loop: diktérhook, globale genveje, tra
 
 ## Invarianter
 
-- Hooken svarer på hvert tastetryk inden for ca. 1 ms, uanset hvad UI'et laver. Intet tungt arbejde på hooktråden.
+- Host må ikke blokere den hooktråd, den starter. Selve 1 ms-kravet til hooken ejes af `tingskriver-core` (`dictation/win.rs`).
 - Intet, der tastes, ses, gemmes, sendes eller logges. Loggen får genvejsetiketter og tal, aldrig tastenavne eller -koder (`tests/hook_through_host.rs`).
 - Andre tråde taler til host-tråden via en kø og en besked til dens vindue, ikke til tråden, så beskeder overlever modale løkker som den åbne tray-menu.
 - Indstillingsfiler skrives via en midlertidig fil og omdøbning.

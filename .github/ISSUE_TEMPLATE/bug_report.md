@@ -24,7 +24,7 @@ assignees: ''
 - Windows version: [e.g., Windows 11 23H2]
 - Tingskriver version: [see About / Om, e.g., 0.5.0]
 - Microphone and output device: [model or type]
-- Log file: [attach `tingskriver.log` from `%LOCALAPPDATA%\dk.mahoje.tingskriver\logs\`, with personal data removed]
+- Log file: [attach `tingskriver-app.log` (the current app) or `tingskriver.log` (the older Tauri app) from `%LOCALAPPDATA%\dk.mahoje.tingskriver\logs\`, with personal data removed]
 
 ## Screenshots/Videos
 [If applicable, add screenshots or videos to help explain your problem]

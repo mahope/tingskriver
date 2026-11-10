@@ -35,7 +35,7 @@ Find rækken for det, du har ændret. Kontrollen i anden kolonne skal være grø
 | Du ændrer | Kontrol | Kommando |
 |---|---|---|
 | `crates/tingskriver-core` (platformuafhængig kode) | Job "Core tests and crate boundaries (Linux)" | `cargo test --locked -p tingskriver-core` |
-| `crates/tingskriver-core`, en ny afhængighed | Samme job: core må ikke afhænge af UI-crates | `cargo tree -p tingskriver-core` (ingen `tauri`, `gpui`, `wry`, `webview2`) |
+| `crates/tingskriver-core`, en ny afhængighed | Samme job: core må ikke afhænge af UI-crates | Kommandoen under tabellen (ingen `tauri`, `gpui`, `wry`, `webview2`) |
 | `crates/tingskriver-core`, I/O eller HTTP i async kode | Async-I/O-vagten | `bash scripts/check-async-io-guard.sh` |
 | `crates/tingskriver-core/src/audio`, optagelse | Lydtests og optagesoak | `cargo build --release --locked -p tingskriver-core --example recording_soak`, derefter `python3 scripts/recording-soak.py --binary target/release/examples/recording_soak --output <ny mappe> --seconds 8 --interval 1` ([docs/recording-soak.md](docs/recording-soak.md)) |
 | Enhedsskift eller mute | Beslutningstabellen | `cargo test --locked -p tingskriver-core --test device_decisions` |
@@ -49,6 +49,13 @@ Find rækken for det, du har ændret. Kontrollen i anden kolonne skal være grø
 | `installer/`, `.github/workflows/app-release.yml` | Job "GPUI app artifact" og branch-build | Se [installer/README.md](installer/README.md); installeren kan kun prøves på Windows |
 | `frontend/` (Tauri) | Job "Windows workspace build and tests" | Byg på Windows |
 | Ny tekst, docs, `NOTICE.md` | Ingen automatisk kontrol | Læs den igennem; stavning og æøå skal stemme |
+
+Grænsekontrollen er CI-trinnet "Core has no UI dependencies" ([.github/workflows/rust.yml](.github/workflows/rust.yml)). Kør den lokalt sådan, og den må ikke finde noget:
+
+```bash
+cargo tree --locked -p tingskriver-core -e normal,build --prefix none --target all \
+  | grep -E '^(tauri|tauri-[a-z-]+|gpui|gpui-[a-z-]+|wry|webview2[a-z-]*) v'
+```
 
 Formatering: kør `rustfmt --edition 2021 <fil>` på de filer, du rører, aldrig på hele træet (se [docs/agenter.md](docs/agenter.md) for hvorfor). Ny og ændret kode skal være clippy-ren.
 

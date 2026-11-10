@@ -22,6 +22,6 @@ Kode, der er overtaget fra et andet projekt, registreres her med upstream-repo, 
 
 | Upstream | Revision | Filer | Ophavsret | Licens |
 |---|---|---|---|---|
-| [Meetily](https://github.com/Zackriya-Solutions/meetily) | Version 0.4.1 (hele træet ved forken) | Hele repoets udgangspunkt: `frontend/` (Tauri-appen), `backend/` (arkiveret) og den første lyd-, transskriptions- og resumékode, som siden er flyttet til `crates/tingskriver-core` og omskrevet i stor udstrækning | Copyright (c) 2024 Zackriya Solutions | MIT ([LICENSE.md](LICENSE.md)) |
+| [Meetily](https://github.com/Zackriya-Solutions/meetily) | Version 0.4.1, commit `a2cb62e827da7ef59f65064c97233efb2313878e` (tag `v0.4.1`; hele træet ved forken) | Hele repoets udgangspunkt: `frontend/` (Tauri-appen), `backend/` (arkiveret) og den første lyd-, transskriptions- og resumékode, som siden er flyttet til `crates/tingskriver-core` og omskrevet i stor udstrækning | Copyright (c) 2024 Zackriya Solutions | MIT ([LICENSE.md](LICENSE.md)) |
 
-Kun Meetily er kendt som portet kode i dag. Den nøjagtige upstream-commit for forken er ikke registreret i git-historikken; første kommit i dette repo er fra 2024-12-26. Tilføj en række for hver ny portering, med fuld commit-hash.
+Kun Meetily er kendt som portet kode i dag. Forkens første egne commits har `a2cb62e` som forælder; Meetilys historik ligger i dette repos git-historik (første kommit er fra 2024-12-26). Tilføj en række for hver ny portering, med fuld commit-hash.
