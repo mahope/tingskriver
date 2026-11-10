@@ -15,7 +15,7 @@ async fn export_meeting_renders_both_formats_without_replacing_existing_files() 
         notes: "Notes",
     };
     let existing = dir.path().join("2026-01-02 Planning_next.md");
-    std::fs::write(&existing, "keep me").unwrap();
+    tokio::fs::write(&existing, "keep me").await.unwrap();
     for (format, expected_name, expected_content) in [
         (
             Format::Markdown,
@@ -32,9 +32,15 @@ async fn export_meeting_renders_both_formats_without_replacing_existing_files() 
             .await
             .unwrap();
         assert_eq!(path.file_name().unwrap(), expected_name);
-        assert_eq!(std::fs::read_to_string(path).unwrap(), expected_content);
+        assert_eq!(
+            tokio::fs::read_to_string(path).await.unwrap(),
+            expected_content
+        );
     }
-    assert_eq!(std::fs::read_to_string(existing).unwrap(), "keep me");
+    assert_eq!(
+        tokio::fs::read_to_string(existing).await.unwrap(),
+        "keep me"
+    );
 }
 
 fn meeting() -> MeetingDetails {
@@ -226,14 +232,19 @@ async fn concurrent_exports_choose_different_paths() {
 async fn existing_directory_is_preserved_and_skipped() {
     let dir = tempfile::tempdir().unwrap();
     let existing = dir.path().join("meeting.md");
-    std::fs::create_dir(&existing).unwrap();
+    tokio::fs::create_dir(&existing).await.unwrap();
     let path = write_document(dir.path(), "meeting", Format::Markdown, "document".into())
         .await
         .unwrap();
     assert_eq!(path.file_name().unwrap(), "meeting (2).md");
-    assert!(existing.is_dir());
-    assert_eq!(std::fs::read_to_string(path).unwrap(), "document");
-    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 2);
+    assert!(tokio::fs::metadata(existing).await.unwrap().is_dir());
+    assert_eq!(tokio::fs::read_to_string(path).await.unwrap(), "document");
+    let mut entries = tokio::fs::read_dir(dir.path()).await.unwrap();
+    let mut count = 0;
+    while entries.next_entry().await.unwrap().is_some() {
+        count += 1;
+    }
+    assert_eq!(count, 2);
 }
 
 #[cfg(unix)]
@@ -242,15 +253,20 @@ async fn existing_symlink_is_preserved_without_touching_its_target() {
     let dir = tempfile::tempdir().unwrap();
     let target_dir = tempfile::tempdir().unwrap();
     let target = target_dir.path().join("original.md");
-    std::fs::write(&target, "original").unwrap();
+    tokio::fs::write(&target, "original").await.unwrap();
     let link = dir.path().join("meeting.md");
-    std::os::unix::fs::symlink(&target, &link).unwrap();
+    tokio::fs::symlink(&target, &link).await.unwrap();
     let path = write_document(dir.path(), "meeting", Format::Markdown, "document".into())
         .await
         .unwrap();
     assert_eq!(path.file_name().unwrap(), "meeting (2).md");
-    assert_eq!(std::fs::read_link(link).unwrap(), target);
-    assert_eq!(std::fs::read_to_string(target).unwrap(), "original");
-    assert_eq!(std::fs::read_to_string(path).unwrap(), "document");
-    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 2);
+    assert_eq!(tokio::fs::read_link(link).await.unwrap(), target);
+    assert_eq!(tokio::fs::read_to_string(target).await.unwrap(), "original");
+    assert_eq!(tokio::fs::read_to_string(path).await.unwrap(), "document");
+    let mut entries = tokio::fs::read_dir(dir.path()).await.unwrap();
+    let mut count = 0;
+    while entries.next_entry().await.unwrap().is_some() {
+        count += 1;
+    }
+    assert_eq!(count, 2);
 }
