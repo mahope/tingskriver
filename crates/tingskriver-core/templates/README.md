@@ -84,3 +84,28 @@ let available = templates::list_templates();
 let custom_json = std::fs::read_to_string("custom.json")?;
 let validated = templates::validate_template(&custom_json)?;
 ```
+
+## Danish templates and calendar suggestions
+
+The embedded Danish templates are `standard` (Standardreferat), `kunde`
+(Kundemøde), `one_to_one` (1:1) and `intern_status` (Intern status).
+Each contains Danish section instructions, decisions, tasks and open questions.
+The existing English template identifiers remain available.
+
+Core callers can use `templates::save_template(id, json).await` to create or
+edit a custom template and `templates::export_template(id).await` to export its
+complete JSON, including all section instructions and formatting hints. Saving a
+built-in identifier creates a user override. Invalid JSON and unsafe identifiers
+are rejected before writing; replacement is atomic. Disk work runs off the async
+executor. The directory is the same platform data directory used by the existing
+loader (`dirs::data_dir()/Meetily/templates`).
+
+`summary::template_rules::select_template(event, calendar_config)` suggests 1:1
+when the title contains `1:1`, otherwise Kunde when a non-declined attendee has a
+domain outside the user's `own_addresses`, otherwise Standard. Domains compare
+case-insensitively. Without configured own domains, external status is unknown
+and the suggestion is Standard. Intern status is selected manually. The function
+only returns an identifier and cannot modify meeting notes or saved summaries.
+
+These are core APIs. Desktop editor/export controls and applying calendar
+suggestions in the desktop meeting flow require separate shell integration.

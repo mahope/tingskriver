@@ -19,7 +19,7 @@
     },
     {
       "title": "Aftaler og opgaver",
-      "instruction": "Angiv opgave, ansvarlig og frist. Skriv ikke aftalt, hvis ansvarlig eller frist mangler. Opfind ikke aftaler. Skriv på dansk.",
+      "instruction": "Angiv opgave, ansvarlig og frist. Markér det som uafklaret, hvis ansvarlig eller frist mangler. Opfind ikke aftaler. Skriv på dansk.",
       "format": "list"
     },
     {
