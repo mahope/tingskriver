@@ -84,10 +84,15 @@ pub struct DictationRun {
     pub events: tokio::sync::mpsc::UnboundedReceiver<DictationState>,
     cancel: tokio_util::sync::CancellationToken,
     thread: Option<std::thread::JoinHandle<()>>,
+    service: Arc<Service>,
+    ticket: u64,
 }
 
 impl DictationRun {
     pub fn cancel(&self) {
+        if !is_dictating() && self.service.next_ticket.load(Ordering::SeqCst) == self.ticket + 1 {
+            self.service.overlay.set(OverlayState::Hidden);
+        }
         self.cancel.cancel();
     }
     pub fn join(mut self) -> std::thread::Result<()> {
@@ -97,11 +102,36 @@ impl DictationRun {
 
 impl Drop for DictationRun {
     fn drop(&mut self) {
-        self.cancel.cancel();
+        if self.thread.is_some() {
+            self.cancel();
+        }
     }
 }
 
 impl Service {
+    pub(super) async fn run_processing(
+        &self,
+        cancel: tokio_util::sync::CancellationToken,
+        turn: &Turn,
+        process: impl std::future::Future<Output = ()>,
+    ) {
+        tokio::pin!(process);
+        tokio::select! {
+            biased;
+            _ = cancel.cancelled() => {
+                let inserting = *turn.flow.current.lock().unwrap_or_else(|e| e.into_inner())
+                    == DictationState::Inserting;
+                if inserting {
+                    // OS insertion cannot be recalled. Keep the turn until it completes.
+                    process.await;
+                } else {
+                    turn.flow.set(DictationState::Cancelled);
+                }
+            }
+            _ = &mut process => {}
+        }
+    }
+
     pub(super) fn processing_token(&self) -> tokio_util::sync::CancellationToken {
         self.processing_cancel
             .lock()
@@ -116,6 +146,9 @@ impl Service {
             .processing_cancel
             .lock()
             .unwrap_or_else(|e| e.into_inner());
+        if !is_dictating() {
+            self.overlay.set(OverlayState::Hidden);
+        }
         token.cancel();
         *token = tokio_util::sync::CancellationToken::new();
     }
@@ -147,27 +180,45 @@ impl Service {
         let (tx, events) = tokio::sync::mpsc::unbounded_channel();
         let cancel = self.processing_token();
         let token = cancel.clone();
+        let ticket = self.next_ticket.fetch_add(1, Ordering::SeqCst);
         let service = self.clone();
-        let thread = std::thread::Builder::new().name("dictation-test".into()).spawn(move || {
-            runtime.block_on(async move {
-                let turn = Turn {
-                    ticket: service.next_ticket.fetch_add(1, Ordering::SeqCst),
-                    service: service.clone(),
-                    flow: Flow::new(service.states.clone(), Some(tx)),
-                };
-                let mut settings = service.settings();
-                settings.history_enabled = false;
-                tokio::select! {
-                    biased;
-                    _ = token.cancelled() => turn.flow.set(DictationState::Cancelled),
-                    _ = service.clone().process(samples, None, 0, None, (settings, None), Instant::now(), None, &turn) => {}
-                }
-            });
-        }).map_err(|e| e.to_string())?;
+        let thread = std::thread::Builder::new()
+            .name("dictation-test".into())
+            .spawn(move || {
+                runtime.block_on(async move {
+                    let turn = Turn {
+                        ticket,
+                        service: service.clone(),
+                        flow: Flow::new(service.states.clone(), Some(tx)),
+                    };
+                    let mut settings = service.settings();
+                    settings.history_enabled = false;
+                    service.overlay.set(OverlayState::Processing);
+                    service
+                        .run_processing(
+                            token,
+                            &turn,
+                            service.clone().process(
+                                samples,
+                                None,
+                                0,
+                                None,
+                                (settings, None),
+                                Instant::now(),
+                                None,
+                                &turn,
+                            ),
+                        )
+                        .await;
+                });
+            })
+            .map_err(|e| e.to_string())?;
         Ok(DictationRun {
             events,
             cancel,
             thread: Some(thread),
+            service: self.clone(),
+            ticket,
         })
     }
 }

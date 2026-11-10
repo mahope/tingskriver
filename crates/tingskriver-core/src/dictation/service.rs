@@ -644,11 +644,22 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant, Optio
                                 ticket,
                                 flow: s.flow,
                             };
-                            tokio::select! {
-                                biased;
-                                _ = cancel.cancelled() => turn.flow.set(DictationState::Cancelled),
-                                _ = service.process(samples, target_app, s.target_window, s.start_focus, (s.settings, s.mode), at, start_ms, &turn) => {}
-                            }
+                            service
+                                .run_processing(
+                                    cancel,
+                                    &turn,
+                                    service.clone().process(
+                                        samples,
+                                        target_app,
+                                        s.target_window,
+                                        s.start_focus,
+                                        (s.settings, s.mode),
+                                        at,
+                                        start_ms,
+                                        &turn,
+                                    ),
+                                )
+                                .await;
                         });
                     }
                 }
@@ -1145,6 +1156,7 @@ impl Service {
         {
             self.overlay.set(OverlayState::Hidden);
             turn.wait().await;
+            turn.flow.set(DictationState::Inserting);
             self.run_edit_command(command).await;
             return;
         }

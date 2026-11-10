@@ -28,18 +28,24 @@ impl AppHost for Host {
         Ok(())
     }
 }
-struct Pill;
+#[derive(Default)]
+struct Pill(Mutex<Vec<OverlayState>>);
 impl Overlay for Pill {
     fn ensure(&self) -> Result<(), String> {
         Ok(())
     }
-    fn set(&self, _: OverlayState) {}
+    fn set(&self, state: OverlayState) {
+        self.0.lock().unwrap().push(state);
+    }
 }
 #[derive(Default)]
 struct Fake {
     calls: Mutex<Vec<&'static str>>,
     inserted: Mutex<Vec<String>>,
     block: bool,
+    block_insert: bool,
+    inserting: tokio::sync::Notify,
+    release: tokio::sync::Notify,
     fail_local: bool,
     fail_insert: bool,
     started: tokio::sync::Notify,
@@ -80,6 +86,10 @@ impl DictationBackend for Fake {
         if self.fail_insert {
             return Err("fortrolig indsættelsesfejl zebra".into());
         }
+        self.inserting.notify_one();
+        if self.block_insert {
+            self.release.notified().await;
+        }
         self.inserted.lock().unwrap().push(text);
         Ok(())
     }
@@ -118,7 +128,7 @@ async fn dictation_flow_fallback_cancel_and_private_logs() {
     let fake = Arc::new(Fake::default());
     let service = Service::open_for_test(
         Arc::new(Host(dir.path().into())),
-        Arc::new(Pill),
+        Arc::new(Pill::default()),
         fake.clone(),
     )
     .await
@@ -155,7 +165,7 @@ async fn dictation_flow_fallback_cancel_and_private_logs() {
     });
     let service = Service::open_for_test(
         Arc::new(Host(dir.path().into())),
-        Arc::new(Pill),
+        Arc::new(Pill::default()),
         fake.clone(),
     )
     .await
@@ -220,7 +230,7 @@ async fn dictation_flow_fallback_cancel_and_private_logs() {
         });
         let service = Service::open_for_test(
             Arc::new(Host(dir.path().into())),
-            Arc::new(Pill),
+            Arc::new(Pill::default()),
             fake.clone(),
         )
         .await
@@ -248,4 +258,80 @@ async fn dictation_flow_fallback_cancel_and_private_logs() {
     ] {
         assert!(!logs.contains(private), "private data in logs");
     }
+}
+
+#[tokio::test]
+async fn cancellation_keeps_insertion_turn_until_insert_finishes() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = Arc::new(Fake {
+        block_insert: true,
+        ..Fake::default()
+    });
+    let service = Service::open_for_test(
+        Arc::new(Host(dir.path().into())),
+        Arc::new(Pill::default()),
+        fake.clone(),
+    )
+    .await
+    .unwrap();
+    let mut first = service.test_trigger(vec![0.2; 16000]).unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), fake.inserting.notified())
+        .await
+        .unwrap();
+    first.cancel();
+    let mut second = service.test_trigger(vec![0.2; 16000]).unwrap();
+    assert!(tokio::time::timeout(
+        std::time::Duration::from_millis(100),
+        fake.inserting.notified()
+    )
+    .await
+    .is_err());
+    fake.release.notify_one();
+    drain(&mut first).await;
+    first.join().unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), fake.inserting.notified())
+        .await
+        .unwrap();
+    fake.release.notify_one();
+    drain(&mut second).await;
+    second.join().unwrap();
+    assert_eq!(fake.inserted.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn cancellation_hides_processing_overlay() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = Arc::new(Fake {
+        block: true,
+        ..Fake::default()
+    });
+    let pill = Arc::new(Pill::default());
+    let service = Service::open_for_test(
+        Arc::new(Host(dir.path().into())),
+        pill.clone(),
+        fake.clone(),
+    )
+    .await
+    .unwrap();
+    let mut run = service.test_trigger(vec![0.2; 16000]).unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), fake.started.notified())
+        .await
+        .unwrap();
+    run.cancel();
+    drain(&mut run).await;
+    run.join().unwrap();
+    assert_eq!(pill.0.lock().unwrap().last(), Some(&OverlayState::Hidden));
+    let mut run = service.test_trigger(vec![0.2; 16000]).unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), fake.started.notified())
+        .await
+        .unwrap();
+    service.cancel_processing();
+    let recording = OverlayState::Recording {
+        level: 0.5,
+        locked: false,
+    };
+    pill.set(recording);
+    drain(&mut run).await;
+    run.join().unwrap();
+    assert_eq!(pill.0.lock().unwrap().last(), Some(&recording));
 }

@@ -387,7 +387,10 @@ lifecycle events through a broadcast channel: inactive → recording →
 processing → inserting → inactive. Error and cancellation return to inactive
 as well. Each overlapping dictation has its own lifecycle; the service stream
 can interleave those lifecycles. `cancel_processing` cancels pending processing;
-an insertion already handed to the operating system cannot be recalled.
+an insertion already handed to the operating system cannot be recalled. Its
+processing future and insertion turn remain alive until insertion completes,
+so cancellation cannot release the next insertion early. Cancelling processing
+hides its pill synchronously, before a newer recording can show its own pill.
 Interrupted keyboard chords cancel pending processing as well as capture.
 
 `Service::open_for_test` opens an isolated service with a fake `AppHost`,
