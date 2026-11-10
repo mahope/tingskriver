@@ -355,7 +355,6 @@ impl Service {
     /// (Re)install the keyboard hook according to the settings.
     #[cfg(windows)]
     fn apply_shortcut(self: &Arc<Self>) {
-        self.cancel_processing();
         let mut slot = match self.hook.lock() {
             Ok(slot) => slot,
             Err(_) => return,
@@ -520,6 +519,24 @@ fn foreground_window() -> usize {
     }
 }
 
+fn microphone_failure(error: &str) -> &'static str {
+    if error == "Ingen mikrofon fundet" {
+        "device_not_found"
+    } else if error == "Mikrofonen svarede ikke" {
+        "timeout"
+    } else if error.starts_with("Mikrofonen kan ikke bruges:") {
+        "input_config"
+    } else if error.starts_with("Kunne ikke åbne mikrofonen:") {
+        "open_stream"
+    } else if error.starts_with("Kunne ikke starte mikrofonen:") {
+        "start_stream"
+    } else if error.starts_with("could not start capture thread:") {
+        "capture_thread"
+    } else {
+        "capture_error"
+    }
+}
+
 fn flash_error(overlay: &Arc<dyn Overlay>) {
     flash(overlay, OverlayState::Error);
 }
@@ -546,9 +563,6 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant, Optio
     loop {
         let (actions, at) = match rx.recv_timeout(Duration::from_millis(50)) {
             Ok((signal, at, shortcut)) => {
-                if signal == ChordSignal::Interrupted {
-                    service.cancel_processing();
-                }
                 if signal == ChordSignal::Pressed && session.is_none() {
                     selected_shortcut = shortcut;
                 }
@@ -591,6 +605,7 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant, Optio
                     let flow = Flow::new(service.states.clone(), None);
                     match Recorder::start(&settings.capture_options()) {
                         Ok(recorder) => {
+                            flow.set(DictationState::Recording);
                             DICTATING.store(true, Ordering::Relaxed);
                             session = Some(Session {
                                 flow,
@@ -606,7 +621,7 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant, Optio
                         }
                         Err(e) => {
                             flow.set(DictationState::Error);
-                            log::warn!("Dictation microphone failed");
+                            log::warn!("Dictation microphone failed: {}", microphone_failure(&e));
                             service.set_error(Some(e));
                             gesture.reset();
                             flash_error(&service.overlay);
@@ -1486,6 +1501,152 @@ fn cleanup_options<'a>(
 #[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dictation_microphone_logs_only_failure_classes() {
+        for (error, class) in [
+            ("Ingen mikrofon fundet", "device_not_found"),
+            ("Mikrofonen svarede ikke", "timeout"),
+            ("Mikrofonen kan ikke bruges: private device", "input_config"),
+            ("Kunne ikke åbne mikrofonen: private device", "open_stream"),
+            (
+                "Kunne ikke starte mikrofonen: private device",
+                "start_stream",
+            ),
+            (
+                "could not start capture thread: private device",
+                "capture_thread",
+            ),
+            ("private unexpected error", "capture_error"),
+        ] {
+            assert_eq!(microphone_failure(error), class);
+        }
+    }
+
+    struct TestHost(PathBuf);
+    impl crate::host::AppHost for TestHost {
+        fn emit_json(&self, _: &str, _: &str) -> Result<(), String> {
+            Ok(())
+        }
+        fn database(&self) -> Option<crate::database::manager::DatabaseManager> {
+            None
+        }
+        fn app_data_dir(&self) -> Result<PathBuf, String> {
+            Ok(self.0.clone())
+        }
+        fn listen(&self, _: &str, _: Box<dyn Fn(&str) + Send + Sync>) -> crate::host::ListenerId {
+            0
+        }
+        fn unlisten(&self, _: crate::host::ListenerId) {}
+        fn read_setting(&self, _: &str, _: &str) -> Result<Option<serde_json::Value>, String> {
+            Ok(None)
+        }
+        fn write_setting(&self, _: &str, _: &str, _: serde_json::Value) -> Result<(), String> {
+            Ok(())
+        }
+    }
+    struct TestOverlay;
+    impl Overlay for TestOverlay {
+        fn ensure(&self) -> Result<(), String> {
+            Ok(())
+        }
+        fn set(&self, _: OverlayState) {}
+    }
+    #[derive(Default)]
+    struct PendingBackend {
+        started: tokio::sync::Notify,
+        release: tokio::sync::Notify,
+        inserted: Mutex<Vec<String>>,
+    }
+    #[async_trait::async_trait]
+    impl DictationBackend for PendingBackend {
+        fn syv_key(&self) -> Option<String> {
+            None
+        }
+        async fn local_available(&self) -> bool {
+            true
+        }
+        async fn syv(
+            &self,
+            _: &str,
+            _: &DictationSettings,
+            _: Vec<u8>,
+            _: String,
+            _: String,
+        ) -> Result<String, String> {
+            unreachable!()
+        }
+        async fn local(&self, _: Vec<f32>) -> Result<String, String> {
+            self.started.notify_one();
+            self.release.notified().await;
+            Ok("test sentence".into())
+        }
+        async fn insert(&self, text: String) -> Result<(), String> {
+            self.inserted.lock().unwrap().push(text);
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn dictation_pending_turn_survives_interruption_and_settings() {
+        for interrupted in [true, false] {
+            let dir = tempfile::tempdir().unwrap();
+            let backend = Arc::new(PendingBackend::default());
+            let service = Service::open_for_test(
+                Arc::new(TestHost(dir.path().into())),
+                Arc::new(TestOverlay),
+                backend.clone(),
+            )
+            .await
+            .unwrap();
+            let flow = Flow::new(service.states.clone(), None);
+            flow.set(DictationState::Recording);
+            let turn = Turn {
+                service: service.clone(),
+                ticket: 0,
+                flow,
+            };
+            service.next_ticket.store(1, Ordering::SeqCst);
+            let mut settings = service.settings();
+            settings.keep_audio = false;
+            let process = service.clone().process(
+                vec![0.2; 16000],
+                None,
+                0,
+                None,
+                (settings, None),
+                Instant::now(),
+                None,
+                &turn,
+            );
+            let running = service.run_processing(service.processing_token(), &turn, process);
+            let changes = async {
+                backend.started.notified().await;
+                if interrupted {
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    tx.send((ChordSignal::Interrupted, Instant::now(), None))
+                        .unwrap();
+                    drop(tx);
+                    control_loop(service.clone(), rx);
+                } else {
+                    let mut settings = service.settings();
+                    settings.enabled = !settings.enabled;
+                    service.save_settings(settings).await.unwrap();
+                }
+                backend.release.notify_one();
+            };
+            tokio::time::timeout(Duration::from_secs(5), async {
+                tokio::join!(running, changes);
+            })
+            .await
+            .unwrap();
+            assert_eq!(*backend.inserted.lock().unwrap(), vec!["Test sentence"]);
+            assert_eq!(
+                service.store.history(10).await.unwrap()[0].text,
+                "Test sentence"
+            );
+        }
+    }
 
     #[test]
     fn service_raw_cleanup_preserves_numbers_and_addresses() {

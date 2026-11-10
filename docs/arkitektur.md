@@ -391,7 +391,8 @@ an insertion already handed to the operating system cannot be recalled. Its
 processing future and insertion turn remain alive until insertion completes,
 so cancellation cannot release the next insertion early. Cancelling processing
 hides its pill synchronously, before a newer recording can show its own pill.
-Interrupted keyboard chords cancel pending processing as well as capture.
+Interrupted keyboard chords cancel only the current capture. Released turns
+continue processing when a chord is interrupted or settings reinstall the hook.
 
 `Service::open_for_test` opens an isolated service with a fake `AppHost`,
 overlay and `DictationBackend`, without registering the singleton or keyboard
@@ -401,11 +402,16 @@ channel, cancellation handle and join handle. It disables history for that
 run and requires an injected backend, so the trigger cannot accidentally use
 real providers. Engine planning, fallback, cleanup, ordering and timing remain
 the production implementations. Dropping a cancelled transcription also aborts
-its outstanding provider task. No new dependencies are required.
+its outstanding Syv request task. Already spawned blocking local inference
+continues after its awaiting future is dropped. Text hooks use
+`kill_on_drop(true)`, so dropping their future kills
+the child process (without guaranteeing termination of its descendants).
+No new dependencies are required.
 
 `cargo test --locked -p tingskriver-core --test dictation_flow` exercises a
-mock Syv.ai rejection of an invalid test key, mock Parakeet fallback, fake
-insertion, cancellation during local inference, engine/insertion failures and
+real Syv HTTP request rejected with 401 by a localhost fake server, mock
+Parakeet fallback, fake insertion, cancellation during local inference,
+engine/insertion failures and
 captured logs without dictated text, keys or keyboard events. It does not
 exercise real audio capture, model inference or Windows insertion.
 The manual acceptance checks in #46 (Notepad, measured latency and Start menu

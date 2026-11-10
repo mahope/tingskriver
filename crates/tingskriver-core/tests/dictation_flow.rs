@@ -49,6 +49,7 @@ struct Fake {
     fail_local: bool,
     fail_insert: bool,
     started: tokio::sync::Notify,
+    endpoint: Option<String>,
 }
 #[async_trait::async_trait]
 impl DictationBackend for Fake {
@@ -62,12 +63,24 @@ impl DictationBackend for Fake {
         &self,
         key: &str,
         _: &DictationSettings,
-        _: Vec<u8>,
-        _: String,
-        _: String,
+        wav: Vec<u8>,
+        prompt: String,
+        language: String,
     ) -> Result<String, String> {
         assert_eq!(key, "invalid-test-key");
         self.calls.lock().unwrap().push("syv");
+        if let Some(endpoint) = &self.endpoint {
+            return tingskriver_core::dictation::syv::transcribe_language(
+                &reqwest::Client::new(),
+                endpoint,
+                key,
+                "test",
+                wav,
+                Some(prompt),
+                &language,
+            )
+            .await;
+        }
         Err("Syv.ai svarede 401 Unauthorized".into())
     }
     async fn local(&self, _: Vec<f32>) -> Result<String, String> {
@@ -125,7 +138,44 @@ async fn dictation_flow_fallback_cancel_and_private_logs() {
     log::set_logger(&LOGS).unwrap();
     log::set_max_level(log::LevelFilter::Trace);
     let dir = tempfile::tempdir().unwrap();
-    let fake = Arc::new(Fake::default());
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut request = Vec::new();
+        loop {
+            let mut buf = [0; 8192];
+            let n = socket.read(&mut buf).await.unwrap();
+            assert_ne!(n, 0);
+            request.extend_from_slice(&buf[..n]);
+            let text = String::from_utf8_lossy(&request);
+            if let Some(end) = text.find("\r\n\r\n") {
+                let length: usize = text[..end]
+                    .lines()
+                    .find_map(|line| {
+                        line.to_ascii_lowercase()
+                            .strip_prefix("content-length: ")
+                            .map(|v| v.parse().unwrap())
+                    })
+                    .unwrap();
+                if request.len() >= end + 4 + length {
+                    break;
+                }
+            }
+        }
+        assert!(request.starts_with(b"POST /audio/transcriptions "));
+        socket
+            .write_all(
+                b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            )
+            .await
+            .unwrap();
+    });
+    let fake = Arc::new(Fake {
+        endpoint: Some(endpoint),
+        ..Fake::default()
+    });
     let service = Service::open_for_test(
         Arc::new(Host(dir.path().into())),
         Arc::new(Pill::default()),
@@ -138,6 +188,7 @@ async fn dictation_flow_fallback_cancel_and_private_logs() {
     let mut states = Vec::new();
     states.extend(drain(&mut run).await);
     run.join().unwrap();
+    server.await.unwrap();
     let mut published = Vec::new();
     while let Ok(state) = broadcast.try_recv() {
         published.push(state);
@@ -247,6 +298,7 @@ async fn dictation_flow_fallback_cancel_and_private_logs() {
         logs.contains("Dictation"),
         "capture must exercise real logs"
     );
+    assert!(logs.contains("Dictation Syv request failed: HTTP 401"));
     for private in [
         "fortrolig",
         "Fortrolig",

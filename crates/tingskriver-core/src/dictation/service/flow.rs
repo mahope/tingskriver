@@ -46,7 +46,6 @@ impl Flow {
             current: Mutex::new(DictationState::Inactive),
         };
         flow.set(DictationState::Inactive);
-        flow.set(DictationState::Recording);
         flow
     }
 
@@ -55,7 +54,7 @@ impl Flow {
         let mut current = self.current.lock().unwrap_or_else(|e| e.into_inner());
         let valid = matches!(
             (*current, state),
-            (Inactive, Inactive | Recording)
+            (Inactive, Inactive | Recording | Error)
                 | (Recording, Processing | Error | Cancelled | Inactive)
                 | (Processing, Inserting | Error | Cancelled | Inactive)
                 | (Inserting, Error | Cancelled | Inactive)
@@ -191,6 +190,7 @@ impl Service {
                         service: service.clone(),
                         flow: Flow::new(service.states.clone(), Some(tx)),
                     };
+                    turn.flow.set(DictationState::Recording);
                     let mut settings = service.settings();
                     settings.history_enabled = false;
                     service.overlay.set(OverlayState::Processing);
@@ -223,10 +223,35 @@ impl Service {
     }
 }
 
-// Dropping a cancelled processing future must also stop its provider task.
+// Dropping processing aborts the spawned Syv request, including its test backend.
 pub(super) struct AbortTask(pub tokio::task::AbortHandle);
 impl Drop for AbortTask {
     fn drop(&mut self) {
         self.0.abort();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dictation_capture_failure_does_not_publish_recording() {
+        let (events, mut received) = tokio::sync::mpsc::unbounded_channel();
+        let flow = Flow::new(tokio::sync::broadcast::channel(8).0, Some(events));
+        flow.set(DictationState::Error);
+        drop(flow);
+        let mut states = Vec::new();
+        while let Ok(state) = received.try_recv() {
+            states.push(state);
+        }
+        assert_eq!(
+            states,
+            vec![
+                DictationState::Inactive,
+                DictationState::Error,
+                DictationState::Inactive
+            ]
+        );
     }
 }
