@@ -226,9 +226,11 @@ transcription leaves the saved meeting available and reports the error.
 - In the background, `audio::finalize` encodes `microphone.m4a`,
   `system.m4a` and the mixed `audio.mp4` (all on the shared clock), decodes
   each and requires at most 1 s difference from the recorded length. The
-  two-track mix uses a fixed half gain per track, including silent gaps and
-  exhausted tracks, to prevent clipping and gain pumping. A single-track mix
-  keeps unity gain; the separate track files keep their original levels.
+  two-track mix keeps unity gain when the other track is silent. Overlap
+  uses half gain per track, with a 100 ms hold through short gaps and 5 ms
+  lookahead fades in solo blocks to prevent clipping and abrupt gain changes.
+  Activity is detected in 10 ms blocks using exact PCM silence. A single-track
+  mix keeps unity gain; the separate track files keep their original levels.
   The status is `ok`, `delvis` or `fejlet` (`recording-audio-finalized`,
   `metadata.json` field `audio_status`). The raw tracks are deleted only on
   `ok`; otherwise the message is "Lyden kunne ikke samles. Originalen er

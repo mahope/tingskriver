@@ -414,8 +414,7 @@ fn timeline_sources(track: &ScannedTrack) -> Vec<Source> {
     sources
 }
 
-/// Reserve fixed headroom for both tracks. Silence must not change the gain:
-/// normalizing only active samples would pump at gaps and at a track's end.
+/// Equal-gain headroom when both tracks are active.
 pub fn mix_samples(a: i16, b: i16) -> i16 {
     ((a as i32 + b as i32) / 2) as i16
 }
@@ -434,31 +433,86 @@ fn encode_track(
     })
 }
 
+// Keep headroom through short speech gaps instead of modulating at zero crossings.
+struct MixGain {
+    hold_blocks: usize,
+}
+
+impl MixGain {
+    fn new() -> Self {
+        Self { hold_blocks: 0 }
+    }
+
+    fn target(&mut self, a: &[i16], b: &[i16]) -> f64 {
+        if a.iter().any(|&s| s != 0) && b.iter().any(|&s| s != 0) {
+            self.hold_blocks = 10;
+            0.5
+        } else if self.hold_blocks > 0 {
+            self.hold_blocks -= 1;
+            0.5
+        } else {
+            1.0
+        }
+    }
+}
+
+fn mix_block(a: &mut [i16], b: &[i16], previous: f64, current: f64, next: f64) {
+    let half = (a.len() / 2).max(1);
+    let len = a.len();
+    for (i, (a, &b)) in a.iter_mut().zip(b).enumerate() {
+        // Fade only in solo blocks: overlapping tracks always have half gain.
+        // Lookahead lowers the gain before overlap, so no limiter is needed.
+        let gain = if i < half {
+            let start = previous.min(current);
+            start + (current - start) * i as f64 / half as f64
+        } else {
+            current + (next.min(current) - current) * (i - half) as f64 / (len - half).max(1) as f64
+        };
+        *a = if gain == 0.5 {
+            mix_samples(*a, b)
+        } else {
+            ((*a as i32 + b as i32) as f64 * gain).round() as i16
+        };
+    }
+}
+
+fn read_mix_block(readers: &mut [SourceReader], size: usize) -> io::Result<[Vec<i16>; 2]> {
+    debug_assert!(readers.len() <= 2);
+    let mut parts = [Vec::new(), Vec::new()];
+    for (reader, part) in readers.iter_mut().zip(&mut parts) {
+        reader.read_block(part, size)?;
+    }
+    let len = parts[0].len().max(parts[1].len());
+    for part in &mut parts {
+        part.resize(len, 0);
+    }
+    Ok(parts)
+}
+
 fn encode_mix(ffmpeg: &Path, scanned: &ScannedTracks, output: &Path) -> anyhow::Result<()> {
     let mut readers: Vec<SourceReader> = scanned
         .tracks
         .iter()
         .map(|t| SourceReader::new(timeline_sources(t)))
         .collect();
-    let mut part = Vec::new();
+    let size = (scanned.sample_rate as usize / 100).max(1);
+    let mut gain = MixGain::new();
+    let mut parts = read_mix_block(&mut readers, size)?;
+    let mut current = gain.target(&parts[0], &parts[1]);
+    let mut previous = current;
     encode_pcm_s16(ffmpeg, scanned.sample_rate, "128k", output, |block| {
-        block.clear();
-        for (index, reader) in readers.iter_mut().enumerate() {
-            reader.read_block(&mut part, BLOCK)?;
-            if index == 0 {
-                block.extend_from_slice(&part);
-                continue;
-            }
-            if block.len() < part.len() {
-                block.resize(part.len(), 0);
-            }
-            // An exhausted track still contributes silence at the same gain.
-            part.resize(block.len(), 0);
-            for (out, &s) in block.iter_mut().zip(part.iter()) {
-                *out = mix_samples(*out, s);
-            }
+        if parts[0].is_empty() {
+            block.clear();
+            return Ok(false);
         }
-        Ok(!block.is_empty())
+        let next_parts = read_mix_block(&mut readers, size)?;
+        let next = gain.target(&next_parts[0], &next_parts[1]);
+        let [mut a, b] = std::mem::replace(&mut parts, next_parts);
+        mix_block(&mut a, &b, previous, current, next);
+        *block = a;
+        previous = current;
+        current = next;
+        Ok(true)
     })
 }
 
@@ -1074,7 +1128,7 @@ mod tests {
     }
 
     #[test]
-    fn mixed_wav_timeline_has_constant_headroom_across_gaps() {
+    fn mixed_wav_timeline_preserves_solo_level_across_gaps() {
         let ffmpeg = ffmpeg().expect("ffmpeg is required for the mix regression");
         let dir = tempfile::tempdir().unwrap();
         let rate = 48_000usize;
@@ -1153,8 +1207,8 @@ mod tests {
             );
             let decoded = super::super::decoder::decode_audio_file(&output).unwrap();
             assert!((decoded.duration_seconds - 4.0).abs() < 0.05);
-            // Compare RMS away from AAC edges: fixed gain, no flat clipped peaks,
-            // no zero holes, and no gain rise when the other track ends.
+            // Compare RMS away from AAC edges and gain transitions: no clipped
+            // peaks or zero holes, and unity gain during solo speech.
             for (start, end, gain) in [
                 (0.05, 0.20, 1.0),
                 (0.35, 0.9, 1.0),
@@ -1209,8 +1263,116 @@ mod tests {
             (rms - 28_000.0 / 32768.0 / 2.0f64.sqrt()).abs() < 0.02,
             "single track keeps unity gain"
         );
+        let single_bytes = std::fs::read(&single).unwrap();
+        let silent_file = dir.path().join("silent.wav");
+        write_segment(&silent_file, &vec![0; tone.len()], tone.len() as u64);
+        for silent_source in [
+            Source::Silence(tone.len() as u64),
+            Source::File {
+                path: silent_file,
+                samples: tone.len() as u64,
+            },
+        ] {
+            for reverse in [false, true] {
+                let mut tracks = scanned.tracks.clone();
+                tracks.push(ScannedTrack {
+                    kind: TrackKind::Microphone,
+                    offset_samples: 0,
+                    sources: vec![silent_source.clone()],
+                    segment_count: 1,
+                });
+                if reverse {
+                    tracks.reverse();
+                }
+                let with_silence = ScannedTracks {
+                    sample_rate: scanned.sample_rate,
+                    tracks,
+                    problems: vec![],
+                    complete: true,
+                };
+                encode_mix(
+                    &ffmpeg,
+                    &with_silence,
+                    &dir.path().join("silent-partner.mp4"),
+                )
+                .unwrap();
+                assert_eq!(
+                    single_bytes,
+                    std::fs::read(dir.path().join("silent-partner.mp4")).unwrap(),
+                    "a silent partner must not change encoded solo level or bytes"
+                );
+            }
+        }
         assert_eq!(originals[0], std::fs::read(continuous).unwrap());
         assert_eq!(originals[1], std::fs::read(interrupted).unwrap());
+    }
+
+    #[test]
+    fn mix_preserves_solo_level_and_smooths_overlap() {
+        for rate in [16_000, 44_100, 48_000] {
+            let size = rate / 100;
+            let solo = vec![28_000; size];
+            let silence = vec![0; size];
+            for reverse in [false, true] {
+                let (mut a, b) = if reverse {
+                    (silence.clone(), solo.clone())
+                } else {
+                    (solo.clone(), silence.clone())
+                };
+                let target = MixGain::new().target(&a, &b);
+                mix_block(&mut a, &b, target, target, target);
+                assert_eq!(a, solo, "solo speech keeps exactly unity gain");
+            }
+            for sample in [i16::MIN, -30_000, 30_000, i16::MAX] {
+                let mut a = vec![sample; size];
+                let b = a.clone();
+                let target = MixGain::new().target(&a, &b);
+                mix_block(&mut a, &b, target, target, target);
+                assert!(a.iter().all(|&s| s == sample), "overlap without clipping");
+            }
+            let a = vec![12_000; size];
+            let ramp: Vec<i16> = (0..size)
+                .map(|i| (12_000 * i / (size - 1)) as i16)
+                .collect();
+            let other = [silence.clone(), ramp, a.clone(), silence.clone()];
+            let mut mixer = MixGain::new();
+            let gains: Vec<f64> = other.iter().map(|b| mixer.target(&a, b)).collect();
+            let render = || {
+                let mut output = Vec::new();
+                for (i, b) in other.iter().enumerate() {
+                    let mut block = a.clone();
+                    mix_block(
+                        &mut block,
+                        b,
+                        gains[i.saturating_sub(1)],
+                        gains[i],
+                        gains[(i + 1).min(gains.len() - 1)],
+                    );
+                    output.extend(block);
+                }
+                output
+            };
+            let output = render();
+            assert_eq!(output, render(), "deterministic PCM");
+            // Exclude the input's abrupt stop, but include the block boundary at onset.
+            assert!(
+                output[..3 * size]
+                    .windows(2)
+                    .all(|s| { (s[1] as i32 - s[0] as i32).abs() <= 80 }),
+                "gain transition exceeds 80 PCM units per sample at {rate} Hz"
+            );
+            for _ in 0..9 {
+                assert_eq!(mixer.target(&a, &silence), 0.5, "hold through short gaps");
+            }
+            assert_eq!(mixer.target(&a, &silence), 1.0, "release after 100 ms");
+            let mut release = a.clone();
+            mix_block(&mut release, &silence, 0.5, 1.0, 1.0);
+            assert_eq!(release[0], 6_000);
+            assert_eq!(release[size - 1], 12_000);
+            assert!(release
+                .windows(2)
+                .all(|s| (s[1] as i32 - s[0] as i32).abs() <= 80));
+        }
     }
 
     #[test]
