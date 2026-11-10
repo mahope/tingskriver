@@ -3,6 +3,10 @@
 Main er flettet ind med merge-commit `1d088d9` uden rebase eller force-push.
 Konflikten i core-modulets eksportliste bevarer main's moduler og tilføjer
 `meeting_detect`. Ingen Windows-indsamling eller appintegration er tilføjet.
+Ved genoptagelsen blev nyeste `origin/main` flettet igen i `023ac65`, uden
+konflikter. Fletningen er pushet som fast-forward til `issue/33-moededetektor`.
+De eksisterende rettelser i `ad523e6` og `8b3df53` er bevaret og genverificeret;
+der var ikke behov for yderligere ændringer i detektoren.
 
 Begge P1-fund er bekræftet med regressioner før rettelsen:
 
@@ -15,9 +19,10 @@ Begge P1-fund er bekræftet med regressioner før rettelsen:
   af samme mikrofonproces tilknyttes mødet uden at nulstille observationstid,
   kalender eller stoptimer.
 
-Seks nye JSON-fixtures dækker forlængelse, forkortelse, sent kalenderopslag,
+Syv nye JSON-fixtures dækker forlængelse, forkortelse, sent kalenderopslag,
 konkurrerende mikrofonbrug med kalenderfrist, kort mikrofonfravær og en stabil
-anden kilde under den oprindelige kildes fraværsstop. Udvalgte trin kontrollerer
+anden kilde under den oprindelige kildes fraværsstop samt genåbning uden vindue.
+Udvalgte trin kontrollerer
 også hele den aktive mødetilstand. Den eksisterende fixture
 `new_meeting_before_stop` er rettet: en ny mikrofonkørsel må ikke fjerne den
 oprindelige kalenderfrist.
@@ -35,11 +40,19 @@ og alle JSON-filer køres. Testbinæren blev kørt efter den sidste kodeændring
 Sidste ikke-tomme outputlinje:
 
 ```text
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 ```
 
-Dette ene test indeholder **66 fixtures med 120 snapshots**, inklusive gentagne
+Denne ene test indeholder **67 fixtures med 127 snapshots**, inklusive gentagne
 kald, ombytning af inputrækkefølge og serialisering af tilstanden.
+
+Regressionernes følsomhed blev genverificeret på midlertidige kopier af modulet:
+Når kalenderopdatering begrænses til første binding, fejler
+`calendar_extension_refreshes_deadline` ved trin 1. Når en ny kandidat igen får
+lov at erstatte aktiv tilstand, fejler
+`competing_microphone_preserves_active_deadline` ved trin 1. Begge testkørsler
+afviste den fejlbehæftede variant med exit 101. Arbejdsgrenens kode blev ikke
+ændret under kontrollen.
 
 `rustfmt --edition 2021 --check` består for alle detektorens Rust-filer og
 `lib.rs` (med `skip_children=true` på modulrødder). `git diff --check` og
@@ -57,6 +70,8 @@ warning: build failed, waiting for other jobs to finish...
 ```
 
 Core-cratens fulde suite og Cargo-baseret clippy er derfor ikke verificeret.
+Direkte `clippy-driver --edition=2021 --test -D warnings` på det rene modul
+består med core-cratens Clippy-konfiguration (exit 0, intet output).
 Ingen workspace-builds eller andre crates er bygget som mål.
 
 ## Issue #33 og Fixes
@@ -93,13 +108,13 @@ Titel: `Preserve active meetings and refresh calendar stop deadlines`
 Beskrivelse:
 
 ```text
-Add a pure meeting detector with 66 JSON fixtures covering all six meeting
+Add a pure meeting detector with 67 JSON fixtures covering all six meeting
 sources, false positives, start modes and deterministic stop rules.
 
 Preserve active meetings when another microphone candidate appears, and
 refresh calendar stop deadlines without replacing the bound meeting.
 
-Validation: the Linux detector test passes all 66 fixtures / 120 snapshots;
+Validation: the Linux detector test passes all 67 fixtures / 127 snapshots;
 rustfmt and diff checks pass. Full core Cargo tests are blocked locally by
 the missing ALSA system library. Complete CI and the planned PR review before
 marking this draft ready.
