@@ -138,5 +138,7 @@ pub struct ActiveMeeting {
     pub session: SessionIdentity,
     pub observed_at: Timestamp,
     pub calendar_end: Option<Timestamp>,
+    #[serde(default)]
+    pub calendar_start: Option<Timestamp>,
     pub signals_missing_since: Option<Timestamp>,
 }

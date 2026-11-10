@@ -57,8 +57,8 @@ Stopbeslutninger medtager ikke årsagssignaler fra en anden mødekilde.
 Snapshottene indeholder titler og bør derfor ikke logges.
 
 Mikrofonidentitet er kilde, mikrofonproces og mikrofonstart. Genåbning af samme
-mikrofonproces med samme mødekilde bevarer mødet, hvis der ikke er observeret
-et snapshot uden begge mødesignaler. Hvis indsamleren lader
+mikrofonproces med samme mødekilde bevarer mødet, også efter et kort fravær
+inden stopfristen. Hvis indsamleren lader
 et mikrofonforløb fortsætte på tværs af to møder i samme kilde, kan de ikke
 adskilles af denne grænseflade. Indsamleren skal rapportere reelle ophør/genstarter.
 
@@ -71,16 +71,21 @@ En manuelt startet optagelse uden observeret mødekilde stoppes ikke automatisk.
    ved første fraværende snapshot. Ved mindst 30 sekunder gives `signals_lost`.
    Et af signalerne er nok til at nulstille timeren (fx mute med mødevindue åbent).
    Mikrofon eller vindue fra en anden kilde holder ikke det gamle møde i live.
-2. Den aktive kalenderaftales slutdato fastholdes, også hvis kalenderinputtet
-   senere bliver tomt. En manglende kalenderbinding tilknyttes ved et senere
-   overlap, også ved mødestart før kalenderaftalen. Stop tidligst ved slut +
+2. Den aktive kalenderaftales slutdato opdateres fra hvert snapshot, også ved
+   forlængelse eller forkortelse. Bindingen bruger aftalens starttid, så en anden
+   aftale med en anden starttid ikke overtager fristen. Ved tomt kalenderinput
+   fastholdes den seneste slutdato. Inputtet har intet stabilt begivenheds-id;
+   flytning af starttiden og adskillelse af aftaler med samme starttid kræver en
+   udvidet grænseflade. En manglende kalenderbinding tilknyttes ved et senere
+   opslag, hvis aftalen overlapper tiden siden første observation, også hvis
+   aftalen allerede er afsluttet ved opslaget. Stop tidligst ved slut +
    300 sekunder, og kun hvis der
    ikke har været tale i mindst 300 sekunder. Uden tale bruges tidspunktet for
    første observation som nederste grænse. Fremtidig tale blokerer denne regel.
-3. En ny kilde eller mikrofonproces, eller et nyt stabilt mikrofonforløb efter
-   observeret fravær af begge signaler, erstatter den gamle tilstand før
-   stopvurderingen. Det arver ikke den gamle kalender. Mute/genåbning i et
-   fortsat observeret møde bevarer kalenderfrist og første observation.
+3. En ny kilde eller mikrofonproces er en separat kandidat og erstatter ikke
+   det aktive møde under optagelse. Genåbning af samme mikrofonproces og kilde
+   tilknyttes det aktive møde. Kalenderfrist, første observation og stoptimer
+   bevares. Den separate kandidat kan ikke holde den oprindelige kilde i live.
    Stop rydder tilstanden; næste snapshot kan identificere et nyt møde.
 
 Stop vurderes også ved `off`, da indstillingen styrer start og ikke en allerede
@@ -96,10 +101,12 @@ Et nyt forløb kan starte normalt. Værten bør behandle stop før næste snapsh
 `tests/fixtures/meeting_detect/`. Testen kræver mindst 30 filer, mindst ét trin
 pr. fil, vellykket parsing og præcis beslutning pr. trin. Hvert kald gentages
 med samme input for at kontrollere determinisme, og tilstanden serialiseres og læses tilbage.
-De 60 fixtures indeholder 100 snapshots. Alle fixturetitler er syntetiske.
+De 66 fixtures indeholder 120 snapshots. Alle fixturetitler er syntetiske.
 Tidsforløbene bruger falsk tid, herunder
 mikrofonens femsekundersgrænse, 29/30/31 sekunders fravær, kalenderfrist,
-ny tale og et nyt møde umiddelbart efter.
+ny tale og et nyt møde umiddelbart efter. Regressioner dækker kalenderændringer,
+sent opslag efter aftalens slutning, konkurrerende stabile mikrofonbrugere og
+kortvarigt mikrofonfravær. Udvalgte trin kontrollerer også den aktive tilstand.
 
 Windows-kontrol efter integration med #59: åbn én reel samtale pr. kilde,
 bekræft procesnavn, PWA-flag og mikrofonstart; afprøv derefter chat, forside,

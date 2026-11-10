@@ -90,8 +90,8 @@
           "meeting_window",
           "foreground_window"
         ],
-        "action": "none",
-        "reason": "already_recording"
+        "action": "stop",
+        "reason": "calendar_ended_without_speech"
       }
     }
   ]

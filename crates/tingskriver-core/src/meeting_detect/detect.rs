@@ -37,6 +37,24 @@ fn calendar_end(snapshot: &Snapshot) -> Option<Timestamp> {
         .min()
 }
 
+fn refresh_calendar(snapshot: &Snapshot, active: &mut ActiveMeeting) {
+    let event = snapshot
+        .calendar
+        .iter()
+        .filter(|event| {
+            event.start < event.end
+                && match active.calendar_start {
+                    Some(start) => event.start == start,
+                    None => event.start <= snapshot.now && event.end > active.observed_at,
+                }
+        })
+        .min_by_key(|event| (event.end, event.start));
+    if let Some(event) = event {
+        active.calendar_start = Some(event.start);
+        active.calendar_end = Some(event.end);
+    }
+}
+
 fn browser_source(source: Source) -> bool {
     matches!(
         source,
@@ -143,18 +161,18 @@ pub fn detect(snapshot: &Snapshot, previous: &DetectorState) -> (Decision, Detec
                 let same = state.active.as_ref().is_some_and(|active| {
                     active.session == session
                         || (active.session.source == session.source
-                            && active.session.microphone_process == session.microphone_process
-                            && active.signals_missing_since.is_none())
+                            && active.session.microphone_process == session.microphone_process)
                 });
                 if same {
                     if let Some(active) = state.active.as_mut() {
                         active.session = session;
                     }
-                } else {
+                } else if state.active.is_none() {
                     state.active = Some(ActiveMeeting {
                         session,
                         observed_at: snapshot.now,
-                        calendar_end: end,
+                        calendar_end: None,
+                        calendar_start: None,
                         signals_missing_since: None,
                     });
                     state.stopped_session = None;
@@ -164,11 +182,11 @@ pub fn detect(snapshot: &Snapshot, previous: &DetectorState) -> (Decision, Detec
             decision.reason = Reason::MicrophoneWarmingUp;
         }
     }
+    if let Some(active) = state.active.as_mut() {
+        refresh_calendar(snapshot, active);
+    }
     if snapshot.recording_active {
         if let Some(active) = state.active.as_mut() {
-            if active.calendar_end.is_none() {
-                active.calendar_end = end;
-            }
             let window_present = snapshot
                 .windows
                 .iter()

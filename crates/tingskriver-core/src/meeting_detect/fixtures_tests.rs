@@ -12,6 +12,8 @@ struct Fixture {
 struct Step {
     snapshot: Snapshot,
     expected: Decision,
+    #[serde(default)]
+    expected_active: Option<ActiveMeeting>,
 }
 
 #[test]
@@ -38,6 +40,14 @@ fn json_fixtures() {
             reordered.calendar.reverse();
             assert_eq!(result, detect(&reordered, &state), "order-dependent");
             assert_eq!(result.0, step.expected, "{} step {index}", path.display());
+            if let Some(expected) = step.expected_active {
+                assert_eq!(
+                    result.1.active,
+                    Some(expected),
+                    "{} step {index} state",
+                    path.display()
+                );
+            }
             state = result.1;
             let json = serde_json::to_string(&state).unwrap();
             assert_eq!(state, serde_json::from_str(&json).unwrap());
