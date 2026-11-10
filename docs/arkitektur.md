@@ -371,6 +371,28 @@ crash_dumps::tests::native_crash_produces_a_minidump -- --ignored --exact`.
 The test registers only its uniquely named child executable, checks the dump
 signature and removes its HKLM key afterward. It is excluded from ordinary
 unit tests because it requires administrator access and the WER service.
+
+# Meeting export
+
+`tingskriver_core::export` renders `MeetingDetails` (loaded with
+`MeetingsRepository::get_meeting`) as Markdown with YAML frontmatter or as a
+self-contained HTML document. Callers supply summary text, serialized Markdown
+notes (`notes::markdown::serialize`), optional duration in seconds, speaker or
+participant labels and language. Missing metadata remains null in frontmatter;
+the exporter does not infer participants or language from transcript text.
+Transcript segments are rendered in recording order. HTML preserves source
+text in escaped, wrapping blocks, including Markdown notation in notes and
+summaries; it does not interpret raw HTML or fetch external resources.
+
+`filename` expands `{dato}` and `{titel}` once and sanitizes the result for
+Windows and Unix. `write_document` takes a basename and a typed format, adds
+the extension and runs disk work on the blocking pool. It syncs a temporary
+file in the destination directory and publishes with `persist_noclobber`
+(no-replace rename or atomic hard-link fallback). Existing files, including
+concurrent exports, receive ` (2)`, ` (3)`, etc. The caller must create/select
+the directory and use the returned path. This core API adds no UI command,
+dialog, DOCX support or export preference storage.
+
 # Network and file I/O
 
 The GPUI shell calls core only through its background executor. Core async
