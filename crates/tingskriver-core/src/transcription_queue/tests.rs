@@ -260,6 +260,7 @@ async fn remote_system_speakers_stay_separate_and_requests_do_not_translate() {
         assert!(request.starts_with("POST /v1/audio/transcriptions"));
         assert!(request.contains("name=\"language\"\r\n\r\nda"));
         assert!(request.contains("name=\"response_format\"\r\n\r\nverbose_json"));
+        assert!(!request.contains("name=\"prompt\""));
     }
     assert!(!requests[0].contains("name=\"diarize\""));
     assert!(requests[1].contains("name=\"diarize\"\r\n\r\ntrue"));

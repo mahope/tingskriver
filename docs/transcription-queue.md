@@ -82,6 +82,8 @@ recording-stop enqueueing, the local model loader, event forwarding and the
 “Kør igen” controls/version selector still need host/UI integration. Existing
 recording/retranscription paths are unchanged. This is not yet an automatic
 end-to-end queue in the desktop app.
+The host must also supply the matched calendar event and dictionary snapshot;
+core does not fetch calendar feeds or open the dictionary database itself.
 
 Run `cargo test --locked -p tingskriver-core transcription_queue`. Tests cover
 HTTP 500/429/hanging responses, bounded retries, speaker merging, explicit
@@ -90,3 +92,7 @@ process after its SQLite claim is committed. Local inference itself needs an
 installed Parakeet/Whisper model; the automated tests use a local provider
 double. Mads must still check an actual Danish meeting with two other speakers
 on Windows and Syv.ai.
+
+`cargo test --locked -p tingskriver-core hotwords` covers name/target/alias
+priority, exact-byte boundaries, Danish spelling, deduplication, legacy jobs,
+and the multipart prompt body with an unused reserve receiving no request.
