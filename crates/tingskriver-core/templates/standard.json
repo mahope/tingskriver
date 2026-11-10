@@ -1,0 +1,26 @@
+{
+  "name": "Standardreferat",
+  "description": "Dansk referat med overblik, beslutninger og aftaler.",
+  "sections": [
+    {
+      "title": "Overblik",
+      "instruction": "Opsummér mødets formål og vigtigste emner kort på dansk. Skriv på dansk.",
+      "format": "list"
+    },
+    {
+      "title": "Beslutninger",
+      "instruction": "Angiv kun beslutninger, der faktisk blev truffet. Skriv på dansk.",
+      "format": "list"
+    },
+    {
+      "title": "Aftaler og opgaver",
+      "instruction": "Angiv opgave, ansvarlig og frist. Skriv ikke aftalt, hvis ansvarlig eller frist mangler. Opfind ikke aftaler. Skriv på dansk.",
+      "format": "list"
+    },
+    {
+      "title": "Åbne spørgsmål",
+      "instruction": "Angiv uafklarede spørgsmål og næste skridt. Skriv på dansk.",
+      "format": "list"
+    }
+  ]
+}
