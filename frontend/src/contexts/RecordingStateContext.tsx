@@ -154,6 +154,7 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
         // Recording started
         const unlistenStarted = await recordingService.onRecordingStarted(() => {
           console.log('[RecordingStateContext] Recording started event');
+          isRecordingRef.current = true;
           setState(prev => ({
             ...prev,
             isRecording: true,
@@ -177,6 +178,8 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
         // Recording stopped
         const unlistenStopped = await recordingService.onRecordingStopped((payload) => {
           console.log('[RecordingStateContext] Recording stopped event:', payload);
+          toast.dismiss('recording-disk');
+          isRecordingRef.current = false;
           if (payload.audio_status && payload.audio_status !== 'ok' && payload.audio_message) {
             toast.error(payload.audio_message, { duration: 15000 });
           }
@@ -373,10 +376,16 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
       try {
         const subscriptions = [
           listen<{ message: string }>('recording-disk-low', (event) => {
-            toast.warning(event.payload.message, { id: 'recording-disk', duration: Infinity });
+            if (isRecordingRef.current) {
+              toast.warning(event.payload.message, { id: 'recording-disk', duration: Infinity });
+            }
           }),
           listen<{ message: string }>('recording-disk-ok', (event) => {
-            toast.success(event.payload.message, { id: 'recording-disk', duration: 5000 });
+            if (isRecordingRef.current) {
+              toast.success(event.payload.message, { id: 'recording-disk', duration: 5000 });
+            } else {
+              toast.dismiss('recording-disk');
+            }
           }),
           listen<{ message: string }>('recording-storage-error', (event) => {
             toast.error(event.payload.message, { id: 'recording-storage', duration: Infinity });
@@ -428,6 +437,7 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
   // Ryd enhedsbeskeden når optagelsen er slut, og nulstil den aktive mikrofon
   useEffect(() => {
     if (!state.isRecording) {
+      toast.dismiss('recording-disk');
       setDeviceNotice(null);
       setActiveMicName(null);
     }

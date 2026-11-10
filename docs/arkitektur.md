@@ -234,8 +234,12 @@ transcription leaves the saved meeting available and reports the error.
   `recording-disk-low` (`kind: DiskLow`); at 320 MiB it emits
   `recording-disk-ok` (`kind: DiskOk`).
   Each transition is emitted once. Unknown space leaves the warning unchanged.
-  The recording context displays a persistent warning for low space and replaces
-  it with a recovery toast when space returns, independently of write errors.
+  When a low-space guard stops, it also emits `DiskOk` to clear its warning.
+  The recording context replaces the warning on recovery and dismisses it
+  immediately on recording stop, independently of write errors. The dictation
+  overlay has no meeting-recording status connection yet; its disk warning is
+  deferred to #169.
+  Testing on an almost-full Windows VHD remains a manual validation step.
   The guard only advises through `AppHost`; it never stops or blocks capture.
 - Storage errors are a state, not a log line: the first failure emits
   `recording-storage-error` (`{ message, kind }`, e.g. "Lyden gemmes ikke:

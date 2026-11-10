@@ -12,6 +12,7 @@ afterAll(() => {
 
 const listeners = new Map<string, (event: { payload: { message: string } }) => void>();
 const removed: string[] = [];
+let stopped: ((payload: object) => void) | undefined;
 mock.module('@tauri-apps/api/event', () => ({
   listen: async (name: string, callback: (event: { payload: { message: string } }) => void) => {
     listeners.set(name, callback);
@@ -21,14 +22,17 @@ mock.module('@tauri-apps/api/event', () => ({
 mock.module('../../src/services/recordingService', () => ({
   recordingService: new Proxy({}, {
     get: (_, name) => name === 'getRecordingState'
-      ? async () => ({ is_recording: false, is_paused: false, is_active: false })
-      : async () => () => {},
+      ? async () => ({ is_recording: true, is_paused: false, is_active: true })
+      : name === 'onRecordingStopped'
+        ? async (callback: (payload: object) => void) => { stopped = callback; return () => {}; }
+        : async () => () => {},
   }),
 }));
 const warning = mock(() => {});
 const success = mock(() => {});
 const error = mock(() => {});
-mock.module('sonner', () => ({ toast: { warning, success, error } }));
+const dismiss = mock(() => {});
+mock.module('sonner', () => ({ toast: { warning, success, error, dismiss } }));
 const { RecordingStateProvider } = await import('../../src/contexts/RecordingStateContext');
 
 test('disk transitions show and replace a persistent warning independently of write errors', async () => {
@@ -43,6 +47,15 @@ test('disk transitions show and replace a persistent warning independently of wr
     expect(error).toHaveBeenCalledWith('Write failed', { id: 'recording-storage', duration: Infinity });
     listeners.get('recording-disk-ok')!({ payload: { message: 'Space recovered' } });
     expect(success).toHaveBeenCalledWith('Space recovered', { id: 'recording-disk', duration: 5000 });
+    listeners.get('recording-disk-low')!({ payload: { message: 'Low again' } });
+    await act(async () => { stopped!({}); });
+    expect(dismiss).toHaveBeenCalledWith('recording-disk');
+    const warningCount = warning.mock.calls.length;
+    const successCount = success.mock.calls.length;
+    listeners.get('recording-disk-low')!({ payload: { message: 'Late low' } });
+    listeners.get('recording-disk-ok')!({ payload: { message: 'Guard stopped' } });
+    expect(warning.mock.calls.length).toBe(warningCount);
+    expect(success.mock.calls.length).toBe(successCount);
   } finally {
     await act(async () => renderer!.unmount());
   }
