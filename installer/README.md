@@ -55,6 +55,8 @@ Builds with a version suffix (`0.5.1-dev.1`) also see pre-releases; release buil
 
 ## Releasing
 
+Pre-releases (`-dev.N`) are normally published automatically every 8 hours when `main` has changed and its CI is green; see [docs/auto-release.md](../docs/auto-release.md) (switch off with the repository variable `AUTO_RELEASE=false`). The manual steps below are for stable versions and for anything the automation does not cover.
+
 1. Set `version` in `[workspace.package]` in the root `Cargo.toml` (0.5.x PATCH steps, see SPEC; a `-dev.N` suffix for test builds), commit and push.
 2. Tag and push: `git tag app-v0.5.1-dev.1 && git push origin app-v0.5.1-dev.1`. The workflow fails if the tag and the workspace version differ.
 3. `app-release.yml` builds the app with the same portable CPU baseline as the Tauri installer, downloads the previous Velopack release's full package so vpk can build a delta, packs, and publishes a GitHub Release with `Tingskriver-Setup.exe`, `TingskriverApp-<version>-full.nupkg`, `TingskriverApp-<version>-delta.nupkg` (from the second release on) and `releases.win.json`. Versions with a suffix become pre-releases. The release is never marked latest (see the move below).
