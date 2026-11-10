@@ -238,7 +238,10 @@ fn long_text_is_fast() {
     };
     let short = measure(200);
     let long = measure(3200);
-    assert!(short < Duration::from_secs(1), "200 sentences took {short:?}");
+    assert!(
+        short < Duration::from_secs(1),
+        "200 sentences took {short:?}"
+    );
     // 16x input should scale near 16x, not the 256x of quadratic work.
     // Allow 4x scaling headroom plus a fixed scheduling allowance.
     assert!(
@@ -453,8 +456,14 @@ fn enter_trigger_in_the_middle_is_text() {
 #[test]
 fn addresses_table() {
     let cases: &[(&str, &str)] = &[
-        ("se mahoje punktum dk skråstreg kontakt i morgen", "Se mahoje.dk/kontakt i morgen"),
-        ("se mahoje punktum dk skråstreg min bindestreg side skråstreg kontakt i morgen", "Se mahoje.dk/min-side/kontakt i morgen"),
+        (
+            "se mahoje punktum dk skråstreg kontakt i morgen",
+            "Se mahoje.dk/kontakt i morgen",
+        ),
+        (
+            "se mahoje punktum dk skråstreg min bindestreg side skråstreg kontakt i morgen",
+            "Se mahoje.dk/min-side/kontakt i morgen",
+        ),
         ("anna snabel-a eksempel punktum d k", "anna@eksempel.dk"),
         (
             "skriv til anna snabel-a eksempel punktum dk",
@@ -727,10 +736,7 @@ fn code_urls_and_file_names_are_unchanged() {
         raw("klokken fjorten tredive tolv procent"),
         "klokken fjorten tredive tolv procent"
     );
-    assert_eq!(
-        raw("anna snabel-a eksempel punktum dk"),
-        "anna@eksempel.dk"
-    );
+    assert_eq!(raw("anna snabel-a eksempel punktum dk"), "anna@eksempel.dk");
 }
 
 // ---------------------------------------------------------------------------
@@ -859,7 +865,10 @@ fn english_terms_survive_mixed_sentences() {
 fn three_or_more_equal_words_are_collapsed() {
     assert_eq!(normal("nej nej nej nej"), "Nej");
     assert_eq!(normal("jeg jeg jeg vil gerne"), "Jeg vil gerne");
-    assert_eq!(normal("Nej, nej, nej, det gør jeg ikke"), "Nej, det gør jeg ikke");
+    assert_eq!(
+        normal("Nej, nej, nej, det gør jeg ikke"),
+        "Nej, det gør jeg ikke"
+    );
     assert_eq!(normal("det er NEJ nej Nej"), "Det er NEJ");
 }
 
@@ -957,12 +966,94 @@ fn code_identifiers() {
 }
 
 #[test]
+fn code_identifier_review_regressions() {
+    for (input, expected) in [
+        (
+            "lav en variabel get user id camel case",
+            "lav en variabel getUserId",
+        ),
+        ("ny linje user id camel case", "\nuserId"),
+        (
+            "git checkout bindestreg b feature login snake case",
+            "git checkout -b feature_login",
+        ),
+        ("get øh user id camel case", "getUserId"),
+        ("fix login punktum tilføj test", "fix login. tilføj test"),
+        ("index punktum ts", "index.ts"),
+        ("config punktum yaml", "config.yaml"),
+        ("get øhm, user id camel case", "getUserId"),
+        ("prefix understreg user id camel case", "prefix_userId"),
+        ("src skråstreg user id camel case", "src/userId"),
+        ("get + user id camel case", "get + userId"),
+        ("GET USER ID camel case", "getUserId"),
+        ("ls bindestreg la", "ls -la"),
+        ("ls bindestreg R", "ls -R"),
+        (
+            "cargo build bindestreg bindestreg release",
+            "cargo build --release",
+        ),
+    ] {
+        assert_eq!(raw(input), expected, "{input}");
+    }
+}
+
+#[test]
+fn identifier_boundaries_follow_the_active_spoken_table() {
+    let table = SpokenTable::with_user(
+        r#"{"version":1,"entries":[{"phrases":["custom boundary"],"action":{"type":"break","lines":1}}]}"#,
+    )
+    .unwrap();
+    for entry in &table.entries {
+        for phrase in &entry.phrases {
+            for word in spoken::phrase_words(phrase) {
+                let tokens = vec![
+                    Tok::plain("prefix"),
+                    Tok::plain(&word),
+                    Tok::plain("user"),
+                    Tok::plain("id"),
+                    Tok::plain("camel"),
+                    Tok::plain("case"),
+                ];
+                let expected = match word.as_str() {
+                    "punktum" => vec![
+                        Tok::plain("prefix"),
+                        Tok::sym(".", false, false),
+                        Tok::exact("userId"),
+                    ],
+                    "bindestreg" => vec![
+                        Tok::plain("prefix"),
+                        Tok::sym("-", true, false),
+                        Tok::exact("user"),
+                        Tok::exact("id"),
+                    ],
+                    _ => vec![
+                        Tok::plain("prefix"),
+                        Tok::plain(&word),
+                        Tok::exact("userId"),
+                    ],
+                };
+                assert_eq!(
+                    super::super::identifiers::format(tokens, Style::Raw, &table),
+                    expected,
+                    "{word} in {phrase}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn identifiers_leave_normal_danish_alone() {
     for (input, expected) in [
         ("get user id camel case", "Get user id camel case"),
         ("vi taler om snake case", "Vi taler om snake case"),
         ("index punktum ts", "Index. Ts"),
         ("git commit bindestreg m", "Git commit-m"),
+        ("ls bindestreg la", "Ls-la"),
+        (
+            "cargo build bindestreg bindestreg release",
+            "Cargo build--release",
+        ),
         ("hej verden", "Hej verden"),
     ] {
         assert_eq!(normal(input), expected, "{input}");

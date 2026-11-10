@@ -1,12 +1,18 @@
 //! Pure code-style token formatting, before spoken punctuation is expanded.
 
 use super::cleanup::Style;
+use super::spoken::{phrase_words, SpokenTable};
 use super::token::Tok;
 
-pub(super) fn format(tokens: Vec<Tok>, style: Style) -> Vec<Tok> {
+pub(super) fn format(tokens: Vec<Tok>, style: Style, spoken: &SpokenTable) -> Vec<Tok> {
     if style != Style::Raw {
         return tokens;
     }
+    let command_words: std::collections::HashSet<_> = spoken
+        .entries
+        .iter()
+        .flat_map(|entry| entry.phrases.iter().flat_map(|phrase| phrase_words(phrase)))
+        .collect();
     let mut out = Vec::with_capacity(tokens.len());
     let mut i = 0;
     while i < tokens.len() {
@@ -24,19 +30,21 @@ pub(super) fn format(tokens: Vec<Tok>, style: Style) -> Vec<Tok> {
             _ => ("", 0),
         };
         if consumed > 0 {
-            let start = out
+            let count = out
                 .iter()
-                .rposition(|t: &Tok| {
-                    t.plain_word().is_none()
-                        || matches!(
-                            t.plain_word().as_deref(),
-                            Some("komma" | "semikolon" | "kolon" | "punktum")
-                        )
+                .rev()
+                .take(3)
+                .take_while(|t: &&Tok| {
+                    t.plain_word().is_some_and(|word| {
+                        !command_words.contains(&word) && word.chars().all(char::is_alphanumeric)
+                    })
                 })
-                .map_or(0, |index| index + 1);
+                .count();
+            let start = out.len() - count;
             if start < out.len() {
                 let words: Vec<_> = out
                     .drain(start..)
+                    // The boundary scan guarantees every drained token is a plain word.
                     .map(|t| t.plain_word().unwrap())
                     .collect();
                 let separator = match case {
@@ -66,16 +74,34 @@ pub(super) fn format(tokens: Vec<Tok>, style: Style) -> Vec<Tok> {
             }
         }
         match word.as_str() {
-            "punktum" if i > 0 && tokens.get(i + 1).and_then(Tok::plain_word).is_some() => {
+            "punktum"
+                if i > 0
+                    && tokens
+                        .get(i + 1)
+                        .and_then(Tok::plain_word)
+                        .is_some_and(|w| {
+                            w.chars().count() <= 4
+                                && w.chars().all(|c| c.is_ascii_alphanumeric())
+                                && !command_words.contains(&w)
+                        }) =>
+            {
                 out.push(Tok::sym(".", false, false));
             }
-            "bindestreg"
-                if tokens
-                    .get(i + 1)
-                    .and_then(Tok::plain_word)
-                    .is_some_and(|w| w.chars().count() == 1) =>
-            {
-                out.push(Tok::sym("-", true, false));
+            "bindestreg" => {
+                let double =
+                    tokens.get(i + 1).and_then(Tok::plain_word).as_deref() == Some("bindestreg");
+                let next = i + 1 + usize::from(double);
+                if tokens.get(next).and_then(Tok::plain_word).is_some_and(|w| {
+                    w.chars().all(|c| c.is_ascii_alphanumeric()) && !command_words.contains(&w)
+                }) {
+                    out.push(Tok::sym(if double { "--" } else { "-" }, true, false));
+                    if let Tok::Word { text, .. } = &tokens[next] {
+                        out.push(Tok::exact(text.clone()));
+                    }
+                    i = next + 1;
+                    continue;
+                }
+                out.push(tokens[i].clone());
             }
             _ => out.push(tokens[i].clone()),
         }
