@@ -363,9 +363,10 @@ async fn chat_sends_messages_and_options() {
 
 #[tokio::test]
 async fn test_call_measures_latency_and_counts_models() {
-    let server = FakeServer::start(vec![Reply::ok(
-        r#"{"object":"list","data":[{"id":"a"},{"id":"b"}]}"#,
-    )])
+    let server = FakeServer::start(vec![
+        Reply::ok(r#"{"object":"list","data":[{"id":"a"},{"id":"b"}]}"#),
+        Reply::json("401 Unauthorized", "{}"),
+    ])
     .await;
     let report = client::test(&http(), &link("a", &server.base_url, Some("k")))
         .await
@@ -373,6 +374,146 @@ async fn test_call_measures_latency_and_counts_models() {
     assert_eq!(report.models, 2);
     assert!(report.latency_ms < 5_000);
     assert!(server.requests()[0].starts_with("GET /v1/models "));
+}
+
+#[tokio::test]
+async fn verification_rejects_gateway_accepting_every_key() {
+    let server = FakeServer::start(vec![Reply::ok(r#"{"data":[]}"#)]).await;
+    let result = client::test(&http(), &link("gateway", &server.base_url, Some("valid"))).await;
+    assert!(matches!(result, Err(ProviderError::BadResponse { .. })));
+}
+
+#[tokio::test]
+async fn verification_never_follows_redirects() {
+    let destination = FakeServer::start(vec![Reply::ok(r#"{"data":[]}"#)]).await;
+    let server = FakeServer::start(vec![Reply::json("307 Temporary Redirect", "{}")
+        .with_header("Location", format!("{}/models", destination.base_url))])
+    .await;
+    let error = client::test(&http(), &link("redirect", &server.base_url, Some("valid")))
+        .await
+        .unwrap_err();
+    assert!(error.message("Test").contains("omdirigering"));
+    assert_eq!(server.requests().len(), 1);
+    assert!(destination.requests().is_empty());
+}
+
+#[tokio::test]
+async fn verification_caches_per_key_and_endpoint() {
+    let server = FakeServer::start(vec![
+        Reply::ok(r#"{"data":[]}"#),
+        Reply::json("403 Forbidden", "{}"),
+    ])
+    .await;
+    let mut target = link("cache", &server.base_url, Some("first"));
+    for _ in 0..2 {
+        client::test(&http(), &target).await.unwrap();
+    }
+    assert_eq!(server.requests().len(), 2);
+    assert!(server.requests()[0].contains("Bearer first"));
+    assert!(!server.requests()[1].contains("Bearer first"));
+    target.key = ApiKey::new("second");
+    assert!(matches!(
+        client::test(&http(), &target).await,
+        Err(ProviderError::Unauthorized { status: 403 })
+    ));
+    assert_eq!(server.requests().len(), 3);
+}
+
+#[tokio::test]
+async fn verification_cache_expires_after_sixty_seconds() {
+    let server = FakeServer::start(vec![
+        Reply::ok(r#"{"data":[]}"#),
+        Reply::json("401 Unauthorized", "{}"),
+    ])
+    .await;
+    let target = link("expiry", &server.base_url, Some("valid"));
+    client::test(&http(), &target).await.unwrap();
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(59)).await;
+    client::test(&http(), &target).await.unwrap();
+    assert_eq!(server.requests().len(), 2);
+    tokio::time::advance(Duration::from_secs(1)).await;
+    tokio::time::resume();
+    assert!(matches!(
+        client::test(&http(), &target).await,
+        Err(ProviderError::Unauthorized { status: 401 })
+    ));
+    assert_eq!(server.requests().len(), 3);
+}
+
+#[tokio::test]
+async fn verification_cache_does_not_cross_endpoints() {
+    let accepted = FakeServer::start(vec![
+        Reply::ok(r#"{"data":[]}"#),
+        Reply::json("403 Forbidden", "{}"),
+    ])
+    .await;
+    let rejected = FakeServer::start(vec![Reply::json("401 Unauthorized", "{}")]).await;
+    let mut target = link("endpoint", &accepted.base_url, Some("valid"));
+    client::test(&http(), &target).await.unwrap();
+    target.base_url = rejected.base_url.clone();
+    assert!(matches!(
+        client::test(&http(), &target).await,
+        Err(ProviderError::Unauthorized { status: 401 })
+    ));
+    assert_eq!(rejected.requests().len(), 1);
+}
+
+#[tokio::test]
+async fn verification_refuses_unsafe_urls_without_a_request() {
+    let server = FakeServer::start(vec![Reply::ok(r#"{"data":[]}"#)]).await;
+    for url in [
+        server.base_url.replace("http://", "http://user:password@"),
+        "http://example.com/v1".into(),
+        "ftp://localhost/v1".into(),
+    ] {
+        let error = client::test(&http(), &link("unsafe", &url, Some("valid")))
+            .await
+            .unwrap_err();
+        assert!(matches!(error, ProviderError::Config { .. }));
+        assert!(!error.message("Test").contains("password"));
+    }
+    assert!(server.requests().is_empty());
+}
+
+#[tokio::test]
+async fn verification_classifies_control_rate_limit_and_unverifiable() {
+    for (status, limited) in [
+        ("429 Too Many Requests", true),
+        ("500 Internal Server Error", false),
+    ] {
+        let server = FakeServer::start(vec![
+            Reply::ok(r#"{"data":[]}"#),
+            Reply::json(status, "{}").with_header("Retry-After", "12"),
+        ])
+        .await;
+        let error = client::test(&http(), &link("control", &server.base_url, Some("valid")))
+            .await
+            .unwrap_err();
+        if limited {
+            assert_eq!(
+                error,
+                ProviderError::RateLimited {
+                    retry_after_secs: Some(12)
+                }
+            );
+        } else {
+            assert!(matches!(error, ProviderError::BadResponse { .. }));
+        }
+    }
+}
+
+#[tokio::test]
+async fn verification_limits_headers_and_body_to_eight_seconds() {
+    for reply in [Reply::Hang, Reply::HangAfterHeaders] {
+        let server = FakeServer::start(vec![reply]).await;
+        let mut target = link("timeout", &server.base_url, None);
+        target.timeout = Some(Duration::from_secs(60));
+        let start = std::time::Instant::now();
+        let error = client::test(&http(), &target).await.unwrap_err();
+        assert_eq!(error, ProviderError::Timeout { after_ms: 8000 });
+        assert!(start.elapsed() < Duration::from_secs(10));
+    }
 }
 
 #[tokio::test]
