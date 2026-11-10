@@ -41,6 +41,7 @@ pub struct Upcoming {
     pub series_uid: String,
     pub title: String,
     pub attendees: Vec<String>,
+    pub own_addresses: Vec<String>,
     pub start: DateTime<Utc>,
     pub end: DateTime<Utc>,
 }
@@ -110,7 +111,11 @@ fn emails(list: &[String]) -> BTreeSet<String> {
 /// one, and empty minutes, never count. At most [`MAX_MEETINGS`].
 pub fn rank(upcoming: &Upcoming, past: &[PastMeeting]) -> Vec<(PastMeeting, Relation)> {
     let title = normalize(&upcoming.title);
-    let people = emails(&upcoming.attendees);
+    let own = emails(&upcoming.own_addresses);
+    let people = emails(&upcoming.attendees)
+        .difference(&own)
+        .cloned()
+        .collect();
     let mut ranked: Vec<(PastMeeting, Relation)> = past
         .iter()
         .filter(|m| m.started_at < upcoming.start && !m.minutes.trim().is_empty())
@@ -161,6 +166,7 @@ fn points_key(model: &str, meeting: &PastMeeting) -> String {
         hash(&[
             &PROMPT_VERSION.to_string(),
             model,
+            &meeting.id,
             &meeting.title,
             &meeting.minutes
         ])
@@ -170,6 +176,7 @@ fn points_key(model: &str, meeting: &PastMeeting) -> String {
 fn overview_key(model: &str, meetings: &[MeetingPoints]) -> String {
     let mut parts = vec![PROMPT_VERSION.to_string(), model.to_string()];
     for m in meetings {
+        parts.push(m.meeting_id.clone());
         parts.push(m.title.clone());
         parts.extend(m.points.iter().cloned());
     }
@@ -203,8 +210,7 @@ pub async fn build_brief(
             None => {
                 // One slow or failing minutes text must not remove the brief
                 // for the others; fail only if every meeting fails.
-                let mut points = match briefer.key_points(&meeting.title, &meeting.minutes).await
-                {
+                let mut points = match briefer.key_points(&meeting.title, &meeting.minutes).await {
                     Ok(points) => points,
                     Err(e) => {
                         last_error = Some(e);
@@ -213,10 +219,14 @@ pub async fn build_brief(
                 };
                 points.retain(|p| !p.trim().is_empty());
                 points.truncate(MAX_POINTS);
+                if points.is_empty() {
+                    continue;
+                }
                 cache
                     .put(
                         &key,
                         &serde_json::to_string(&points).map_err(|_| BriefError::Cache)?,
+                        &[&meeting.id],
                     )
                     .await?;
                 points
@@ -243,8 +253,16 @@ pub async fn build_brief(
     let overview = match cache.get(&key).await? {
         Some(text) => text,
         None => {
-            let text = briefer.overview(&meetings).await?.trim().to_string();
-            cache.put(&key, &text).await?;
+            let text = briefer
+                .overview(&meetings)
+                .await
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            if !text.is_empty() {
+                let ids: Vec<&str> = meetings.iter().map(|m| m.meeting_id.as_str()).collect();
+                cache.put(&key, &text, &ids).await?;
+            }
             text
         }
     };

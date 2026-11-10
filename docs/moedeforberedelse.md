@@ -2,9 +2,9 @@
 
 `tingskriver_core::briefing` builds a short brief from the latest related minutes. It is core only; the UI is not wired yet (see "Wiring").
 
-- **Series match:** same iCalendar `UID` (every instance of a recurring event, including `RECURRENCE-ID` overrides, keeps the master `UID`), then same normalised title, then shared attendee addresses. Newest first within a class; only earlier meetings with non-empty minutes count.
+- **Series match:** same iCalendar `UID` (every instance of a recurring event, including `RECURRENCE-ID` overrides, keeps the master `UID`), then same normalised title, then shared attendee addresses excluding `Upcoming.own_addresses` (pass the calendar configuration's own addresses). Newest first within a class; only earlier meetings with non-empty minutes count.
 - **Limits:** five meetings, three points each, 512 output tokens, 45 s per model call (`MAX_MEETINGS`, `MAX_POINTS`, `MAX_OUTPUT_TOKENS`, `TIMEOUT`).
-- **Cache:** table `briefing_cache`. Key points are keyed by meeting id plus a hash of prompt version, model, title and minutes; the joint text by a hash of the points. Unchanged minutes make no model call.
+- **Cache:** table `briefing_cache`. Key-point hashes include meeting id, prompt version, model, title and minutes; overview hashes include source meeting ids, titles and points, prompt version and model. Each entry records its source `meeting_id` (one row per source for joint overviews). A deletion trigger removes all entries derived from a deleted meeting, including the whole joint overview, even with foreign keys disabled. Unchanged minutes make no model call. Empty results and failed overviews are not cached; a failed overview returns the available points with an empty overview.
 - **No history:** `build_brief` returns `None`, so nothing is shown and no model is called.
 - **Visibility:** `visible(now, upcoming)`: before the meeting and until five minutes after its end.
 - **Privacy:** only local minutes are read. The model goes through `Briefer`; `LlmBriefer` uses the summary provider the caller passes. Use a local one (Ollama or the built-in model) as default; nothing leaves the PC unless the user has chosen another provider.
@@ -16,4 +16,4 @@ Model choice: the default is a local provider (Ollama or the built-in model); th
 
 ## Wiring (open)
 
-Neither the calendar nor a meeting-to-calendar link exists in the app on `main`. To finish: store the matched event `UID` and attendees on the meeting when recording starts (`calendar::match_meeting`), load minutes from `summary_processes.result`, call `build_brief` for the next event, and show it on the meeting page/reminder with `strings::BRIEF_*` and a setting to turn it off.
+Neither the calendar nor a meeting-to-calendar link exists in the app on `main`. To finish: store the matched event `UID` and attendees on the meeting when recording starts (`calendar::match_meeting`), load minutes from `summary_processes.result`, call `build_brief` for the next event with the calendar configuration's own addresses, and show it on the meeting page/reminder with appropriate UI strings and a setting to turn it off.

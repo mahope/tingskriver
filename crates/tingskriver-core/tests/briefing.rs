@@ -30,6 +30,7 @@ fn upcoming() -> Upcoming {
         series_uid: "serie-1@example.test".into(),
         title: "Ugentligt statusmøde".into(),
         attendees: vec!["a@example.test".into()],
+        own_addresses: vec![],
         start: t(28),
         end: t(28) + Duration::hours(1),
     }
@@ -39,6 +40,8 @@ fn upcoming() -> Upcoming {
 struct Fake {
     points: AtomicUsize,
     overviews: AtomicUsize,
+    fail_overview: bool,
+    empty_points: bool,
 }
 
 #[async_trait]
@@ -48,6 +51,9 @@ impl Briefer for Fake {
     }
     async fn key_points(&self, title: &str, minutes: &str) -> Result<Vec<String>, BriefError> {
         self.points.fetch_add(1, Ordering::SeqCst);
+        if self.empty_points {
+            return Ok(vec![]);
+        }
         Ok(vec![
             format!("{title}: {minutes}"),
             "to".into(),
@@ -57,6 +63,9 @@ impl Briefer for Fake {
     }
     async fn overview(&self, m: &[MeetingPoints]) -> Result<String, BriefError> {
         self.overviews.fetch_add(1, Ordering::SeqCst);
+        if self.fail_overview {
+            return Err(BriefError::Model("overview failed".into()));
+        }
         Ok(format!("Samlet over {} møder", m.len()))
     }
 }
@@ -239,22 +248,23 @@ fn visible_until_five_minutes_after_end() {
 #[tokio::test]
 async fn sqlite_cache_roundtrip_and_migration() {
     let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-    sqlx::query(include_str!(
-        "../migrations/20261105120000_add_briefing_cache.sql"
-    ))
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    sqlx::query(
+        "INSERT INTO meetings (id, title, created_at, updated_at) VALUES ('m', 'Test', '', '')",
+    )
     .execute(&pool)
     .await
     .unwrap();
     let c = SqliteCache(pool);
     assert_eq!(c.get("k").await.unwrap(), None);
-    c.put("k", "v").await.unwrap();
-    c.put("k", "w").await.unwrap();
+    c.put("k", "v", &["m"]).await.unwrap();
+    c.put("k", "w", &["m"]).await.unwrap();
     assert_eq!(c.get("k").await.unwrap().as_deref(), Some("w"));
 }
 
 /// Fails for one named minutes text, otherwise like `Fake`.
 struct Flaky {
-    bad: &'static str,
+    bad: String,
     all: bool,
 }
 
@@ -264,7 +274,7 @@ impl Briefer for Flaky {
         "flaky:1".into()
     }
     async fn key_points(&self, _title: &str, minutes: &str) -> Result<Vec<String>, BriefError> {
-        if self.all || minutes.contains(self.bad) {
+        if self.all || minutes.contains(&self.bad) {
             return Err(BriefError::Model("tidsgrænsen blev nået".into()));
         }
         Ok(vec!["et".into()])
@@ -278,7 +288,6 @@ impl Briefer for Flaky {
 async fn one_failing_meeting_is_skipped() {
     let h = history();
     let bad = h.iter().find(|m| m.id == "s6").unwrap().minutes.clone();
-    let bad: &'static str = Box::leak(bad.into_boxed_str());
     let f = Flaky { bad, all: false };
     let b = build_brief(&upcoming(), &h, &f, &InMemoryCache::default())
         .await
@@ -289,7 +298,89 @@ async fn one_failing_meeting_is_skipped() {
 
 #[tokio::test]
 async fn all_meetings_failing_is_an_error() {
-    let f = Flaky { bad: "", all: true };
+    let f = Flaky {
+        bad: String::new(),
+        all: true,
+    };
     let r = build_brief(&upcoming(), &history(), &f, &InMemoryCache::default()).await;
     assert!(matches!(r, Err(BriefError::Model(_))));
+}
+
+#[tokio::test]
+async fn failed_overview_keeps_points_and_is_retried() {
+    let f = Fake {
+        fail_overview: true,
+        ..Fake::default()
+    };
+    let cache = InMemoryCache::default();
+    for _ in 0..2 {
+        let brief = build_brief(&upcoming(), &history(), &f, &cache)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(brief.overview.is_empty());
+        assert_eq!(brief.meetings.len(), 5);
+    }
+    assert_eq!(f.points.load(Ordering::SeqCst), 5);
+    assert_eq!(f.overviews.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn empty_points_are_retried() {
+    let f = Fake {
+        empty_points: true,
+        ..Fake::default()
+    };
+    let cache = InMemoryCache::default();
+    for _ in 0..2 {
+        assert!(build_brief(&upcoming(), &history(), &f, &cache)
+            .await
+            .unwrap()
+            .is_none());
+    }
+    assert_eq!(f.points.load(Ordering::SeqCst), 10);
+}
+
+#[tokio::test]
+async fn own_addresses_do_not_match_unrelated_one_off_meetings() {
+    let mut next = upcoming();
+    next.own_addresses = vec![" ME@example.test ".into(), "alias@example.test".into()];
+    next.attendees
+        .extend(["me@example.test".into(), "ALIAS@example.test".into()]);
+    let past = vec![past(
+        "unrelated",
+        "Other topic",
+        None,
+        &[
+            "me@example.test",
+            "alias@example.test",
+            "other@example.test",
+        ],
+        27,
+        "minutes",
+    )];
+    let fake = Fake::default();
+    assert!(build_brief(&next, &past, &fake, &InMemoryCache::default())
+        .await
+        .unwrap()
+        .is_none());
+    assert_eq!(fake.points.load(Ordering::SeqCst), 0);
+    next.attendees.push("other@example.test".into());
+    assert_eq!(rank(&next, &past)[0].1, Relation::SharedAttendees);
+}
+
+#[tokio::test]
+async fn identical_minutes_from_different_meetings_have_separate_cache_entries() {
+    let fake = Fake::default();
+    let cache = InMemoryCache::default();
+    let mut past = vec![history()[0].clone()];
+    build_brief(&upcoming(), &past, &fake, &cache)
+        .await
+        .unwrap();
+    past[0].id = "different".into();
+    build_brief(&upcoming(), &past, &fake, &cache)
+        .await
+        .unwrap();
+    assert_eq!(fake.points.load(Ordering::SeqCst), 2);
+    assert_eq!(fake.overviews.load(Ordering::SeqCst), 2);
 }
