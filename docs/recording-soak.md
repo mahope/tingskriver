@@ -82,15 +82,18 @@ streams less in parallel, which is why the limit is 1800 s and not close to
 the estimate. The old script allowed `finish` 600 s, so it sat at the limit and
 failed on the night of 2026-11-05 although the code was unchanged on that
 path (the encode path has no diff between the commit before #164 and `main`).
-`recover` and `finish` now get 1800 s: the limit only has to catch a hang.
+`recover` and `finish` now get 1200 s: the limit only has to catch a hang, and
+it is still more than three times the measured 310-350 s.
 `recover` was not timed separately; it runs the same scan and encode path.
 Stopping `finish` early cannot lose audio: raw tracks are deleted only after
 the outputs verify as `ok`, outputs are written to `.{name}.tmp` files and
 renamed, and a killed run leaves the raw tracks plus stale temp files that the
-next run overwrites. The three encodes use one core each, so on a small machine
-they compete with other work after stop but never with the capture itself.
-The job's `timeout-minutes: 345` still covers 3 h + 1.5 h of recording, both
-limits and the build.
+next run overwrites. The three encodes use one core each. On a small machine they compete with other
+work after stop, such as transcription or a new recording started before the
+previous one has finished; that costs time, not audio, because capture never
+waits for the disk writer. The job's `timeout-minutes: 345` (20,700 s) covers
+3 h + 1.5 h of recording (16,200 s) and both limits (2,400 s), leaving about
+35 minutes for checkout, packages and a cold build.
 
 ## Manual hardware variant (Windows)
 

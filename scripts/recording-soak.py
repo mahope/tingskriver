@@ -11,7 +11,7 @@ import time
 # Measured at about 0.03 s of work per recorded second on a developer machine
 # (about 0.07 s before the outputs were encoded side by side), so the limit
 # only has to catch a hang, not police speed.
-POST_STEP_TIMEOUT = 1800
+POST_STEP_TIMEOUT = 1200
 
 
 def check_memory(values):
