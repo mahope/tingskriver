@@ -230,7 +230,9 @@ transcription leaves the saved meeting available and reports the error.
   are padded to the same end. Audio received while confirming a gap stays
   buffered so silence can be inserted before it, at the start of the outage.
 - A separate `audio::disk_guard` polls the recording drive every 5 s on a
-  blocking worker. Below 256 MiB it emits `recording-disk-low` (`kind: DiskLow`); at 320 MiB it emits `recording-disk-ok` (`kind: DiskOk`).
+  blocking worker, starting immediately. Below 256 MiB it emits
+  `recording-disk-low` (`kind: DiskLow`); at 320 MiB it emits
+  `recording-disk-ok` (`kind: DiskOk`).
   Each transition is emitted once. Unknown space leaves the warning unchanged.
   The guard only advises through `AppHost`; it never stops or blocks capture.
 - Storage errors are a state, not a log line: the first failure emits
