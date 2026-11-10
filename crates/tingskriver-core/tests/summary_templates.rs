@@ -93,7 +93,9 @@ fn calendar_domain_rules_do_not_guess_or_match_domain_suffixes() {
 #[cfg(target_os = "linux")]
 #[tokio::test]
 async fn custom_template_public_api_round_trip() {
-    use tingskriver_core::summary::templates::{export_template, list_template_ids, save_template};
+    use tingskriver_core::summary::templates::{
+        export_template, list_template_ids, list_templates, save_template,
+    };
     if std::env::var_os("TINGSKRIVER_TEMPLATE_TEST_CHILD").is_none() {
         let dir = tempfile::tempdir().unwrap();
         let status = std::process::Command::new(std::env::current_exe().unwrap())
@@ -106,6 +108,25 @@ async fn custom_template_public_api_round_trip() {
         return;
     }
     let original = export_template("standard").await.unwrap();
+    let directory = dirs::data_dir().unwrap().join("Meetily/templates");
+    tokio::fs::create_dir_all(&directory).await.unwrap();
+    for id in ["Mit referat", "Møde med æøå"] {
+        tokio::fs::write(directory.join(format!("{id}.json")), &original)
+            .await
+            .unwrap();
+        assert!(list_template_ids().contains(&id.to_string()));
+        assert!(list_templates().iter().any(|(listed, _, _)| listed == id));
+        let mut template = get_template(id).unwrap();
+        template.name = id.into();
+        save_template(id, &serde_json::to_string(&template).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(get_template(id).unwrap().name, id);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&export_template(id).await.unwrap()).unwrap(),
+            serde_json::to_value(&template).unwrap()
+        );
+    }
     save_template("my_template", &original).await.unwrap();
     assert!(list_template_ids().contains(&"my_template".into()));
     let mut edited = get_template("my_template").unwrap();

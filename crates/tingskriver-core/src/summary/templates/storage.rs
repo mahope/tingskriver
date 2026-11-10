@@ -1,17 +1,17 @@
 //! User templates use the existing override directory and portable JSON schema.
+//! IDs preserve existing filenames, including spaces and Unicode, without path components.
 use super::{get_template, validate_and_parse_template};
 use std::path::PathBuf;
 
 pub(super) fn validate_id(id: &str) -> Result<(), String> {
     if id.is_empty()
-        || id.len() > 128
-        || !id
-            .bytes()
-            .all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-')
+        || id == "."
+        || id == ".."
+        || id
+            .chars()
+            .any(|c| c.is_control() || matches!(c, '/' | '\\' | ':'))
     {
-        return Err(
-            "Skabelon-id må kun indeholde bogstaver, tal, bindestreg og understregning".into(),
-        );
+        return Err("Skabelon-id skal være et filnavn uden sti eller kontroltegn".into());
     }
     Ok(())
 }
@@ -60,6 +60,32 @@ pub async fn export_template(id: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn preserve_legacy_template_filenames() {
+        let dir = tempfile::tempdir().unwrap();
+        let json = export_template("standard").await.unwrap();
+        for id in ["Mit referat", "Møde med æøå", "Referat.v2"] {
+            assert!(validate_id(id).is_ok(), "Rejected legacy id: {id}");
+            save_in(dir.path().into(), id, &json).await.unwrap();
+            let saved = tokio::fs::read_to_string(dir.path().join(format!("{id}.json")))
+                .await
+                .unwrap();
+            assert_eq!(saved, json);
+        }
+        for id in [
+            "",
+            ".",
+            "..",
+            "../outside",
+            "a/b",
+            "a\\b",
+            "C:outside",
+            "a\0b",
+        ] {
+            assert!(validate_id(id).is_err(), "Accepted unsafe id: {id:?}");
+        }
+    }
 
     #[tokio::test]
     async fn create_edit_and_reject_invalid_replacements() {
