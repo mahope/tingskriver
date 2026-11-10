@@ -16,6 +16,20 @@ are private meeting data and belong in the application's local data directory.
 2. After recording/finalization (or pause-based chunking), enqueue `JobSpec` with
    saved WAV paths. Set `microphone_label` from settings. The defaults are `Mig`
    and language `da`. `offset_ms` puts a chunk back on the meeting timeline.
+   Set `hotwords = Hotwords::from_sources(matched_event, &dictionary)` using
+   only the matched calendar event and the dictation store's dictionary.
+   Names of non-declined participants come first, then dictionary targets,
+   then their old spellings (aliases). Email addresses are never hints.
+   Missing snapshots in older jobs default to empty. Hints are private data
+   stored with the job; the host must apply the same consent policy as audio.
+   The worker sends hints only through `TranscriptionRequest.prompt` to the
+   attempted chain links, never to unused reserves or a separate service.
+   Whole hints are selected within a conservative 224 UTF-8 byte budget
+   (including separators), preserving case and Danish letters. This also
+   bounds byte-level tokens for Whisper's 224-token prompt window; larger
+   provider windows are deliberately not filled. Custom endpoints with a
+   smaller limit are not yet configurable. The built-in local adapter does
+   not consume prompt hints because its inference trait has no prompt field.
 3. Poll `run_once` from a host-owned task. It returns false if nothing is due;
    the host can wait before polling again. Shut down/cancel workers before
    recovery. A cancelled in-flight call remains running until recovery.

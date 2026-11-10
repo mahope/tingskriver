@@ -125,7 +125,7 @@ where
             language: Some(job.spec.language.clone()),
             diarize,
             timestamps: true,
-            prompt: None,
+            prompt: job.spec.hotwords.prompt(crate::hotwords::PROMPT_BUDGET),
         };
         let cooldowns = queue.cooldowns(clock()).await.map_err(|_| None)?;
         let links = service

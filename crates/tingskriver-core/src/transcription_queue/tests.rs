@@ -24,6 +24,59 @@ fn remote_config(url: &str) -> ProvidersConfig {
 }
 
 #[tokio::test]
+async fn hotwords_reach_only_the_called_link_as_a_prompt() {
+    use fake_server::{FakeServer, Reply};
+    let body = r#"{"text":"Hej","segments":[{"start":0,"end":1,"text":"Hej"}]}"#;
+    let server = FakeServer::start(vec![Reply::ok(body)]).await;
+    let unused = FakeServer::start(vec![Reply::ok(body)]).await;
+    let dir = tempfile::tempdir().unwrap();
+    let mic = dir.path().join("mic.wav");
+    std::fs::write(&mic, [0, 1]).unwrap();
+    let mut spec = JobSpec::new("meeting", mic, None);
+    spec.hotwords = crate::hotwords::Hotwords {
+        participant_names: vec!["Ægir Ø".into()],
+        dictionary_words: vec!["Åle".into(), "Aale".into(), "x".repeat(225)],
+    };
+    let mut config = remote_config(&server.base_url);
+    let mut reserve = custom_provider("reserve", "Reserve", &unused.base_url);
+    reserve.transcription_model = Some("test".into());
+    config.upsert_provider(reserve);
+    config
+        .functions
+        .get_mut(&Function::Transcription)
+        .unwrap()
+        .push(ChainLink::new("reserve"));
+    let queue = Queue::open_memory().await.unwrap();
+    queue.enqueue(&spec, 0).await.unwrap();
+    queue
+        .run_once_at(
+            &service(dir.path()),
+            &config,
+            |_, _| async { panic!("remote only") },
+            |_| {},
+            0,
+        )
+        .await
+        .unwrap();
+    assert_eq!(queue.statuses().await.unwrap()[0].status, "completed");
+    let requests = server.requests();
+    assert_eq!(requests.len(), 1);
+    assert!(requests[0].contains("name=\"prompt\"\r\n\r\nÆgir Ø, Åle, Aale\r\n"));
+    assert!(!requests[0].contains(&"x".repeat(225)));
+    assert!(!requests[0].contains("name=\"hotwords\""));
+    assert!(unused.requests().is_empty());
+}
+
+#[test]
+fn old_jobs_without_hotwords_still_deserialize() {
+    let spec = JobSpec::new("meeting", "mic.wav".into(), None);
+    let mut value = serde_json::to_value(spec).unwrap();
+    value.as_object_mut().unwrap().remove("hotwords");
+    let restored: JobSpec = serde_json::from_value(value).unwrap();
+    assert_eq!(restored.hotwords.prompt(224), None);
+}
+
+#[tokio::test]
 async fn interrupted_job_survives_reopen_and_rerun_preserves_versions() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("queue.sqlite");

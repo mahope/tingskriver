@@ -18,6 +18,8 @@ pub struct JobSpec {
     pub offset_ms: u64,
     /// Optional snapshot for "run again with another provider". Never keys.
     pub providers: Option<crate::providers::ProvidersConfig>,
+    #[serde(default)]
+    pub hotwords: crate::hotwords::Hotwords,
 }
 
 impl JobSpec {
@@ -30,6 +32,7 @@ impl JobSpec {
             language: "da".into(),
             offset_ms: 0,
             providers: None,
+            hotwords: Default::default(),
         }
     }
 }
