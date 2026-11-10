@@ -37,8 +37,8 @@ fn private_host(url: &Url) -> bool {
                     }
                     std::net::IpAddr::V6(ip) => {
                         ip.is_loopback()
-                            || ip.is_unique_local()
-                            || ip.is_unicast_link_local()
+                            || (ip.segments()[0] & 0xfe00) == 0xfc00
+                            || (ip.segments()[0] & 0xffc0) == 0xfe80
                             || ip.to_ipv4_mapped().is_some_and(|ip| {
                                 ip.is_loopback() || ip.is_private() || ip.is_link_local()
                             })
@@ -211,12 +211,19 @@ mod tests {
             "http://169.254.1.1/v1",
             "http://server.local/v1",
             "http://[fe80::1]/v1",
+            "http://[febf::1]/v1",
+            "http://[fc00::1]/v1",
+            "http://[fdff::1]/v1",
         ] {
             assert!(models_url(url).is_ok(), "{url}");
         }
         for url in [
             "http://example.com/v1",
             "http://localhost.example.com/v1",
+            "http://[fbff::1]/v1",
+            "http://[fe00::1]/v1",
+            "http://[fe7f::1]/v1",
+            "http://[fec0::1]/v1",
             "https://user@example.com/v1",
             "https://:password@example.com/v1",
             "file:///v1",

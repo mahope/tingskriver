@@ -1379,7 +1379,16 @@ async fn verification_retries_after_server_starts() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let (mut socket, _) = listener.accept().await.unwrap();
         let mut buf = [0; 4096];
-        socket.read(&mut buf).await.unwrap();
+        let mut read = 0;
+        while !buf[..read].windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+            assert!(read < buf.len(), "request headers exceed buffer");
+            let count = socket.read(&mut buf[read..]).await.unwrap();
+            assert!(
+                count > 0,
+                "connection closed before request headers completed"
+            );
+            read += count;
+        }
         socket
             .write_all(
                 b"HTTP/1.1 200 OK\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{\"data\":[]}",
