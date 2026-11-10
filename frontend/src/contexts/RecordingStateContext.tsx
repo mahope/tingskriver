@@ -372,6 +372,12 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
     const setup = async () => {
       try {
         const subscriptions = [
+          listen<{ message: string }>('recording-disk-low', (event) => {
+            toast.warning(event.payload.message, { id: 'recording-disk', duration: Infinity });
+          }),
+          listen<{ message: string }>('recording-disk-ok', (event) => {
+            toast.success(event.payload.message, { id: 'recording-disk', duration: 5000 });
+          }),
           listen<{ message: string }>('recording-storage-error', (event) => {
             toast.error(event.payload.message, { id: 'recording-storage', duration: Infinity });
           }),
