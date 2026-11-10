@@ -998,6 +998,23 @@ fn code_identifier_review_regressions() {
 }
 
 #[test]
+fn code_flags_preserve_argument_and_path_hyphens() {
+    for (input, expected) in [
+        (
+            "git checkout bindestreg b feature bindestreg login",
+            "git checkout -b feature-login",
+        ),
+        (
+            "src skråstreg my bindestreg module punktum rs",
+            "src/my-module.rs",
+        ),
+        ("ls bindestreg la bindestreg R", "ls -la -R"),
+    ] {
+        assert_eq!(raw(input), expected, "{input}");
+    }
+}
+
+#[test]
 fn identifier_boundaries_follow_the_active_spoken_table() {
     let table = SpokenTable::with_user(
         r#"{"version":1,"entries":[{"phrases":["custom boundary"],"action":{"type":"break","lines":1}}]}"#,

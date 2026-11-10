@@ -423,7 +423,14 @@ extensions under this heuristic. `bindestreg` before an alphanumeric flag
 produces `-`, and two consecutive occurrences produce `--`, with a space
 before the flag: `ls bindestreg la` becomes `ls -la` and
 `cargo build bindestreg bindestreg release` becomes `cargo build --release`.
-Flag words are protected from subsequent casing commands.
+Flag recognition is limited to a command with at most one subcommand, followed
+by zero or more flags. After a positional argument or path starts, hyphens
+retain their normal joining: `git checkout bindestreg b feature bindestreg login`
+becomes `git checkout -b feature-login`, and
+`src skråstreg my bindestreg module punktum rs` becomes `src/my-module.rs`.
+This conservative heuristic does not recognize flags after positional arguments
+or command prefixes longer than two words. Flag words are protected from
+subsequent casing commands.
 No application detection or I/O lives in this pass, so it can move to a text
 crate independently of desktop hosts.
 

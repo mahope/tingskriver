@@ -4,6 +4,31 @@ use super::cleanup::Style;
 use super::spoken::{phrase_words, SpokenTable};
 use super::token::Tok;
 
+// Flags follow a command (optionally with one subcommand) or another flag.
+// Once a positional argument or path begins, hyphens keep their normal joining.
+fn is_flag_position(tokens: &[Tok]) -> bool {
+    let command_len = tokens
+        .iter()
+        .take_while(|token| token.plain_word().is_some())
+        .count();
+    if !(1..=2).contains(&command_len) {
+        return false;
+    }
+    let mut flags = tokens[command_len..].chunks_exact(2);
+    let valid = flags.by_ref().all(|pair| {
+        matches!(&pair[0], Tok::Sym { text, space_before: true, space_after: false }
+            if text == "-" || text == "--")
+            && matches!(
+                &pair[1],
+                Tok::Word {
+                    kind: super::token::WordKind::Exact,
+                    ..
+                }
+            )
+    });
+    valid && flags.remainder().is_empty()
+}
+
 pub(super) fn format(tokens: Vec<Tok>, style: Style, spoken: &SpokenTable) -> Vec<Tok> {
     if style != Style::Raw {
         return tokens;
@@ -91,9 +116,11 @@ pub(super) fn format(tokens: Vec<Tok>, style: Style, spoken: &SpokenTable) -> Ve
                 let double =
                     tokens.get(i + 1).and_then(Tok::plain_word).as_deref() == Some("bindestreg");
                 let next = i + 1 + usize::from(double);
-                if tokens.get(next).and_then(Tok::plain_word).is_some_and(|w| {
-                    w.chars().all(|c| c.is_ascii_alphanumeric()) && !command_words.contains(&w)
-                }) {
+                if is_flag_position(&out)
+                    && tokens.get(next).and_then(Tok::plain_word).is_some_and(|w| {
+                        w.chars().all(|c| c.is_ascii_alphanumeric()) && !command_words.contains(&w)
+                    })
+                {
                     out.push(Tok::sym(if double { "--" } else { "-" }, true, false));
                     if let Tok::Word { text, .. } = &tokens[next] {
                         out.push(Tok::exact(text.clone()));
