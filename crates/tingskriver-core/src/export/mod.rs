@@ -2,6 +2,7 @@
 //! pass notes (via `notes::markdown::serialize`) and summary text explicitly.
 
 use crate::api::MeetingDetails;
+use chrono::{DateTime, Local, TimeZone};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
@@ -11,6 +12,12 @@ pub struct ExportData<'a> {
     pub duration_seconds: Option<u64>,
     /// Participant names or speaker labels, in display order.
     pub speakers: &'a [String],
+    /// Confirmed participant names only, never anonymous speaker labels.
+    pub participants: &'a [String],
+    /// Action items from the summary, supplied separately from its display text.
+    pub action_items: &'a [String],
+    /// Original audio file path, or None for an import without a known path.
+    pub source_audio: Option<&'a str>,
     pub language: Option<&'a str>,
     pub summary: &'a str,
     pub notes: &'a str,
@@ -23,25 +30,26 @@ pub enum Format {
 }
 
 /// Render and save one meeting document for a future UI wrapper.
-/// `{dato}` uses the calendar date from the stored RFC 3339 creation timestamp.
+/// `{dato}` uses the local calendar date of the stored RFC 3339 timestamp.
 pub async fn export_meeting(
     directory: &Path,
     template: &str,
     format: Format,
     data: &ExportData<'_>,
 ) -> io::Result<PathBuf> {
-    let date = data
-        .meeting
-        .created_at
-        .split('T')
-        .next()
-        .unwrap_or_default();
-    let basename = filename(template, date, &data.meeting.title);
+    let date = local_date(&data.meeting.created_at, &Local)?;
+    let basename = filename(template, &date, &data.meeting.title);
     let content = match format {
         Format::Markdown => render_markdown(data),
         Format::Html => render_html(data),
     };
     write_document(directory, &basename, format, content).await
+}
+
+fn local_date<Tz: TimeZone>(created_at: &str, timezone: &Tz) -> io::Result<String> {
+    let timestamp = DateTime::parse_from_rfc3339(created_at)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+    Ok(timestamp.with_timezone(timezone).date_naive().to_string())
 }
 
 // JSON strings and arrays are also YAML flow values. Quoting prevents dates,
@@ -56,10 +64,20 @@ pub fn render_markdown(data: &ExportData<'_>) -> String {
         .map_or("null".into(), |n| n.to_string());
     let language = data.language.map_or("null".into(), quoted);
     let speakers = serde_json::to_string(data.speakers).expect("serializing strings cannot fail");
+    let participants =
+        serde_json::to_string(data.participants).expect("serializing strings cannot fail");
+    let tasks = serde_json::to_string(data.action_items).expect("serializing strings cannot fail");
+    let source = quoted(data.source_audio.unwrap_or("import"));
+    let heading = data
+        .meeting
+        .title
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     let mut text = format!(
-        "---\ntitle: {}\ndate: {}\nduration_seconds: {duration}\nspeakers: {speakers}\nlanguage: {language}\n---\n\n# {}\n\n## Referat\n\n{}\n\n## Noter\n\n{}\n\n## Transskript\n\n",
+        "---\ntitle: {}\ndate: {}\nduration_seconds: {duration}\nspeakers: {speakers}\nlanguage: {language}\ndato: {}\ndeltagere: {participants}\nopgaver: {tasks}\nkilde: {source}\n---\n\n# {}\n\n## Referat\n\n{}\n\n## Noter\n\n{}\n\n## Transskript\n\n",
         quoted(&data.meeting.title), quoted(&data.meeting.created_at),
-        data.meeting.title, data.summary, data.notes
+        quoted(&data.meeting.created_at), heading, data.summary, data.notes
     );
     for segment in ordered_transcripts(data.meeting) {
         text.push_str(&format!("[{}] {}\n\n", segment.timestamp, segment.text));
@@ -171,7 +189,7 @@ pub fn sanitize_filename(value: &str) -> String {
         stem.strip_prefix(prefix).is_some_and(|n| {
             matches!(
                 n,
-                "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+                "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
             )
         })
     };

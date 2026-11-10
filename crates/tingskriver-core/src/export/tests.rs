@@ -9,6 +9,9 @@ async fn export_meeting_renders_both_formats_without_replacing_existing_files() 
     let data = ExportData {
         meeting: &meeting,
         duration_seconds: Some(60),
+        participants: &["Ada".into()],
+        action_items: &["Send notes".into()],
+        source_audio: Some("recording.wav"),
         speakers: &[],
         language: Some("da"),
         summary: "<summary>",
@@ -66,14 +69,21 @@ fn frontmatter_and_sections_preserve_content() {
     let data = ExportData {
         meeting: &meeting,
         duration_seconds: Some(60),
+        participants: &["Ada".into()],
+        action_items: &["Send notes".into()],
+        source_audio: Some("recording.wav"),
         speakers: &["Speaker: 1".into()],
         language: Some("da"),
         summary: "Summary",
         notes: "Notes",
     };
     let text = render_markdown(&data);
-    assert!(text.starts_with("---\ntitle: \"Title: \\\"quoted\\\"\\n---\"\n"));
-    assert!(text.contains("date: \"2026-01-02T03:04:05Z\"\nduration_seconds: 60\nspeakers: [\"Speaker: 1\"]\nlanguage: \"da\"\n---\n"));
+    let yaml = frontmatter(&text);
+    assert_eq!(yaml["title"].as_str(), Some(meeting.title.as_str()));
+    assert_eq!(yaml["date"].as_str(), Some(meeting.created_at.as_str()));
+    assert_eq!(yaml["duration_seconds"].as_i64(), Some(60));
+    assert_eq!(yaml["speakers"][0].as_str(), Some("Speaker: 1"));
+    assert_eq!(yaml["language"].as_str(), Some("da"));
     for part in [
         "## Referat\n\nSummary",
         "## Noter\n\nNotes",
@@ -91,6 +101,9 @@ fn html_escapes_all_dynamic_content() {
     let data = ExportData {
         meeting: &meeting,
         duration_seconds: None,
+        participants: &["Ada".into()],
+        action_items: &["Send notes".into()],
+        source_audio: Some("recording.wav"),
         speakers: &["<speaker>".into()],
         language: Some("<da>"),
         summary: "<summary>",
@@ -115,7 +128,7 @@ fn html_escapes_all_dynamic_content() {
 #[test]
 fn portable_filenames() {
     for name in [
-        "CON", "con.txt", "PRN", "AUX", "NUL", "COM1", "LPT9", "COM¹", "LPT²",
+        "CON", "con.txt", "PRN", "AUX", "NUL", "COM0", "LPT0", "COM1", "LPT9", "COM¹", "LPT²",
     ] {
         assert!(sanitize_filename(name).starts_with('_'), "{name}");
     }
@@ -138,13 +151,19 @@ fn absent_metadata_and_empty_sections_are_explicit() {
     let data = ExportData {
         meeting: &meeting,
         duration_seconds: None,
+        participants: &["Ada".into()],
+        action_items: &["Send notes".into()],
+        source_audio: Some("recording.wav"),
         speakers: &[],
         language: None,
         summary: "",
         notes: "",
     };
     let markdown = render_markdown(&data);
-    assert!(markdown.contains("duration_seconds: null\nspeakers: []\nlanguage: null\n---"));
+    let yaml = frontmatter(&markdown);
+    assert!(yaml["duration_seconds"].is_null());
+    assert!(yaml["speakers"].as_vec().unwrap().is_empty());
+    assert!(yaml["language"].is_null());
     assert!(markdown.ends_with("## Transskript\n\n"));
     assert!(render_html(&data).ends_with("</body></html>\n"));
 }
@@ -166,6 +185,9 @@ fn transcript_uses_recording_order_in_both_formats() {
     let data = ExportData {
         meeting: &meeting,
         duration_seconds: None,
+        participants: &["Ada".into()],
+        action_items: &["Send notes".into()],
+        source_audio: Some("recording.wav"),
         speakers: &[],
         language: None,
         summary: "",
@@ -207,12 +229,7 @@ async fn never_overwrites_and_leaves_no_temporary_files() {
     assert_eq!(third.file_name().unwrap(), "_CON (3).md");
     assert_eq!(tokio::fs::read_to_string(first).await.unwrap(), "first");
     assert_eq!(tokio::fs::read_to_string(second).await.unwrap(), "second");
-    let mut entries = tokio::fs::read_dir(dir.path()).await.unwrap();
-    let mut count = 0;
-    while entries.next_entry().await.unwrap().is_some() {
-        count += 1;
-    }
-    assert_eq!(count, 3);
+    assert_eq!(entry_count(dir.path()).await, 3);
 }
 
 #[tokio::test]
@@ -239,12 +256,7 @@ async fn existing_directory_is_preserved_and_skipped() {
     assert_eq!(path.file_name().unwrap(), "meeting (2).md");
     assert!(tokio::fs::metadata(existing).await.unwrap().is_dir());
     assert_eq!(tokio::fs::read_to_string(path).await.unwrap(), "document");
-    let mut entries = tokio::fs::read_dir(dir.path()).await.unwrap();
-    let mut count = 0;
-    while entries.next_entry().await.unwrap().is_some() {
-        count += 1;
-    }
-    assert_eq!(count, 2);
+    assert_eq!(entry_count(dir.path()).await, 2);
 }
 
 #[cfg(unix)]
@@ -263,10 +275,79 @@ async fn existing_symlink_is_preserved_without_touching_its_target() {
     assert_eq!(tokio::fs::read_link(link).await.unwrap(), target);
     assert_eq!(tokio::fs::read_to_string(target).await.unwrap(), "original");
     assert_eq!(tokio::fs::read_to_string(path).await.unwrap(), "document");
-    let mut entries = tokio::fs::read_dir(dir.path()).await.unwrap();
+    assert_eq!(entry_count(dir.path()).await, 2);
+}
+
+#[test]
+fn local_date_crosses_utc_midnight() {
+    let timezone = chrono_tz::Europe::Copenhagen;
+    for timestamp in ["2026-01-01T23:30:00Z", "2026-07-01T22:30:00Z"] {
+        let expected = if timestamp.contains("01-01") {
+            "2026-01-02"
+        } else {
+            "2026-07-02"
+        };
+        assert_eq!(local_date(timestamp, &timezone).unwrap(), expected);
+    }
+    assert!(local_date("invalid", &timezone).is_err());
+}
+
+fn frontmatter(text: &str) -> yaml_rust2::Yaml {
+    let yaml = text
+        .strip_prefix("---\n")
+        .unwrap()
+        .split_once("\n---\n")
+        .unwrap()
+        .0;
+    let mut documents = yaml_rust2::YamlLoader::load_from_str(yaml).unwrap();
+    assert_eq!(documents.len(), 1);
+    documents.remove(0)
+}
+
+#[test]
+fn frontmatter_has_typed_metadata_and_a_single_line_heading() {
+    let meeting = meeting();
+    let mut data = ExportData {
+        meeting: &meeting,
+        duration_seconds: Some(60),
+        participants: &["Ada".into()],
+        speakers: &["Taler 1".into()],
+        action_items: &["Send notes\n---".into()],
+        source_audio: Some("recording.wav"),
+        language: Some("da"),
+        summary: "Summary",
+        notes: "",
+    };
+    let text = render_markdown(&data);
+    let yaml = frontmatter(&text);
+    assert_eq!(yaml["title"].as_str(), Some(meeting.title.as_str()));
+    assert_eq!(yaml["dato"].as_str(), Some(meeting.created_at.as_str()));
+    assert_eq!(yaml["duration_seconds"].as_i64(), Some(60));
+    assert_eq!(yaml["language"].as_str(), Some("da"));
+    assert_eq!(yaml["deltagere"].as_vec().unwrap().len(), 1);
+    assert_eq!(yaml["deltagere"][0].as_str(), Some("Ada"));
+    assert_eq!(yaml["speakers"][0].as_str(), Some("Taler 1"));
+    assert_eq!(yaml["opgaver"][0].as_str(), Some("Send notes\n---"));
+    assert_eq!(yaml["kilde"].as_str(), Some("recording.wav"));
+    assert!(text.contains("\n# Title: \"quoted\" ---\n"));
+    data.participants = &[];
+    data.action_items = &[];
+    data.source_audio = None;
+    data.duration_seconds = None;
+    data.language = None;
+    let yaml = frontmatter(&render_markdown(&data));
+    assert!(yaml["deltagere"].as_vec().unwrap().is_empty());
+    assert!(yaml["opgaver"].as_vec().unwrap().is_empty());
+    assert_eq!(yaml["kilde"].as_str(), Some("import"));
+    assert!(yaml["duration_seconds"].is_null());
+    assert!(yaml["language"].is_null());
+}
+
+async fn entry_count(directory: &Path) -> usize {
+    let mut entries = tokio::fs::read_dir(directory).await.unwrap();
     let mut count = 0;
     while entries.next_entry().await.unwrap().is_some() {
         count += 1;
     }
-    assert_eq!(count, 2);
+    count
 }

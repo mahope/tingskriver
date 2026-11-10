@@ -377,20 +377,25 @@ unit tests because it requires administrator access and the WER service.
 `tingskriver_core::export` renders `MeetingDetails` (loaded with
 `MeetingsRepository::get_meeting`) as Markdown with YAML frontmatter or as a
 self-contained HTML document. Callers supply summary text, serialized Markdown
-notes (`notes::markdown::serialize`), optional duration in seconds, speaker or
-participant labels and language. Missing metadata remains null in frontmatter;
-the exporter does not infer participants or language from transcript text.
+notes (`notes::markdown::serialize`), optional duration in seconds,
+participant names, speaker labels, action items from the summary, an optional
+audio file path and language. Participant names are supplied separately from
+labels such as `Taler 1`; labels never populate `deltagere`. Frontmatter includes
+`dato` (the creation timestamp), `deltagere` and `opgaver` (string arrays), and
+`kilde` (the audio path, or `import` when absent). Missing duration and language
+remain null; the exporter does not infer metadata from transcript text.
 Transcript segments are rendered in recording order. HTML preserves source
 text in escaped, wrapping blocks, including Markdown notation in notes and
 summaries; it does not interpret raw HTML or fetch external resources.
 
 `filename` expands `{dato}` and `{titel}` once and sanitizes the result for
 Windows and Unix. `export_meeting` combines rendering, filename expansion and
-writing for a future UI wrapper, using the creation timestamp's calendar date
-for `{dato}`. It returns the actual saved path. `write_document` takes a
-basename and a typed format, adds
-the extension and runs disk work on the blocking pool. It syncs a temporary
-file in the destination directory and publishes with `persist_noclobber`
+writing for a future UI wrapper, using the creation timestamp converted to
+local time for `{dato}`. Invalid timestamps return an input error before
+writing. It returns the actual saved path. `write_document` takes a basename
+and a typed format, adds the extension and runs disk work on the blocking
+pool. It syncs a temporary file in the destination directory and publishes
+with `persist_noclobber`
 (no-replace rename or atomic hard-link fallback). Existing files, including
 concurrent exports, receive ` (2)`, ` (3)`, etc. The caller must create/select
 the directory and use the returned path. This core API adds no UI command,
