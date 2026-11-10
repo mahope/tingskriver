@@ -395,59 +395,57 @@ async fn verification_never_follows_redirects() {
     let error = client::test(&link("redirect", &server.base_url, Some("valid")))
         .await
         .unwrap_err();
-    assert!(error.message("Test").contains("omdirigering"));
+    assert_eq!(
+        error.message("Test"),
+        "Uventet svar fra Test: Omdirigering er ikke tilladt. Nøglen er ikke sendt videre."
+    );
     assert_eq!(server.requests().len(), 1);
     assert!(destination.requests().is_empty());
 }
 
 #[tokio::test]
-async fn verification_caches_per_key_and_endpoint() {
+async fn verification_always_requests_fresh_results() {
     let server = FakeServer::start(vec![
         Reply::ok(r#"{"data":[]}"#),
-        Reply::json("403 Forbidden", "{}"),
-    ])
-    .await;
-    let mut target = link("cache", &server.base_url, Some("first"));
-    for _ in 0..2 {
-        client::test(&target).await.unwrap();
-    }
-    assert_eq!(server.requests().len(), 2);
-    assert!(server.requests()[0].contains("Bearer first"));
-    assert!(!server.requests()[1].contains("Bearer first"));
-    target.key = ApiKey::new("second");
-    assert!(matches!(
-        client::test(&target).await,
-        Err(ProviderError::Unauthorized { status: 403 })
-    ));
-    assert_eq!(server.requests().len(), 3);
-}
-
-#[tokio::test]
-async fn verification_cache_expires_after_sixty_seconds() {
-    let server = FakeServer::start(vec![
-        Reply::ok(r#"{"data":[]}"#),
+        Reply::ok(r#"{"data":[{"id":"new"}]}"#).with_delay(Duration::from_millis(50)),
         Reply::json("401 Unauthorized", "{}"),
     ])
     .await;
-    let target = link("expiry", &server.base_url, Some("valid"));
-    let cache = super::verify::Cache::default();
-    let start = std::time::Instant::now();
-    super::verify::test_with_cache(&target, &cache, || start)
-        .await
-        .unwrap();
-    super::verify::test_with_cache(&target, &cache, || start + Duration::from_secs(59))
-        .await
-        .unwrap();
+    let target = link("fresh", &server.base_url, None);
+    assert_eq!(client::test(&target).await.unwrap().models, 0);
+    let fresh = client::test(&target).await.unwrap();
+    assert_eq!(fresh.models, 1);
+    assert!(fresh.latency_ms >= 50);
     assert_eq!(server.requests().len(), 2);
     assert!(matches!(
-        super::verify::test_with_cache(&target, &cache, || start + Duration::from_secs(60)).await,
+        client::test(&target).await,
         Err(ProviderError::Unauthorized { status: 401 })
     ));
     assert_eq!(server.requests().len(), 3);
 }
 
 #[tokio::test]
-async fn verification_cache_does_not_cross_endpoints() {
+async fn verification_checks_changed_keys() {
+    let server = FakeServer::start(vec![
+        Reply::ok(r#"{"data":[]}"#),
+        Reply::json("401 Unauthorized", "{}"),
+    ])
+    .await;
+    let mut target = link("keys", &server.base_url, Some("first"));
+    client::test(&target).await.unwrap();
+    assert_eq!(server.requests().len(), 2);
+    assert!(server.requests()[0].contains("Bearer first"));
+    assert!(!server.requests()[1].contains("Bearer first"));
+    target.key = ApiKey::new("second");
+    assert!(matches!(
+        client::test(&target).await,
+        Err(ProviderError::Unauthorized { status: 401 })
+    ));
+    assert_eq!(server.requests().len(), 3);
+}
+
+#[tokio::test]
+async fn verification_checks_changed_endpoints() {
     let accepted = FakeServer::start(vec![
         Reply::ok(r#"{"data":[]}"#),
         Reply::json("403 Forbidden", "{}"),
@@ -469,7 +467,6 @@ async fn verification_refuses_unsafe_urls_without_a_request() {
     let server = FakeServer::start(vec![Reply::ok(r#"{"data":[]}"#)]).await;
     for url in [
         server.base_url.replace("http://", "http://user:password@"),
-        "http://example.com/v1".into(),
         "ftp://localhost/v1".into(),
     ] {
         let error = client::test(&link("unsafe", &url, Some("valid")))

@@ -1,22 +1,17 @@
 //! Connection verification uses its own client: a caller's redirect policy
 //! must never forward a key. Only custom keyed gateways need a negative control.
+//! Each test makes a fresh request. HTTP follows the settings' provider policy;
+//! public HTTP endpoints produce a warning in the report.
 
-use std::collections::HashMap;
-use std::hash::{Hash, Hasher};
-use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use reqwest::{redirect::Policy, StatusCode, Url};
 
 use super::client::{classify_status, map_reqwest, ResolvedLink, TestReport};
 use super::error::ProviderError;
-use super::model::ProviderKind;
+use super::model::{accepts_base_url, ProviderKind};
 
 const TIMEOUT: Duration = Duration::from_secs(8);
-const CACHE_TTL: Duration = Duration::from_secs(60);
-type Cached = (Instant, TestReport);
-pub(super) type Cache = Mutex<HashMap<u64, Cached>>;
-static CACHE: OnceLock<Cache> = OnceLock::new();
 
 fn unverifiable(detail: &str) -> ProviderError {
     ProviderError::BadResponse {
@@ -55,51 +50,35 @@ fn key_warning(url: &Url) -> String {
     }
 }
 
-fn models_url(base: &str) -> Result<Url, ProviderError> {
-    let invalid = || {
-        ProviderError::Config {
-        detail: "brug HTTPS til offentlige værter (HTTP kun til lokale og private adresser) og en URL uden brugernavn eller adgangskode"
-            .into(),
-    }
+fn http_warning(url: &Url) -> Option<&'static str> {
+    (url.scheme() == "http" && !private_host(url))
+        .then_some("Advarsel: Forbindelsen bruger ukrypteret HTTP til en offentlig vært.")
+}
+
+fn models_url(kind: ProviderKind, base: &str) -> Result<Url, ProviderError> {
+    let invalid = || ProviderError::Config {
+        detail: "Brug en gyldig HTTP- eller HTTPS-adresse.".into(),
     };
-    let mut url = Url::parse(base).map_err(|_| invalid())?;
-    if !url.username().is_empty()
-        || url.password().is_some()
-        || !(url.scheme() == "https" || (url.scheme() == "http" && private_host(&url)))
-        || url.host_str().is_none()
-    {
+    let mut url = Url::parse(base.trim()).map_err(|_| invalid())?;
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(ProviderError::Config {
+            detail: "Brug en adresse uden brugernavn eller adgangskode.".into(),
+        });
+    }
+    if url.host_str().is_none() || !matches!(url.scheme(), "http" | "https") {
         return Err(invalid());
+    }
+    if !accepts_base_url(kind, base) {
+        return Err(ProviderError::Config {
+            detail: "Brug HTTPS til denne udbyder.".into(),
+        });
     }
     url.set_path(&format!("{}/models", url.path().trim_end_matches('/')));
     Ok(url)
 }
 
 pub(super) async fn test(link: &ResolvedLink) -> Result<TestReport, ProviderError> {
-    test_with_cache(link, CACHE.get_or_init(Mutex::default), Instant::now).await
-}
-
-pub(super) async fn test_with_cache(
-    link: &ResolvedLink,
-    cache: &Cache,
-    now: impl Fn() -> Instant,
-) -> Result<TestReport, ProviderError> {
-    let url = models_url(&link.base_url)?;
-    // Keep only a process-local fingerprint, never the credential itself.
-    let mut hash = std::collections::hash_map::DefaultHasher::new();
-    (
-        url.as_str(),
-        link.kind,
-        link.key.as_ref().map(|key| key.expose()),
-        link.remote_timeout(),
-    )
-        .hash(&mut hash);
-    let cache_key = hash.finish();
-    if let Ok(mut entries) = cache.lock() {
-        entries.retain(|_, (at, _)| now().saturating_duration_since(*at) < CACHE_TTL);
-        if let Some((_, result)) = entries.get(&cache_key) {
-            return Ok(result.clone());
-        }
-    }
+    let url = models_url(link.kind, &link.base_url)?;
     let timeout = TIMEOUT.min(link.remote_timeout());
     let work = async {
         let client = reqwest::Client::builder()
@@ -148,28 +127,28 @@ pub(super) async fn test_with_cache(
                 _ => check(&response)?,
             }
         }
+        if let Some(http_warning) = http_warning(&url) {
+            warning = Some(match warning {
+                Some(warning) => format!("{http_warning} {warning}"),
+                None => http_warning.into(),
+            });
+        }
         Ok(TestReport {
             latency_ms,
             warning,
             models,
         })
     };
-    let result = tokio::time::timeout(timeout, work)
+    tokio::time::timeout(timeout, work)
         .await
-        .unwrap_or_else(|_| Err(ProviderError::timeout(timeout)));
-    if let Ok(report) = &result {
-        if let Ok(mut entries) = cache.lock() {
-            entries.insert(cache_key, (now(), report.clone()));
-        }
-    }
-    result
+        .unwrap_or_else(|_| Err(ProviderError::timeout(timeout)))
 }
 
 fn check(response: &reqwest::Response) -> Result<(), ProviderError> {
     if response.status().is_redirection() {
-        return Err(unverifiable(
-            "omdirigering er ikke tilladt; nøglen er ikke sendt videre",
-        ));
+        return Err(ProviderError::BadResponse {
+            detail: "Omdirigering er ikke tilladt. Nøglen er ikke sendt videre.".into(),
+        });
     }
     if response.status().is_success() {
         return Ok(());
@@ -189,6 +168,38 @@ mod tests {
     use super::*;
 
     #[test]
+    fn public_http_is_allowed_with_a_warning() {
+        for kind in [ProviderKind::OpenAiCompatible, ProviderKind::Ollama] {
+            let url = models_url(kind, "http://example.com/v1").unwrap();
+            assert_eq!(
+                http_warning(&url),
+                Some("Advarsel: Forbindelsen bruger ukrypteret HTTP til en offentlig vært.")
+            );
+            assert!(http_warning(&models_url(kind, "https://example.com/v1").unwrap()).is_none());
+            assert!(http_warning(&models_url(kind, "http://localhost/v1").unwrap()).is_none());
+        }
+    }
+
+    #[test]
+    fn invalid_addresses_have_specific_messages() {
+        for (url, detail) in [
+            ("http://example.com/v1", "Brug HTTPS til denne udbyder."),
+            (
+                "https://user@example.com/v1",
+                "Brug en adresse uden brugernavn eller adgangskode.",
+            ),
+            ("file:///v1", "Brug en gyldig HTTP- eller HTTPS-adresse."),
+        ] {
+            assert_eq!(
+                models_url(ProviderKind::OpenAi, url).unwrap_err(),
+                ProviderError::Config {
+                    detail: detail.into()
+                }
+            );
+        }
+    }
+
+    #[test]
     fn public_gateways_get_a_stronger_warning() {
         assert!(key_warning(&Url::parse("https://example.com/v1").unwrap())
             .contains("offentlige gateway"));
@@ -199,7 +210,7 @@ mod tests {
     }
 
     #[test]
-    fn allows_https_and_private_http_without_credentials() {
+    fn allows_configured_http_without_credentials() {
         for url in [
             "https://example.com/v1",
             "http://localhost/v1",
@@ -214,22 +225,31 @@ mod tests {
             "http://[febf::1]/v1",
             "http://[fc00::1]/v1",
             "http://[fdff::1]/v1",
-        ] {
-            assert!(models_url(url).is_ok(), "{url}");
-        }
-        for url in [
+            "http://gpu-box:11434",
+            "http://ollama.lan",
+            "http://100.64.0.1:11434",
             "http://example.com/v1",
             "http://localhost.example.com/v1",
             "http://[fbff::1]/v1",
             "http://[fe00::1]/v1",
             "http://[fe7f::1]/v1",
             "http://[fec0::1]/v1",
+        ] {
+            for kind in [ProviderKind::OpenAiCompatible, ProviderKind::Ollama] {
+                assert!(accepts_base_url(kind, url), "{url}");
+                assert!(models_url(kind, url).is_ok(), "{url}");
+            }
+        }
+        for url in [
             "https://user@example.com/v1",
             "https://:password@example.com/v1",
             "file:///v1",
             "not a URL",
         ] {
-            assert!(models_url(url).is_err(), "{url}");
+            assert!(
+                models_url(ProviderKind::OpenAiCompatible, url).is_err(),
+                "{url}"
+            );
         }
     }
 }
