@@ -43,7 +43,7 @@ permissions:
 
 jobs:
   checks:
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' && vars.LINUX_RUNNER) || 'ubuntu-latest' }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
@@ -58,7 +58,7 @@ jobs:
   gate:
     if: ${{ inputs.artifact != '' }}
     needs: checks
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' && vars.LINUX_RUNNER) || 'ubuntu-latest' }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
