@@ -1,6 +1,42 @@
 use super::*;
 use crate::api::{MeetingDetails, MeetingTranscript};
 
+#[tokio::test]
+async fn export_meeting_renders_both_formats_without_replacing_existing_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut meeting = meeting();
+    meeting.title = "Planning/next".into();
+    let data = ExportData {
+        meeting: &meeting,
+        duration_seconds: Some(60),
+        speakers: &[],
+        language: Some("da"),
+        summary: "<summary>",
+        notes: "Notes",
+    };
+    let existing = dir.path().join("2026-01-02 Planning_next.md");
+    std::fs::write(&existing, "keep me").unwrap();
+    for (format, expected_name, expected_content) in [
+        (
+            Format::Markdown,
+            "2026-01-02 Planning_next (2).md",
+            render_markdown(&data),
+        ),
+        (
+            Format::Html,
+            "2026-01-02 Planning_next.html",
+            render_html(&data),
+        ),
+    ] {
+        let path = export_meeting(dir.path(), "{dato} {titel}", format, &data)
+            .await
+            .unwrap();
+        assert_eq!(path.file_name().unwrap(), expected_name);
+        assert_eq!(std::fs::read_to_string(path).unwrap(), expected_content);
+    }
+    assert_eq!(std::fs::read_to_string(existing).unwrap(), "keep me");
+}
+
 fn meeting() -> MeetingDetails {
     MeetingDetails {
         id: "fixture".into(),

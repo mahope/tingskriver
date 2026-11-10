@@ -385,7 +385,10 @@ text in escaped, wrapping blocks, including Markdown notation in notes and
 summaries; it does not interpret raw HTML or fetch external resources.
 
 `filename` expands `{dato}` and `{titel}` once and sanitizes the result for
-Windows and Unix. `write_document` takes a basename and a typed format, adds
+Windows and Unix. `export_meeting` combines rendering, filename expansion and
+writing for a future UI wrapper, using the creation timestamp's calendar date
+for `{dato}`. It returns the actual saved path. `write_document` takes a
+basename and a typed format, adds
 the extension and runs disk work on the blocking pool. It syncs a temporary
 file in the destination directory and publishes with `persist_noclobber`
 (no-replace rename or atomic hard-link fallback). Existing files, including

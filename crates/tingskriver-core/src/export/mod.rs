@@ -22,6 +22,28 @@ pub enum Format {
     Html,
 }
 
+/// Render and save one meeting document for a future UI wrapper.
+/// `{dato}` uses the calendar date from the stored RFC 3339 creation timestamp.
+pub async fn export_meeting(
+    directory: &Path,
+    template: &str,
+    format: Format,
+    data: &ExportData<'_>,
+) -> io::Result<PathBuf> {
+    let date = data
+        .meeting
+        .created_at
+        .split('T')
+        .next()
+        .unwrap_or_default();
+    let basename = filename(template, date, &data.meeting.title);
+    let content = match format {
+        Format::Markdown => render_markdown(data),
+        Format::Html => render_html(data),
+    };
+    write_document(directory, &basename, format, content).await
+}
+
 // JSON strings and arrays are also YAML flow values. Quoting prevents dates,
 // colons, newlines and document markers from changing the frontmatter structure.
 fn quoted(value: &str) -> String {
