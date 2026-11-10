@@ -306,7 +306,9 @@ export function useSummaryGeneration({
       }
 
       const result = meeting.is_imported
-        ? await invokeTauri<ProcessTranscriptResponse>('regenerate_summary_command', { meetingId: meeting.id })
+        ? await invokeTauri<ProcessTranscriptResponse>('regenerate_summary_command', {
+          meetingId: meeting.id, customPrompt, templateId: selectedTemplate, summaryLanguage,
+        })
         : await invokeTauri<ProcessTranscriptResponse>('api_process_transcript', {
           text: transcriptText,
           model: modelConfig.provider,

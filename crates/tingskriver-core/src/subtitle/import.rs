@@ -243,6 +243,9 @@ pub async fn start_summary_for_meeting(
     app: HostHandle,
     state: &AppState,
     meeting_id: &str,
+    custom_prompt: Option<String>,
+    template_id: Option<String>,
+    summary_language: Option<String>,
 ) -> Result<crate::summary::commands::ProcessTranscriptResponse, String> {
     let (provider, model, text) = prepare_summary(state.db_manager.pool(), meeting_id).await?;
     crate::summary::commands::api_process_transcript(
@@ -254,9 +257,9 @@ pub async fn start_summary_for_meeting(
         Some(meeting_id.to_string()),
         None,
         None,
-        None,
-        Some(IMPORT_SUMMARY_TEMPLATE.to_string()),
-        None,
+        custom_prompt,
+        Some(template_id.unwrap_or_else(|| IMPORT_SUMMARY_TEMPLATE.to_string())),
+        summary_language,
         None,
     )
     .await
@@ -306,9 +309,10 @@ async fn run_import(
     let pool = state.db_manager.pool();
     let (mut outcome, summary_wanted) = import_file_to_db(pool, path).await?;
     if summary_wanted {
-        outcome.summary_error = start_summary_for_meeting(app, state, &outcome.meeting_id)
-            .await
-            .err();
+        outcome.summary_error =
+            start_summary_for_meeting(app, state, &outcome.meeting_id, None, None, None)
+                .await
+                .err();
     }
     Ok(outcome)
 }

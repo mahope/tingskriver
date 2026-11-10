@@ -271,8 +271,11 @@ describe('summary state restored when returning to a meeting', () => {
 test('imported meetings retry through the speaker-aware command and poll the result', async () => {
   importedMeeting = true;
   await show(response({ status: 'failed', error: 'Previous failure' }));
-  await act(async () => state.handleGenerateSummary());
-  expect(invoke.mock.calls.some(([command]) => command === 'regenerate_summary_command')).toBe(true);
+  await act(async () => state.handleGenerateSummary('Focus on blockers'));
+  expect(invoke.mock.calls).toContainEqual(['regenerate_summary_command', {
+    meetingId: 'meeting-a', customPrompt: 'Focus on blockers',
+    templateId: 'daily_standup', summaryLanguage: 'en',
+  }]);
   expect(invoke.mock.calls.some(([command]) => command === 'api_process_transcript')).toBe(false);
   expect(state.summaryStatus).toBe('processing');
   getSummary = async () => response({ status: 'completed', data: { markdown: 'Imported summary' } });

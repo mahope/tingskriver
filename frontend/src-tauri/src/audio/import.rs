@@ -107,11 +107,17 @@ pub async fn regenerate_summary_command<R: Runtime>(
     app: AppHandle<R>,
     state: tauri::State<'_, crate::state::AppState>,
     meeting_id: String,
+    custom_prompt: Option<String>,
+    template_id: Option<String>,
+    summary_language: Option<String>,
 ) -> Result<tingskriver_core::summary::commands::ProcessTranscriptResponse, String> {
     tingskriver_core::subtitle::import::start_summary_for_meeting(
         crate::core_bridge::host(&app),
         &state,
         &meeting_id,
+        custom_prompt,
+        template_id,
+        summary_language,
     )
     .await
 }
