@@ -21,32 +21,26 @@ impl Hotwords {
                 .filter(|attendee| !attendee.declined)
                 .filter_map(|attendee| attendee.name.clone())
                 .collect(),
-            dictionary_words: dictionary
-                .iter()
-                .map(|word| word.word.clone())
-                .chain(
-                    dictionary
-                        .iter()
-                        .flat_map(|word| word.aliases.split(',').map(str::to_string)),
-                )
-                .collect(),
+            dictionary_words: dictionary.iter().map(|word| word.word.clone()).collect(),
         }
     }
 
     /// A conservative UTF-8 byte budget also bounds byte-level model tokens.
-    /// Keep whole names/words, preserving case and distinct old spellings.
+    /// Keep whole names/words; deduplicate ignoring case, retaining the first form.
     pub fn prompt(&self, max_bytes: usize) -> Option<String> {
         let mut selected = Vec::new();
         let mut used = 0;
+        let mut seen = std::collections::HashSet::new();
         for word in self.participant_names.iter().chain(&self.dictionary_words) {
             let word = word.trim();
-            if word.is_empty() || selected.contains(&word) {
+            if word.is_empty() || seen.contains(&word.to_lowercase()) {
                 continue;
             }
             let needed = word.len() + if selected.is_empty() { 0 } else { 2 };
             if needed > max_bytes.saturating_sub(used) {
                 continue;
             }
+            seen.insert(word.to_lowercase());
             selected.push(word);
             used += needed;
         }
@@ -63,7 +57,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sources_use_names_and_keep_dictionary_aliases() {
+    fn sources_use_names_and_only_dictionary_targets() {
         let now = chrono::Utc::now();
         let event = crate::calendar::Event {
             uid: "test".into(),
@@ -96,22 +90,22 @@ mod tests {
             english: false,
         }];
         let hints = Hotwords::from_sources(Some(&event), &dictionary);
-        assert_eq!(hints.prompt(224).as_deref(), Some("Ægir, Åle, Aale, Aal"));
+        assert_eq!(hints.prompt(224).as_deref(), Some("Ægir, Åle"));
         assert_eq!(
             Hotwords::from_sources(None, &dictionary)
                 .prompt(224)
                 .as_deref(),
-            Some("Åle, Aale, Aal")
+            Some("Åle")
         );
     }
 
     #[test]
     fn priority_preserves_spellings_and_danish_letters() {
         let hints = Hotwords {
-            participant_names: vec![" Ægir Ø ".into(), "Ægir Ø".into()],
+            participant_names: vec![" Ægir Ø ".into(), "ægir ø".into()],
             dictionary_words: vec!["Åle".into(), "Aale".into(), "åle".into(), "".into()],
         };
-        assert_eq!(hints.prompt(224).as_deref(), Some("Ægir Ø, Åle, Aale, åle"));
+        assert_eq!(hints.prompt(224).as_deref(), Some("Ægir Ø, Åle, Aale"));
         assert_eq!(hints.prompt(8).as_deref(), Some("Ægir Ø"));
     }
 

@@ -33,10 +33,17 @@ async fn hotwords_reach_only_the_called_link_as_a_prompt() {
     let mic = dir.path().join("mic.wav");
     std::fs::write(&mic, [0, 1]).unwrap();
     let mut spec = JobSpec::new("meeting", mic, None);
-    spec.hotwords = crate::hotwords::Hotwords {
-        participant_names: vec!["Ægir Ø".into()],
-        dictionary_words: vec!["Åle".into(), "Aale".into(), "x".repeat(225)],
-    };
+    spec.hotwords = crate::hotwords::Hotwords::from_sources(
+        None,
+        &[crate::dictation::store::DictionaryWord {
+            id: 1,
+            word: "Åle".into(),
+            aliases: "Aale, Aal".into(),
+            english: false,
+        }],
+    );
+    spec.hotwords.participant_names.push("Ægir Ø".into());
+    spec.hotwords.dictionary_words.push("x".repeat(225));
     let mut config = remote_config(&server.base_url);
     let mut reserve = custom_provider("reserve", "Reserve", &unused.base_url);
     reserve.transcription_model = Some("test".into());
@@ -61,10 +68,67 @@ async fn hotwords_reach_only_the_called_link_as_a_prompt() {
     assert_eq!(queue.statuses().await.unwrap()[0].status, "completed");
     let requests = server.requests();
     assert_eq!(requests.len(), 1);
-    assert!(requests[0].contains("name=\"prompt\"\r\n\r\nÆgir Ø, Åle, Aale\r\n"));
+    assert!(requests[0].contains("name=\"prompt\"\r\n\r\nÆgir Ø, Åle\r\n"));
+    assert!(!requests[0].contains("Aal"));
     assert!(!requests[0].contains(&"x".repeat(225)));
     assert!(!requests[0].contains("name=\"hotwords\""));
     assert!(unused.requests().is_empty());
+}
+
+#[tokio::test]
+async fn hotwords_reach_the_reserve_when_the_primary_fails() {
+    use fake_server::{FakeServer, Reply};
+    let body = r#"{"text":"Hej","segments":[{"start":0,"end":1,"text":"Hej"}]}"#;
+    let server = FakeServer::start(vec![Reply::json("500 Internal Server Error", "{}")]).await;
+    let fallback = FakeServer::start(vec![Reply::ok(body)]).await;
+    let dir = tempfile::tempdir().unwrap();
+    let mic = dir.path().join("mic.wav");
+    std::fs::write(&mic, [0, 1]).unwrap();
+    let mut spec = JobSpec::new("meeting", mic, None);
+    spec.hotwords = crate::hotwords::Hotwords::from_sources(
+        None,
+        &[crate::dictation::store::DictionaryWord {
+            id: 1,
+            word: "Åle".into(),
+            aliases: "Aale, Aal".into(),
+            english: false,
+        }],
+    );
+    spec.hotwords.participant_names.push("Ægir Ø".into());
+    spec.hotwords.dictionary_words.push("x".repeat(225));
+    let mut config = remote_config(&server.base_url);
+    let mut reserve = custom_provider("reserve", "Reserve", &fallback.base_url);
+    reserve.transcription_model = Some("test".into());
+    config.upsert_provider(reserve);
+    config
+        .functions
+        .get_mut(&Function::Transcription)
+        .unwrap()
+        .push(ChainLink::new("reserve"));
+    let queue = Queue::open_memory().await.unwrap();
+    queue.enqueue(&spec, 0).await.unwrap();
+    queue
+        .run_once_at(
+            &service(dir.path()),
+            &config,
+            |_, _| async { panic!("remote only") },
+            |_| {},
+            0,
+        )
+        .await
+        .unwrap();
+    assert_eq!(queue.statuses().await.unwrap()[0].status, "completed");
+    let requests = server.requests();
+    assert_eq!(requests.len(), 1);
+    assert!(requests[0].contains("name=\"prompt\"\r\n\r\nÆgir Ø, Åle\r\n"));
+    assert!(!requests[0].contains("Aal"));
+    assert!(!requests[0].contains(&"x".repeat(225)));
+    assert!(!requests[0].contains("name=\"hotwords\""));
+    let reserve_requests = fallback.requests();
+    assert_eq!(reserve_requests.len(), 1);
+    assert!(reserve_requests[0].contains("name=\"prompt\"\r\n\r\nÆgir Ø, Åle\r\n"));
+    assert!(!reserve_requests[0].contains("Aal"));
+    assert!(!reserve_requests[0].contains(&"x".repeat(225)));
 }
 
 #[test]
