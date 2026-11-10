@@ -90,8 +90,8 @@ the outputs verify as `ok`, outputs are written to `.{name}.tmp` files and
 renamed, and a killed run leaves the raw tracks plus stale temp files that the
 next run overwrites. The three encodes use one core each. On a small machine they compete with other
 work after stop, such as transcription or a new recording started before the
-previous one has finished; that costs time, not audio, because capture never
-waits for the disk writer. The job's `timeout-minutes: 345` (20,700 s) covers
+previous one has finished. Capping the encodes to the core count is a
+possible follow-up if that shows up in the writer backlog metrics. The job's `timeout-minutes: 345` (20,700 s) covers
 3 h + 1.5 h of recording (16,200 s) and both limits (2,400 s), leaving about
 35 minutes for checkout, packages and a cold build.
 
