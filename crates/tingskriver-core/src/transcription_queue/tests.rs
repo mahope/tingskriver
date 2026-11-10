@@ -830,7 +830,10 @@ async fn truncated_rerun_is_stored_but_never_becomes_current() {
 
 #[tokio::test]
 async fn name_confirmed_between_snapshot_and_commit_is_preserved() {
-    let queue = Queue::open_memory().await.unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("queue.sqlite");
+    let queue = Queue::open(&path).await.unwrap();
+    let confirmations = Queue::open(&path).await.unwrap();
     let spec = JobSpec::new("m", "mic.wav".into(), None);
     let first = queue.enqueue(&spec, 0).await.unwrap();
     let job = queue.claim(0).await.unwrap().unwrap();
@@ -840,19 +843,32 @@ async fn name_confirmed_between_snapshot_and_commit_is_preserved() {
     queue.complete(&job, &result).await.unwrap();
     let second = queue.enqueue(&spec, 1).await.unwrap();
     let job = queue.claim(1).await.unwrap().unwrap();
-    let previous = queue.current_version("m", 0).await.unwrap().unwrap();
-    assert!(queue
-        .speaker_names(&previous.job_id)
-        .await
-        .unwrap()
-        .is_empty());
     let mut rerun = result.clone();
-    queue
-        .complete_carrying_over_before_store(&job, &mut rerun, async {
-            queue.set_speaker_name(&first, 2, "Bo").await
+    let error = queue
+        .complete_with_after_snapshot(&job, &mut rerun, true, async {
+            confirmations.set_speaker_name(&first, 2, "Bo").await
         })
         .await
-        .unwrap();
+        .expect_err("a stale snapshot must not overwrite a concurrent confirmation");
+    let database_error = error.downcast_ref::<sqlx::Error>().unwrap();
+    assert_eq!(
+        database_error
+            .as_database_error()
+            .unwrap()
+            .code()
+            .as_deref(),
+        Some("517"), // SQLITE_BUSY_SNAPSHOT
+    );
+    assert_eq!(
+        queue.current_version("m", 0).await.unwrap().unwrap().job_id,
+        first
+    );
+    assert_eq!(
+        queue.speaker_names(&first).await.unwrap(),
+        [(2, "Bo".into())]
+    );
+    let mut rerun = result;
+    queue.complete_with(&job, &mut rerun, true).await.unwrap();
     assert_eq!(
         queue.current_version("m", 0).await.unwrap().unwrap().job_id,
         second

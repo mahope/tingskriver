@@ -181,6 +181,17 @@ impl Queue {
         result: &mut serde_json::Value,
         carry: bool,
     ) -> Result<()> {
+        self.complete_with_after_snapshot(job, result, carry, std::future::ready(Ok(())))
+            .await
+    }
+
+    pub(super) async fn complete_with_after_snapshot(
+        &self,
+        job: &Job,
+        result: &mut serde_json::Value,
+        carry: bool,
+        after_snapshot: impl std::future::Future<Output = Result<()>>,
+    ) -> Result<()> {
         let mut tx = self.pool.begin().await?;
         let previous = if carry {
             Self::versions_on(&mut tx, &job.spec.meeting_id)
@@ -207,6 +218,7 @@ impl Queue {
         } else {
             None
         };
+        after_snapshot.await?;
         let updated = sqlx::query("UPDATE transcription_jobs SET status='completed',result=? WHERE id=? AND status='running' AND attempts=?")
             .bind(serde_json::to_string(result)?).bind(&job.id).bind(job.attempts)
             .execute(&mut *tx).await?.rows_affected();

@@ -91,17 +91,6 @@ impl Queue {
     /// chunk, keep its confirmed names and corrections and reject a truncated
     /// rerun. The result is stored either way, and the old version untouched.
     async fn complete_carrying_over(&self, job: &Job, value: &mut serde_json::Value) -> Result<()> {
-        self.complete_carrying_over_before_store(job, value, std::future::ready(Ok(())))
-            .await
-    }
-
-    pub(super) async fn complete_carrying_over_before_store(
-        &self,
-        job: &Job,
-        value: &mut serde_json::Value,
-        before_store: impl Future<Output = Result<()>>,
-    ) -> Result<()> {
-        before_store.await?;
         self.complete_with(job, value, true).await
     }
 }
