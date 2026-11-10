@@ -413,3 +413,9 @@ accepted as `camelCase`, `snake_case`, `kebab-case`, `PascalCase`). For example,
 `index.ts`, and `git commit bindestreg m` becomes `git commit -m`.
 No application detection or I/O lives in this pass, so it can move to a text
 crate independently of desktop hosts.
+
+The 20-case `cleanup::tests::code_identifiers` table covers the four casing
+styles, filenames, command flags, paths, Danish words and unchanged input.
+With the identifier pass bypassed, 4 of 20 cases match; with it enabled,
+20 of 20 match. Separate tests cover normal-style isolation, application
+style overrides and protected literal, dictionary and snippet text.
