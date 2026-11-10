@@ -131,13 +131,15 @@ The optional `InsertLast` and `RerunLast` shortcuts are stored as `insertLast`
 and `rerunLast` in `shortcuts.json`. The host dispatches them to the core
 `dictation::rerun` module. Reinsertion uses the existing Windows target checks.
 Rerun switches between local Parakeet and Syv; local-only settings prevent cloud reruns.
+The local path ensures Parakeet is ready before inference, reloading an idle-unloaded model.
 Missing audio produces a Danish pill message and no insertion.
 
 A successful rerun emits `dictation-rerun-comparison` through `AppHost`, with
-`historyId`, `before`, `after` and `changed`. **UI integration remains open:**
-neither shell currently displays this event or provides controls for the two
-new shortcut settings. A comparison viewer and shortcut settings controls
-are needed before issue #76 can be closed.
+`historyId`, `before`, `after` and `changed`. Both shells listen globally and
+show the original and new text with an explicit changed/unchanged status,
+bringing the window forward even when it was hidden. Closing the comparison
+discards it without inserting or overwriting anything. Shortcut settings controls
+remain open before issue #76 can be closed.
 
 ## The pill overlay
 

@@ -2,7 +2,7 @@
 
 use std::future::Future;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
 use super::store::{Store, AUDIO_RETENTION_MS};
@@ -11,7 +11,7 @@ pub const COMPARISON_EVENT: &str = "dictation-rerun-comparison";
 pub const AUDIO_UNAVAILABLE_MESSAGE: &str =
     "Lyden er slettet eller ældre end 24 timer. Der blev ikke indsat noget.";
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Comparison {
     pub history_id: i64,
@@ -133,9 +133,12 @@ pub async fn shortcut(
                             .await
                         }
                         super::logic::engine::Engine::Local => {
-                            let samples = decode_saved_wav(&wav)?;
-                            crate::parakeet_engine::commands::parakeet_transcribe_audio(samples)
-                                .await
+                            transcribe_local_with(
+                                &wav,
+                                || async { super::warm::ensure_parakeet().await.map(|_| ()) },
+                                crate::parakeet_engine::commands::parakeet_transcribe_audio,
+                            )
+                            .await
                         }
                     }
                 },
@@ -145,6 +148,22 @@ pub async fn shortcut(
         }
         _ => Err("Genvejen er ikke en gentagelse".into()),
     }
+}
+
+async fn transcribe_local_with<Ready, ReadyFuture, Transcribe, TranscriptFuture>(
+    wav: &[u8],
+    ready: Ready,
+    transcribe: Transcribe,
+) -> Result<String, String>
+where
+    Ready: FnOnce() -> ReadyFuture,
+    ReadyFuture: Future<Output = Result<(), String>>,
+    Transcribe: FnOnce(Vec<f32>) -> TranscriptFuture,
+    TranscriptFuture: Future<Output = Result<String, String>>,
+{
+    let samples = decode_saved_wav(wav)?;
+    ready().await?;
+    transcribe(samples).await
 }
 
 fn alternate_engine(
@@ -190,6 +209,40 @@ fn decode_saved_wav(wav: &[u8]) -> Result<Vec<f32>, String> {
 mod tests {
     use super::*;
     use crate::dictation::store::NewHistoryEntry;
+
+    #[tokio::test]
+    async fn cold_local_model_is_ready_before_transcription() {
+        let ready = std::sync::atomic::AtomicBool::new(false);
+        let wav = crate::dictation::logic::audio::wav_bytes(&[0.5], 16_000);
+        let text = transcribe_local_with(
+            &wav,
+            || async {
+                ready.store(true, std::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            },
+            |samples| {
+                assert!(ready.load(std::sync::atomic::Ordering::SeqCst));
+                assert_eq!(samples.len(), 1);
+                async { Ok("Kold model klar".into()) }
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(text, "Kold model klar");
+    }
+
+    #[tokio::test]
+    async fn failed_model_load_never_transcribes() {
+        let wav = crate::dictation::logic::audio::wav_bytes(&[0.5], 16_000);
+        let error = transcribe_local_with(
+            &wav,
+            || async { Err("Modellen kunne ikke indlæses".into()) },
+            |_| async { panic!("must not transcribe without a ready model") },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error, "Modellen kunne ikke indlæses");
+    }
 
     async fn fixture(text: &str, path: Option<&str>, at: i64) -> Store {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
