@@ -67,13 +67,13 @@ pub mod runtime;
 pub mod shortcuts;
 pub mod state;
 pub mod strings;
+pub mod stt;
 pub mod summary;
 pub mod transcript_merge;
 pub mod transcription_queue;
 pub mod vad_trim;
 pub mod wer;
 pub mod whisper_engine;
-pub mod stt;
 
 #[cfg(target_os = "windows")]
 static ONNX_RUNTIME_INIT_ERROR: std::sync::OnceLock<String> = std::sync::OnceLock::new();
