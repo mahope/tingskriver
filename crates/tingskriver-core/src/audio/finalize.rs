@@ -414,16 +414,10 @@ fn timeline_sources(track: &ScannedTrack) -> Vec<Source> {
     sources
 }
 
-/// Sum two tracks without clipping: a sum beyond full scale is scaled back
-/// to full scale (the live mixer's rule).
+/// Reserve fixed headroom for both tracks. Silence must not change the gain:
+/// normalizing only active samples would pump at gaps and at a track's end.
 pub fn mix_samples(a: i16, b: i16) -> i16 {
-    let sum = a as f32 / i16::MAX as f32 + b as f32 / i16::MAX as f32;
-    let scaled = if sum.abs() > 1.0 {
-        sum / sum.abs()
-    } else {
-        sum
-    };
-    (scaled * i16::MAX as f32).round() as i16
+    ((a as i32 + b as i32) / 2) as i16
 }
 
 const BLOCK: usize = 48_000;
@@ -449,11 +443,17 @@ fn encode_mix(ffmpeg: &Path, scanned: &ScannedTracks, output: &Path) -> anyhow::
     let mut part = Vec::new();
     encode_pcm_s16(ffmpeg, scanned.sample_rate, "128k", output, |block| {
         block.clear();
-        for reader in readers.iter_mut() {
+        for (index, reader) in readers.iter_mut().enumerate() {
             reader.read_block(&mut part, BLOCK)?;
+            if index == 0 {
+                block.extend_from_slice(&part);
+                continue;
+            }
             if block.len() < part.len() {
                 block.resize(part.len(), 0);
             }
+            // An exhausted track still contributes silence at the same gain.
+            part.resize(block.len(), 0);
             for (out, &s) in block.iter_mut().zip(part.iter()) {
                 *out = mix_samples(*out, s);
             }
@@ -1119,6 +1119,21 @@ mod tests {
                 },
             ];
             if reverse {
+                // Recovery can represent the same hole as a separate silence source.
+                // The tone has an integer number of periods in each piece.
+                tracks[1].sources = vec![
+                    Source::File {
+                        path: interrupted.clone(),
+                        samples: (3 * rate / 4) as u64,
+                    },
+                    Source::Silence(rate as u64),
+                    Source::File {
+                        path: interrupted.clone(),
+                        samples: (3 * rate / 4) as u64,
+                    },
+                ];
+                tracks[0].kind = TrackKind::System;
+                tracks[1].kind = TrackKind::Microphone;
                 tracks.reverse();
             }
             let scanned = ScannedTracks {
@@ -1165,15 +1180,47 @@ mod tests {
                 assert!(longest_zero_run <= rate / 200, "zero hole over 5 ms");
             }
         }
+        let scanned = ScannedTracks {
+            sample_rate: rate as u32,
+            tracks: vec![ScannedTrack {
+                kind: TrackKind::System,
+                offset_samples: 0,
+                sources: vec![Source::File {
+                    path: continuous.clone(),
+                    samples: tone.len() as u64,
+                }],
+                segment_count: 1,
+            }],
+            problems: vec![],
+            complete: true,
+        };
+        let single = dir.path().join("single.mp4");
+        encode_mix(&ffmpeg, &scanned, &single).unwrap();
+        let decoded = super::super::decoder::decode_audio_file(&single).unwrap();
+        assert_eq!(decoded.sample_rate, rate as u32);
+        assert_eq!(decoded.channels, 1);
+        let rms = (decoded.samples[rate..2 * rate]
+            .iter()
+            .map(|&s| (s as f64).powi(2))
+            .sum::<f64>()
+            / rate as f64)
+            .sqrt();
+        assert!(
+            (rms - 28_000.0 / 32768.0 / 2.0f64.sqrt()).abs() < 0.02,
+            "single track keeps unity gain"
+        );
         assert_eq!(originals[0], std::fs::read(continuous).unwrap());
         assert_eq!(originals[1], std::fs::read(interrupted).unwrap());
     }
 
     #[test]
     fn mixes_without_clipping() {
-        assert_eq!(mix_samples(1000, 2000), 3000);
+        assert_eq!(mix_samples(1000, 2000), 1500);
         assert_eq!(mix_samples(i16::MAX, i16::MAX), i16::MAX);
-        assert_eq!(mix_samples(-30000, -30000), -i16::MAX);
+        assert_eq!(mix_samples(-30000, -30000), -30000);
+        assert_eq!(mix_samples(i16::MIN, i16::MIN), i16::MIN);
+        assert_eq!(mix_samples(28000, 0), 14000);
+        assert_eq!(mix_samples(0, -28000), -14000);
     }
 
     #[test]

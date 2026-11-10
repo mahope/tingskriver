@@ -226,7 +226,10 @@ transcription leaves the saved meeting available and reports the error.
 - In the background, `audio::finalize` encodes `microphone.m4a`,
   `system.m4a` and the mixed `audio.mp4` (all on the shared clock), decodes
   each and requires at most 1 s difference from the recorded length. The
-  status is `ok`, `delvis` or `fejlet` (`recording-audio-finalized`,
+  two-track mix uses a fixed half gain per track, including silent gaps and
+  exhausted tracks, to prevent clipping and gain pumping. A single-track mix
+  keeps unity gain; the separate track files keep their original levels.
+  The status is `ok`, `delvis` or `fejlet` (`recording-audio-finalized`,
   `metadata.json` field `audio_status`). The raw tracks are deleted only on
   `ok`; otherwise the message is "Lyden kunne ikke samles. Originalen er
   gemt."
