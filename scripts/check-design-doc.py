@@ -45,13 +45,13 @@ def code_components() -> set:
     found = set()
     lib = read(SRC / "lib.rs")
     found.update(re.findall(r"^\s*(?:pub\s+)?mod\s+([a-z_][a-z0-9_]*)\s*;", lib, re.M))
-    for path in sorted(SRC.glob("*.rs")):
+    for path in sorted(SRC.rglob("*.rs")):
         text = read(path)
         for m in re.finditer(r"\bfn\s+([a-z_][a-z0-9_]*)\b([^{;]*)\{", text):
             name, rest = m.groups()
             if name != "render" and re.search(r"->\s*(impl\s+IntoElement|AnyElement)\b", rest):
                 found.add(name)
-        found.update(re.findall(r"\bimpl\s+Render\s+for\s+([A-Za-z_][A-Za-z0-9_]*)", text))
+        found.update(re.findall(r"\bimpl\b(?:\s*<[^>]*>)?\s+(?:Render|RenderOnce)\s+for\s+([A-Za-z_][A-Za-z0-9_]*)", text))
     return found
 
 
@@ -61,14 +61,19 @@ def main() -> int:
     section = component_section(doc)
     documented = table_names(section)
     in_code = code_components()
-    source = "\n".join(read(p) for p in SRC.glob("*.rs"))
+    sources = sorted(SRC.rglob("*.rs"))
+    source = "\n".join(read(p) for p in sources)
+    stems = {p.stem for p in sources}
 
     for name in sorted(in_code - documented):
         errors.append(f"docs/design.md: no row for `{name}` (add it to the component tables)")
     for name in sorted(documented - in_code):
         # Types and enums named in rows (Shell, Page, AppModel) are not found
-        # by the scan above; they only have to exist as identifiers.
-        if not re.search(rf"\b{re.escape(name)}\b", source):
+        # by the scan above; they still have to be defined, not just mentioned.
+        defined = re.search(
+            rf"\b(?:fn|struct|enum|mod|type|trait|const|static)\s+{re.escape(name)}\b", source
+        )
+        if not defined and name not in stems:
             errors.append(f"docs/design.md: row `{name}` is not in crates/tingskriver-app/src any more")
 
     for rel in ("AGENTS.md", "CONTRIBUTING.md"):
@@ -78,7 +83,7 @@ def main() -> int:
         elif "docs/design.md" not in read(path):
             errors.append(f"{rel}: does not link docs/design.md")
     template = ROOT / ".github" / "pull_request_template.md"
-    if "omponent" not in read(template):
+    if "## Components (GPUI app)" not in read(template):
         errors.append(".github/pull_request_template.md: no reused-or-new component field")
 
     if errors:
