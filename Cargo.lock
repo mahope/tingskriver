@@ -10769,6 +10769,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "unicode-segmentation",
  "uuid",
  "whatlang",
  "which 6.0.3",

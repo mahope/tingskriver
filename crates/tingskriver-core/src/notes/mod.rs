@@ -1,6 +1,7 @@
 //! UI-independent meeting notes and durable editing sessions.
 pub mod autosave;
 pub mod blocknote;
+pub mod edit;
 pub mod markdown;
 pub mod model;
 pub mod store;
