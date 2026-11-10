@@ -175,7 +175,9 @@ fn history_restores_selection_styles_and_offsets() {
     e.enter();
     check(&e);
     assert_eq!(e.document().blocks[1].kind, BlockKind::Checkbox(false));
-    assert!(!e.copy_markdown().contains("offset"));
+    select(&mut e, pos(0, 0), pos(1, 0));
+    let copied = markdown::parse(&e.copy_markdown()).unwrap();
+    assert!(copied.blocks.iter().all(|b| b.created_offset_ms.is_none()));
 }
 
 proptest::proptest! {
@@ -199,4 +201,41 @@ proptest::proptest! {
             markdown::parse(&e.copy_markdown()).unwrap();
         }
     }
+}
+
+#[test]
+fn toggles_remove_both_styles_and_plain_paste_does_not_trigger_shortcuts() {
+    let mut e = Editor::new(Document::default());
+    e.backspace();
+    check(&e);
+    assert!(!e.undo());
+    e.insert_plain_text("# ");
+    check(&e);
+    assert_eq!(e.document().blocks[0].kind, BlockKind::Paragraph);
+    select(&mut e, pos(0, 0), pos(0, 2));
+    e.toggle_style(Style::Bold);
+    check(&e);
+    e.toggle_style(Style::Italic);
+    check(&e);
+    assert!(e.document().blocks[0].spans[0].bold);
+    assert!(e.document().blocks[0].spans[0].italic);
+    e.toggle_style(Style::Bold);
+    check(&e);
+    e.toggle_style(Style::Italic);
+    check(&e);
+    assert!(!e.document().blocks[0].spans[0].bold);
+    assert!(!e.document().blocks[0].spans[0].italic);
+    e.backspace();
+    check(&e);
+    assert!(e.document().blocks[0].spans.is_empty());
+    e.toggle_style(Style::Italic);
+    check(&e);
+    e.insert_plain_text("æ");
+    check(&e);
+    assert!(e.document().blocks[0].spans[0].italic);
+    e.toggle_style(Style::Italic);
+    check(&e);
+    e.insert_plain_text("ø");
+    check(&e);
+    assert!(!e.document().blocks[0].spans[1].italic);
 }

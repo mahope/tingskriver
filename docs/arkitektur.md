@@ -400,3 +400,28 @@ OpenRouter's model list is async in core and in the Tauri wrapper. Its
 single-worker fake-server test covers stalled headers, stalled bodies and
 concurrent core calls. `read_audio_file` has already been removed; playback
 uses the core playback API instead of JSON arrays of audio bytes.
+
+## Notes editing
+
+`notes::edit::Editor` edits `notes::model::Document` without UI dependencies.
+`Position` uses a block index and an extended grapheme index in the entire
+block, including graphemes that cross formatting spans. Invalid selections
+return an error without changing the editor. The editor keeps at least one
+paragraph, even for a new empty document.
+
+`type_text` recognizes `# `, `- `, `[] ` and `1. ` at the start of an otherwise
+empty paragraph. `insert_plain_text` pastes literal text with normalized line
+endings and no markdown interpretation. Enter splits a block, continues lists
+(with a fresh unchecked checkbox), or leaves an empty list. Headings continue
+as paragraphs. Backspace removes one grapheme, unwraps a list/heading at its
+start, or joins paragraphs with the previous block. Splits retain the original
+block's timestamp on its left half; new blocks are untimed.
+
+Selections can span blocks in either direction. Bold and italic toggle the
+selected text, or the insertion style at an empty selection. Each modifying
+call is one undo step and restores document, selection and insertion style;
+editing after undo clears redo. Selection movement itself is not an undo step.
+`copy_markdown` serializes the selected fragments with `notes::markdown`,
+retaining block kinds and formatting but omitting meeting timestamps. A GPUI
+widget, keyboard/clipboard integration and persistence wiring remain for the
+UI half of #47.
