@@ -109,3 +109,18 @@ only returns an identifier and cannot modify meeting notes or saved summaries.
 
 These are core APIs. Desktop editor/export controls and applying calendar
 suggestions in the desktop meeting flow require separate shell integration.
+
+Calendar selection rules are ordered JSON data. The embedded
+`rules/calendar.json` defaults to a title containing `1:1`, then an external
+attendee, then `standard`. `template_rules::save_rules(json).await` validates
+and atomically saves edits to `templates/.rules/calendar.json`;
+`load_rules()` reads them back. A final `default` rule is required. Invalid
+saved files are logged and selection falls back to the embedded defaults.
+Own addresses may also be bare domains; public mail domains do not imply
+that other attendees belong to the same organization.
+
+`TINGSKRIVER_TEMPLATES_DIR` overrides the custom template directory, including
+rule storage, for isolated environments. The Tauri commands `save_template`
+and `export_template` expose template editing and export to the desktop UI.
+Template selection only chooses summary instructions; it does not edit saved
+meeting notes. The saved-notes regression test covers this core boundary.

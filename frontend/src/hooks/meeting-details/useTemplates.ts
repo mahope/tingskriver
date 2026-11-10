@@ -8,7 +8,7 @@ export function useTemplates() {
     name: string;
     description: string;
   }>>([]);
-  const [selectedTemplate, setSelectedTemplate] = useState<string>('standard_meeting');
+  const [selectedTemplate, setSelectedTemplate] = useState<string>('standard');
 
   // Fetch available templates on mount
   useEffect(() => {
@@ -21,6 +21,8 @@ export function useTemplates() {
         }>;
         console.log('Available templates:', templates);
         setAvailableTemplates(templates);
+        setSelectedTemplate(current => templates.some(t => t.id === current)
+          ? current : (templates.find(t => t.id === 'standard')?.id ?? templates[0]?.id ?? current));
       } catch (error) {
         console.error('Failed to fetch templates:', error);
       }

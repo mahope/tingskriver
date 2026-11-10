@@ -22,7 +22,10 @@ pub fn set_bundled_templates_dir(path: PathBuf) {
 /// - macOS: ~/Library/Application Support/Meetily/templates/
 /// - Windows: %APPDATA%\Meetily\templates\
 /// - Linux: ~/.config/Meetily/templates/
-pub(super) fn get_custom_templates_dir() -> Option<PathBuf> {
+pub(crate) fn get_custom_templates_dir() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("TINGSKRIVER_TEMPLATES_DIR") {
+        return Some(path.into());
+    }
     let mut path = dirs::data_dir()?;
     path.push("Meetily");
     path.push("templates");

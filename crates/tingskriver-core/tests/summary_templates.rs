@@ -46,12 +46,11 @@ fn calendar_rules_prioritize_one_to_one_then_external_domains() {
     assert_eq!(events.len(), 4);
     assert_eq!(select_template(None, &config), "standard");
     assert_eq!(
-        select_template(Some(&events[0]), &CalendarConfig::default()),
-        if events[0].title.contains("1:1") {
-            "one_to_one"
-        } else {
-            "standard"
-        }
+        select_template(
+            Some(events.iter().find(|e| e.uid == "one").unwrap()),
+            &CalendarConfig::default()
+        ),
+        "one_to_one"
     );
 }
 
@@ -84,13 +83,26 @@ fn calendar_domain_rules_do_not_guess_or_match_domain_suffixes() {
     assert_eq!(select_template(Some(&event), &config), "standard");
     event.attendees[0].email = "guest@notexample.test".into();
     assert_eq!(select_template(Some(&event), &config), "kunde");
+    let bare = CalendarConfig {
+        own_addresses: vec!["mailto:example.test".into()],
+        ..Default::default()
+    };
+    event.attendees[0].email = "mailto:guest@EXAMPLE.TEST".into();
+    assert_eq!(select_template(Some(&event), &bare), "standard");
+    let public = CalendarConfig {
+        own_addresses: vec!["self@gmail.com".into()],
+        ..Default::default()
+    };
+    event.attendees[0].email = "guest@gmail.com".into();
+    assert_eq!(select_template(Some(&event), &public), "kunde");
+    event.attendees[0].email = "self@gmail.com".into();
+    assert_eq!(select_template(Some(&event), &public), "standard");
     event.attendees[0].email = "invalid".into();
     assert_eq!(select_template(Some(&event), &config), "standard");
 }
 
 // Isolate the platform data directory in a subprocess rather than changing
 // process-wide environment variables while other template tests are running.
-#[cfg(target_os = "linux")]
 #[tokio::test]
 async fn custom_template_public_api_round_trip() {
     use tingskriver_core::summary::templates::{
@@ -101,14 +113,34 @@ async fn custom_template_public_api_round_trip() {
         let status = std::process::Command::new(std::env::current_exe().unwrap())
             .args(["--exact", "custom_template_public_api_round_trip"])
             .env("TINGSKRIVER_TEMPLATE_TEST_CHILD", "1")
-            .env("XDG_DATA_HOME", dir.path())
+            .env("TINGSKRIVER_TEMPLATES_DIR", dir.path())
             .status()
             .unwrap();
         assert!(status.success());
         return;
     }
+    use tingskriver_core::calendar::CalendarConfig;
+    use tingskriver_core::summary::template_rules::{load_rules, save_rules, select_template};
+    assert_eq!(
+        select_template(None, &CalendarConfig::default()),
+        "standard"
+    );
+    save_rules(r#"[{"when":"default","template":"intern_status"}]"#)
+        .await
+        .unwrap();
+    assert_eq!(load_rules().unwrap().len(), 1);
+    assert_eq!(
+        select_template(None, &CalendarConfig::default()),
+        "intern_status"
+    );
+    assert!(save_rules("[]").await.is_err());
+    assert_eq!(
+        select_template(None, &CalendarConfig::default()),
+        "intern_status"
+    );
     let original = export_template("standard").await.unwrap();
-    let directory = dirs::data_dir().unwrap().join("Meetily/templates");
+    let directory =
+        std::path::PathBuf::from(std::env::var_os("TINGSKRIVER_TEMPLATES_DIR").unwrap());
     tokio::fs::create_dir_all(&directory).await.unwrap();
     for id in ["Mit referat", "Møde med æøå"] {
         tokio::fs::write(directory.join(format!("{id}.json")), &original)
@@ -143,4 +175,30 @@ async fn custom_template_public_api_round_trip() {
     assert_eq!(get_template("standard").unwrap().name, edited.name);
     assert!(save_template("standard", "{}").await.is_err());
     assert_eq!(export_template("standard").await.unwrap(), exported);
+}
+
+// Core template selection is independent of the persisted notes document.
+#[tokio::test]
+async fn switching_template_after_meeting_preserves_saved_notes() {
+    use tingskriver_core::notes::{markdown, NotesStore};
+    use tingskriver_core::{calendar::CalendarConfig, summary::template_rules::select_template};
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    sqlx::query("INSERT INTO meetings(id,title,created_at,updated_at) VALUES ('completed','Synthetic',datetime('now'),datetime('now'))")
+        .execute(&pool).await.unwrap();
+    let store = NotesStore::new(pool);
+    let notes = markdown::parse("# Noter\n\n- Bevar denne aftale").unwrap();
+    store.save("completed", &notes).await.unwrap();
+    let before = store.load("completed").await.unwrap();
+    let mut selected = select_template(None, &CalendarConfig::default());
+    assert_eq!(selected, "standard");
+    get_template(&selected).unwrap();
+    selected = "kunde".into();
+    assert_eq!(get_template(&selected).unwrap().name, "Kundemøde");
+    assert_eq!(store.load("completed").await.unwrap(), before);
+    assert_eq!(before, notes);
 }

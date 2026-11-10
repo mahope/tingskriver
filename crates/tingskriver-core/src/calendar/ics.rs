@@ -262,7 +262,7 @@ impl RawEvent {
         })
     }
 }
-fn email(s: &str) -> &str {
+pub(crate) fn email(s: &str) -> &str {
     if s.get(..7)
         .is_some_and(|p| p.eq_ignore_ascii_case("mailto:"))
     {

@@ -4,14 +4,32 @@ use super::{get_template, validate_and_parse_template};
 use std::path::PathBuf;
 
 pub(super) fn validate_id(id: &str) -> Result<(), String> {
-    if id.is_empty()
+    let stem = id
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_uppercase();
+    let reserved = matches!(
+        stem.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+    ) || ["COM", "LPT"].iter().any(|prefix| {
+        stem.strip_prefix(prefix).is_some_and(|n| {
+            matches!(
+                n,
+                "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+            )
+        })
+    });
+    if reserved
+        || id.ends_with(['.', ' '])
+        || id.is_empty()
         || id == "."
         || id == ".."
-        || id
-            .chars()
-            .any(|c| c.is_control() || matches!(c, '/' | '\\' | ':'))
+        || id.chars().any(|c| {
+            c.is_control() || matches!(c, '/' | '\\' | ':' | '<' | '>' | '"' | '|' | '?' | '*')
+        })
     {
-        return Err("Skabelon-id skal være et filnavn uden sti eller kontroltegn".into());
+        return Err("Skabelon-id må ikke være et reserveret Windows-navn eller indeholde ulovlige filnavnstegn".into());
     }
     Ok(())
 }
@@ -78,6 +96,18 @@ mod tests {
             ".",
             "..",
             "../outside",
+            "CON",
+            "nul.txt",
+            "COM1",
+            "LPT9",
+            "bad?name",
+            "bad*name",
+            "bad|name",
+            "bad<name",
+            "bad>name",
+            "bad\"name",
+            "trailing.",
+            "trailing ",
             "a/b",
             "a\\b",
             "C:outside",
