@@ -9,6 +9,7 @@
 //! partial download can never become an active model, and an existing model is
 //! never touched before its replacement has been verified. If a source fails,
 //! the next source in the manifest (the reserve mirror) is tried.
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, UNIX_EPOCH};
 
@@ -302,9 +303,14 @@ async fn fetch_from_source(
 
     // The old marker belongs to the file that is about to be replaced.
     remove_quietly(&verified_marker_path(dir, &file.name)).await;
-    fs::rename(&part, &final_path).await.map_err(|error| {
-        TransferError::failed(format!("Failed to activate {}: {error}", file.name))
-    })?;
+    let rename_from = part.clone();
+    let rename_to = final_path.clone();
+    tokio::task::spawn_blocking(move || {
+        crate::file_ops::rename_with_retry(&rename_from, &rename_to)
+    })
+    .await
+    .map_err(|error| TransferError::failed(format!("Rename task failed: {error}")))?
+    .map_err(|error| TransferError::failed(format!("Failed to activate {}: {error}", file.name)))?;
     write_verified_marker(dir, file, &digest).await;
     Ok(())
 }
@@ -469,6 +475,10 @@ async fn remove_quietly(path: &Path) {
     }
 }
 
+#[cfg(test)]
+static HASH_COUNTS: Lazy<std::sync::Mutex<HashMap<PathBuf, usize>>> =
+    Lazy::new(|| std::sync::Mutex::new(HashMap::new()));
+
 /// SHA-256 of a file as lowercase hex, computed on a blocking worker that
 /// stops early when the token is cancelled.
 #[allow(clippy::disallowed_methods)]
@@ -476,6 +486,10 @@ pub async fn sha256_of(path: &Path, cancel: &CancellationToken) -> Result<String
     use std::io::Read;
 
     let path = path.to_path_buf();
+    #[cfg(test)]
+    {
+        *HASH_COUNTS.lock().unwrap().entry(path.clone()).or_default() += 1;
+    }
     let cancel = cancel.clone();
     tokio::task::spawn_blocking(move || {
         let mut file = std::fs::File::open(&path).map_err(|error| {
@@ -529,6 +543,36 @@ async fn write_verified_marker(dir: &Path, file: &FileEntry, sha256: &str) {
     }
 }
 
+#[derive(Clone, PartialEq, Eq)]
+struct InstalledStamp {
+    size: u64,
+    modified: std::time::SystemTime,
+    sha256: String,
+}
+
+static INSTALLED_CACHE: Lazy<tokio::sync::Mutex<HashMap<PathBuf, (InstalledStamp, bool)>>> =
+    Lazy::new(|| tokio::sync::Mutex::new(HashMap::new()));
+
+async fn installed_stamp(path: &Path, file: &FileEntry) -> Option<InstalledStamp> {
+    let metadata = fs::metadata(path).await.ok()?;
+    Some(InstalledStamp {
+        size: metadata.len(),
+        modified: metadata.modified().ok()?,
+        sha256: file.sha256.to_ascii_lowercase(),
+    })
+}
+
+pub(crate) async fn installed_is_corrupted(path: &Path, file: &FileEntry) -> bool {
+    let Some(stamp) = installed_stamp(path, file).await else {
+        return false;
+    };
+    INSTALLED_CACHE
+        .lock()
+        .await
+        .get(path)
+        .is_some_and(|(cached, valid)| *cached == stamp && !valid)
+}
+
 /// Check an installed file against the manifest. The SHA-256 is only
 /// recomputed when the file's size or modification time differs from the last
 /// successful check, so loading a verified model stays cheap. A mismatch
@@ -547,6 +591,22 @@ pub async fn verify_installed(
             file: file.name.clone(),
         });
     }
+    let stamp = installed_stamp(&path, file).await;
+    // Serialize checks so concurrent requests hash an unchanged file only once.
+    let mut cache = INSTALLED_CACHE.lock().await;
+    if let Some(stamp) = &stamp {
+        if let Some((cached, valid)) = cache.get(&path) {
+            if cached == stamp {
+                return if *valid {
+                    Ok(())
+                } else {
+                    Err(TransferError::InstalledMismatch {
+                        file: file.name.clone(),
+                    })
+                };
+            }
+        }
+    }
     if let Some(expected) = marker_for(&path, &file.sha256).await {
         if fs::read_to_string(verified_marker_path(dir, &file.name))
             .await
@@ -554,11 +614,24 @@ pub async fn verify_installed(
             .as_deref()
             == Some(expected.as_str())
         {
+            if let Some(stamp) = stamp {
+                cache.insert(path.clone(), (stamp, true));
+            }
             return Ok(());
         }
     }
     let digest = sha256_of(&path, cancel).await?;
-    if !digest.eq_ignore_ascii_case(&file.sha256) {
+    let valid = digest.eq_ignore_ascii_case(&file.sha256);
+    if let Some(stamp) = stamp {
+        if installed_stamp(&path, file).await.as_ref() == Some(&stamp) {
+            cache.insert(path.clone(), (stamp, valid));
+        } else {
+            return Err(TransferError::InstalledMismatch {
+                file: file.name.clone(),
+            });
+        }
+    }
+    if !valid {
         remove_quietly(&verified_marker_path(dir, &file.name)).await;
         return Err(TransferError::InstalledMismatch {
             file: file.name.clone(),
@@ -1201,6 +1274,13 @@ mod tests {
             .await
             .unwrap();
         assert!(verified_marker_path(dir.path(), "model.bin").exists());
+        // Without the disk marker, repeated loads must still reuse the process cache.
+        std::fs::remove_file(verified_marker_path(dir.path(), "model.bin")).unwrap();
+        verify_installed(dir.path(), &file, &CancellationToken::new())
+            .await
+            .unwrap();
+        assert!(!verified_marker_path(dir.path(), "model.bin").exists());
+        assert_eq!(HASH_COUNTS.lock().unwrap().get(&path), Some(&1));
 
         // Same size, different content, new modification time: the marker no longer applies.
         let mut changed = GOOD.to_vec();
@@ -1224,5 +1304,9 @@ mod tests {
             path.exists(),
             "an installed file is never deleted by the check"
         );
+        assert_eq!(HASH_COUNTS.lock().unwrap().get(&path), Some(&2));
+        assert!(installed_is_corrupted(&path, &file).await);
+        std::fs::write(&path, GOOD).unwrap();
+        assert!(!installed_is_corrupted(&path, &file).await);
     }
 }

@@ -316,7 +316,7 @@ fn copy_database(database_path: &Path, backup_root: &Path) -> io::Result<Option<
             Some(name) => fs::copy(file, partial.join(name)).map(|_| ()),
             None => Ok(()),
         })
-        .and_then(|()| fs::rename(&partial, &folder));
+        .and_then(|()| crate::file_ops::rename_with_retry(&partial, &folder));
     if let Err(e) = copied {
         // Give the space back now: on a full disk the half copy is what
         // stands between the user and the next recording.

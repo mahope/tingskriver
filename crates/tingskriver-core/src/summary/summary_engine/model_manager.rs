@@ -69,7 +69,10 @@ pub enum ModelStatus {
     Available,
 
     /// Model file is corrupted and needs redownload
-    Corrupted { file_size: u64, expected_min_size: u64 },
+    Corrupted {
+        file_size: u64,
+        expected_min_size: u64,
+    },
 
     /// Error occurred with the model
     Error(String),
@@ -311,11 +314,7 @@ impl ModelManager {
                         }
                     }
                     Err(e) => {
-                        log::error!(
-                            "Model '{}': Failed to read metadata: {}",
-                            model_def.name,
-                            e
-                        );
+                        log::error!("Model '{}': Failed to read metadata: {}", model_def.name, e);
                         ModelStatus::Error(format!("Failed to read metadata: {}", e))
                     }
                 }
@@ -364,11 +363,7 @@ impl ModelManager {
 
     /// Get info for a specific model
     pub async fn get_model_info(&self, model_name: &str) -> Option<ModelInfo> {
-        self.available_models
-            .read()
-            .await
-            .get(model_name)
-            .cloned()
+        self.available_models.read().await.get(model_name).cloned()
     }
 
     /// Check if a model is ready to use
@@ -389,10 +384,13 @@ impl ModelManager {
         }
         // A file that no longer matches the pinned SHA-256 is never used.
         if let Some(entry) = model_download::entry("summary", model_name) {
+            let Some(file) = entry.files.first() else {
+                log::error!("Model manifest has no files for {}", model_name);
+                return false;
+            };
             let dir = info.path.parent().unwrap_or(&self.models_dir).to_path_buf();
             if let Err(error) =
-                model_download::verify_installed(&dir, &entry.files[0], &CancellationToken::new())
-                    .await
+                model_download::verify_installed(&dir, file, &CancellationToken::new()).await
             {
                 log::error!(
                     "Built-in model {} failed verification: {}",
@@ -409,7 +407,7 @@ impl ModelManager {
                                 .metadata()
                                 .map(|m| m.len() / (1024 * 1024))
                                 .unwrap_or(0),
-                            expected_min_size: entry.files[0].size / (1024 * 1024),
+                            expected_min_size: file.size / (1024 * 1024),
                         };
                     }
                 }
@@ -426,11 +424,13 @@ impl ModelManager {
         progress_callback: Option<Box<dyn Fn(u8) + Send>>,
     ) -> Result<()> {
         // Wrap the simple callback to use detailed progress internally
-        let detailed_callback: Option<Box<dyn Fn(DownloadProgress) + Send>> =
-            progress_callback.map(|cb| {
-                Box::new(move |p: DownloadProgress| cb(p.percent)) as Box<dyn Fn(DownloadProgress) + Send>
+        let detailed_callback: Option<Box<dyn Fn(DownloadProgress) + Send>> = progress_callback
+            .map(|cb| {
+                Box::new(move |p: DownloadProgress| cb(p.percent))
+                    as Box<dyn Fn(DownloadProgress) + Send>
             });
-        self.download_model_detailed(model_name, detailed_callback).await
+        self.download_model_detailed(model_name, detailed_callback)
+            .await
     }
 
     /// Download a model with detailed progress (MB, speed, etc.)
@@ -489,7 +489,12 @@ impl ModelManager {
                 model_name
             ));
         };
-        let file = &entry.files[0];
+        let Some(file) = entry.files.first() else {
+            let message = format!("Model manifest has no files for {}", model_name);
+            self.finish_failed_download(model_name, &file_path, message.clone())
+                .await;
+            return Err(anyhow!(message));
+        };
 
         log::info!(
             "Downloading {} from the pinned sources ({} source(s))",
@@ -612,7 +617,11 @@ impl ModelManager {
         {
             let mut models = self.available_models.write().await;
             if let Some(model_info) = models.get_mut(model_name) {
-                model_info.status = if usable { ModelStatus::Available } else { ModelStatus::Error(message) };
+                model_info.status = if usable {
+                    ModelStatus::Available
+                } else {
+                    ModelStatus::Error(message)
+                };
             }
         }
         self.active_downloads.write().await.remove(model_name);
