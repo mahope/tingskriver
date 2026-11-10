@@ -56,7 +56,11 @@ Stored results include raw per-track deliveries/provenance and merged segments.
 Enqueue a new `JobSpec` for the same meeting, optionally with another language
 and a validated provider configuration snapshot in `providers`. Credentials are
 resolved when the job runs. `versions(meeting_id)` returns successful versions
-in creation order; failed reruns never replace a previous result. Multiple
+in creation order; failed reruns never replace a previous result. The current
+version is the newest **created** completed, non-rejected job for the chunk,
+not the job that finished most recently (ties use insertion order). If an older
+job in backoff finishes after a successful rerun, its result remains in history
+but does not replace that newer current version. Multiple
 chunks have separate jobs/versions: aggregation and selection of a complete
 meeting version remain the host's responsibility. A retry may re-submit a
 previously successful track if the other track failed.
@@ -75,7 +79,9 @@ same chunk (same `offset_ms`), the new result is reconciled with it
   silently changes owner and a speaker below 0.6 stays unnamed.
 - Names confirmed with `set_speaker_name(job_id, number, name)` and corrections
   stored with `add_speaker_correction` are copied to the new version in the
-  same transaction as the result. A correction is moved to a new segment when
+  same transaction as the result. The current version, names and corrections
+  are read within that transaction too, so confirmations saved before it starts
+  are included. A correction is moved to a new segment when
   it covers at least 0.6 of it, and overrides the provider's clustering.
 - If the new text loses at least 200 letters/digits and keeps under 50 %, the
   result is stored as a version with `rejected` (`reason: "truncated"` and a

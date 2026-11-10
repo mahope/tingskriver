@@ -827,3 +827,38 @@ async fn truncated_rerun_is_stored_but_never_becomes_current() {
         third
     );
 }
+
+#[tokio::test]
+async fn name_confirmed_between_snapshot_and_commit_is_preserved() {
+    let queue = Queue::open_memory().await.unwrap();
+    let spec = JobSpec::new("m", "mic.wav".into(), None);
+    let first = queue.enqueue(&spec, 0).await.unwrap();
+    let job = queue.claim(0).await.unwrap().unwrap();
+    let result = serde_json::json!({"segments": [
+        {"startMs": 0, "endMs": 10000, "text": "Hej", "speaker": "Taler 2", "source": "system"}
+    ]});
+    queue.complete(&job, &result).await.unwrap();
+    let second = queue.enqueue(&spec, 1).await.unwrap();
+    let job = queue.claim(1).await.unwrap().unwrap();
+    let previous = queue.current_version("m", 0).await.unwrap().unwrap();
+    assert!(queue
+        .speaker_names(&previous.job_id)
+        .await
+        .unwrap()
+        .is_empty());
+    let mut rerun = result.clone();
+    queue
+        .complete_carrying_over_before_store(&job, &mut rerun, async {
+            queue.set_speaker_name(&first, 2, "Bo").await
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        queue.current_version("m", 0).await.unwrap().unwrap().job_id,
+        second
+    );
+    assert_eq!(
+        queue.speaker_names(&second).await.unwrap(),
+        [(2, "Bo".into())]
+    );
+}
