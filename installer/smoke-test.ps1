@@ -67,10 +67,15 @@ function Invoke-Timed([string] $file, [string[]] $arguments, [string] $name, [in
   $params = @{ FilePath = $file; PassThru = $true; RedirectStandardOutput = $out; RedirectStandardError = $err }
   if ($arguments.Count -gt 0) { $params.ArgumentList = $arguments }
   $process = Start-Process @params
+  # Reading Handle before the process exits keeps ExitCode readable afterwards;
+  # without it PowerShell can return $null, which would look like a failure.
+  $null = $process.Handle
   if (-not $process.WaitForExit($seconds * 1000)) {
     try { $process.Kill() } catch { }
     Fail "$name did not finish within $seconds s"
   }
+  $process.WaitForExit()
+  if ($null -eq $process.ExitCode) { Fail "$name exited, but its exit code could not be read" }
   return $process.ExitCode
 }
 
@@ -104,6 +109,13 @@ try {
   Step 'Refuse to run on an existing installation'
   if ((Test-Path $installDir) -or (Test-Path $uninstallKey)) {
     Fail "The app is already installed ($installDir or $uninstallKey exists). Run this on a clean runner or VM."
+  }
+  # The old Tauri install shares the data folders and the Run value; the
+  # install and uninstall hooks would rewrite or delete them.
+  $legacyDir = Join-Path $env:LOCALAPPDATA 'Tingskriver'
+  $existingRun = (Get-ItemProperty $runKey -ErrorAction SilentlyContinue).PSObject.Properties['Tingskriver']
+  if ((Test-Path $legacyDir) -or $existingRun) {
+    Fail "An earlier Tingskriver install exists ($legacyDir or the Run value Tingskriver). Run this on a clean runner or VM."
   }
   if (Test-Path (Join-Path $dataDir 'slet-data-ved-afinstallation')) {
     Fail 'The delete-data marker exists; this machine is not clean.'
