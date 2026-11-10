@@ -145,6 +145,7 @@ impl ChatMessage {
 #[serde(rename_all = "camelCase")]
 pub struct TestReport {
     pub latency_ms: u64,
+    pub warning: Option<String>,
     /// Number of models the service listed.
     pub models: usize,
 }
@@ -293,10 +294,7 @@ pub async fn chat(
 }
 
 /// A real, small call (`GET /models`) with the measured round trip.
-pub async fn test(
-    _client: &reqwest::Client,
-    link: &ResolvedLink,
-) -> Result<TestReport, ProviderError> {
+pub async fn test(link: &ResolvedLink) -> Result<TestReport, ProviderError> {
     link.ensure_remote()?;
     super::verify::test(link).await
 }
@@ -365,7 +363,11 @@ pub fn classify_status(status: StatusCode, retry_after: Option<&str>) -> Provide
     }
 }
 
-fn map_reqwest(error: reqwest::Error, timeout: Duration, link: &ResolvedLink) -> ProviderError {
+pub(super) fn map_reqwest(
+    error: reqwest::Error,
+    timeout: Duration,
+    link: &ResolvedLink,
+) -> ProviderError {
     if error.is_timeout() {
         return ProviderError::timeout(timeout);
     }

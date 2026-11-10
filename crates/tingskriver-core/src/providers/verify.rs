@@ -4,19 +4,19 @@
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::{Mutex, OnceLock};
-use std::time::Duration;
-use tokio::time::Instant;
+use std::time::{Duration, Instant};
 
 use reqwest::{redirect::Policy, StatusCode, Url};
 
-use super::client::{classify_status, ResolvedLink, TestReport};
+use super::client::{classify_status, map_reqwest, ResolvedLink, TestReport};
 use super::error::ProviderError;
 use super::model::ProviderKind;
 
 const TIMEOUT: Duration = Duration::from_secs(8);
 const CACHE_TTL: Duration = Duration::from_secs(60);
-type Cached = (Instant, Result<TestReport, ProviderError>);
-static CACHE: OnceLock<Mutex<HashMap<u64, Cached>>> = OnceLock::new();
+type Cached = (Instant, TestReport);
+pub(super) type Cache = Mutex<HashMap<u64, Cached>>;
+static CACHE: OnceLock<Cache> = OnceLock::new();
 
 fn unverifiable(detail: &str) -> ProviderError {
     ProviderError::BadResponse {
@@ -24,30 +24,48 @@ fn unverifiable(detail: &str) -> ProviderError {
     }
 }
 
-fn network_error(error: reqwest::Error, timeout: Duration) -> ProviderError {
-    if error.is_timeout() {
-        ProviderError::timeout(timeout)
+fn private_host(url: &Url) -> bool {
+    url.host_str().is_some_and(|host| {
+        host.eq_ignore_ascii_case("localhost")
+            || host.to_ascii_lowercase().ends_with(".local")
+            || host
+                .trim_matches(['[', ']'])
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| match ip {
+                    std::net::IpAddr::V4(ip) => {
+                        ip.is_loopback() || ip.is_private() || ip.is_link_local()
+                    }
+                    std::net::IpAddr::V6(ip) => {
+                        ip.is_loopback()
+                            || ip.is_unique_local()
+                            || ip.is_unicast_link_local()
+                            || ip.to_ipv4_mapped().is_some_and(|ip| {
+                                ip.is_loopback() || ip.is_private() || ip.is_link_local()
+                            })
+                    }
+                })
+    })
+}
+
+fn key_warning(url: &Url) -> String {
+    if private_host(url) {
+        "Serveren tjekker ikke nøglen.".into()
     } else {
-        unverifiable("netværksfejl eller ugyldigt svar")
+        "Advarsel: Den offentlige gateway tjekker ikke nøglen. Kontrollér adressen, før du sender data.".into()
     }
 }
 
 fn models_url(base: &str) -> Result<Url, ProviderError> {
-    let invalid = || ProviderError::Config {
-        detail: "brug HTTPS (HTTP kun til loopback) og en URL uden brugernavn eller adgangskode"
+    let invalid = || {
+        ProviderError::Config {
+        detail: "brug HTTPS til offentlige værter (HTTP kun til lokale og private adresser) og en URL uden brugernavn eller adgangskode"
             .into(),
+    }
     };
     let mut url = Url::parse(base).map_err(|_| invalid())?;
-    let loopback = url.host_str().is_some_and(|host| {
-        host.eq_ignore_ascii_case("localhost")
-            || host
-                .trim_matches(['[', ']'])
-                .parse::<std::net::IpAddr>()
-                .is_ok_and(|ip| ip.is_loopback())
-    });
     if !url.username().is_empty()
         || url.password().is_some()
-        || !(url.scheme() == "https" || (url.scheme() == "http" && loopback))
+        || !(url.scheme() == "https" || (url.scheme() == "http" && private_host(&url)))
         || url.host_str().is_none()
     {
         return Err(invalid());
@@ -57,6 +75,14 @@ fn models_url(base: &str) -> Result<Url, ProviderError> {
 }
 
 pub(super) async fn test(link: &ResolvedLink) -> Result<TestReport, ProviderError> {
+    test_with_cache(link, CACHE.get_or_init(Mutex::default), Instant::now).await
+}
+
+pub(super) async fn test_with_cache(
+    link: &ResolvedLink,
+    cache: &Cache,
+    now: impl Fn() -> Instant,
+) -> Result<TestReport, ProviderError> {
     let url = models_url(&link.base_url)?;
     // Keep only a process-local fingerprint, never the credential itself.
     let mut hash = std::collections::hash_map::DefaultHasher::new();
@@ -68,11 +94,10 @@ pub(super) async fn test(link: &ResolvedLink) -> Result<TestReport, ProviderErro
     )
         .hash(&mut hash);
     let cache_key = hash.finish();
-    let cache = CACHE.get_or_init(Mutex::default);
     if let Ok(mut entries) = cache.lock() {
-        entries.retain(|_, (at, _)| at.elapsed() < CACHE_TTL);
+        entries.retain(|_, (at, _)| now().saturating_duration_since(*at) < CACHE_TTL);
         if let Some((_, result)) = entries.get(&cache_key) {
-            return result.clone();
+            return Ok(result.clone());
         }
     }
     let timeout = TIMEOUT.min(link.remote_timeout());
@@ -90,25 +115,27 @@ pub(super) async fn test(link: &ResolvedLink) -> Result<TestReport, ProviderErro
         let response = request
             .send()
             .await
-            .map_err(|error| network_error(error, timeout))?;
+            .map_err(|error| map_reqwest(error, timeout, link))?;
         check(&response)?;
         let raw: serde_json::Value = response
             .json()
             .await
-            .map_err(|error| network_error(error, timeout))?;
+            .map_err(|error| map_reqwest(error, timeout, link))?;
         let models = raw
             .get("data")
             .and_then(|data| data.as_array())
             .ok_or_else(|| unverifiable("svaret indeholdt ingen modelliste"))?
             .len();
+        let latency_ms = start.elapsed().as_millis() as u64;
+        let mut warning = None;
         if link.kind == ProviderKind::OpenAiCompatible && link.key.is_some() {
             let control = format!("tingskriver-invalid-{}", uuid::Uuid::new_v4());
             let response = client
-                .get(url)
+                .get(url.clone())
                 .bearer_auth(control)
                 .send()
                 .await
-                .map_err(|error| network_error(error, timeout))?;
+                .map_err(|error| map_reqwest(error, timeout, link))?;
             match response.status() {
                 StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {}
                 StatusCode::TOO_MANY_REQUESTS => {
@@ -117,23 +144,23 @@ pub(super) async fn test(link: &ResolvedLink) -> Result<TestReport, ProviderErro
                 status if status.is_redirection() => {
                     check(&response)?;
                 }
-                _ => {
-                    return Err(unverifiable(
-                        "gatewayen skal afvise kontrolnøglen med 401 eller 403",
-                    ))
-                }
+                status if status.is_success() => warning = Some(key_warning(&url)),
+                _ => check(&response)?,
             }
         }
         Ok(TestReport {
-            latency_ms: start.elapsed().as_millis() as u64,
+            latency_ms,
+            warning,
             models,
         })
     };
     let result = tokio::time::timeout(timeout, work)
         .await
         .unwrap_or_else(|_| Err(ProviderError::timeout(timeout)));
-    if let Ok(mut entries) = cache.lock() {
-        entries.insert(cache_key, (Instant::now(), result.clone()));
+    if let Ok(report) = &result {
+        if let Ok(mut entries) = cache.lock() {
+            entries.insert(cache_key, (now(), report.clone()));
+        }
     }
     result
 }
@@ -154,10 +181,7 @@ fn check(response: &reqwest::Response) -> Result<(), ProviderError> {
             .get(reqwest::header::RETRY_AFTER)
             .and_then(|value| value.to_str().ok()),
     );
-    match error {
-        ProviderError::Unauthorized { .. } | ProviderError::RateLimited { .. } => Err(error),
-        _ => Err(unverifiable("serveren returnerede en HTTP-fejl")),
-    }
+    Err(error)
 }
 
 #[cfg(test)]
@@ -165,12 +189,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn allows_only_https_or_loopback_http_without_credentials() {
+    fn public_gateways_get_a_stronger_warning() {
+        assert!(key_warning(&Url::parse("https://example.com/v1").unwrap())
+            .contains("offentlige gateway"));
+        assert_eq!(
+            key_warning(&Url::parse("http://server.local/v1").unwrap()),
+            "Serveren tjekker ikke nøglen."
+        );
+    }
+
+    #[test]
+    fn allows_https_and_private_http_without_credentials() {
         for url in [
             "https://example.com/v1",
             "http://localhost/v1",
             "http://127.0.0.2/v1",
             "http://[::1]/v1",
+            "http://192.168.1.2/v1",
+            "http://10.0.0.1/v1",
+            "http://172.16.0.1/v1",
+            "http://169.254.1.1/v1",
+            "http://server.local/v1",
+            "http://[fe80::1]/v1",
         ] {
             assert!(models_url(url).is_ok(), "{url}");
         }
