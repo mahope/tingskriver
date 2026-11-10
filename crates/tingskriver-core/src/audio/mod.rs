@@ -22,6 +22,7 @@ pub mod recording_state;
 pub mod pipeline;
 pub mod stream;
 mod callback_queue;
+pub(crate) mod disk_guard;
 pub mod recording_manager;
 pub mod recording_commands;
 pub mod recording_preferences;

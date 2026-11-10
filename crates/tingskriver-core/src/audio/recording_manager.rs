@@ -237,6 +237,10 @@ impl RecordingManager {
             return Err(e);
         }
 
+        if let Some(folder) = self.get_meeting_folder() {
+            super::disk_guard::spawn(app.clone(), self.state.clone(), folder);
+        }
+
         // Start device monitoring for disconnect/reconnect detection
         if let Some(ref mut monitor) = self.device_monitor {
             if let Err(e) = monitor.start_monitoring(microphone_device, system_device) {
