@@ -10,6 +10,8 @@ Issues #187 (lint only what changed) and #192 (measure, scope by path, test sche
 | `branch-build.yml` | push to any branch except `main` | `scope`, Windows installer, device switching tests |
 | `wer.yml`, `search-benchmark.yml`, `ydeevne-port.yml` | own path filters | unchanged, except `wer.yml` now cancels superseded runs on branches |
 
+**Order and cancelling in `rust.yml`**: the two Windows jobs (`windows`, `windows-gpui-app`) need `lint`, so they start only after format and clippy pass and are skipped when lint fails. A lint error then costs a few Linux minutes instead of two Windows runners for 25 minutes; the price is that a green run takes the lint time longer. On branches other than `main` a newer push cancels the older `Rust` run (only the tip is merged). `main` still queues, so every commit on `main` gets a finished run for the automatic release.
+
 **Scope** (`.github/scripts/ci-scope.py`): the `scope` job decides whether the Rust and installer jobs run.
 
 - `main` and tags always run everything. The automatic release needs a successful `Rust` push run for every commit on `main`, and `main` keeps the full check.

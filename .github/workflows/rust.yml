@@ -19,8 +19,10 @@ on:
 
 concurrency:
   group: rust-${{ github.ref }}
-  # Queue instead of cancel: every push gets a finished result for agents.
-  cancel-in-progress: false
+  # main queues, so every merge gets a finished result. On other branches only
+  # the tip matters, so a newer push cancels the older run instead of waiting
+  # behind it for scarce Windows runners.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
@@ -128,7 +130,9 @@ jobs:
 
   windows:
     name: Windows workspace build and tests
-    needs: scope
+    # Wait for format and clippy (a few minutes on Linux), so a lint error does
+    # not hold two Windows runners for 25 minutes. Skipped when lint fails.
+    needs: [scope, lint]
     if: ${{ needs.scope.outputs.rust == 'true' }}
     runs-on: windows-latest
     timeout-minutes: 90
@@ -272,7 +276,9 @@ jobs:
   # docs/gpui.md (text input, IME, UI Automation, DPI, start time, no GPU).
   windows-gpui-app:
     name: GPUI app artifact (Windows release)
-    needs: scope
+    # Wait for format and clippy (a few minutes on Linux), so a lint error does
+    # not hold two Windows runners for 25 minutes. Skipped when lint fails.
+    needs: [scope, lint]
     if: ${{ needs.scope.outputs.rust == 'true' }}
     runs-on: windows-latest
     timeout-minutes: 90
