@@ -39,7 +39,9 @@
 
 mod defaults;
 mod loader;
+mod storage;
 mod types;
+pub use storage::{export_template, save_template};
 
 // Re-export public API
 pub use loader::{

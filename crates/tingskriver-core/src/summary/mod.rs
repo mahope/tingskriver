@@ -6,7 +6,6 @@
 /// - Service layer for orchestrating summary generation
 /// - Templates for structured meeting summary generation
 /// - Command bodies behind the Tauri commands (`commands`, `template_commands`)
-
 use serde::{Deserialize, Serialize};
 
 /// Custom OpenAI-compatible endpoint configuration
@@ -33,12 +32,13 @@ pub struct CustomOpenAIConfig {
 pub mod commands;
 pub mod language_detection;
 pub mod llm_client;
-pub mod metadata;
 pub mod map_reduce;
+pub mod metadata;
 pub mod processor;
 pub mod service;
 pub mod summary_engine;
 pub mod template_commands;
+pub mod template_rules;
 pub mod templates;
 
 // Re-export commonly used items
