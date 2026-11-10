@@ -155,6 +155,10 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
         const unlistenStarted = await recordingService.onRecordingStarted(() => {
           console.log('[RecordingStateContext] Recording started event');
           isRecordingRef.current = true;
+          if (pendingDiskWarningRef.current !== null) {
+            toast.warning(pendingDiskWarningRef.current, { id: 'recording-disk', duration: Infinity });
+            pendingDiskWarningRef.current = null;
+          }
           setState(prev => ({
             ...prev,
             isRecording: true,
@@ -169,6 +173,7 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
         // Recording starting (startup in progress)
         const unlistenStarting = await recordingService.onRecordingStarting(() => {
           console.log('[RecordingStateContext] Recording starting event');
+          pendingDiskWarningRef.current = null;
           setState(prev => prev.status === RecordingStatus.RECORDING
             ? prev
             : { ...prev, status: RecordingStatus.STARTING, statusMessage: 'Starter optagelse…' });
@@ -179,6 +184,7 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
         const unlistenStopped = await recordingService.onRecordingStopped((payload) => {
           console.log('[RecordingStateContext] Recording stopped event:', payload);
           toast.dismiss('recording-disk');
+          pendingDiskWarningRef.current = null;
           isRecordingRef.current = false;
           if (payload.audio_status && payload.audio_status !== 'ok' && payload.audio_message) {
             toast.error(payload.audio_message, { duration: 15000 });
@@ -266,6 +272,8 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
   const [deviceNotice, setDeviceNotice] = useState<DeviceNotice | null>(null);
   const dismissDeviceNotice = useCallback(() => setDeviceNotice(null), []);
   const isRecordingRef = useRef(false);
+  // The guard can publish its first measurement before recording-started.
+  const pendingDiskWarningRef = useRef<string | null>(null);
   useEffect(() => {
     isRecordingRef.current = state.isRecording;
   }, [state.isRecording]);
@@ -378,9 +386,12 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
           listen<{ message: string }>('recording-disk-low', (event) => {
             if (isRecordingRef.current) {
               toast.warning(event.payload.message, { id: 'recording-disk', duration: Infinity });
+            } else {
+              pendingDiskWarningRef.current = event.payload.message;
             }
           }),
           listen<{ message: string }>('recording-disk-ok', (event) => {
+            pendingDiskWarningRef.current = null;
             if (isRecordingRef.current) {
               toast.success(event.payload.message, { id: 'recording-disk', duration: 5000 });
             } else {

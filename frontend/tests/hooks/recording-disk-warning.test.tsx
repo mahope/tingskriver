@@ -13,6 +13,9 @@ afterAll(() => {
 const listeners = new Map<string, (event: { payload: { message: string } }) => void>();
 const removed: string[] = [];
 let stopped: ((payload: object) => void) | undefined;
+let started: (() => void) | undefined;
+let starting: (() => void) | undefined;
+let backendRecording = true;
 mock.module('@tauri-apps/api/event', () => ({
   listen: async (name: string, callback: (event: { payload: { message: string } }) => void) => {
     listeners.set(name, callback);
@@ -22,9 +25,13 @@ mock.module('@tauri-apps/api/event', () => ({
 mock.module('../../src/services/recordingService', () => ({
   recordingService: new Proxy({}, {
     get: (_, name) => name === 'getRecordingState'
-      ? async () => ({ is_recording: true, is_paused: false, is_active: true })
+      ? async () => ({ is_recording: backendRecording, is_paused: false, is_active: backendRecording })
       : name === 'onRecordingStopped'
         ? async (callback: (payload: object) => void) => { stopped = callback; return () => {}; }
+        : name === 'onRecordingStarted'
+          ? async (callback: () => void) => { started = callback; return () => {}; }
+        : name === 'onRecordingStarting'
+          ? async (callback: () => void) => { starting = callback; return () => {}; }
         : async () => () => {},
   }),
 }));
@@ -61,4 +68,36 @@ test('disk transitions show and replace a persistent warning independently of wr
   }
   expect(removed).toContain('recording-disk-low');
   expect(removed).toContain('recording-disk-ok');
+});
+
+test('low disk before recording-started is shown at start and cleared across sessions', async () => {
+  backendRecording = false;
+  warning.mockClear();
+  let renderer: ReturnType<typeof create>;
+  await act(async () => { renderer = create(<RecordingStateProvider><span /></RecordingStateProvider>); });
+  try {
+    await act(async () => { starting!(); });
+    listeners.get('recording-disk-low')!({ payload: { message: 'Early low' } });
+    expect(warning).not.toHaveBeenCalled();
+    await act(async () => { started!(); });
+    expect(warning).toHaveBeenCalledWith('Early low', { id: 'recording-disk', duration: Infinity });
+    await act(async () => { stopped!({}); });
+    const count = warning.mock.calls.length;
+    // A late event from the stopped guard must not leak into the next session.
+    listeners.get('recording-disk-low')!({ payload: { message: 'Late low' } });
+    await act(async () => { starting!(); started!(); });
+    expect(warning.mock.calls.length).toBe(count);
+    await act(async () => { stopped!({}); starting!(); });
+    listeners.get('recording-disk-low')!({ payload: { message: 'Recovered before start' } });
+    listeners.get('recording-disk-ok')!({ payload: { message: 'Recovered' } });
+    await act(async () => { started!(); });
+    expect(warning.mock.calls.length).toBe(count);
+    await act(async () => { stopped!({}); starting!(); });
+    listeners.get('recording-disk-low')!({ payload: { message: 'Stopped before start' } });
+    await act(async () => { stopped!({}); started!(); });
+    expect(warning.mock.calls.length).toBe(count);
+  } finally {
+    await act(async () => renderer!.unmount());
+    backendRecording = true;
+  }
 });

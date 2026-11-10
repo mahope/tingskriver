@@ -236,7 +236,9 @@ transcription leaves the saved meeting available and reports the error.
   Each transition is emitted once. Unknown space leaves the warning unchanged.
   When a low-space guard stops, it also emits `DiskOk` to clear its warning.
   The recording context replaces the warning on recovery and dismisses it
-  immediately on recording stop, independently of write errors. The dictation
+  immediately on recording stop, independently of write errors. A low-space
+  event arriving before `recording-started` is held until that event; recovery,
+  stop and the next startup clear any pending warning. The dictation
   overlay has no meeting-recording status connection yet; its disk warning is
   deferred to #169.
   Testing on an almost-full Windows VHD remains a manual validation step.
