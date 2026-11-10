@@ -361,6 +361,19 @@ need their own loop. The settings UI uses `config`, `save_config`,
 `statuses`, `set_key`, `delete_key` and `test_provider` (a real `GET /models`
 with the measured round trip).
 
+Connection tests use `providers::verify`, with an eight-second total deadline,
+HTTPS except for loopback HTTP, and no URL credentials or redirects. A redirect
+returns a Danish explanation without forwarding the key. A custom
+OpenAI-compatible gateway with a configured key must also reject a random
+negative-control key with 401/403; an endpoint accepting every key fails
+verification. Keyless endpoints (including local Ollama) only test connectivity.
+Rejections use `Unauthorized`, rate limits use `RateLimited` with `Retry-After`,
+and inconclusive HTTP/control responses use `BadResponse` with a Danish
+explanation. Timeouts and unsafe configuration retain their existing error
+classes. Results are cached in memory for 60 seconds per endpoint, provider kind,
+key fingerprint and timeout; changing the key or endpoint triggers a new test.
+GPUI presentation of the verification states remains separate work for #53.
+
 Database safety copies use a unique folder on every attempt, including the
 current WAL and rollback journal. Error advice only confirms a copy when its
 path is available; failed copies are reported explicitly.
