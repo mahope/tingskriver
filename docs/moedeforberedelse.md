@@ -2,6 +2,8 @@
 
 `tingskriver_core::briefing` builds a short brief from the latest related minutes. It is core only; the UI is not wired yet (see "Wiring").
 
+PR #221 references #204 without closing it: response-time measurements, UI wiring and calendar series matching remain open.
+
 - **Series match:** same iCalendar `UID` (every instance of a recurring event, including `RECURRENCE-ID` overrides, keeps the master `UID`), then same normalised title, then shared attendee addresses excluding `Upcoming.own_addresses` (pass the calendar configuration's own addresses). Newest first within a class; only earlier meetings with non-empty minutes count.
 - **Limits:** five meetings, three points each, 512 output tokens, 45 s per model call (`MAX_MEETINGS`, `MAX_POINTS`, `MAX_OUTPUT_TOKENS`, `TIMEOUT`).
 - **Cache:** table `briefing_cache`. Key-point hashes include meeting id, prompt version, model, title and minutes; overview hashes include source meeting ids, titles and points, prompt version and model. Each entry records its source `meeting_id` (one row per source for joint overviews). A deletion trigger removes all entries derived from a deleted meeting, including the whole joint overview, even with foreign keys disabled. Unchanged minutes make no model call. Empty results and failed overviews are not cached; a failed overview returns the available points with an empty overview.
