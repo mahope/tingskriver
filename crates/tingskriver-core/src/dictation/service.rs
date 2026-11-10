@@ -355,6 +355,7 @@ impl Service {
     /// (Re)install the keyboard hook according to the settings.
     #[cfg(windows)]
     fn apply_shortcut(self: &Arc<Self>) {
+        self.cancel_processing();
         let mut slot = match self.hook.lock() {
             Ok(slot) => slot,
             Err(_) => return,
@@ -446,6 +447,7 @@ impl Service {
     /// logs the rest of its timing window when it unhooks.
     #[cfg(windows)]
     pub fn stop_shortcut(&self) {
+        self.cancel_processing();
         if let Ok(mut slot) = self.hook.lock() {
             slot.take();
         }
@@ -457,6 +459,7 @@ impl Service {
 
     #[cfg(not(windows))]
     pub fn stop_shortcut(&self) {
+        self.cancel_processing();
         self.shortcut_active.store(false, Ordering::Relaxed);
     }
 
@@ -699,7 +702,8 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant, Optio
         }
     }
 
-    if session.take().is_some() {
+    if let Some(s) = session.take() {
+        s.flow.set(DictationState::Cancelled);
         DICTATING.store(false, Ordering::Relaxed);
         service.overlay.set(OverlayState::Hidden);
     }

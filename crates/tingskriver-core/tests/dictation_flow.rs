@@ -84,6 +84,20 @@ impl DictationBackend for Fake {
         Ok(())
     }
 }
+async fn drain(
+    run: &mut tingskriver_core::dictation::service::DictationRun,
+) -> Vec<DictationState> {
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        let mut states = Vec::new();
+        while let Some(state) = run.events.recv().await {
+            states.push(state);
+        }
+        states
+    })
+    .await
+    .expect("dictation worker did not finish")
+}
+
 struct Logs(Mutex<Vec<String>>);
 static LOGS: Logs = Logs(Mutex::new(Vec::new()));
 impl log::Log for Logs {
@@ -109,12 +123,16 @@ async fn dictation_flow_fallback_cancel_and_private_logs() {
     )
     .await
     .unwrap();
+    let mut broadcast = service.subscribe_states();
     let mut run = service.test_trigger(vec![0.2; 16000]).unwrap();
     let mut states = Vec::new();
-    while let Some(state) = run.events.recv().await {
-        states.push(state);
-    }
+    states.extend(drain(&mut run).await);
     run.join().unwrap();
+    let mut published = Vec::new();
+    while let Ok(state) = broadcast.try_recv() {
+        published.push(state);
+    }
+    assert_eq!(published, states);
     assert_eq!(
         states,
         vec![
@@ -146,11 +164,9 @@ async fn dictation_flow_fallback_cancel_and_private_logs() {
     tokio::time::timeout(std::time::Duration::from_secs(5), fake.started.notified())
         .await
         .unwrap();
-    run.cancel();
+    service.cancel_processing();
     let mut states = Vec::new();
-    while let Some(state) = run.events.recv().await {
-        states.push(state);
-    }
+    states.extend(drain(&mut run).await);
     run.join().unwrap();
     assert_eq!(
         states,
@@ -163,6 +179,15 @@ async fn dictation_flow_fallback_cancel_and_private_logs() {
         ]
     );
     assert!(fake.inserted.lock().unwrap().is_empty());
+    let mut run = service.test_trigger(vec![0.2; 16000]).unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), fake.started.notified())
+        .await
+        .unwrap();
+    run.cancel();
+    assert_eq!(drain(&mut run).await, states);
+    run.join().unwrap();
+    assert!(fake.inserted.lock().unwrap().is_empty());
+
     for (fail_local, fail_insert, expected) in [
         (
             true,
@@ -202,9 +227,7 @@ async fn dictation_flow_fallback_cancel_and_private_logs() {
         .unwrap();
         let mut run = service.test_trigger(vec![0.2; 16000]).unwrap();
         let mut states = Vec::new();
-        while let Some(state) = run.events.recv().await {
-            states.push(state);
-        }
+        states.extend(drain(&mut run).await);
         run.join().unwrap();
         assert_eq!(states, expected);
         assert!(fake.inserted.lock().unwrap().is_empty());
