@@ -129,11 +129,11 @@ pub fn init(app: HostHandle, overlay: Arc<dyn Overlay>) {
 }
 
 async fn init_inner(app: HostHandle, overlay: Arc<dyn Overlay>) -> Result<(), String> {
-    let service = Service::open(app, overlay, None).await?;
+    let (service, spoken_error) = Service::open(app, overlay, None).await?;
     SERVICE
         .set(service.clone())
         .map_err(|_| "dictation already initialised".to_string())?;
-    service.apply_shortcut();
+    service.finish_startup(spoken_error, |service| service.apply_shortcut());
     apply_capture(&service.settings());
     let mut interval = tokio::time::interval(Duration::from_secs(10 * 60));
     loop {
@@ -147,7 +147,7 @@ impl Service {
         app: HostHandle,
         overlay: Arc<dyn Overlay>,
         backend: Option<Arc<dyn DictationBackend>>,
-    ) -> Result<Arc<Self>, String> {
+    ) -> Result<(Arc<Self>, Option<String>), String> {
         let app_data_dir = app.app_data_dir()?;
         let store = Store::open(&app_data_dir.join("dictation.sqlite")).await?;
         let settings = store.settings().await?;
@@ -184,14 +184,23 @@ impl Service {
             #[cfg(windows)]
             trigger: Mutex::new(None),
         });
-        if let Some(e) = spoken_error {
-            service.set_error(Some(e));
-        }
-        Ok(service)
+        Ok((service, spoken_error))
     }
 }
 
 impl Service {
+    fn finish_startup(
+        self: &Arc<Self>,
+        spoken_error: Option<String>,
+        install_shortcut: impl FnOnce(&Arc<Self>),
+    ) {
+        install_shortcut(self);
+        // A successful hook installation clears last_error.
+        if let Some(e) = spoken_error {
+            self.set_error(Some(e));
+        }
+    }
+
     pub fn settings(&self) -> DictationSettings {
         self.settings.read().map(|s| s.clone()).unwrap_or_default()
     }
@@ -1551,6 +1560,30 @@ mod tests {
             Ok(())
         }
         fn set(&self, _: OverlayState) {}
+    }
+
+    #[tokio::test]
+    async fn dictation_startup_preserves_spoken_error_after_shortcut_success() {
+        let dir = tempfile::tempdir().unwrap();
+        tokio::fs::write(dir.path().join(settings::SPOKEN_FILE), "{invalid")
+            .await
+            .unwrap();
+        let (service, spoken_error) = Service::open(
+            Arc::new(TestHost(dir.path().into())),
+            Arc::new(TestOverlay),
+            Some(Arc::new(PendingBackend::default())),
+        )
+        .await
+        .unwrap();
+        let expected = spoken_error
+            .clone()
+            .expect("invalid spoken table must fail");
+        service.finish_startup(spoken_error, |service| {
+            service.shortcut_active.store(true, Ordering::Relaxed);
+            service.set_error(None);
+        });
+        assert!(service.shortcut_active());
+        assert_eq!(service.last_error(), Some(expected));
     }
     #[derive(Default)]
     struct PendingBackend {

@@ -159,7 +159,11 @@ impl Service {
         overlay: Arc<dyn Overlay>,
         backend: Arc<dyn DictationBackend>,
     ) -> Result<Arc<Self>, String> {
-        Self::open(app, overlay, Some(backend)).await
+        let (service, spoken_error) = Self::open(app, overlay, Some(backend)).await?;
+        if let Some(e) = spoken_error {
+            service.set_error(Some(e));
+        }
+        Ok(service)
     }
 
     pub fn subscribe_states(&self) -> tokio::sync::broadcast::Receiver<DictationState> {
