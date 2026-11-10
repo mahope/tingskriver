@@ -30,6 +30,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[allow(clippy::disallowed_methods)] // Synchronous test of the disk worker.
     fn model_activation_retries_transient_rename_errors() {
         let dir = tempfile::tempdir().unwrap();
         let from = dir.path().join("model.part");
