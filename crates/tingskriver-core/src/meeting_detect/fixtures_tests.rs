@@ -17,6 +17,10 @@ struct Step {
 }
 
 #[test]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "Synchronous fixture test runs without an async runtime"
+)]
 fn json_fixtures() {
     let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/meeting_detect");
     let mut paths: Vec<_> = fs::read_dir(directory)

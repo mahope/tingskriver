@@ -57,7 +57,7 @@ Stopbeslutninger medtager ikke årsagssignaler fra en anden mødekilde.
 Snapshottene indeholder titler og bør derfor ikke logges.
 
 Mikrofonidentitet er kilde, mikrofonproces og mikrofonstart. Genåbning af samme
-mikrofonproces med samme mødekilde bevarer mødet, også efter et kort fravær
+mikrofonproces bevarer mødet, også uden et genkendt mødevindue og efter et kort fravær
 inden stopfristen. Hvis indsamleren lader
 et mikrofonforløb fortsætte på tværs af to møder i samme kilde, kan de ikke
 adskilles af denne grænseflade. Indsamleren skal rapportere reelle ophør/genstarter.
@@ -101,12 +101,12 @@ Et nyt forløb kan starte normalt. Værten bør behandle stop før næste snapsh
 `tests/fixtures/meeting_detect/`. Testen kræver mindst 30 filer, mindst ét trin
 pr. fil, vellykket parsing og præcis beslutning pr. trin. Hvert kald gentages
 med samme input for at kontrollere determinisme, og tilstanden serialiseres og læses tilbage.
-De 66 fixtures indeholder 120 snapshots. Alle fixturetitler er syntetiske.
+De 67 fixtures indeholder 127 snapshots. Alle fixturetitler er syntetiske.
 Tidsforløbene bruger falsk tid, herunder
 mikrofonens femsekundersgrænse, 29/30/31 sekunders fravær, kalenderfrist,
 ny tale og et nyt møde umiddelbart efter. Regressioner dækker kalenderændringer,
 sent opslag efter aftalens slutning, konkurrerende stabile mikrofonbrugere og
-kortvarigt mikrofonfravær. Udvalgte trin kontrollerer også den aktive tilstand.
+kortvarigt mikrofonfravær samt genåbning uden mødevindue. Udvalgte trin kontrollerer også den aktive tilstand.
 
 Windows-kontrol efter integration med #59: åbn én reel samtale pr. kilde,
 bekræft procesnavn, PWA-flag og mikrofonstart; afprøv derefter chat, forside,

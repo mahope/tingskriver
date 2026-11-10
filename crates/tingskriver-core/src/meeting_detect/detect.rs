@@ -191,12 +191,18 @@ pub fn detect(snapshot: &Snapshot, previous: &DetectorState) -> (Decision, Detec
                 .windows
                 .iter()
                 .any(|w| rules::source(w) == Some(active.session.source));
-            let mic_present = snapshot.microphone_users.iter().any(|mic| {
-                let process = rules::normalized(&mic.process_name);
-                process == active.session.microphone_process
-                    && mic.started_at == active.session.microphone_started_at
-                    && mic.started_at <= snapshot.now
-            });
+            let microphone = snapshot
+                .microphone_users
+                .iter()
+                .filter(|mic| {
+                    rules::normalized(&mic.process_name) == active.session.microphone_process
+                        && mic.started_at <= snapshot.now
+                })
+                .max_by_key(|mic| mic.started_at);
+            let mic_present = microphone.is_some();
+            if let Some(microphone) = microphone {
+                active.session.microphone_started_at = microphone.started_at;
+            }
             if window_present || mic_present {
                 active.signals_missing_since = None;
             } else {
