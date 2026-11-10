@@ -262,6 +262,10 @@ impl Editor {
                 spans.extend(slice(block, end, text(block).len()));
                 e.state.document.blocks[i].spans = spans;
             }
+            match style {
+                Style::Bold => e.state.bold = enabled,
+                Style::Italic => e.state.italic = enabled,
+            }
         });
     }
     fn selected_blocks(&self) -> Vec<Block> {
@@ -270,6 +274,7 @@ impl Editor {
             return Vec::new();
         }
         (a.block..=b.block)
+            .filter(|&i| i != b.block || b.grapheme != 0 || a.block == b.block)
             .map(|i| {
                 let block = &self.document().blocks[i];
                 let start = if i == a.block {
@@ -292,9 +297,14 @@ impl Editor {
             .collect()
     }
     pub fn copy_markdown(&self) -> String {
-        markdown::serialize(&Document {
+        let mut copied = markdown::serialize(&Document {
             blocks: self.selected_blocks(),
-        })
+        });
+        let (a, b) = self.selection().ordered();
+        if a.block != b.block && b.grapheme == 0 {
+            copied.push('\n');
+        }
+        copied
     }
     pub fn undo(&mut self) -> bool {
         if let Some(state) = self.undo.pop() {

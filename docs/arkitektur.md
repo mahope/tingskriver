@@ -422,6 +422,8 @@ selected text, or the insertion style at an empty selection. Each modifying
 call is one undo step and restores document, selection and insertion style;
 editing after undo clears redo. Selection movement itself is not an undo step.
 `copy_markdown` serializes the selected fragments with `notes::markdown`,
-retaining block kinds and formatting but omitting meeting timestamps. A GPUI
-widget, keyboard/clipboard integration and persistence wiring remain for the
-UI half of #47.
+retaining block kinds and formatting but omitting meeting timestamps.
+Selection style toggles also set the style for replacement text. When copying
+up to the start of another block, the selected newline is retained without
+including that block's unselected kind. A GPUI widget, keyboard/clipboard
+integration and persistence wiring remain for the UI half of #47.

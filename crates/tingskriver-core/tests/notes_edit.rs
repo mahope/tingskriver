@@ -23,6 +23,59 @@ fn check(e: &Editor) {
     other.set_selection(s).unwrap();
 }
 #[test]
+fn selection_toggle_sets_replacement_style() {
+    for (style, marker) in [(Style::Bold, "**"), (Style::Italic, "*")] {
+        for enabled in [false, true] {
+            let input = if enabled {
+                "æøå".into()
+            } else {
+                format!("{marker}æøå{marker}")
+            };
+            let mut e = Editor::new(markdown::parse(&input).unwrap());
+            select(&mut e, pos(0, 0), pos(0, 3));
+            e.toggle_style(style);
+            check(&e);
+            e.type_text("x");
+            check(&e);
+            let span = &e.document().blocks[0].spans[0];
+            assert_eq!(span.text, "x");
+            assert_eq!(
+                match style {
+                    Style::Bold => span.bold,
+                    Style::Italic => span.italic,
+                },
+                enabled
+            );
+            assert!(e.undo());
+            check(&e);
+            assert!(e.redo());
+            check(&e);
+            e.type_text("y");
+            check(&e);
+            assert_eq!(e.document().blocks[0].spans[0].text, "xy");
+        }
+    }
+}
+
+#[test]
+fn copy_to_block_start_excludes_unselected_block_kind() {
+    for ending in ["# xyz", "- xyz", "1. xyz", "- [ ] xyz", "xyz"] {
+        for reversed in [false, true] {
+            let mut e = Editor::new(markdown::parse(&format!("abc\n{ending}")).unwrap());
+            let (a, b) = (pos(0, 0), pos(1, 0));
+            select(
+                &mut e,
+                if reversed { b } else { a },
+                if reversed { a } else { b },
+            );
+            assert_eq!(e.copy_markdown(), "abc\n");
+            check(&e);
+            select(&mut e, pos(0, 3), pos(1, 0));
+            assert_eq!(e.copy_markdown(), "<!--empty-->\n");
+        }
+    }
+}
+#[test]
 fn shortcuts_lists_and_history_round_trip() {
     for (prefix, kind) in [
         ("# ", BlockKind::Heading(1)),
@@ -107,7 +160,10 @@ fn formatting_copy_and_cross_block_replacement() {
     check(&e);
     assert_eq!(e.document().blocks.len(), 2);
     assert_eq!(e.document().blocks[1].kind, BlockKind::Paragraph);
-    assert_eq!(e.document().blocks[1].spans[0].text, "# literalz");
+    assert_eq!(e.document().blocks[1].spans[0].text, "# literal");
+    assert!(e.document().blocks[1].spans[0].italic);
+    assert_eq!(e.document().blocks[1].spans[1].text, "z");
+    assert!(!e.document().blocks[1].spans[1].italic);
     assert!(e.undo());
     check(&e);
     assert!(e.redo());
