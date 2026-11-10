@@ -73,3 +73,57 @@ Begge fund er vurderet som korrekte. Ingen P3-fund var angivet.
   grundlag. Der påstås ingen fysisk eller fuld Gradle-verifikation.
 
 Ingen PR oprettet. Commit og push omfatter kun testdækning og dokumentation.
+
+## Fysisk tjekliste efter review af PR #152
+
+- Prøv både EditText og browser/WebView med syntetiske slutresultater.
+  Indsættelsen skal ske ved den aktuelle markør i forbindelsen fra optagestarten.
+- Prøv apps og WebViews, der ofte kalder `restartInput`: det invaliderer den
+  aktive session og kan afbryde diktering. Et efterfølgende resultat må ikke
+  indsættes, heller ikke hvis forbindelsen genbruges.
+- Kontrollér både automatisk stop ved 30 sekunder og fuld buffer samt manuelt
+  stop, annuller, feltskift, appskift, skjult IME, skærmlås og service-stop.
+- Fysiske prøver er fortsat ikke udført på worker-miljøet. STT-stubben indsætter
+  fortsat ingen tekst; rigtig STT er ikke tilsluttet.
+
+## Rettelser og verifikation af PR #152, 2026-11-10
+
+- Automatisk STOPPED ved tidsgrænse eller fuld buffer går nu gennem samme
+  afslutningssti som manuelt stop. ERROR og CANCELLED invaliderer indsættelsen.
+  Livscyklus- og tilladelseskontroller kan fortsat annullere en optagelse.
+- Den lille DictationController bruges af knap-handleren og fastholder
+  forbindelsen fra optagestarten. Fem nye tests dækker forbindelsesskift,
+  oprydning efter startfejl og vellykket genstart, manglende forbindelse,
+  blokerede felter, tilladelsesafslag, begge automatiske stop og fejl/annullering.
+- README beskriver nu den aktuelle markør i den oprindelige forbindelse.
+  insertionStatus læses via en lokal val. Den gentagne controller-test bruger
+  nu faktisk samme commit-funktion, mens servicens felt-/apptests allerede
+  bruger forskellige fieldId/packageName.
+- Mutationstest: STOPPED blev midlertidigt ændret tilbage til invalidering.
+  Regressionstesten fejlede med "expected:<1> but was:<0>". Rettelsen blev
+  derefter gendannet før den fulde kørsel.
+- Kørt fra apps/android med lokal JAVA_HOME og ANDROID_HOME:
+  `./gradlew --no-daemon testDebugUnitTest lint`.
+  Resultat: 36 tests, 0 fejl, 0 udeladte. Gradle: `BUILD SUCCESSFUL in 28s`;
+  opgavelinje: `34 actionable tasks: 13 executed, 21 up-to-date`.
+  Sidste outputlinje: `Consider enabling configuration cache to speed up this build: https://docs.gradle.org/9.6.0/userguide/configuration_cache_enabling.html`.
+  Lint: ingen fejl, seks advarsler i uændret opsætning/kode: OldTargetApi,
+  InflateParams, AndroidGradlePluginVersion, GradleDependency,
+  DataExtractionRules og MissingApplicationIcon.
+- Den tidligere JDK-blokering er løst i jobbet med Eclipse Adoptium Temurin
+  21.0.13+9 og Googles officielle Android-SDK. Arkiv-checksummer er verificeret.
+  Temurin er et etableret Eclipse-projekt; SDK-værktøjerne vedligeholdes af Google.
+  De valgte JDK-/CLI-udgivelser er ældre end tre døgn. Arkiverne pakkes ud uden
+  installationsscripts. SDK-manageren læser SDK/JDK-stier og henter officielle
+  SDK-komponenter via netværket. Ingen nye projektafhængigheder er tilføjet.
+  Konklusion: installér lokalt til jobbet.
+- Ingen fund afvist. Fysiske prøver mangler fortsat; JVM-tests certificerer
+  hverken OEM-livscyklus eller rigtig STT.
+
+PR-titel: Complete automatic Android dictation stops safely
+
+PR-beskrivelse: Route elapsed-time and full-buffer stops through completion,
+capture the original input connection in a tested controller, and clear failed
+starts. Correct cursor documentation and document restartInput cancellation.
+Android JVM tests (36) and lint pass. Physical-device checks remain pending.
+Fixes #137.

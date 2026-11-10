@@ -40,6 +40,9 @@ at-most-once commit including reentrant callbacks. The IME captures the original
 InputConnection when recording starts and invalidates it on every lifecycle
 cancellation. Completion must run on the IME main thread. The enabled STT stub
 still inserts no text. No clipboard, surrounding-text reads or Enter are used.
+The main-thread dictation controller routes both elapsed-time and sample-capacity
+stops through completion; errors and cancellation invalidate the insertion.
+Its JVM tests cover captured connections and cleanup after recording start fails.
 
 JVM tests cover stub behavior, input-field policy and recording ownership:
 permission denial/open failure, duplicate start, stale worker generations,
@@ -134,8 +137,9 @@ A green JVM suite cannot certify OEM lifecycle behavior or the indicator.
 
 No device is attached in the worker environment. Before enabling real STT, use
 synthetic final results in a local test build on a physical phone, in both a
-standard EditText and a browser form. Verify one insertion at the original
-cursor, duplicate callbacks, blank/error results, rejected connections, same-app
+standard EditText and a browser form. Verify one insertion at the current
+cursor in the original connection, duplicate callbacks, blank/error results,
+rejected connections, same-app
 field changes, app switches, cancel/new session, hidden IME, screen lock and
 service stop before completion. Late results must write to neither old nor new
 fields. Test text, visible, web and numeric passwords and non-text fields.

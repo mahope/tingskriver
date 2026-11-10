@@ -39,15 +39,14 @@ class InsertionSessionTest {
         assertEquals(listOf("Hej"), writes)
     }
 
-    @Test fun fieldAndAppChangesInvalidateEvenWhenConnectionIsReused() {
-        repeat(2) {
-            val old = start()
-            sessions.invalidate()
-            val next = start()
-            assertEquals(InsertionOutcome.Ignored, sessions.complete(old, SpeechResult.Text("Gammel")))
-            assertTrue(writes.isEmpty())
-            sessions.complete(next, SpeechResult.Cancelled)
-        }
+    @Test fun invalidationRejectsOldResultEvenWhenConnectionIsReused() {
+        val connection: (String) -> Boolean = { writes.add(it); true }
+        val old = sessions.start(1, connection)!!
+        sessions.invalidate()
+        val next = sessions.start(1, connection)!!
+        assertEquals(InsertionOutcome.Ignored, sessions.complete(old, SpeechResult.Text("Gammel")))
+        assertTrue(writes.isEmpty())
+        sessions.complete(next, SpeechResult.Cancelled)
     }
 
     @Test fun finishHideAndDestroyInvalidateCallbacks() {
