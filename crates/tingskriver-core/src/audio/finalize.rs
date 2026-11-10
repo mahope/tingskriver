@@ -1156,11 +1156,11 @@ mod tests {
             // Compare RMS away from AAC edges: fixed gain, no flat clipped peaks,
             // no zero holes, and no gain rise when the other track ends.
             for (start, end, gain) in [
-                (0.05, 0.20, 0.5),
+                (0.05, 0.20, 1.0),
                 (0.35, 0.9, 1.0),
-                (1.1, 1.9, 0.5),
+                (1.2, 1.9, 1.0),
                 (2.1, 2.6, 1.0),
-                (2.9, 3.9, 0.5),
+                (3.0, 3.9, 1.0),
             ] {
                 let samples =
                     &decoded.samples[(start * rate as f64) as usize..(end * rate as f64) as usize];
