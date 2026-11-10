@@ -226,3 +226,76 @@ async fn cancellation_wins_when_model_returns_in_the_same_poll() {
         .await
         .is_err());
 }
+
+#[tokio::test]
+async fn preserves_source_language_through_map_and_reduce() {
+    struct LanguageSensitive {
+        maps: usize,
+        reductions: usize,
+    }
+
+    #[async_trait::async_trait]
+    impl Model for LanguageSensitive {
+        async fn generate(
+            &mut self,
+            phase: Phase,
+            system: &str,
+            input: &str,
+        ) -> Result<String, String> {
+            assert!(budget().fits(system, input));
+            let danish = input.contains("Beslutningen er godkendt") && !system.contains("English");
+            let summary = if danish {
+                "Beslutningen er godkendt"
+            } else {
+                "The decision is approved"
+            };
+            match phase {
+                Phase::Final => Ok(serde_json::json!({
+                    "summary": summary, "decisions": [], "tasks": [], "open_questions": []
+                })
+                .to_string()),
+                Phase::Translation => {
+                    panic!("structured reports must preserve language without translation")
+                }
+                Phase::Map | Phase::Reduce => {
+                    if phase == Phase::Map {
+                        self.maps += 1;
+                    } else {
+                        self.reductions += 1;
+                    }
+                    Ok(format!("{summary}. ").repeat(30))
+                }
+            }
+        }
+    }
+
+    for (source, expected) in [
+        ("Beslutningen er godkendt. ", "Beslutningen er godkendt"),
+        ("The decision is approved. ", "The decision is approved"),
+    ] {
+        for minutes in [1, 90] {
+            let segments = vec![source.repeat(75); minutes];
+            let mut model = LanguageSensitive {
+                maps: 0,
+                reductions: 0,
+            };
+            let result = generate(
+                &mut model,
+                &budget(),
+                &segments,
+                &[],
+                &CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(result.content.summary, expected);
+            if minutes == 90 {
+                assert!(model.maps > 1);
+                assert!(model.reductions > 0);
+            } else {
+                assert_eq!(model.maps, 0);
+                assert_eq!(model.reductions, 0);
+            }
+        }
+    }
+}

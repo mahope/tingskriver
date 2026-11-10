@@ -42,7 +42,9 @@ Long transcripts use the existing hierarchical `map_reduce::prepare`, including
 its overlap, output bounds and failure when reduction does not shrink. Every
 final attempt reserves the schema, framing and answer budget. Token estimates
 are the supplied `Budget` estimator, not an exact tokenizer guarantee. Intermediate
-summaries follow the existing English map/reduce prompt. The model adapter must
+summaries use a source-language prompt for both map and reduce, so the final
+step receives source-language facts even after hierarchical reduction. The
+existing English report pipeline keeps its English prompt. The model adapter must
 enforce the requested context/output limits at inference time too. `Builtin`
 already implements `Model`; other providers can implement the same interface.
 
@@ -60,6 +62,7 @@ concurrent-run ordering and deduplication are the future service's responsibilit
 `cargo test --locked -p tingskriver-core summary::structured` exercises verbatim
 notes and provenance, schema rejection, one JSON retry, a synthetic 90-minute
 transcript (150 words/minute) with every model call checked against the budget,
+source-language preservation through map and reduce for Danish and English,
 and cancellation during generation followed by restart without duplicate items.
 These are deterministic fake-model tests, not an evaluation of a real model's
 factual accuracy or extraction quality.
