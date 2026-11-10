@@ -18,6 +18,7 @@ struct Fake {
     invalid_response: String,
     cancel: Option<CancellationToken>,
     wait_after_cancel: bool,
+    prompts: Vec<(String, String)>,
 }
 
 #[async_trait::async_trait]
@@ -29,7 +30,8 @@ impl Model for Fake {
         input: &str,
     ) -> Result<String, String> {
         assert!(budget().fits(system, input));
-        assert!(!input.contains("Min egen note"));
+        self.prompts.push((system.into(), input.into()));
+        assert!(system.contains("Danish"));
         self.calls += 1;
         if let Some(token) = self.cancel.take() {
             token.cancel();
@@ -55,14 +57,23 @@ fn fake(invalid: usize) -> Fake {
         invalid_response: "{invalid".into(),
         cancel: None,
         wait_after_cancel: true,
+        prompts: Vec::new(),
     }
 }
 
 #[tokio::test]
 async fn preserves_notes_and_marks_origins() {
-    let notes = vec!["  Min egen note\næøå\r\n".into(), "".into(), "".into()];
+    let notes = MeetingNotes {
+        before: vec!["### Plan\n  Min egen note\næøå\r\n".into()],
+        during: vec![
+            "### Opfølgning\nAftalt under mødet".into(),
+            "".into(),
+            "".into(),
+        ],
+    };
+    let mut model = fake(0);
     let result = generate(
-        &mut fake(0),
+        &mut model,
         &budget(),
         &["Transcript".into()],
         &notes,
@@ -77,8 +88,18 @@ async fn preserves_notes_and_marks_origins() {
             .map(|n| n.text.clone())
             .collect::<Vec<_>>(),
         notes
+            .before
+            .iter()
+            .chain(&notes.during)
+            .cloned()
+            .collect::<Vec<_>>()
     );
     assert!(result.notes.iter().all(|n| n.origin == Origin::Own));
+    let (system, input) = &model.prompts[0];
+    assert!(input.contains("<notes_before_meeting>\n### Plan"));
+    assert!(input.contains("<notes_during_meeting>\n### Opfølgning"));
+    assert!(system.contains("H3"));
+    assert!(system.contains("summary"));
     assert_eq!(result.origin, Origin::Ai);
     assert_eq!(result.content.tasks[0].who, None);
 }
@@ -86,16 +107,30 @@ async fn preserves_notes_and_marks_origins() {
 #[tokio::test]
 async fn retries_invalid_json_once() {
     let mut model = fake(1);
-    generate(&mut model, &budget(), &[], &[], &CancellationToken::new())
-        .await
-        .unwrap();
+    generate(
+        &mut model,
+        &budget(),
+        &[],
+        &MeetingNotes::default(),
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
     assert_eq!(model.calls, 2);
+    assert!(!model.prompts[0].0.contains("previous response"));
+    assert!(model.prompts[1].0.contains("previous response"));
+    assert!(!model.prompts[1].0.contains("{invalid"));
+    assert_eq!(model.prompts[0].1, model.prompts[1].1);
     let mut model = fake(2);
-    assert!(
-        generate(&mut model, &budget(), &[], &[], &CancellationToken::new())
-            .await
-            .is_err()
-    );
+    assert!(generate(
+        &mut model,
+        &budget(),
+        &[],
+        &MeetingNotes::default(),
+        &CancellationToken::new()
+    )
+    .await
+    .is_err());
     assert_eq!(model.calls, 2);
 }
 
@@ -104,9 +139,15 @@ async fn retries_schema_invalid_and_oversized_answers() {
     for raw in ["{}".into(), "x".repeat(2048)] {
         let mut model = fake(1);
         model.invalid_response = raw;
-        let result = generate(&mut model, &budget(), &[], &[], &CancellationToken::new())
-            .await
-            .unwrap();
+        let result = generate(
+            &mut model,
+            &budget(),
+            &[],
+            &MeetingNotes::default(),
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
         assert_eq!(model.calls, 2);
         assert_eq!(result.content.summary, "A short summary");
     }
@@ -116,6 +157,10 @@ async fn retries_schema_invalid_and_oversized_answers() {
 fn rejects_schema_violations() {
     for value in [
         "{}",
+        &VALID.replace("A short summary", ""),
+        &VALID.replace("A short summary", "  "),
+        &VALID.replace("Check", ""),
+        &VALID.replace("Check", "  "),
         r#"{"summary":5,"decisions":[],"tasks":[],"open_questions":[]}"#,
         &VALID.replace("\"who\":null,", ""),
         &VALID.replace("\"who\":null", "\"who\":42"),
@@ -140,7 +185,7 @@ async fn ninety_minutes_stays_within_budget() {
         &mut model,
         &budget(),
         &segments,
-        &[],
+        &MeetingNotes::default(),
         &CancellationToken::new(),
     )
     .await
@@ -153,16 +198,23 @@ async fn cancellation_then_restart_has_no_partial_or_duplicate_results() {
     let token = CancellationToken::new();
     let mut model = fake(0);
     model.cancel = Some(token.clone());
-    assert!(
-        generate(&mut model, &budget(), &["source".into()], &[], &token)
-            .await
-            .is_err()
-    );
+    assert!(generate(
+        &mut model,
+        &budget(),
+        &["source".into()],
+        &MeetingNotes::default(),
+        &token
+    )
+    .await
+    .is_err());
     let result = generate(
         &mut model,
         &budget(),
         &["source".into()],
-        &["own".into()],
+        &MeetingNotes {
+            before: vec!["own".into()],
+            during: vec![],
+        },
         &CancellationToken::new(),
     )
     .await
@@ -171,9 +223,11 @@ async fn cancellation_then_restart_has_no_partial_or_duplicate_results() {
     assert_eq!(result.content.tasks.len(), 1);
     assert_eq!(result.notes.len(), 1);
     let calls = model.calls;
-    assert!(generate(&mut model, &budget(), &[], &[], &token)
-        .await
-        .is_err());
+    assert!(
+        generate(&mut model, &budget(), &[], &MeetingNotes::default(), &token)
+            .await
+            .is_err()
+    );
     assert_eq!(model.calls, calls);
 }
 
@@ -183,14 +237,20 @@ async fn cancellation_during_map_then_restart() {
     let token = CancellationToken::new();
     let mut model = fake(0);
     model.cancel = Some(token.clone());
-    assert!(generate(&mut model, &budget(), &segments, &[], &token)
-        .await
-        .is_err());
+    assert!(generate(
+        &mut model,
+        &budget(),
+        &segments,
+        &MeetingNotes::default(),
+        &token
+    )
+    .await
+    .is_err());
     let result = generate(
         &mut model,
         &budget(),
         &segments,
-        &[],
+        &MeetingNotes::default(),
         &CancellationToken::new(),
     )
     .await
@@ -208,7 +268,7 @@ async fn impossible_budget_makes_no_model_calls() {
         &mut model,
         &tiny,
         &["source".into()],
-        &[],
+        &MeetingNotes::default(),
         &CancellationToken::new()
     )
     .await
@@ -222,13 +282,15 @@ async fn cancellation_wins_when_model_returns_in_the_same_poll() {
     let mut model = fake(0);
     model.cancel = Some(token.clone());
     model.wait_after_cancel = false;
-    assert!(generate(&mut model, &budget(), &[], &[], &token)
-        .await
-        .is_err());
+    assert!(
+        generate(&mut model, &budget(), &[], &MeetingNotes::default(), &token)
+            .await
+            .is_err()
+    );
 }
 
 #[tokio::test]
-async fn preserves_source_language_through_map_and_reduce() {
+async fn requires_danish_through_map_and_reduce() {
     struct LanguageSensitive {
         maps: usize,
         reductions: usize,
@@ -243,19 +305,15 @@ async fn preserves_source_language_through_map_and_reduce() {
             input: &str,
         ) -> Result<String, String> {
             assert!(budget().fits(system, input));
-            let danish = input.contains("Beslutningen er godkendt") && !system.contains("English");
-            let summary = if danish {
-                "Beslutningen er godkendt"
-            } else {
-                "The decision is approved"
-            };
+            assert!(system.contains("Danish"));
+            let summary = "Beslutningen er godkendt";
             match phase {
                 Phase::Final => Ok(serde_json::json!({
                     "summary": summary, "decisions": [], "tasks": [], "open_questions": []
                 })
                 .to_string()),
                 Phase::Translation => {
-                    panic!("structured reports must preserve language without translation")
+                    panic!("structured reports request Danish directly in every phase")
                 }
                 Phase::Map | Phase::Reduce => {
                     if phase == Phase::Map {
@@ -271,7 +329,7 @@ async fn preserves_source_language_through_map_and_reduce() {
 
     for (source, expected) in [
         ("Beslutningen er godkendt. ", "Beslutningen er godkendt"),
-        ("The decision is approved. ", "The decision is approved"),
+        ("The decision is approved. ", "Beslutningen er godkendt"),
     ] {
         for minutes in [1, 90] {
             let segments = vec![source.repeat(75); minutes];
@@ -283,7 +341,7 @@ async fn preserves_source_language_through_map_and_reduce() {
                 &mut model,
                 &budget(),
                 &segments,
-                &[],
+                &MeetingNotes::default(),
                 &CancellationToken::new(),
             )
             .await
@@ -298,4 +356,57 @@ async fn preserves_source_language_through_map_and_reduce() {
             }
         }
     }
+}
+
+#[test]
+fn parses_first_complete_object_with_wrapping_and_string_braces() {
+    let json = VALID.replace(
+        "A short summary",
+        r#"En {beslutning} med \"citat\" og \\ sti"#,
+    );
+    for raw in [
+        json.clone(),
+        format!("```json\n{json}\n```"),
+        format!("Her er referatet:\n{json}\nSlut. {{}} "),
+    ] {
+        assert_eq!(parse(&raw).unwrap(), parse(&json).unwrap());
+    }
+    assert!(parse("prosa {\"summary\": \"unfinished").is_err());
+}
+
+#[tokio::test]
+async fn oversized_notes_fail_before_any_model_call() {
+    let mut model = fake(0);
+    let notes = MeetingNotes {
+        before: vec!["note ".repeat(2048)],
+        during: vec![],
+    };
+    let error = generate(
+        &mut model,
+        &budget(),
+        &["source ".repeat(4000)],
+        &notes,
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error, "Structured report exceeds context budget");
+    assert_eq!(model.calls, 0);
+}
+
+#[tokio::test]
+async fn returns_last_validation_error() {
+    let mut model = fake(2);
+    model.invalid_response = "{}".into();
+    let error = generate(
+        &mut model,
+        &budget(),
+        &[],
+        &MeetingNotes::default(),
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error, "Report does not match schema");
+    assert_eq!(model.calls, 2);
 }
