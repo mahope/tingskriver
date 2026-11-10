@@ -167,6 +167,14 @@ impl Editor {
             && self.typing.is_some_and(|(time, selection)| {
                 now.duration_since(time) < Duration::from_millis(1000)
                     && selection == self.selection()
+                    && {
+                        let p = selection.focus;
+                        let block = &self.document().blocks[p.block];
+                        let start = boundary(block, p.grapheme);
+                        let mut combined = text(block);
+                        combined.insert_str(start, input);
+                        !combined.split_word_bound_indices().any(|(i, _)| i == start)
+                    }
             });
         let prior_undo = if join { self.undo.pop() } else { None };
         self.change(|e| {
@@ -399,6 +407,23 @@ fn slice(block: &Block, start: usize, end: usize) -> Vec<Span> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn notes_typing_unicode_word_boundaries_start_new_groups() {
+        let mut e = Editor::new(Document::default());
+        for input in ["a", "中", "b", "c"] {
+            e.type_text(input);
+        }
+        for expected in ["a中", "a", ""] {
+            assert!(e.undo());
+            assert_eq!(text(&e.document().blocks[0]), expected);
+        }
+        assert!(!e.undo());
+        for expected in ["a", "a中", "a中bc"] {
+            assert!(e.redo());
+            assert_eq!(text(&e.document().blocks[0]), expected);
+        }
+    }
 
     #[test]
     fn notes_typing_pause_and_other_operations_start_new_groups() {

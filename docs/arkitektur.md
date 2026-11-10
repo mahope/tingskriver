@@ -423,7 +423,8 @@ the current block's metadata; other joins retain the predecessor's metadata.
 Selections can span blocks in either direction. Bold and italic toggle the
 selected text, or the insertion style at an empty selection. A range containing
 only empty blocks enables the insertion style. Consecutive typing is grouped
-by word, with a new step after a one-second pause or another operation. History
+by Unicode word boundaries in the combined existing and inserted text, with a
+new step after a one-second pause or another operation. History
 is limited to 500 steps and restores document, selection and insertion style;
 editing after undo clears redo. Selection movement itself is not an undo step.
 `copy_markdown` serializes the selected fragments with `notes::markdown`,
