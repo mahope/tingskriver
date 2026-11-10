@@ -96,7 +96,19 @@ jobs:
 
       - name: Build tingskriver-app (release)
         shell: bash
-        run: .github/scripts/annotate-errors.sh cargo build --release --locked -p tingskriver-app
+        run: .github/scripts/annotate-errors.sh cargo build --release --locked -p tingskriver-app -p tingskriver-core --bin tingskriver-app --bin tingskriver-stt
+
+      # Same pinned runtime and archive checksum as the Tauri bundler.
+      - name: Stage ONNX Runtime for the isolated speech worker
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP "tingskriver-onnx.zip"
+          Invoke-WebRequest "https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-win-x64-1.22.0.zip" -OutFile $archive
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne "174c616efc0271194488642a72f1a514e01487da4dfe84c49296d66e40ebe0da") { throw "ONNX Runtime checksum mismatch" }
+          Expand-Archive $archive -DestinationPath (Join-Path $env:RUNNER_TEMP "tingskriver-onnx") -Force
+          $runtime = Join-Path $env:RUNNER_TEMP "tingskriver-onnx/onnxruntime-win-x64-1.22.0"
+          Copy-Item "$runtime/lib/onnxruntime.dll","$runtime/lib/onnxruntime_providers_shared.dll" target/release/
+          Copy-Item "$runtime/LICENSE" target/release/onnxruntime-LICENSE.txt
 
       - name: Verify portable Whisper build
         run: node .github/verify-portable-ggml.cjs target/release
@@ -110,10 +122,11 @@ jobs:
         shell: bash
         run: dotnet tool install -g vpk --version "$VPK_VERSION"
 
-      # The newest published version's full package lets vpk build a delta
-      # (branch builds too, so their artifacts can be tested as an update).
+      # Only releases build deltas; unpublished builds may have the same or
+      # an older version than the newest published package, which vpk rejects.
       # Before the first release there is none; then only the full package.
       - name: Download previous release
+        if: steps.version.outputs.publish == 'true'
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -135,7 +148,7 @@ jobs:
       - name: Pack
         shell: pwsh
         run: |
-          ./installer/pack.ps1 -Version "${{ steps.version.outputs.version }}" -Exe target/release/tingskriver-app.exe
+          ./installer/pack.ps1 -Version "${{ steps.version.outputs.version }}" -Exe target/release/tingskriver-app.exe -Extra target/release/tingskriver-stt.exe,target/release/onnxruntime.dll,target/release/onnxruntime_providers_shared.dll,target/release/onnxruntime-LICENSE.txt
           Get-Content -Raw installer/Releases/upload/releases.win.json
 
       - name: Upload release files

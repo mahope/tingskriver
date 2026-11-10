@@ -1,0 +1,54 @@
+{
+  "mic": [
+    {
+      "start_ms": 0,
+      "slut_ms": 5,
+      "tekst": "",
+      "taler": null
+    },
+    {
+      "start_ms": 5,
+      "slut_ms": 5,
+      "tekst": "point",
+      "taler": null
+    }
+  ],
+  "system": [
+    {
+      "start_ms": 5,
+      "slut_ms": 10,
+      "tekst": "touch",
+      "taler": "a"
+    }
+  ],
+  "diarized": true,
+  "expected": [
+    {
+      "start_ms": 0,
+      "slut_ms": 5,
+      "tekst": "",
+      "kilde": "Mikrofon",
+      "label": "Mig",
+      "overlapper": false,
+      "taler_mangler": false
+    },
+    {
+      "start_ms": 5,
+      "slut_ms": 5,
+      "tekst": "point",
+      "kilde": "Mikrofon",
+      "label": "Mig",
+      "overlapper": false,
+      "taler_mangler": false
+    },
+    {
+      "start_ms": 5,
+      "slut_ms": 10,
+      "tekst": "touch",
+      "kilde": "System",
+      "label": "Taler 1",
+      "overlapper": false,
+      "taler_mangler": false
+    }
+  ]
+}

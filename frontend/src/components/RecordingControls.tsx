@@ -8,9 +8,9 @@ import { toast } from 'sonner';
 import { ProcessRequest, SummaryResponse } from '@/types/summary';
 import { listen } from '@tauri-apps/api/event';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import Analytics from '@/lib/analytics';
 import { useRecordingState } from '@/contexts/RecordingStateContext';
 import type { TranscriptionErrorPayload } from '@/services/transcriptService';
+import type { RecordingSaveResult } from '@/services/recordingService';
 
 interface RecordingControlsProps {
   isRecording: boolean;
@@ -148,7 +148,7 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
       const savePath = `${dataDir}/recording-${timestamp}.wav`;
       console.log('Saving recording to:', savePath);
       console.log('About to call stop_recording command');
-      const result = await invoke('stop_recording', {
+      const result = await invoke<RecordingSaveResult | null>('stop_recording', {
         args: {
           save_path: savePath
         }
@@ -157,9 +157,7 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
       setRecordingPath(savePath);
       // setShowPlayback(true);
       setIsProcessing(false);
-      // Track successful transcription
-      Analytics.trackTranscriptionSuccess();
-      onRecordingStop(true);
+      onRecordingStop(result?.status !== 'fejlet');
     } catch (error) {
       console.error('Failed to stop recording:', error);
       if (error instanceof Error) {
@@ -257,7 +255,6 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
           console.error('Transcription error received:', event.payload);
           const errorMessage = event.payload as string;
 
-          Analytics.trackTranscriptionError(errorMessage);
           console.log('Tracked transcription error:', errorMessage);
 
           setTranscriptionErrors(prev => {
@@ -280,7 +277,6 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
 
           const errorMessage = event.payload.userMessage || event.payload.error;
 
-          Analytics.trackTranscriptionError(errorMessage);
           console.log('Tracked transcription error:', errorMessage);
 
           setTranscriptionErrors(prev => {
@@ -347,7 +343,6 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
           <button
             type="button"
             onClick={() => {
-              Analytics.trackButtonClick('start_recording', 'recording_controls');
               handleStartRecording();
             }}
             disabled={busyStarting || isRecordingDisabled}
@@ -371,10 +366,8 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
               type="button"
               onClick={() => {
                 if (isPaused) {
-                  Analytics.trackButtonClick('resume_recording', 'recording_controls');
                   handleResumeRecording();
                 } else {
-                  Analytics.trackButtonClick('pause_recording', 'recording_controls');
                   handlePauseRecording();
                 }
               }}
@@ -388,7 +381,6 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
             <button
               type="button"
               onClick={() => {
-                Analytics.trackButtonClick('stop_recording', 'recording_controls');
                 handleStopRecording();
               }}
               disabled={isStopping || isPausing || isResuming || isStartingRecording}

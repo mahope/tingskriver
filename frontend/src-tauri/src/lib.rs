@@ -5,15 +5,16 @@ use std::sync::atomic::{AtomicBool, Ordering};
 // Re-export async logging macros for external use (removed due to macro conflicts)
 
 // Declare audio module
-pub mod analytics;
 pub mod api;
 pub mod audio;
 pub use tingskriver_core::config;
 pub mod core_bridge;
 pub mod console_utils;
 pub mod database;
+pub mod delivery;
 pub mod dictation;
 pub mod file_logger;
+pub mod move_to_gpui;
 pub mod notifications;
 pub mod ollama;
 pub mod onboarding;
@@ -36,45 +37,6 @@ use tauri::{AppHandle, Manager, Runtime};
 use tokio::sync::RwLock;
 
 static RECORDING_FLAG: AtomicBool = AtomicBool::new(false);
-
-#[cfg(target_os = "windows")]
-fn catch_onnx_runtime_init<F, E>(init: F) -> Result<(), String>
-where
-    F: FnOnce() -> Result<(), E>,
-    E: std::fmt::Display,
-{
-    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(init)) {
-        Ok(result) => result.map_err(|error| error.to_string()),
-        Err(payload) => {
-            let message = payload
-                .downcast_ref::<&str>()
-                .copied()
-                .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
-                .unwrap_or("unknown panic");
-            Err(format!("ONNX Runtime initialization panicked: {message}"))
-        }
-    }
-}
-
-#[cfg(all(test, target_os = "windows"))]
-mod onnx_runtime_tests {
-    use super::catch_onnx_runtime_init;
-
-    #[test]
-    fn catch_onnx_runtime_init_converts_errors_and_panics() {
-        assert!(catch_onnx_runtime_init(|| Ok::<(), &str>(())).is_ok());
-        assert_eq!(
-            catch_onnx_runtime_init(|| Err::<(), _>("initializer error")),
-            Err("initializer error".to_string())
-        );
-
-        let error = catch_onnx_runtime_init(|| -> Result<(), &str> {
-            panic!("synthetic loader panic");
-        })
-        .unwrap_err();
-        assert!(error.contains("synthetic loader panic"));
-    }
-}
 
 #[derive(Debug, Deserialize)]
 struct RecordingArgs {
@@ -150,13 +112,13 @@ async fn start_recording<R: Runtime>(
 }
 
 #[tauri::command]
-async fn stop_recording<R: Runtime>(app: AppHandle<R>, args: RecordingArgs) -> Result<(), String> {
+async fn stop_recording<R: Runtime>(app: AppHandle<R>, args: RecordingArgs) -> Result<Option<audio::recording_saver::SaveResult>, String> {
     log_info!("Attempting to stop recording...");
 
     // Check the actual audio recording system state instead of the flag
     if !audio::recording_commands::is_recording().await {
         log_info!("Recording is already stopped");
-        return Ok(());
+        return Ok(None);
     }
 
     // Call the actual audio recording system to stop
@@ -168,7 +130,7 @@ async fn stop_recording<R: Runtime>(app: AppHandle<R>, args: RecordingArgs) -> R
     )
     .await
     {
-        Ok(_) => {
+        Ok(saved) => {
             RECORDING_FLAG.store(false, Ordering::SeqCst);
             tray::update_tray_menu(&app);
 
@@ -201,7 +163,7 @@ async fn stop_recording<R: Runtime>(app: AppHandle<R>, args: RecordingArgs) -> R
                 log_info!("Successfully showed recording stopped notification");
             }
 
-            Ok(())
+            Ok(saved)
         }
         Err(e) => {
             log_error!("Failed to stop audio recording: {}", e);
@@ -224,14 +186,6 @@ fn get_transcription_status() -> TranscriptionStatus {
         chunks_in_queue: 0,
         is_processing: false,
         last_activity_ms: 0,
-    }
-}
-
-#[tauri::command]
-fn read_audio_file(file_path: String) -> Result<Vec<u8>, String> {
-    match std::fs::read(&file_path) {
-        Ok(data) => Ok(data),
-        Err(e) => Err(format!("Failed to read audio file: {}", e)),
     }
 }
 
@@ -285,7 +239,6 @@ async fn is_audio_level_monitoring() -> bool {
     audio::simple_level_monitor::is_monitoring()
 }
 
-// Analytics commands are now handled by analytics::commands module
 
 // Whisper commands are now handled by whisper_engine::commands module
 
@@ -405,6 +358,20 @@ async fn open_log_folder() -> Result<(), String> {
     Ok(())
 }
 
+/// Whether Windows saves a crash dump when the app crashes in native code.
+#[tauri::command]
+fn get_crash_dumps_enabled() -> bool {
+    tingskriver_core::crash_dumps::enabled()
+}
+
+/// Turn crash dumps on or off (the per-user WER LocalDumps key).
+#[tauri::command]
+async fn set_crash_dumps_enabled(enabled: bool) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || tingskriver_core::crash_dumps::set_enabled(enabled))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 pub fn run() {
     log::set_max_level(log::LevelFilter::Info);
 
@@ -435,45 +402,35 @@ pub fn run() {
         )) as NotificationManagerState<tauri::Wry>)
         .manage(audio::init_system_audio_state())
         .manage(summary::summary_engine::ModelManagerState(Arc::new(tokio::sync::Mutex::new(None))))
+        .manage(database::setup::DatabaseStatusState::default())
         .setup(|_app| {
             // Core spawns async work from audio and hook threads on Tauri's runtime.
             tingskriver_core::runtime::set_handle(tauri::async_runtime::handle().inner().clone());
 
-            #[cfg(target_os = "windows")]
-            match _app.path().resolve(
-                "onnxruntime.dll",
-                tauri::path::BaseDirectory::Resource,
-            ) {
-                Ok(runtime_path) => {
-                    match catch_onnx_runtime_init(|| {
-                        ort::init_from(runtime_path.to_string_lossy().into_owned())
-                            .with_telemetry(false)
-                            .commit()
-                            .map(|_| ())
-                    }) {
-                        Ok(()) => log::info!(
-                            "Initialized bundled ONNX Runtime from {}",
-                            runtime_path.display()
-                        ),
-                        Err(error) => tingskriver_core::record_onnx_runtime_failure(format!(
-                            "Failed to initialize bundled ONNX Runtime from {}: {}",
-                            runtime_path.display(),
-                            error
-                        )),
-                    }
-                }
-                Err(error) => tingskriver_core::record_onnx_runtime_failure(format!(
-                    "Failed to resolve bundled ONNX Runtime resource: {}",
-                    error
-                )),
-            };
+            // Windows Error Reporting writes a minidump on a native crash.
+            tingskriver_core::crash_dumps::apply_in_background();
 
-            log::info!("Application setup complete");
+            // The last Tauri release moves the installation to the GPUI app
+            // (installer/README.md, "Move from Tauri").
+            #[cfg(all(windows, not(debug_assertions)))]
+            {
+                let app_for_move = _app.handle().clone();
+                move_to_gpui::start(
+                    || {
+                        tauri::async_runtime::block_on(audio::recording_commands::is_recording())
+                            || tingskriver_core::audio::finalize::is_finalizing()
+                            || tingskriver_core::audio::retranscription::is_retranscription_in_progress()
+                            || tingskriver_core::audio::import::is_import_in_progress()
+                    },
+                    move || app_for_move.exit(0),
+                );
+            }
 
             // Initialize system tray
             if let Err(e) = tray::create_tray(_app.handle()) {
                 log::error!("Failed to create system tray: {}", e);
             }
+            tingskriver_core::logging::startup_phase("tray ready");
 
             // Initialize notification system with proper defaults
             log::info!("Initializing notification system...");
@@ -500,6 +457,10 @@ pub fn run() {
                     }
                 }
             });
+
+            // Finish the audio of meetings whose background encode never completed.
+            tauri::async_runtime::spawn(tingskriver_core::audio::finalize::finalize_pending_at_startup());
+            tauri::async_runtime::spawn(delivery::worker(_app.handle().clone()));
 
             // Set models directory to use app_data_dir (unified storage location)
             whisper_engine::commands::set_models_directory(&_app.handle());
@@ -546,11 +507,10 @@ pub fn run() {
             //     });
             // }
 
-            // Initialize database (handles first launch detection and conditional setup)
-            tauri::async_runtime::block_on(async {
-                database::setup::initialize_database_on_startup(&_app.handle()).await
-            })
-            .expect("Failed to initialize database");
+            // Open the database in the background: the window shows a loading
+            // state meanwhile and an error page if it fails, instead of the
+            // app exiting without a word.
+            database::setup::start_database_initialization(_app.handle());
 
             // Initialize bundled templates directory for dynamic template discovery
             log::info!("Initializing bundled templates directory...");
@@ -562,7 +522,16 @@ pub fn run() {
                 log::warn!("Failed to resolve resource directory for templates");
             }
 
+            log::info!("Application setup complete");
             Ok(())
+        })
+        .on_page_load(|webview, payload| {
+            static WINDOW_READY: std::sync::Once = std::sync::Once::new();
+            if webview.label() == "main"
+                && matches!(payload.event(), tauri::webview::PageLoadEvent::Finished)
+            {
+                WINDOW_READY.call_once(|| tingskriver_core::logging::startup_phase("window ready"));
+            }
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
@@ -577,37 +546,18 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            delivery::delivery_status,
+            delivery::delivery_save_target,
+            delivery::delivery_delete_target,
+            delivery::delivery_set_policy,
+            delivery::delivery_test,
+            delivery::delivery_retry,
+            delivery::delivery_approve,
             start_recording,
             stop_recording,
             is_recording,
             get_transcription_status,
-            read_audio_file,
             save_transcript,
-            analytics::commands::init_analytics,
-            analytics::commands::disable_analytics,
-            analytics::commands::track_event,
-            analytics::commands::identify_user,
-            analytics::commands::track_meeting_started,
-            analytics::commands::track_recording_started,
-            analytics::commands::track_recording_stopped,
-            analytics::commands::track_meeting_deleted,
-            analytics::commands::track_settings_changed,
-            analytics::commands::track_feature_used,
-            analytics::commands::is_analytics_enabled,
-            analytics::commands::start_analytics_session,
-            analytics::commands::end_analytics_session,
-            analytics::commands::track_daily_active_user,
-            analytics::commands::track_user_first_launch,
-            analytics::commands::is_analytics_session_active,
-            analytics::commands::track_summary_generation_started,
-            analytics::commands::track_summary_generation_completed,
-            analytics::commands::track_summary_regenerated,
-            analytics::commands::track_model_changed,
-            analytics::commands::track_custom_prompt_used,
-            analytics::commands::track_meeting_ended,
-            analytics::commands::track_analytics_enabled,
-            analytics::commands::track_analytics_disabled,
-            analytics::commands::track_analytics_transparency_viewed,
             whisper_engine::commands::whisper_init,
             whisper_engine::commands::whisper_get_available_models,
             whisper_engine::commands::whisper_load_model,
@@ -732,6 +682,8 @@ pub fn run() {
             audio::recording_preferences::get_default_recordings_folder_path,
             audio::recording_preferences::open_recordings_folder,
             open_log_folder,
+            get_crash_dumps_enabled,
+            set_crash_dumps_enabled,
             audio::recording_preferences::select_recording_folder,
             audio::recording_preferences::get_available_audio_backends,
             audio::recording_preferences::get_current_audio_backend,
@@ -770,6 +722,8 @@ pub fn run() {
             dictation::commands::dictation_get_settings,
             dictation::commands::dictation_save_settings,
             dictation::commands::dictation_get_status,
+            dictation::commands::dictation_list_microphones,
+            dictation::commands::dictation_list_hook_scripts,
             dictation::commands::dictation_set_syv_key,
             dictation::commands::dictation_delete_syv_key,
             dictation::commands::dictation_test_syv,
@@ -793,6 +747,8 @@ pub fn run() {
             // Database and Models path commands
             database::commands::get_database_directory,
             database::commands::open_database_folder,
+            database::setup::get_database_status,
+            database::setup::open_database_backup_folder,
             whisper_engine::commands::open_models_folder,
             // Onboarding commands
             onboarding::get_onboarding_status,

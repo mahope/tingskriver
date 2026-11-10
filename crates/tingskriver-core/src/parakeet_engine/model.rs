@@ -142,6 +142,7 @@ impl ParakeetModel {
         Ok(session)
     }
 
+    #[allow(clippy::disallowed_methods)]
     fn load_vocab<P: AsRef<Path>>(model_dir: P) -> Result<(Vec<String>, i32), ParakeetError> {
         let vocab_path = model_dir.as_ref().join("vocab.txt");
         let content = fs::read_to_string(vocab_path)?;

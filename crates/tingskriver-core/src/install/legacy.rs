@@ -178,6 +178,7 @@ pub fn stale_exes_in(install_dir: &Path) -> Vec<PathBuf> {
 
 /// Shortcut files in `dir` (not recursive) that point to a legacy exe
 /// that is gone.
+#[allow(clippy::disallowed_methods)]
 pub fn stale_shortcuts_in(dir: &Path, exists: impl Fn(&str) -> bool) -> Vec<PathBuf> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
@@ -204,6 +205,7 @@ pub fn stale_shortcuts_in(dir: &Path, exists: impl Fn(&str) -> bool) -> Vec<Path
 
 /// Remove leftover exes and shortcuts. Returns what was removed and what
 /// failed, for the log.
+#[allow(clippy::disallowed_methods)]
 pub fn remove_stale_files(locations: &LegacyLocations, exists: impl Fn(&str) -> bool) -> Vec<String> {
     let mut report = Vec::new();
     let mut remove = |path: &Path| match std::fs::remove_file(path) {
@@ -224,6 +226,7 @@ pub fn remove_stale_files(locations: &LegacyLocations, exists: impl Fn(&str) -> 
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
 

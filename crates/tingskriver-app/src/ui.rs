@@ -17,6 +17,7 @@ use gpui_component::{
     v_flex, ActiveTheme, Icon, Root,
 };
 use gpui_kit_assets::IconName;
+use tingskriver_core::strings;
 use tokio::runtime::Handle;
 
 use crate::startup::{self, DbFailure, DbState, StartupClock};
@@ -173,7 +174,7 @@ fn open_main_window(cx: &mut App) -> anyhow::Result<WindowHandle<Root>> {
         WindowOptions {
             window_bounds: Some(bounds),
             titlebar: Some(TitlebarOptions {
-                title: Some("Tingskriver".into()),
+                title: Some(strings::APP_NAME.into()),
                 ..Default::default()
             }),
             app_id: Some(tingskriver_core::paths::APP_ID.to_string()),
@@ -204,10 +205,16 @@ pub enum Page {
     Meetings,
     Dictation,
     Settings,
+    Measurement,
 }
 
 impl Page {
-    pub const ALL: [Page; 3] = [Page::Meetings, Page::Dictation, Page::Settings];
+    pub const ALL: [Page; 4] = [
+        Page::Meetings,
+        Page::Dictation,
+        Page::Measurement,
+        Page::Settings,
+    ];
 
     /// The page for a `--page` argument (English or Danish name).
     pub fn from_arg(name: &str) -> Option<Page> {
@@ -215,15 +222,17 @@ impl Page {
             "meetings" | "møder" => Some(Page::Meetings),
             "dictation" | "diktering" => Some(Page::Dictation),
             "settings" | "indstillinger" => Some(Page::Settings),
+            "measurement" | "måling" => Some(Page::Measurement),
             _ => None,
         }
     }
 
     pub fn label(self) -> &'static str {
         match self {
-            Page::Meetings => "Møder",
-            Page::Dictation => "Diktering",
-            Page::Settings => "Indstillinger",
+            Page::Meetings => strings::MEETINGS,
+            Page::Dictation => strings::DICTATION,
+            Page::Settings => strings::SETTINGS,
+            Page::Measurement => strings::MEASURE_TITLE,
         }
     }
 
@@ -232,6 +241,7 @@ impl Page {
             Page::Meetings => IconName::Calendar,
             Page::Dictation => IconName::Mic,
             Page::Settings => IconName::Settings,
+            Page::Measurement => IconName::Mic,
         }
     }
 }
@@ -239,6 +249,7 @@ impl Page {
 pub struct Shell {
     model: Entity<AppModel>,
     page: Page,
+    measurement: Entity<crate::measurement::MeasurementView>,
     probe_line: Entity<InputState>,
     probe_text: Entity<TextareaState>,
     state_path: Option<PathBuf>,
@@ -250,13 +261,10 @@ pub struct Shell {
 impl Shell {
     fn new(state_path: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let model = model(cx);
-        let probe_line = cx
-            .new(|cx| InputState::new(window, cx).placeholder("Skriv fx æøå, é, ü, ê, @ og € her"));
+        let probe_line = cx.new(|cx| InputState::new(window, cx).placeholder(strings::PROBE_LINE));
         let probe_text = cx.new(|cx| {
             TextareaState::new(window, cx)
-                .placeholder(
-                    "Flere linjer: prøv også IME-komposition, fx Windows' emoji-panel (Win+.)",
-                )
+                .placeholder(strings::PROBE_TEXT)
                 .rows(4)
         });
         let subscriptions = vec![
@@ -269,6 +277,14 @@ impl Shell {
             cx.subscribe(&probe_line, |_, _, _: &InputEvent, cx| cx.notify()),
             cx.subscribe(&probe_text, |_, _, _: &InputEvent, cx| cx.notify()),
         ];
+        let measurement = cx.new(|cx| {
+            crate::measurement::MeasurementView::new(
+                model.read(cx).app_data_dir.clone(),
+                model.read(cx).runtime.clone(),
+                window,
+                cx,
+            )
+        });
         let save_path = state_path.clone();
         window.on_window_should_close(cx, move |window, _| {
             if let Some(path) = &save_path {
@@ -283,6 +299,7 @@ impl Shell {
         Shell {
             model,
             page,
+            measurement,
             probe_line,
             probe_text,
             state_path,
@@ -322,7 +339,7 @@ impl Shell {
                         .font_family(typography::SERIF)
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_size(typography::XL)
-                        .child("Tingskriver"),
+                        .child(strings::APP_NAME),
                 ),
             )
             .child(SidebarMenu::new().children(Page::ALL.map(|page| {
@@ -339,28 +356,28 @@ impl Shell {
                     .px(space::SM)
                     .text_size(typography::XS)
                     .text_color(palette.muted_foreground)
-                    .child(format!("Version {}", env!("CARGO_PKG_VERSION"))),
+                    .child(strings::version(env!("CARGO_PKG_VERSION"))),
             )
     }
 
     fn meetings_page(&self, cx: &mut Context<Self>) -> AnyElement {
         let body = match &self.model.read(cx).db {
-            DbState::Loading => loading("Indlæser møder …", cx),
+            DbState::Loading => loading(strings::LOADING_MEETINGS, cx),
             DbState::NotCreated => empty_state(
                 IconName::Inbox,
-                "Ingen møder endnu",
-                "Når du har optaget dit første møde, står det her.",
+                strings::NO_MEETINGS,
+                strings::FIRST_MEETING,
                 cx,
             ),
             DbState::Ready(_) => empty_state(
                 IconName::Inbox,
-                "Ingen møder at vise endnu",
-                "Mødelisten kommer hertil i en senere version. Indtil da finder du dine møder i den nuværende app.",
+                strings::NO_MEETINGS_YET,
+                strings::MEETINGS_LATER,
                 cx,
             ),
             DbState::Failed(_) => div().into_any_element(),
         };
-        page("Møder", None, body, cx)
+        page(strings::MEETINGS, None, body, cx)
     }
 
     fn dictation_page(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -374,18 +391,12 @@ impl Shell {
         let warning = probe::composition_warning(&typed);
         let body = v_flex()
             .gap(space::LG)
-            .child(paragraph(
-                "Hold Ctrl+Win nede, tal, og slip. Teksten skrives der, hvor markøren står. Diktering flytter hertil i en senere version.",
-                cx,
-            ))
+            .child(paragraph(strings::DICTATION_LATER, cx))
             .child(
                 v_flex()
                     .gap(space::SM)
-                    .child(section_title("Prøvefelt"))
-                    .child(muted(
-                        "Brug felterne til at teste tastaturet: æøå, dødtaster (^ ¨ ~ ´ `) efterfulgt af en vokal, AltGr-tegn (@ £ $ € { [ ] } | \\) og IME-komposition.",
-                        cx,
-                    ))
+                    .child(section_title(strings::PROBE))
+                    .child(muted(strings::PROBE_HELP, cx))
                     .child(Input::new(&self.probe_line))
                     .child(Textarea::new(&self.probe_text))
                     .when_some(warning, |this, warning| {
@@ -401,68 +412,67 @@ impl Shell {
                             .text_size(typography::SM)
                             .text_color(palette.muted_foreground)
                             .child(if described.is_empty() {
-                                "Særlige tegn vises her med deres Unicode-nummer.".to_string()
+                                strings::SPECIAL_EMPTY.to_string()
                             } else {
-                                format!("Særlige tegn: {}", described.join(", "))
+                                strings::special_characters(&described.join(", "))
                             }),
                     ),
             );
-        page("Diktering", None, body.into_any_element(), cx)
+        page(strings::DICTATION, None, body.into_any_element(), cx)
     }
 
     fn settings_page(&self, cx: &mut Context<Self>) -> AnyElement {
         let model = self.model.read(cx);
         let mode = if cx.theme().mode.is_dark() {
-            "mørk"
+            strings::DARK
         } else {
-            "lys"
+            strings::LIGHT
         };
         let data_dir = model
             .app_data_dir
             .as_ref()
             .map(|p| p.display().to_string())
-            .unwrap_or_else(|| "ukendt".to_string());
+            .unwrap_or_else(|| strings::UNKNOWN.to_string());
         let database = match &model.db {
-            DbState::Loading => "åbnes …",
-            DbState::NotCreated => "ikke oprettet endnu",
-            DbState::Ready(_) => "klar",
-            DbState::Failed(_) => "kunne ikke åbnes",
+            DbState::Loading => strings::DB_OPENING,
+            DbState::NotCreated => strings::DB_NOT_CREATED,
+            DbState::Ready(_) => strings::DB_READY,
+            DbState::Failed(_) => strings::DB_FAILED,
         };
         let log_path = model
             .log_path
             .as_ref()
             .map(|p| p.display().to_string())
-            .unwrap_or_else(|| "ingen logfil (kun konsollen)".to_string());
+            .unwrap_or_else(|| strings::NO_LOG.to_string());
         let log_dir = model.log_dir();
 
         let body = v_flex()
             .gap(space::XL)
-            .child(paragraph(
-                "Indstillingerne flytter hertil i en senere version. Her kan du se, hvordan appen kører.",
+            .child(paragraph(strings::SETTINGS_LATER, cx))
+            .child(setting_group(
+                strings::APPEARANCE,
+                vec![strings::appearance(mode)],
                 cx,
             ))
             .child(setting_group(
-                "Udseende",
-                vec![format!(
-                    "Følger Windows' indstilling for lys og mørk tilstand. Lige nu: {mode}."
-                )],
-                cx,
-            ))
-            .child(setting_group(
-                "Data",
-                vec![format!("Datamappe: {data_dir}"), format!("Database: {database}")],
+                strings::DATA,
+                vec![strings::data_dir(&data_dir), strings::database(database)],
                 cx,
             ))
             .child(
                 v_flex()
                     .gap(space::SM)
-                    .child(setting_group("Log", vec![format!("Logfil: {log_path}")], cx))
+                    .child(setting_group(
+                        strings::LOG,
+                        vec![strings::log_file(&log_path)],
+                        cx,
+                    ))
                     .child(
                         h_flex()
                             .gap(space::SM)
                             .child(
                                 Button::new("open-log-dir")
-                                    .label("Åbn logmappen")
+                                    .label(strings::OPEN_LOG)
                                     .icon(IconName::FolderOpen)
                                     .on_click(move |_, _, _| {
                                         if let Some(dir) = &log_dir {
@@ -472,12 +482,12 @@ impl Shell {
                             )
                             .child(
                                 Button::new("quit")
-                                    .label("Afslut Tingskriver")
+                                    .label(strings::QUIT)
                                     .on_click(|_, _, cx| cx.quit()),
                             ),
                     ),
             );
-        page("Indstillinger", None, body.into_any_element(), cx)
+        page(strings::SETTINGS, None, body.into_any_element(), cx)
     }
 
     fn database_error_page(&self, failure: &DbFailure, cx: &mut Context<Self>) -> AnyElement {
@@ -485,8 +495,8 @@ impl Shell {
         let model = self.model.read(cx);
         let log_dir = model.log_dir();
         let log_line = match &model.log_path {
-            Some(path) => format!("Logfil: {}", path.display()),
-            None => "Logfilen kunne ikke oprettes, så detaljerne står kun i konsollen.".to_string(),
+            Some(path) => strings::log_file(&path.display().to_string()),
+            None => strings::LOG_FAILED.to_string(),
         };
         v_flex()
             .id("database-error")
@@ -504,11 +514,11 @@ impl Shell {
                             .size(icon_size::ERROR)
                             .text_color(palette.destructive),
                     )
-                    .child(heading("Tingskriver kunne ikke åbne dine møder"))
+                    .child(heading(strings::DATABASE_FAILED))
                     .child(paragraph(&failure.summary, cx))
                     .child(paragraph(&failure.advice, cx))
                     .child(muted(
-                        &format!("Database: {}", failure.database_path.display()),
+                        &strings::database(&failure.database_path.display().to_string()),
                         cx,
                     ))
                     .child(muted(&log_line, cx))
@@ -529,7 +539,7 @@ impl Shell {
                             .child(
                                 Button::new("db-error-open-log")
                                     .primary()
-                                    .label("Åbn logmappen")
+                                    .label(strings::OPEN_LOG)
                                     .icon(IconName::FolderOpen)
                                     .on_click(move |_, _, _| {
                                         if let Some(dir) = &log_dir {
@@ -539,7 +549,7 @@ impl Shell {
                             )
                             .child(
                                 Button::new("db-error-retry")
-                                    .label("Prøv igen")
+                                    .label(strings::RETRY)
                                     .icon(IconName::RotateCcw)
                                     .on_click(|_, _, cx| load_database(cx)),
                             ),
@@ -561,6 +571,7 @@ impl Render for Shell {
             (None, Page::Meetings) => self.meetings_page(cx),
             (None, Page::Dictation) => self.dictation_page(cx),
             (None, Page::Settings) => self.settings_page(cx),
+            (None, Page::Measurement) => self.measurement.clone().into_any_element(),
         };
         h_flex()
             .size_full()
@@ -580,7 +591,7 @@ fn palette(cx: &App) -> &'static Palette {
     Palette::for_mode(cx.theme().mode)
 }
 
-fn page(title: &str, subtitle: Option<&str>, body: AnyElement, cx: &App) -> AnyElement {
+pub(crate) fn page(title: &str, subtitle: Option<&str>, body: AnyElement, cx: &App) -> AnyElement {
     v_flex()
         .id(SharedString::from(format!("page-{title}")))
         .size_full()
@@ -608,14 +619,14 @@ fn heading(text: &str) -> impl IntoElement {
         .child(text.to_string())
 }
 
-fn section_title(text: &str) -> impl IntoElement {
+pub(crate) fn section_title(text: &str) -> impl IntoElement {
     div()
         .font_weight(FontWeight::SEMIBOLD)
         .text_size(typography::LG)
         .child(text.to_string())
 }
 
-fn paragraph(text: &str, cx: &App) -> impl IntoElement {
+pub(crate) fn paragraph(text: &str, cx: &App) -> impl IntoElement {
     div()
         .text_size(typography::BASE)
         .text_color(palette(cx).foreground)
@@ -687,7 +698,7 @@ mod tests {
     #[test]
     fn navigation_is_danish_and_ordered() {
         let labels: Vec<_> = Page::ALL.iter().map(|p| p.label()).collect();
-        assert_eq!(labels, ["Møder", "Diktering", "Indstillinger"]);
+        assert_eq!(labels, ["Møder", "Diktering", "Måling", "Indstillinger"]);
     }
 
     #[test]

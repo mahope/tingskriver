@@ -18,7 +18,7 @@ pub struct SpeechSegment {
 }
 
 /// Processes audio in 30ms chunks but returns complete speech segments
-pub struct ContinuousVadProcessor {
+pub(crate) struct LocalVadProcessor {
     session: VadSession,
     chunk_size: usize,
     sample_rate: u32,
@@ -32,7 +32,12 @@ pub struct ContinuousVadProcessor {
     last_logged_state: bool,
 }
 
-impl ContinuousVadProcessor {
+impl LocalVadProcessor {
+    pub(crate) fn buffered_session_samples(&self) -> usize {
+        self.session.session_audio_samples()
+    }
+
+    #[cfg(test)]
     pub fn new(input_sample_rate: u32, redemption_time_ms: u32) -> Result<Self> {
         crate::ensure_onnx_runtime_available()?;
 
@@ -63,6 +68,12 @@ impl ContinuousVadProcessor {
         debug!("Creating VAD session with: sample_rate={}Hz, redemption={}ms, min_speech={}ms, input_rate={}Hz",
                VAD_SAMPLE_RATE, redemption_time_ms, 250, input_sample_rate);
 
+        Self::with_config(input_sample_rate, config)
+    }
+
+    /// Create a batch processor with caller-controlled segmentation parameters.
+    pub fn with_config(input_sample_rate: u32, config: VadConfig) -> Result<Self> {
+        crate::ensure_onnx_runtime_available()?;
         let session = VadSession::new(config)
             .map_err(|e| anyhow!("Failed to create VAD session: {:?}", e))?;
 
@@ -104,6 +115,18 @@ impl ContinuousVadProcessor {
         while self.buffer.len() >= self.chunk_size {
             let chunk: Vec<f32> = self.buffer.drain(..self.chunk_size).collect();
             self.process_chunk(&chunk)?;
+
+            // Keep pending speech (before SpeechStart) and the network's
+            // unprocessed tail. Trimming to session_time with zero padding
+            // would discard samples the network has not processed yet.
+            let padding = self.session.config_mut().pre_speech_pad;
+            let keep =
+                padding + self.session.config_mut().min_speech_time + Duration::from_millis(64);
+            if self.session.session_time() > keep {
+                self.session.config_mut().pre_speech_pad = keep;
+                self.session.trim_start_silence();
+                self.session.config_mut().pre_speech_pad = padding;
+            }
 
             // Extract any completed speech segments
             while let Some(segment) = self.speech_segments.pop_front() {
@@ -444,6 +467,48 @@ where
     Ok(all_segments)
 }
 
+/// A VAD session whose ONNX state lives in a disposable process.
+pub struct ContinuousVadProcessor {
+    client: crate::stt::VadClient,
+}
+
+impl ContinuousVadProcessor {
+    pub fn new(input_sample_rate: u32, redemption_time_ms: u32) -> Result<Self> {
+        let config = VadConfig {
+            sample_rate: 16000,
+            positive_speech_threshold: 0.50,
+            negative_speech_threshold: 0.35,
+            redemption_time: Duration::from_millis(redemption_time_ms.into()),
+            pre_speech_pad: Duration::from_millis(300),
+            post_speech_pad: Duration::from_millis(400),
+            min_speech_time: Duration::from_millis(250),
+        };
+        Self::with_config(input_sample_rate, config)
+    }
+
+    pub fn with_config(input_sample_rate: u32, config: VadConfig) -> Result<Self> {
+        Ok(Self {
+            client: crate::stt::VadClient::new(input_sample_rate, config)
+                .map_err(anyhow::Error::msg)?,
+        })
+    }
+
+    pub fn process_audio(&mut self, samples: &[f32]) -> Result<Vec<SpeechSegment>> {
+        self.client
+            .process(samples, false)
+            .map_err(anyhow::Error::msg)
+    }
+
+    pub fn flush(&mut self) -> Result<Vec<SpeechSegment>> {
+        self.client.process(&[], true).map_err(anyhow::Error::msg)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn buffered_session_samples(&mut self) -> usize {
+        self.client.buffered().unwrap()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -569,7 +634,7 @@ mod tests {
     #[test]
     fn test_vad_continuous_processor_state_across_chunks() {
         // Test that VAD state is correctly maintained across chunk boundaries
-        let mut processor = ContinuousVadProcessor::new(16000, 2000).expect("Failed to create processor");
+        let mut processor = LocalVadProcessor::new(16000, 2000).expect("Failed to create processor");
 
         // Generate audio with a speech segment that spans a chunk boundary
         let chunk_size = 160_000; // 10 seconds
@@ -660,7 +725,7 @@ mod tests {
         let audio = generate_late_speech_audio(20.0, 3.0, 16000);
 
         let mut processor =
-            ContinuousVadProcessor::new(16000, 2000).expect("Failed to create processor");
+            LocalVadProcessor::new(16000, 2000).expect("Failed to create processor");
         processor
             .process_audio(&audio)
             .expect("process_audio failed");
@@ -697,7 +762,7 @@ mod tests {
         );
 
         let mut processor =
-            ContinuousVadProcessor::new(16000, 2000).expect("Failed to create processor");
+            LocalVadProcessor::new(16000, 2000).expect("Failed to create processor");
 
         let segments = processor
             .process_audio(&audio)

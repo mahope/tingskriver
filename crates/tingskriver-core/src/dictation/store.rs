@@ -56,6 +56,10 @@ pub struct DictionaryWord {
     pub word: String,
     /// Comma separated spellings the speech model tends to produce.
     pub aliases: String,
+    /// "Behold engelsk stavning": the word is English and kept exactly as
+    /// written, also by polishing.
+    #[serde(default)]
+    pub english: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -108,7 +112,9 @@ fn db_err(e: sqlx::Error) -> String {
 impl Store {
     pub async fn open(path: &Path) -> Result<Store, String> {
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| e.to_string())?;
         }
         let options = SqliteConnectOptions::new()
             .filename(path)
@@ -124,6 +130,7 @@ impl Store {
 
     pub async fn with_pool(pool: SqlitePool) -> Result<Store, String> {
         sqlx::raw_sql(SCHEMA).execute(&pool).await.map_err(db_err)?;
+        migrate(&pool).await?;
         Ok(Store { pool })
     }
 
@@ -167,7 +174,7 @@ impl Store {
     // -- dictionary --------------------------------------------------------
 
     pub async fn dictionary(&self) -> Result<Vec<DictionaryWord>, String> {
-        let rows = sqlx::query("SELECT id, word, aliases FROM dictation_dictionary ORDER BY word COLLATE NOCASE")
+        let rows = sqlx::query("SELECT id, word, aliases, english FROM dictation_dictionary ORDER BY word COLLATE NOCASE")
             .fetch_all(&self.pool)
             .await
             .map_err(db_err)?;
@@ -177,6 +184,7 @@ impl Store {
                 id: r.get("id"),
                 word: r.get("word"),
                 aliases: r.get("aliases"),
+                english: r.get::<i64, _>("english") != 0,
             })
             .collect())
     }
@@ -209,6 +217,17 @@ impl Store {
                 Ok(result.last_insert_rowid())
             }
         }
+    }
+
+    /// Mark a dictionary word as English (or not).
+    pub async fn set_word_english(&self, id: i64, english: bool) -> Result<(), String> {
+        sqlx::query("UPDATE dictation_dictionary SET english = ?1 WHERE id = ?2")
+            .bind(i64::from(english))
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(db_err)?;
+        Ok(())
     }
 
     pub async fn delete_word(&self, id: i64) -> Result<(), String> {
@@ -282,11 +301,13 @@ impl Store {
             replacements.push(Replacement {
                 from: word.word.clone(),
                 to: word.word.clone(),
+                keep_english: word.english,
             });
             for alias in word.aliases.split(',').map(str::trim).filter(|a| !a.is_empty()) {
                 replacements.push(Replacement {
                     from: alias.to_string(),
                     to: word.word.clone(),
+                    keep_english: word.english,
                 });
             }
         }
@@ -299,7 +320,11 @@ impl Store {
                 text: s.text,
             })
             .collect();
-        Ok(Rules { replacements, snippets })
+        Ok(Rules {
+            replacements,
+            snippets,
+            ..Rules::default()
+        })
     }
 
     // -- history -----------------------------------------------------------
@@ -425,6 +450,22 @@ impl Store {
     }
 }
 
+/// Columns added after the first release.
+async fn migrate(pool: &SqlitePool) -> Result<(), String> {
+    let columns = sqlx::query("SELECT name FROM pragma_table_info('dictation_dictionary')")
+        .fetch_all(pool)
+        .await
+        .map_err(db_err)?;
+    let has = |name: &str| columns.iter().any(|r| r.get::<String, _>("name") == name);
+    if !has("english") {
+        sqlx::query("ALTER TABLE dictation_dictionary ADD COLUMN english INTEGER NOT NULL DEFAULT 0")
+            .execute(pool)
+            .await
+            .map_err(db_err)?;
+    }
+    Ok(())
+}
+
 fn normalize_aliases(aliases: &str) -> String {
     aliases
         .split(',')
@@ -435,6 +476,7 @@ fn normalize_aliases(aliases: &str) -> String {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
 
@@ -490,10 +532,37 @@ mod tests {
         assert_eq!(rules.replacements.len(), 3);
         assert_eq!(rules.snippets.len(), 1);
 
+        assert!(!rules.replacements[0].keep_english);
+        s.set_word_english(id, true).await.unwrap();
+        assert!(s.dictionary().await.unwrap()[0].english);
+        assert!(s.rules().await.unwrap().replacements.iter().all(|r| r.keep_english));
+
         s.upsert_word(Some(id), "Syv.ai", "", 2).await.unwrap();
         assert_eq!(s.dictionary().await.unwrap()[0].word, "Syv.ai");
         s.delete_word(id).await.unwrap();
         assert!(s.dictionary().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn english_column_is_added_to_old_databases() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::raw_sql(
+            "CREATE TABLE dictation_dictionary (id INTEGER PRIMARY KEY AUTOINCREMENT, word TEXT NOT NULL,
+             aliases TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL);
+             INSERT INTO dictation_dictionary (word, aliases, created_at) VALUES ('Mahoje', '', 1);",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let s = Store::with_pool(pool).await.unwrap();
+        let words = s.dictionary().await.unwrap();
+        assert_eq!((words[0].word.as_str(), words[0].english), ("Mahoje", false));
+        // Opening again does not add the column twice.
+        Store::with_pool(s.pool.clone()).await.unwrap();
     }
 
     #[tokio::test]

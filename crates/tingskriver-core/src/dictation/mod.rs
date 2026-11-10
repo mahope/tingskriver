@@ -9,14 +9,19 @@
 
 pub mod capture;
 pub mod logic;
+pub mod modes;
 pub mod overlay;
 pub mod secrets;
 pub mod service;
 pub mod settings;
+pub mod sound;
 pub mod store;
 pub mod syv;
+pub mod text_hook;
 pub mod timings;
 pub mod warm;
+#[cfg(windows)]
+pub mod target_win;
 #[cfg(windows)]
 pub mod win;
 

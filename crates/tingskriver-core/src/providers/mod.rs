@@ -29,8 +29,9 @@ pub mod secrets;
 pub mod service;
 
 #[cfg(test)]
-mod fake_server;
+pub(crate) mod fake_server;
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests;
 
 use std::future::Future;

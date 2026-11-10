@@ -139,9 +139,13 @@ pub async fn api_get_meeting_summary_language(
     );
 
     match resolve_meeting_folder(state.db_manager.pool(), &meeting_id).await? {
-        MeetingFolderResolution::Folder(folder) => read_summary_language_from_metadata(&folder)
-            .map(MeetingSummaryLanguagePreference::metadata)
-            .map_err(|e| e.to_string()),
+        MeetingFolderResolution::Folder(folder) => tokio::task::spawn_blocking(move || {
+            read_summary_language_from_metadata(&folder)
+                .map(MeetingSummaryLanguagePreference::metadata)
+                .map_err(|e| e.to_string())
+        })
+        .await
+        .map_err(|e| format!("Metadata task failed: {e}"))?,
         MeetingFolderResolution::NoFolder => Ok(MeetingSummaryLanguagePreference::local_fallback()),
     }
 }
@@ -159,13 +163,15 @@ pub async fn api_save_meeting_summary_language(
     );
 
     match resolve_meeting_folder(state.db_manager.pool(), &meeting_id).await? {
-        MeetingFolderResolution::Folder(folder) => {
+        MeetingFolderResolution::Folder(folder) => tokio::task::spawn_blocking(move || {
             write_summary_language_to_metadata(&folder, summary_language.as_deref())
                 .map_err(|e| e.to_string())?;
             read_summary_language_from_metadata(&folder)
                 .map(MeetingSummaryLanguagePreference::metadata)
                 .map_err(|e| e.to_string())
-        }
+        })
+        .await
+        .map_err(|e| format!("Metadata task failed: {e}"))?,
         MeetingFolderResolution::NoFolder => Ok(MeetingSummaryLanguagePreference::local_fallback()),
     }
 }
@@ -181,9 +187,13 @@ pub async fn api_get_meeting_detected_summary_language(
     );
 
     match resolve_meeting_folder(state.db_manager.pool(), &meeting_id).await? {
-        MeetingFolderResolution::Folder(folder) => read_detected_summary_language_from_metadata(&folder)
-            .map(MeetingSummaryLanguagePreference::metadata)
-            .map_err(|e| e.to_string()),
+        MeetingFolderResolution::Folder(folder) => tokio::task::spawn_blocking(move || {
+            read_detected_summary_language_from_metadata(&folder)
+                .map(MeetingSummaryLanguagePreference::metadata)
+                .map_err(|e| e.to_string())
+        })
+        .await
+        .map_err(|e| format!("Metadata task failed: {e}"))?,
         MeetingFolderResolution::NoFolder => Ok(MeetingSummaryLanguagePreference::local_fallback()),
     }
 }
@@ -201,13 +211,15 @@ pub async fn api_save_meeting_detected_summary_language(
     );
 
     match resolve_meeting_folder(state.db_manager.pool(), &meeting_id).await? {
-        MeetingFolderResolution::Folder(folder) => {
+        MeetingFolderResolution::Folder(folder) => tokio::task::spawn_blocking(move || {
             write_detected_summary_language_to_metadata(&folder, detected_summary_language.as_deref())
                 .map_err(|e| e.to_string())?;
             read_detected_summary_language_from_metadata(&folder)
                 .map(MeetingSummaryLanguagePreference::metadata)
                 .map_err(|e| e.to_string())
-        }
+        })
+        .await
+        .map_err(|e| format!("Metadata task failed: {e}"))?,
         MeetingFolderResolution::NoFolder => Ok(MeetingSummaryLanguagePreference::local_fallback()),
     }
 }

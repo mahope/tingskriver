@@ -1,9 +1,10 @@
 // Retranscription module - allows re-processing stored audio with different settings
 
 use crate::audio::decoder::decode_audio_file;
-use crate::audio::vad::get_speech_chunks_with_progress;
+use crate::vad_trim::meeting::get_speech_chunks_with_progress;
 use super::common::{create_transcript_segments, split_segment_at_silence, write_transcripts_json};
 use super::constants::AUDIO_EXTENSIONS;
+use super::chunk_checkpoint::{append_chunk, chunk_limit, ChunkCheckpoint};
 use crate::config::{DEFAULT_WHISPER_MODEL, DEFAULT_PARAKEET_MODEL};
 use crate::parakeet_engine::ParakeetEngine;
 use crate::whisper_engine::WhisperEngine;
@@ -138,6 +139,7 @@ pub async fn start_retranscription(
 
 /// Find audio file in meeting folder
 /// Tries common names first, then scans for any file with an audio extension
+#[allow(clippy::disallowed_methods)]
 fn find_audio_file(folder: &Path) -> Result<PathBuf> {
     let candidates = [
         "audio.mp4", "audio.m4a", "audio.wav", "audio.mp3",
@@ -310,25 +312,31 @@ async fn run_retranscription(
         None
     };
 
-    // Split very long segments at silence boundaries for better transcription quality.
-    // Hard cuts at arbitrary sample positions lose words at boundaries. Instead, scan
-    // for the lowest-energy window near the target split point and cut there.
-    const MAX_SEGMENT_SAMPLES: usize = 25 * 16000; // 25 seconds at 16kHz
+    let resolved_model = if let Some(engine) = &parakeet_engine {
+        engine.get_current_model().await
+    } else if let Some(engine) = &whisper_engine {
+        engine.get_current_model().await
+    } else {
+        None
+    };
+    let checkpoint_root = folder_path.clone();
+    let checkpoint_source = audio_path.clone();
+    let checkpoint_language = language.clone();
+    let checkpoint = tokio::task::spawn_blocking(move || {
+        ChunkCheckpoint::open(
+            &checkpoint_root, &checkpoint_source,
+            if use_parakeet { "parakeet" } else { "whisper" },
+            resolved_model.as_deref().unwrap_or("none"), checkpoint_language.as_deref(),
+        )
+    }).await.map_err(|e| anyhow!("Checkpoint task panicked: {e}"))??;
 
-    let mut processable_segments: Vec<crate::audio::vad::SpeechSegment> = Vec::new();
-    for segment in &speech_segments {
-        if segment.samples.len() > MAX_SEGMENT_SAMPLES {
-            debug!(
-                "Splitting large segment ({:.0}ms, {} samples) at silence boundaries",
-                segment.end_timestamp_ms - segment.start_timestamp_ms,
-                segment.samples.len()
-            );
-
-            let sub_segments = split_segment_at_silence(segment, MAX_SEGMENT_SAMPLES);
-            debug!("Split into {} sub-segments", sub_segments.len());
-            processable_segments.extend(sub_segments);
+    let max_samples = chunk_limit(use_parakeet);
+    let mut processable_segments = Vec::new();
+    for segment in speech_segments {
+        if segment.samples.len() > max_samples {
+            processable_segments.extend(split_segment_at_silence(&segment, max_samples));
         } else {
-            processable_segments.push(segment.clone());
+            processable_segments.push(segment);
         }
     }
 
@@ -339,7 +347,7 @@ async fn run_retranscription(
     let mut all_transcripts: Vec<(String, f64, f64)> = Vec::new(); // (text, start_ms, end_ms)
     let mut total_confidence = 0.0f32;
 
-    for (i, segment) in processable_segments.iter().enumerate() {
+    for (i, segment) in processable_segments.into_iter().enumerate() {
         // Check for cancellation before each segment
         if RETRANSCRIPTION_CANCELLED.load(Ordering::SeqCst) {
             return Err(anyhow!("Retranscription cancelled"));
@@ -368,32 +376,51 @@ async fn run_retranscription(
         }
 
         // Transcribe this segment
-        let (text, conf) = if use_parakeet {
-            let engine = parakeet_engine.as_ref().unwrap();
-            let text = engine
-                .transcribe_audio(segment.samples.clone())
-                .await
-                .map_err(|e| anyhow!("Parakeet transcription failed on segment {}: {}", i, e))?;
-            (text, 0.9f32)
+        let cached = checkpoint
+            .load_async(i, segment.start_timestamp_ms, segment.end_timestamp_ms)
+            .await?;
+        let (text, conf, words) = if let Some(result) = cached {
+            result
         } else {
-            let engine = whisper_engine.as_ref().unwrap();
-            let (text, conf, _) = engine
-                .transcribe_audio_with_confidence(segment.samples.clone(), language.clone())
-                .await
-                .map_err(|e| anyhow!("Whisper transcription failed on segment {}: {}", i, e))?;
-            (text, conf)
+            let result = if use_parakeet {
+                let engine = parakeet_engine
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("Parakeet engine is not initialized"))?;
+                let words = engine
+                    .transcribe_audio_timed(segment.samples)
+                    .await
+                    .map_err(|e| anyhow!("Parakeet transcription failed on segment {}: {}", i, e))?;
+                (words.iter().map(|w| w.text.as_str()).collect::<Vec<_>>().join(" "), 0.9f32, words)
+            } else {
+                let engine = whisper_engine
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("Whisper engine is not initialized"))?;
+                let words = engine
+                    .transcribe_audio_timed(segment.samples, language.clone())
+                    .await
+                    .map_err(|e| anyhow!("Whisper transcription failed on segment {}: {}", i, e))?;
+                (words.iter().map(|w| w.text.as_str()).collect::<Vec<_>>().join(" "), 0.9f32, words)
+            };
+            checkpoint
+                .save_async(
+                    i,
+                    segment.start_timestamp_ms,
+                    segment.end_timestamp_ms,
+                    &result.0,
+                    result.1,
+                    &result.2,
+                )
+                .await?;
+            result
         };
 
         // Skip empty transcripts
         let trimmed = text.trim();
         if !trimmed.is_empty() {
-            debug!(
-                "Segment {}/{}: {:.1}s, conf={:.2}, text='{}'",
-                i + 1, processable_count, segment_duration_sec, conf,
-                if trimmed.len() > 80 { let mut end = 80; while !trimmed.is_char_boundary(end) { end -= 1; } &trimmed[..end] } else { trimmed }
-            );
-            all_transcripts.push((text, segment.start_timestamp_ms, segment.end_timestamp_ms));
-            total_confidence += conf;
+            let previous_count = all_transcripts.len();
+            if append_chunk(&mut all_transcripts, words, segment.start_timestamp_ms, segment.end_timestamp_ms) {
+                total_confidence += conf * (all_transcripts.len() - previous_count) as f32;
+            }
         } else {
             debug!("Segment {}/{}: {:.1}s — empty transcription", i + 1, processable_count, segment_duration_sec);
         }
@@ -407,7 +434,7 @@ async fn run_retranscription(
     };
 
     info!(
-        "Transcription complete: {} segments transcribed out of {}, avg confidence: {:.2}",
+        "Transcription complete: {} timed words from {} chunks, avg confidence: {:.2}",
         transcribed_count, processable_count, avg_confidence
     );
 
@@ -468,7 +495,8 @@ async fn run_retranscription(
     // Write updated transcripts.json and metadata.json to the meeting folder
     emit_progress(&app, &meeting_id, "saving", 90, "Writing transcript files...");
 
-    if let Err(e) = write_transcripts_json(&folder_path, &segments) {
+    let segments_count = segments.len();
+    if let Err(e) = write_transcripts_json(&folder_path, segments).await {
         warn!("Failed to write transcripts.json: {}", e);
     }
 
@@ -484,15 +512,24 @@ async fn run_retranscription(
         &meeting_id,
         duration_seconds,
         &audio_filename,
-    ) {
+    )
+    .await
+    {
         warn!("Failed to update metadata.json: {}", e);
+    }
+
+    if tokio::task::spawn_blocking(move || checkpoint.finish())
+        .await?
+        .is_err()
+    {
+        warn!("Could not clean up completed transcription checkpoints");
     }
 
     emit_progress(&app, &meeting_id, "complete", 100, "Retranscription complete");
 
     Ok(RetranscriptionResult {
         meeting_id,
-        segments_count: segments.len(),
+        segments_count,
         duration_seconds,
         language,
     })
@@ -721,49 +758,70 @@ async fn get_configured_parakeet_model(app: &HostHandle) -> Result<String> {
 }
 
 /// Write or update metadata.json for retranscription (preserves existing fields, adds retranscribed_at)
-fn write_retranscription_metadata(
+async fn write_retranscription_metadata(
     folder: &Path,
     meeting_id: &str,
     duration_seconds: f64,
     audio_filename: &str,
 ) -> Result<()> {
-    let metadata_path = folder.join("metadata.json");
-    let temp_path = folder.join(".metadata.json.tmp");
-    let now = chrono::Utc::now().to_rfc3339();
+    let folder = folder.to_path_buf();
+    let meeting_id = meeting_id.to_owned();
+    let audio_filename = audio_filename.to_owned();
+    tokio::task::spawn_blocking(move || {
+        #[allow(clippy::disallowed_methods)]
+        fn blocking(
+            folder: &Path,
+            meeting_id: &str,
+            duration_seconds: f64,
+            audio_filename: &str,
+        ) -> Result<()> {
+            let metadata_path = folder.join("metadata.json");
+            let temp_path = folder.join(".metadata.json.tmp");
+            let now = chrono::Utc::now().to_rfc3339();
 
-    // Try to read existing metadata and update it
-    let json = if metadata_path.exists() {
-        let existing = std::fs::read_to_string(&metadata_path)?;
-        let mut value: serde_json::Value = serde_json::from_str(&existing)?;
-        if let Some(obj) = value.as_object_mut() {
-            obj.insert("duration_seconds".to_string(), serde_json::json!(duration_seconds));
-            obj.insert("retranscribed_at".to_string(), serde_json::json!(now));
-            obj.insert("status".to_string(), serde_json::json!("completed"));
-            obj.insert("transcript_file".to_string(), serde_json::json!("transcripts.json"));
-            obj.remove("detected_summary_language");
+            // Try to read existing metadata and update it
+            let json = if metadata_path.exists() {
+                let existing = std::fs::read_to_string(&metadata_path)?;
+                let mut value: serde_json::Value = serde_json::from_str(&existing)?;
+                if let Some(obj) = value.as_object_mut() {
+                    obj.insert(
+                        "duration_seconds".to_string(),
+                        serde_json::json!(duration_seconds),
+                    );
+                    obj.insert("retranscribed_at".to_string(), serde_json::json!(now));
+                    obj.insert("status".to_string(), serde_json::json!("completed"));
+                    obj.insert(
+                        "transcript_file".to_string(),
+                        serde_json::json!("transcripts.json"),
+                    );
+                    obj.remove("detected_summary_language");
+                }
+                value
+            } else {
+                serde_json::json!({
+                    "version": "1.0",
+                    "meeting_id": meeting_id,
+                    "created_at": now,
+                    "completed_at": now,
+                    "retranscribed_at": now,
+                    "duration_seconds": duration_seconds,
+                    "audio_file": audio_filename,
+                    "transcript_file": "transcripts.json",
+                    "status": "completed",
+                    "source": "retranscription"
+                })
+            };
+
+            let json_string = serde_json::to_string_pretty(&json)?;
+            std::fs::write(&temp_path, &json_string)?;
+            std::fs::rename(&temp_path, &metadata_path)?;
+
+            info!("Wrote metadata.json to {}", metadata_path.display());
+            Ok(())
         }
-        value
-    } else {
-        serde_json::json!({
-            "version": "1.0",
-            "meeting_id": meeting_id,
-            "created_at": now,
-            "completed_at": now,
-            "retranscribed_at": now,
-            "duration_seconds": duration_seconds,
-            "audio_file": audio_filename,
-            "transcript_file": "transcripts.json",
-            "status": "completed",
-            "source": "retranscription"
-        })
-    };
-
-    let json_string = serde_json::to_string_pretty(&json)?;
-    std::fs::write(&temp_path, &json_string)?;
-    std::fs::rename(&temp_path, &metadata_path)?;
-
-    info!("Wrote metadata.json to {}", metadata_path.display());
-    Ok(())
+        blocking(&folder, &meeting_id, duration_seconds, &audio_filename)
+    })
+    .await?
 }
 
 // Tauri commands
@@ -831,6 +889,7 @@ pub async fn is_retranscription_in_progress_command() -> bool {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
 
@@ -1030,12 +1089,12 @@ mod tests {
         )
         .unwrap();
 
-        write_retranscription_metadata(
+        crate::audio::common::assert_uses_blocking_pool(write_retranscription_metadata(
             dir.path(),
             "ignored-for-existing-metadata",
             5046.4,
             "recording.m4a",
-        )
+        ))
         .unwrap();
 
         let metadata: serde_json::Value =

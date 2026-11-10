@@ -6,7 +6,6 @@ import { EmptyStateSummary } from '@/components/EmptyStateSummary';
 import { ModelConfig } from '@/components/ModelSettingsModal';
 import { SummaryGeneratorButtonGroup } from './SummaryGeneratorButtonGroup';
 import { SummaryUpdaterButtonGroup } from './SummaryUpdaterButtonGroup';
-import Analytics from '@/lib/analytics';
 import { useEffect, useRef, useState, RefObject } from 'react';
 import { toast } from 'sonner';
 import { Languages, ChevronDown } from 'lucide-react';
@@ -21,6 +20,7 @@ import {
   SummaryLanguageStorage,
 } from '@/lib/summary-language-preferences';
 import { hasVisibleSummaryContent } from '@/lib/summary-content';
+import { DeliveryApproval } from '@/components/delivery/DeliveryApproval';
 
 interface SummaryPanelProps {
   meeting: {
@@ -272,6 +272,15 @@ export function SummaryPanel({
         )}
       </div>
 
+      {hasSummary && !isSummaryLoading && <DeliveryApproval
+        meetingId={meeting.id}
+        disabled={isSummaryDirty || isSaving}
+        getSummary={async () => {
+          if (!summaryRef.current) throw new Error('Referatet er ikke klar');
+          return summaryRef.current.getMarkdown();
+        }}
+      />}
+
       <div className="mt-6">
         {isSummaryLoading ? (
           <div className="py-16 text-center" role="status">
@@ -297,7 +306,6 @@ export function SummaryPanel({
               status={summaryStatus}
               error={summaryError}
               onRegenerateSummary={() => {
-                Analytics.trackButtonClick('regenerate_summary', 'meeting_details');
                 onRegenerateSummary();
               }}
               meeting={{

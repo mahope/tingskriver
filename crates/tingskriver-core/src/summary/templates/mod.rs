@@ -49,6 +49,7 @@ pub use loader::{
 pub use types::{Template, TemplateSection};
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
 

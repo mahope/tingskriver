@@ -3,7 +3,6 @@ import { Switch } from '@/components/ui/switch';
 import { FolderOpen } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { DeviceSelection, SelectedDevices } from '@/components/DeviceSelection';
-import Analytics from '@/lib/analytics';
 import { toast } from 'sonner';
 import { useRecordingState } from '@/contexts/RecordingStateContext';
 import { useConfig } from '@/contexts/ConfigContext';
@@ -72,17 +71,6 @@ export function RecordingSettings({ onSave }: RecordingSettingsProps) {
     loadNotificationPref();
   }, []);
 
-  const handleAutoSaveToggle = async (enabled: boolean) => {
-    const newPreferences = { ...preferences, auto_save: enabled };
-    setPreferences(newPreferences);
-    await savePreferences(newPreferences);
-
-    // Track auto-save setting change
-    await Analytics.track('auto_save_recording_toggled', {
-      enabled: enabled.toString()
-    });
-  };
-
   const handleDeviceChange = async (devices: SelectedDevices) => {
     const newPreferences = {
       ...preferences,
@@ -97,12 +85,6 @@ export function RecordingSettings({ onSave }: RecordingSettingsProps) {
     setSelectedDevices(devices);
     await savePreferences(newPreferences);
 
-    // Track default device preference changes
-    // Note: Individual device selection analytics are tracked in DeviceSelection component
-    await Analytics.track('default_devices_changed', {
-      has_preferred_microphone: (!!devices.micDevice).toString(),
-      has_preferred_system_audio: (!!devices.systemDevice).toString()
-    });
   };
 
   const handleOpenFolder = async () => {
@@ -121,9 +103,6 @@ export function RecordingSettings({ onSave }: RecordingSettingsProps) {
       await store.set('show_recording_notification', enabled);
       await store.save();
       toast.success('Indstillingen er gemt');
-      await Analytics.track('recording_notification_preference_changed', {
-        enabled: enabled.toString()
-      });
     } catch (error) {
       console.error('Failed to save notification preference:', error);
       toast.error('Indstillingen kunne ikke gemmes', { description: 'Prøv igen. Hvis det fortsætter, så genstart Tingskriver.' });
@@ -170,55 +149,30 @@ export function RecordingSettings({ onSave }: RecordingSettingsProps) {
         </p>
       </div>
 
-      {/* Auto Save Toggle */}
-      <div className="flex items-center justify-between gap-6">
-        <div className="flex-1">
-          <label htmlFor="rec-auto-save" className="font-medium text-foreground">Gem lydoptagelser</label>
-          <div id="rec-auto-save-hint" className="text-sm text-muted-foreground">
-            Gem automatisk lydfilen, når optagelsen stopper
+      {/* Audio is always saved: the transcript is made from the saved file
+          after the meeting, so the old "Gem lydoptagelser" switch is gone. */}
+      <div className="space-y-4">
+        <div>
+          <div className="font-medium text-foreground mb-1">Gemmes i</div>
+          <div className="text-sm text-muted-foreground mb-3 break-all">
+            {preferences.save_folder || 'Standardmappen'}
           </div>
+          <button
+            type="button"
+            onClick={handleOpenFolder}
+            className="inline-flex items-center gap-2 min-h-[44px] px-4 text-sm border border-input rounded-md hover:bg-accent transition-colors focus-visible:ring-2 ring-ring"
+          >
+            <FolderOpen aria-hidden="true" className="w-4 h-4" />
+            Åbn mappen
+          </button>
         </div>
-        <Switch
-          id="rec-auto-save"
-          aria-describedby="rec-auto-save-hint"
-          checked={preferences.auto_save}
-          onCheckedChange={handleAutoSaveToggle}
-          disabled={saving}
-        />
+
+        <p className="text-sm text-muted-foreground">
+          Lyden gemmes altid, fordi transskriptionen laves ud fra lydfilen efter mødet.
+          Hvert møde får sin egen mappe med audio.mp4. Vil du ikke beholde lyden,
+          kan du slette mødets mappe.
+        </p>
       </div>
-
-      {/* Folder Location - Only shown when auto_save is enabled */}
-      {preferences.auto_save && (
-        <div className="space-y-4">
-          <div>
-            <div className="font-medium text-foreground mb-1">Gemmes i</div>
-            <div className="text-sm text-muted-foreground mb-3 break-all">
-              {preferences.save_folder || 'Standardmappen'}
-            </div>
-            <button
-              type="button"
-              onClick={handleOpenFolder}
-              className="inline-flex items-center gap-2 min-h-[44px] px-4 text-sm border border-input rounded-md hover:bg-accent transition-colors focus-visible:ring-2 ring-ring"
-            >
-              <FolderOpen aria-hidden="true" className="w-4 h-4" />
-              Åbn mappen
-            </button>
-          </div>
-
-          <p className="text-sm text-muted-foreground">
-            Filerne gemmes som {preferences.file_format.toUpperCase()} og navngives efter tidspunktet, fx recording_ÅÅÅÅMMDD_TTMMSS.{preferences.file_format}
-          </p>
-        </div>
-      )}
-
-      {/* Info when auto_save is disabled */}
-      {!preferences.auto_save && (
-        <div className="p-4 border border-warning/30 rounded-lg bg-warning/10">
-          <div className="text-sm text-warning">
-            Lyden gemmes ikke. Slå "Gem lydoptagelser" til, hvis du vil beholde lyden fra dine møder.
-          </div>
-        </div>
-      )}
 
       {/* Recording Notification Toggle */}
       <div className="flex items-center justify-between gap-6">

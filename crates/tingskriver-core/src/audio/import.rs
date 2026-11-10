@@ -2,7 +2,7 @@
 
 use crate::api::TranscriptSegment;
 use crate::audio::decoder::{decode_audio_file, decode_audio_file_with_progress};
-use crate::audio::vad::get_speech_chunks_with_progress;
+use crate::vad_trim::meeting::get_speech_chunks_with_progress;
 use crate::config::{DEFAULT_WHISPER_MODEL, DEFAULT_PARAKEET_MODEL};
 use crate::parakeet_engine::ParakeetEngine;
 use crate::whisper_engine::WhisperEngine;
@@ -18,6 +18,7 @@ use uuid::Uuid;
 use super::audio_processing::create_meeting_folder;
 use super::common::{create_transcript_segments, split_segment_at_silence, write_transcripts_json};
 use super::constants::AUDIO_EXTENSIONS;
+use super::chunk_checkpoint::{append_chunk, chunk_limit, ChunkCheckpoint};
 use super::recording_preferences::get_default_recordings_folder;
 
 /// Global flag to track if import is in progress
@@ -117,6 +118,7 @@ pub fn cancel_import() {
 
 /// Validate an audio file and return its info using metadata-only approach
 /// Falls back to full decode if metadata is unavailable
+#[allow(clippy::disallowed_methods)]
 pub fn validate_audio_file(path: &Path) -> Result<AudioFileInfo> {
     // Check file exists
     if !path.exists() {
@@ -190,6 +192,7 @@ pub fn validate_audio_file(path: &Path) -> Result<AudioFileInfo> {
 
 /// Extract duration from audio file metadata without full decode
 /// Returns error if metadata is unavailable, triggering fallback to full decode
+#[allow(clippy::disallowed_methods)]
 fn extract_duration_from_metadata(path: &Path) -> Result<f64> {
     use symphonia::core::formats::FormatOptions;
     use symphonia::core::io::MediaSourceStream;
@@ -355,9 +358,8 @@ async fn run_import(
 
     let src = source.clone();
     let dst = dest_path.clone();
-    tokio::task::spawn_blocking(move || std::fs::copy(&src, &dst))
+    tokio::fs::copy(&src, &dst)
         .await
-        .map_err(|e| anyhow!("Copy task join error: {}", e))?
         .map_err(|e| anyhow!("Failed to copy audio file: {}", e))?;
 
     info!("Copied audio to: {}", dest_path.display());
@@ -365,7 +367,7 @@ async fn run_import(
     // Check for cancellation
     if IMPORT_CANCELLED.load(Ordering::SeqCst) {
         // Cleanup: remove the meeting folder
-        let _ = std::fs::remove_dir_all(&meeting_folder);
+        let _ = tokio::fs::remove_dir_all(&meeting_folder).await;
         return Err(anyhow!("Import cancelled"));
     }
 
@@ -396,7 +398,7 @@ async fn run_import(
 
     // Check for cancellation
     if IMPORT_CANCELLED.load(Ordering::SeqCst) {
-        let _ = std::fs::remove_dir_all(&meeting_folder);
+        let _ = tokio::fs::remove_dir_all(&meeting_folder).await;
         return Err(anyhow!("Import cancelled"));
     }
 
@@ -422,7 +424,7 @@ async fn run_import(
 
     // Check for cancellation
     if IMPORT_CANCELLED.load(Ordering::SeqCst) {
-        let _ = std::fs::remove_dir_all(&meeting_folder);
+        let _ = tokio::fs::remove_dir_all(&meeting_folder).await;
         return Err(anyhow!("Import cancelled"));
     }
 
@@ -500,7 +502,7 @@ async fn run_import(
 
     // Check for cancellation
     if IMPORT_CANCELLED.load(Ordering::SeqCst) {
-        let _ = std::fs::remove_dir_all(&meeting_folder);
+        let _ = tokio::fs::remove_dir_all(&meeting_folder).await;
         return Err(anyhow!("Import cancelled"));
     }
 
@@ -518,25 +520,31 @@ async fn run_import(
         None
     };
 
-    // Split very long segments at silence boundaries for better transcription quality.
-    // Hard cuts at arbitrary sample positions lose words at boundaries. Instead, scan
-    // for the lowest-energy window near the target split point and cut there.
-    const MAX_SEGMENT_SAMPLES: usize = 25 * 16000; // 25 seconds at 16kHz
+    let resolved_model = if let Some(engine) = &parakeet_engine {
+        engine.get_current_model().await
+    } else if let Some(engine) = &whisper_engine {
+        engine.get_current_model().await
+    } else {
+        None
+    };
+    let checkpoint_root = base_folder.clone();
+    let checkpoint_source = dest_path.clone();
+    let checkpoint_language = language.clone();
+    let checkpoint = tokio::task::spawn_blocking(move || {
+        ChunkCheckpoint::open(
+            &checkpoint_root, &checkpoint_source,
+            if use_parakeet { "parakeet" } else { "whisper" },
+            resolved_model.as_deref().unwrap_or("none"), checkpoint_language.as_deref(),
+        )
+    }).await.map_err(|e| anyhow!("Checkpoint task panicked: {e}"))??;
 
-    let mut processable_segments: Vec<crate::audio::vad::SpeechSegment> = Vec::new();
-    for segment in &speech_segments {
-        if segment.samples.len() > MAX_SEGMENT_SAMPLES {
-            debug!(
-                "Splitting large segment ({:.0}ms, {} samples) at silence boundaries",
-                segment.end_timestamp_ms - segment.start_timestamp_ms,
-                segment.samples.len()
-            );
-
-            let sub_segments = split_segment_at_silence(segment, MAX_SEGMENT_SAMPLES);
-            debug!("Split into {} sub-segments", sub_segments.len());
-            processable_segments.extend(sub_segments);
+    let max_samples = chunk_limit(use_parakeet);
+    let mut processable_segments = Vec::new();
+    for segment in speech_segments {
+        if segment.samples.len() > max_samples {
+            processable_segments.extend(split_segment_at_silence(&segment, max_samples));
         } else {
-            processable_segments.push(segment.clone());
+            processable_segments.push(segment);
         }
     }
 
@@ -547,9 +555,9 @@ async fn run_import(
     let mut all_transcripts: Vec<(String, f64, f64)> = Vec::new();
     let mut total_confidence = 0.0f32;
 
-    for (i, segment) in processable_segments.iter().enumerate() {
+    for (i, segment) in processable_segments.into_iter().enumerate() {
         if IMPORT_CANCELLED.load(Ordering::SeqCst) {
-            let _ = std::fs::remove_dir_all(&meeting_folder);
+            let _ = tokio::fs::remove_dir_all(&meeting_folder).await;
             return Err(anyhow!("Import cancelled"));
         }
 
@@ -578,31 +586,50 @@ async fn run_import(
         }
 
         // Transcribe
-        let (text, conf) = if use_parakeet {
-            let engine = parakeet_engine.as_ref().unwrap();
-            let text = engine
-                .transcribe_audio(segment.samples.clone())
-                .await
-                .map_err(|e| anyhow!("Parakeet transcription failed on segment {}: {}", i, e))?;
-            (text, 0.9f32)
+        let cached = checkpoint
+            .load_async(i, segment.start_timestamp_ms, segment.end_timestamp_ms)
+            .await?;
+        let (text, conf, words) = if let Some(result) = cached {
+            result
         } else {
-            let engine = whisper_engine.as_ref().unwrap();
-            let (text, conf, _) = engine
-                .transcribe_audio_with_confidence(segment.samples.clone(), language.clone())
-                .await
-                .map_err(|e| anyhow!("Whisper transcription failed on segment {}: {}", i, e))?;
-            (text, conf)
+            let result = if use_parakeet {
+                let engine = parakeet_engine
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("Parakeet engine is not initialized"))?;
+                let words = engine
+                    .transcribe_audio_timed(segment.samples)
+                    .await
+                    .map_err(|e| anyhow!("Parakeet transcription failed on segment {}: {}", i, e))?;
+                (words.iter().map(|w| w.text.as_str()).collect::<Vec<_>>().join(" "), 0.9f32, words)
+            } else {
+                let engine = whisper_engine
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("Whisper engine is not initialized"))?;
+                let words = engine
+                    .transcribe_audio_timed(segment.samples, language.clone())
+                    .await
+                    .map_err(|e| anyhow!("Whisper transcription failed on segment {}: {}", i, e))?;
+                (words.iter().map(|w| w.text.as_str()).collect::<Vec<_>>().join(" "), 0.9f32, words)
+            };
+            checkpoint
+                .save_async(
+                    i,
+                    segment.start_timestamp_ms,
+                    segment.end_timestamp_ms,
+                    &result.0,
+                    result.1,
+                    &result.2,
+                )
+                .await?;
+            result
         };
 
         let trimmed = text.trim();
         if !trimmed.is_empty() {
-            debug!(
-                "Segment {}/{}: {:.1}s, conf={:.2}, text='{}'",
-                i + 1, processable_count, segment_duration_sec, conf,
-                if trimmed.len() > 80 { let mut end = 80; while !trimmed.is_char_boundary(end) { end -= 1; } &trimmed[..end] } else { trimmed }
-            );
-            all_transcripts.push((text, segment.start_timestamp_ms, segment.end_timestamp_ms));
-            total_confidence += conf;
+            let previous_count = all_transcripts.len();
+            if append_chunk(&mut all_transcripts, words, segment.start_timestamp_ms, segment.end_timestamp_ms) {
+                total_confidence += conf * (all_transcripts.len() - previous_count) as f32;
+            }
         } else {
             debug!("Segment {}/{}: {:.1}s — empty transcription", i + 1, processable_count, segment_duration_sec);
         }
@@ -616,13 +643,13 @@ async fn run_import(
     };
 
     info!(
-        "Transcription complete: {} segments transcribed out of {}, avg confidence: {:.2}",
+        "Transcription complete: {} timed words from {} chunks, avg confidence: {:.2}",
         transcribed_count, processable_count, avg_confidence
     );
 
     // Check for cancellation
     if IMPORT_CANCELLED.load(Ordering::SeqCst) {
-        let _ = std::fs::remove_dir_all(&meeting_folder);
+        let _ = tokio::fs::remove_dir_all(&meeting_folder).await;
         return Err(anyhow!("Import cancelled"));
     }
 
@@ -647,7 +674,8 @@ async fn run_import(
     // Write transcripts.json and metadata.json to the meeting folder
     emit_progress(&app, "saving", 90, "Writing transcript files...");
 
-    if let Err(e) = write_transcripts_json(&meeting_folder, &segments) {
+    let segments_count = segments.len();
+    if let Err(e) = write_transcripts_json(&meeting_folder, segments).await {
         warn!("Failed to write transcripts.json: {}", e);
     }
 
@@ -658,8 +686,17 @@ async fn run_import(
         duration_seconds,
         &dest_filename,
         "import",
-    ) {
+    )
+    .await
+    {
         warn!("Failed to write metadata.json: {}", e);
+    }
+
+    if tokio::task::spawn_blocking(move || checkpoint.finish())
+        .await?
+        .is_err()
+    {
+        warn!("Could not clean up completed transcription checkpoints");
     }
 
     emit_progress(&app, "complete", 100, "Import complete");
@@ -667,7 +704,7 @@ async fn run_import(
     Ok(ImportResult {
         meeting_id,
         title,
-        segments_count: segments.len(),
+        segments_count,
         duration_seconds,
     })
 }
@@ -875,7 +912,7 @@ async fn get_configured_model(app: &HostHandle, provider_type: &str) -> Result<S
 }
 
 /// Write metadata.json to a meeting folder (atomic write with temp file)
-fn write_import_metadata(
+async fn write_import_metadata(
     folder: &Path,
     meeting_id: &str,
     title: &str,
@@ -883,29 +920,55 @@ fn write_import_metadata(
     audio_filename: &str,
     source: &str,
 ) -> Result<()> {
-    let metadata_path = folder.join("metadata.json");
-    let temp_path = folder.join(".metadata.json.tmp");
-    let now = chrono::Utc::now().to_rfc3339();
+    let folder = folder.to_path_buf();
+    let meeting_id = meeting_id.to_owned();
+    let title = title.to_owned();
+    let audio_filename = audio_filename.to_owned();
+    let source = source.to_owned();
+    tokio::task::spawn_blocking(move || {
+        #[allow(clippy::disallowed_methods)]
+        fn blocking(
+            folder: &Path,
+            meeting_id: &str,
+            title: &str,
+            duration_seconds: f64,
+            audio_filename: &str,
+            source: &str,
+        ) -> Result<()> {
+            let metadata_path = folder.join("metadata.json");
+            let temp_path = folder.join(".metadata.json.tmp");
+            let now = chrono::Utc::now().to_rfc3339();
 
-    let json = serde_json::json!({
-        "version": "1.0",
-        "meeting_id": meeting_id,
-        "meeting_name": title,
-        "created_at": now,
-        "completed_at": now,
-        "duration_seconds": duration_seconds,
-        "audio_file": audio_filename,
-        "transcript_file": "transcripts.json",
-        "status": "completed",
-        "source": source
-    });
+            let json = serde_json::json!({
+                "version": "1.0",
+                "meeting_id": meeting_id,
+                "meeting_name": title,
+                "created_at": now,
+                "completed_at": now,
+                "duration_seconds": duration_seconds,
+                "audio_file": audio_filename,
+                "transcript_file": "transcripts.json",
+                "status": "completed",
+                "source": source
+            });
 
-    let json_string = serde_json::to_string_pretty(&json)?;
-    std::fs::write(&temp_path, &json_string)?;
-    std::fs::rename(&temp_path, &metadata_path)?;
+            let json_string = serde_json::to_string_pretty(&json)?;
+            std::fs::write(&temp_path, &json_string)?;
+            std::fs::rename(&temp_path, &metadata_path)?;
 
-    info!("Wrote metadata.json to {}", metadata_path.display());
-    Ok(())
+            info!("Wrote metadata.json to {}", metadata_path.display());
+            Ok(())
+        }
+        blocking(
+            &folder,
+            &meeting_id,
+            &title,
+            duration_seconds,
+            &audio_filename,
+            &source,
+        )
+    })
+    .await?
 }
 
 // ============================================================================
@@ -961,6 +1024,7 @@ pub async fn is_import_in_progress_command() -> bool {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
 
@@ -1123,7 +1187,9 @@ mod tests {
 
         // Total samples should exceed input due to overlap
         let total_samples: usize = result.iter().map(|s| s.samples.len()).sum();
-        assert!(total_samples >= 60 * 16000, "Overlap should not lose samples");
+        assert!(total_samples > 60 * 16000, "Overlap must repeat boundary samples");
+        assert!(result.iter().all(|s| s.samples.len() <= 25 * 16000));
+        assert!(result.windows(2).all(|s| s[1].start_timestamp_ms < s[0].end_timestamp_ms));
     }
 
     #[test]
@@ -1148,8 +1214,15 @@ mod tests {
             },
         ];
 
-        let result = write_transcripts_json(dir.path(), &segments);
-        assert!(result.is_ok(), "write_transcripts_json failed: {:?}", result);
+        let result = crate::audio::common::assert_uses_blocking_pool(write_transcripts_json(
+            dir.path(),
+            segments,
+        ));
+        assert!(
+            result.is_ok(),
+            "write_transcripts_json failed: {:?}",
+            result
+        );
 
         // Verify file exists and is valid JSON
         let path = dir.path().join("transcripts.json");
@@ -1172,14 +1245,14 @@ mod tests {
     fn test_write_import_metadata() {
         let dir = tempfile::tempdir().unwrap();
 
-        let result = write_import_metadata(
+        let result = crate::audio::common::assert_uses_blocking_pool(write_import_metadata(
             dir.path(),
             "meeting-123",
             "Test Meeting",
             1800.0,
             "audio.mp4",
             "import",
-        );
+        ));
         assert!(result.is_ok(), "write_import_metadata failed: {:?}", result);
 
         let path = dir.path().join("metadata.json");

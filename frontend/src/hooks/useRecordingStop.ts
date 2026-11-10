@@ -1,13 +1,16 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { listen } from '@tauri-apps/api/event';
+import { invoke } from '@tauri-apps/api/core';
+import { useConfig } from '@/contexts/ConfigContext';
+import { transcribeSavedRecording } from '@/lib/recording-finalization';
+import { getProviderCommands } from '@/lib/transcription-model-readiness';
 import { toast } from 'sonner';
 import { useTranscripts } from '@/contexts/TranscriptContext';
 import { useSidebar } from '@/components/Sidebar/SidebarProvider';
 import { useRecordingState, RecordingStatus } from '@/contexts/RecordingStateContext';
 import { storageService } from '@/services/storageService';
 import { transcriptService } from '@/services/transcriptService';
-import Analytics from '@/lib/analytics';
 import {
   applyPinnedSummaryLanguageToMeeting,
   detectAndCacheSummaryLanguage,
@@ -32,7 +35,6 @@ interface UseRecordingStopReturn {
  * - Transcription completion polling (60s max, 500ms interval)
  * - Transcript buffer flush coordination
  * - SQLite meeting save with folder_path from sessionStorage
- * - Comprehensive analytics tracking (duration, word count, activation)
  * - Auto-navigation to meeting details
  * - Toast notifications for success/error
  * - Window exposure for Rust callbacks
@@ -68,6 +70,7 @@ export function useRecordingStop(
   } = useSidebar();
 
   const router = useRouter();
+  const { transcriptModelConfig, selectedLanguage } = useConfig();
 
   // Guard to prevent duplicate/concurrent stop calls (e.g., from UI and tray simultaneously)
   const stopInProgressRef = useRef(false);
@@ -265,6 +268,42 @@ export function useRecordingStop(
             throw new Error('No meeting ID received from save operation');
           }
 
+          if (folderPath && freshTranscripts.length === 0 && getProviderCommands(transcriptModelConfig.provider)) {
+            try {
+              setStatus(RecordingStatus.PROCESSING_TRANSCRIPTS, 'Transskriberer den gemte lyd…');
+              await transcribeSavedRecording(folderPath, meetingId, async (meetingId, folderPath) => {
+                let complete!: () => void;
+                let fail!: (error: Error) => void;
+                const finished = new Promise<void>((resolve, reject) => { complete = resolve; fail = reject; });
+                const unlistenComplete = await listen<{ meeting_id: string }>('retranscription-complete', ({ payload }) => {
+                  if (payload.meeting_id === meetingId) complete();
+                });
+                let unlistenError: (() => void) | undefined;
+                try {
+                  unlistenError = await listen<{ meeting_id: string; error: string }>('retranscription-error', ({ payload }) => {
+                    if (payload.meeting_id === meetingId) fail(new Error(payload.error));
+                  });
+                  // Attach the rejection handler before starting the job: events may arrive before invoke returns.
+                  await Promise.all([finished, invoke('start_retranscription_command', {
+                    meetingId,
+                    meetingFolderPath: folderPath,
+                    provider: transcriptModelConfig.provider,
+                    model: transcriptModelConfig.model || null,
+                    language: transcriptModelConfig.provider === 'parakeet' || selectedLanguage === 'auto' ? null : selectedLanguage,
+                  })]);
+                } finally {
+                  unlistenComplete();
+                  unlistenError?.();
+                }
+              });
+            } catch (error) {
+              console.error('Automatic file transcription failed:', error);
+              toast.error('Mødet er gemt, men lyden kunne ikke transskriberes', {
+                description: error instanceof Error ? error.message : String(error),
+              });
+            }
+          }
+
           let shouldDetectSummaryLanguage = false;
           try {
             shouldDetectSummaryLanguage = !(await applyPinnedSummaryLanguageToMeeting(meetingId));
@@ -329,7 +368,6 @@ export function useRecordingStop(
               label: 'Åbn mødet',
               onClick: () => {
                 router.push(`/meeting-details?id=${meetingId}`);
-                Analytics.trackButtonClick('view_meeting_from_toast', 'recording_complete');
               }
             },
             duration: 10000,
@@ -339,61 +377,10 @@ export function useRecordingStop(
           setTimeout(() => {
             router.push(`/meeting-details?id=${meetingId}&source=recording`);
             clearTranscripts()
-            Analytics.trackPageView('meeting_details');
 
             // Reset to IDLE after navigation
             setStatus(RecordingStatus.IDLE);
           }, 2000);
-          // Track meeting completion analytics
-          try {
-            // Calculate meeting duration from transcript timestamps
-            let durationSeconds = 0;
-            if (freshTranscripts.length > 0 && freshTranscripts[0].audio_start_time !== undefined) {
-              // Use audio_end_time of last transcript if available
-              const lastTranscript = freshTranscripts[freshTranscripts.length - 1];
-              durationSeconds = lastTranscript.audio_end_time || lastTranscript.audio_start_time || 0;
-            }
-
-            // Calculate word count
-            const transcriptWordCount = freshTranscripts
-              .map(t => t.text.split(/\s+/).length)
-              .reduce((a, b) => a + b, 0);
-
-            // Calculate words per minute
-            const wordsPerMinute = durationSeconds > 0 ? transcriptWordCount / (durationSeconds / 60) : 0;
-
-            // Get meetings count today
-            const meetingsToday = await Analytics.getMeetingsCountToday();
-
-            // Track meeting completed
-            await Analytics.trackMeetingCompleted(meetingId, {
-              duration_seconds: durationSeconds,
-              transcript_segments: freshTranscripts.length,
-              transcript_word_count: transcriptWordCount,
-              words_per_minute: wordsPerMinute,
-              meetings_today: meetingsToday
-            });
-
-            // Update meeting count in analytics.json
-            await Analytics.updateMeetingCount();
-
-            // Check for activation (first meeting)
-            const { Store } = await import('@tauri-apps/plugin-store');
-            const store = await Store.load('analytics.json');
-            const totalMeetings = await store.get<number>('total_meetings');
-
-            if (totalMeetings === 1) {
-              const daysSinceInstall = await Analytics.calculateDaysSince('first_launch_date');
-              await Analytics.track('user_activated', {
-                meetings_count: '1',
-                days_since_install: daysSinceInstall?.toString() || 'null',
-                first_meeting_duration_seconds: durationSeconds.toString()
-              });
-            }
-          } catch (analyticsError) {
-            console.error('Failed to track meeting completion analytics:', analyticsError);
-            // Don't block user flow on analytics errors
-          }
 
         } catch (saveError) {
           console.error('Failed to save meeting to database:', saveError);
@@ -435,6 +422,8 @@ export function useRecordingStop(
     meetings,
     setIsMeetingActive,
     router,
+    transcriptModelConfig,
+    selectedLanguage,
   ]);
 
   // Expose handleRecordingStop function to window for Rust callbacks

@@ -1,0 +1,74 @@
+name: WER regression
+
+on:
+  push:
+    paths:
+      - 'crates/tingskriver-core/**'
+      - 'testsaet/dansk-wer/**'
+      - 'scripts/*wer*'
+      - 'docs/wer.md'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/wer.yml'
+  pull_request:
+    paths:
+      - 'crates/tingskriver-core/**'
+      - 'testsaet/dansk-wer/**'
+      - 'scripts/*wer*'
+      - 'docs/wer.md'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/wer.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch supersedes a running or queued older run
+# (33 runs were queued at once on 5/11-26). main keeps every run. The event
+# is part of the group so the push run of the newest commit is never
+# cancelled by its pull request run.
+concurrency:
+  group: wer-${{ github.event_name }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: ${{ github.ref_name != 'main' }}
+
+env:
+  CARGO_TARGET_DIR: /home/runner/wer-target
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  fixture:
+    name: WER unit tests and positive control (no speech models)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: System libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libasound2-dev cmake clang
+      - uses: swatinem/rust-cache@v2
+        with:
+          cache-bin: 'false'
+          prefix-key: wer-linux-v1
+      - name: WER unit tests
+        run: cargo test --locked -p tingskriver-core --lib 'wer::'
+      - name: Gate tests (including exactly 1.0 and 1.1 percentage points)
+        run: python3 scripts/test-wer-gate.py
+      - name: Fixture evaluation and required regression rejection
+        run: bash scripts/wer-fixture-check.sh "$RUNNER_TEMP/wer"
+      - name: Publish numeric summary
+        if: always()
+        shell: bash
+        run: |
+          for report in "$RUNNER_TEMP/wer/good.md" "$RUNNER_TEMP/wer/bad.md"; do
+            if [ -f "$report" ]; then cat "$report" >> "$GITHUB_STEP_SUMMARY"; fi
+          done
+      - name: Upload per-clip reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wer-fixture-reports
+          path: ${{ runner.temp }}/wer/
+          if-no-files-found: warn

@@ -33,6 +33,7 @@ pub fn from_core(state: OverlayState) -> PillState {
         OverlayState::Processing => PillState::Processing,
         // Core logs the reason and shows it in the app; the pill keeps it short.
         OverlayState::Error => PillState::Error(String::new()),
+        OverlayState::Refused(reason) => PillState::Error(reason.to_string()),
         OverlayState::Hidden => PillState::Idle,
     }
 }
@@ -55,6 +56,10 @@ mod tests {
         );
         assert_eq!(from_core(OverlayState::Processing), PillState::Processing);
         assert_eq!(from_core(OverlayState::Hidden), PillState::Idle);
+        assert_eq!(
+            from_core(OverlayState::Refused("Ikke i adgangskodefelt")).look().unwrap().label,
+            "Ikke i adgangskodefelt"
+        );
         let error = from_core(OverlayState::Error);
         assert_eq!(error.look().unwrap().label, "Kunne ikke skrive");
     }

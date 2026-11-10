@@ -1,0 +1,365 @@
+use super::*;
+use crate::audio::track_writer::write_wav_header;
+use std::io::{Seek, SeekFrom, Write};
+use std::path::PathBuf;
+
+fn fixture(root: &Path, id: &str, truncated: bool) -> PathBuf {
+    let folder = root.join(id);
+    let raw = folder.join(RAW_DIR);
+    std::fs::create_dir_all(&raw).unwrap();
+    let mut f = std::fs::File::create(raw.join("microphone_000.wav")).unwrap();
+    write_wav_header(&mut f, 48000, 96000 * 3).unwrap();
+    f.seek(SeekFrom::Start(44)).unwrap();
+    f.write_all(&vec![0; if truncated { 96000 * 2 + 1 } else { 96000 * 3 }])
+        .unwrap();
+    folder
+}
+
+#[test]
+fn scan_finds_audio_without_ui_state_and_ignores_empty_and_finished() {
+    let root = tempfile::tempdir().unwrap();
+    fixture(root.path(), "complete", false);
+    fixture(root.path(), "truncated", true);
+    std::fs::create_dir_all(root.path().join("empty").join(RAW_DIR)).unwrap();
+    let header_only = fixture(root.path(), "header-only", false);
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(header_only.join(RAW_DIR).join("microphone_000.wav"))
+        .unwrap()
+        .set_len(44)
+        .unwrap();
+    let finished = fixture(root.path(), "finished", false);
+    std::fs::write(finished.join(MIXED_FILE), b"finished").unwrap();
+    let found = scan(root.path()).unwrap();
+    assert_eq!(found.len(), 2);
+    assert_eq!(found[0].id, "complete");
+    assert_eq!(found[0].duration_seconds, 3.0);
+    assert_eq!(found[1].duration_seconds, 2.0);
+    assert_eq!(found[0].tracks, vec![TrackKind::Microphone]);
+    assert!(found[0].last_written > 0);
+    scan_at_startup(root.path());
+    assert_eq!(
+        startup_recordings()
+            .iter()
+            .map(|r| &r.id)
+            .collect::<Vec<_>>(),
+        found.iter().map(|r| &r.id).collect::<Vec<_>>()
+    );
+}
+
+#[tokio::test]
+async fn restore_verifies_audio_and_registers_meeting_idempotently() {
+    let Some(ffmpeg) = crate::audio::ffmpeg::find_ffmpeg_path() else {
+        return;
+    };
+    let root = tempfile::tempdir().unwrap();
+    let folder = fixture(root.path(), "crashed", true);
+    let raw_file = folder.join(RAW_DIR).join("microphone_000.wav");
+    let original = std::fs::read(&raw_file).unwrap();
+    let db_dir = tempfile::tempdir().unwrap();
+    let db = crate::database::manager::DatabaseManager::open(db_dir.path())
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO meetings (id, title, created_at, updated_at, folder_path) VALUES ('existing', 'Fixture', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?)")
+        .bind(root.path().join(".").join("crashed").to_string_lossy().as_ref())
+        .execute(db.pool()).await.unwrap();
+    let result = restore(root.path(), "crashed", db.pool(), Some(&ffmpeg))
+        .await
+        .unwrap();
+    assert_eq!(result.meeting_id, "existing");
+    assert_eq!(result.audio.status, AudioSaveStatus::Partial);
+    assert!(result.audio.audio_file.is_some());
+    assert!(
+        (crate::audio::finalize::decoded_duration_seconds(&folder.join(MIXED_FILE)).unwrap() - 2.0)
+            .abs()
+            < 0.2
+    );
+    assert!(
+        folder.join(RAW_DIR).exists(),
+        "truncated originals must stay"
+    );
+    let again = restore(root.path(), "crashed", db.pool(), Some(&ffmpeg))
+        .await
+        .unwrap();
+    assert_eq!(result.meeting_id, again.meeting_id);
+    assert_eq!(again.audio.status, AudioSaveStatus::Partial);
+    assert_eq!(std::fs::read(raw_file).unwrap(), original);
+    let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM meetings")
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(count, 1);
+    assert!(restore(root.path(), "../escape", db.pool(), Some(&ffmpeg))
+        .await
+        .is_err());
+}
+
+#[tokio::test]
+async fn failed_database_save_remains_discoverable_after_encoding() {
+    let Some(ffmpeg) = crate::audio::ffmpeg::find_ffmpeg_path() else {
+        return;
+    };
+    let root = tempfile::tempdir().unwrap();
+    let folder = fixture(root.path(), "db-failure", false);
+    let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+    // SELECT succeeds, but INSERT fails, simulating unavailable storage.
+    sqlx::query("CREATE TABLE meetings (id TEXT, folder_path TEXT)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(restore(root.path(), "db-failure", &pool, Some(&ffmpeg))
+        .await
+        .is_err());
+    assert!(folder.join(MIXED_FILE).exists());
+    assert_eq!(scan(root.path()).unwrap().len(), 1);
+    assert!(folder.join(RAW_DIR).exists());
+}
+
+#[tokio::test]
+async fn failed_encoding_keeps_originals_and_does_not_register_meeting() {
+    let root = tempfile::tempdir().unwrap();
+    let folder = fixture(root.path(), "encode-failure", true);
+    let raw_file = folder.join(RAW_DIR).join("microphone_000.wav");
+    let original = std::fs::read(&raw_file).unwrap();
+    let db_dir = tempfile::tempdir().unwrap();
+    let db = crate::database::manager::DatabaseManager::open(db_dir.path())
+        .await
+        .unwrap();
+    let missing_ffmpeg = root.path().join("missing-ffmpeg");
+    let error = restore(
+        root.path(),
+        "encode-failure",
+        db.pool(),
+        Some(&missing_ffmpeg),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        error.to_string().contains("Could not start FFmpeg"),
+        "{error}"
+    );
+    assert_eq!(std::fs::read(raw_file).unwrap(), original);
+    assert_eq!(scan(root.path()).unwrap().len(), 1);
+    let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM meetings")
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+}
+
+#[tokio::test]
+async fn complete_restore_and_empty_folder() {
+    let Some(ffmpeg) = crate::audio::ffmpeg::find_ffmpeg_path() else {
+        return;
+    };
+    let root = tempfile::tempdir().unwrap();
+    let folder = fixture(root.path(), "complete", false);
+    let db_dir = tempfile::tempdir().unwrap();
+    let db = crate::database::manager::DatabaseManager::open(db_dir.path())
+        .await
+        .unwrap();
+    let restore_root = root.path().join(".");
+    let restored = restore(&restore_root, "complete", db.pool(), Some(&ffmpeg))
+        .await
+        .unwrap();
+    assert_eq!(restored.audio.status, AudioSaveStatus::Ok);
+    let (saved,): (String,) = sqlx::query_as("SELECT folder_path FROM meetings WHERE id = ?")
+        .bind(&restored.meeting_id)
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(saved, restore_root.join("complete").to_string_lossy());
+    assert!(scan(root.path()).unwrap().is_empty());
+    assert!(
+        (crate::audio::finalize::decoded_duration_seconds(&folder.join(MIXED_FILE)).unwrap() - 3.0)
+            .abs()
+            < 0.2
+    );
+    std::fs::create_dir_all(root.path().join("empty").join(RAW_DIR)).unwrap();
+    assert!(restore(root.path(), "empty", db.pool(), Some(&ffmpeg))
+        .await
+        .is_err());
+    let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM meetings")
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(count, 1);
+}
+
+#[test]
+fn crash_writer_child() {
+    let Some(root) = std::env::var_os("TINGSKRIVER_RECOVERY_CRASH_FIXTURE") else {
+        return;
+    };
+    use crate::audio::recording_writer::{spawn_writer, LogObserver};
+    let root = PathBuf::from(root);
+    std::fs::create_dir_all(root.join("killed").join(RAW_DIR)).unwrap();
+    let (sender, _handle) = spawn_writer(
+        root.join("killed").join(RAW_DIR),
+        48000,
+        std::sync::Arc::new(LogObserver),
+    )
+    .unwrap();
+    for n in 1..=100 {
+        for kind in TrackKind::ALL {
+            sender
+                .send(kind, vec![0.1; 4800], Some(n as f64 / 10.0))
+                .unwrap();
+        }
+        if n == 30 {
+            std::fs::write(root.join("ready"), b"3.0").unwrap();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    panic!("parent did not terminate crash fixture");
+}
+
+#[tokio::test]
+async fn killed_writer_recovers_both_tracks_without_ui_storage() {
+    let Some(ffmpeg) = crate::audio::ffmpeg::find_ffmpeg_path() else {
+        return;
+    };
+    use std::process::{Command, Stdio};
+    let root = tempfile::tempdir().unwrap();
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "recover::tests::crash_writer_child",
+            "--nocapture",
+        ])
+        .env("TINGSKRIVER_RECOVERY_CRASH_FIXTURE", root.path())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    while !root.path().join("ready").exists() && std::time::Instant::now() < deadline {
+        if child.try_wait().unwrap().is_some() {
+            panic!("crash fixture exited before ready");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    child.kill().unwrap();
+    child.wait().unwrap();
+    assert!(
+        root.path().join("ready").exists(),
+        "writer startup timed out"
+    );
+    let found = scan(root.path()).unwrap();
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].tracks, TrackKind::ALL);
+    assert!(
+        found[0].duration_seconds >= 1.0,
+        "more than 2 seconds lost: {:?}",
+        found[0]
+    );
+    // A fresh database substitutes for cleared/absent UI storage.
+    let db_dir = tempfile::tempdir().unwrap();
+    let db = crate::database::manager::DatabaseManager::open(db_dir.path())
+        .await
+        .unwrap();
+    let restored = restore(root.path(), &found[0].id, db.pool(), Some(&ffmpeg))
+        .await
+        .unwrap();
+    let duration = crate::audio::finalize::decoded_duration_seconds(
+        restored.audio.audio_file.as_ref().unwrap(),
+    )
+    .unwrap();
+    assert!((duration - found[0].duration_seconds).abs() < 0.2);
+    assert!(duration >= 1.0, "more than 2 seconds lost after restore");
+}
+
+#[tokio::test]
+async fn recovery_uses_configured_transcription_provider_and_model() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = crate::database::manager::DatabaseManager::open(dir.path())
+        .await
+        .unwrap();
+    for provider in ["parakeet", "localWhisper"] {
+        crate::database::repositories::setting::SettingsRepository::save_transcript_config(
+            db.pool(),
+            provider,
+            "fixture-model",
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            transcription_settings(db.pool()).await.unwrap(),
+            (
+                Some(provider.to_string()),
+                Some("fixture-model".to_string())
+            )
+        );
+    }
+    sqlx::query("DELETE FROM transcript_settings")
+        .execute(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        transcription_settings(db.pool()).await.unwrap(),
+        (None, None)
+    );
+}
+
+#[tokio::test]
+async fn restore_and_transcribe_passes_parakeet_settings_to_transcription() {
+    let Some(_) = crate::audio::ffmpeg::find_ffmpeg_path() else {
+        return;
+    };
+    let root = tempfile::tempdir().unwrap();
+    let folder = fixture(root.path(), "parakeet", false);
+    let db_dir = tempfile::tempdir().unwrap();
+    let db = crate::database::manager::DatabaseManager::open(db_dir.path())
+        .await
+        .unwrap();
+    crate::database::repositories::setting::SettingsRepository::save_transcript_config(
+        db.pool(),
+        "parakeet",
+        "fixture-parakeet",
+    )
+    .await
+    .unwrap();
+    let restored = restore_and_transcribe_with(
+        root.path(),
+        "parakeet",
+        db.pool(),
+        |meeting_id, audio_folder, model, provider| async move {
+            assert_eq!(meeting_id, "recovered-parakeet");
+            assert_eq!(Path::new(&audio_folder), folder);
+            assert!(Path::new(&audio_folder).join(MIXED_FILE).is_file());
+            assert_eq!(model.as_deref(), Some("fixture-parakeet"));
+            assert_eq!(provider.as_deref(), Some("parakeet"));
+            Ok(())
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(restored.meeting_id, "recovered-parakeet");
+}
+
+#[test]
+fn scan_ignores_live_writer_until_it_stops() {
+    use crate::audio::recording_writer::{spawn_writer, LogObserver};
+    let root = tempfile::tempdir().unwrap();
+    let folder = root.path().join(".").join("live");
+    let (sender, handle) = spawn_writer(
+        folder.join(RAW_DIR),
+        48000,
+        std::sync::Arc::new(LogObserver),
+    )
+    .unwrap();
+    fixture(root.path(), "live", false);
+    assert!(scan(root.path()).unwrap().is_empty());
+    drop(sender);
+    handle.join().unwrap();
+    assert_eq!(scan(root.path()).unwrap().len(), 1);
+}
+
+#[test]
+fn scan_continues_after_unreadable_directory_entry() {
+    let root = tempfile::tempdir().unwrap();
+    fixture(root.path(), "readable", false);
+    let entries = std::iter::once(Err(std::io::Error::other("unreadable entry")))
+        .chain(std::fs::read_dir(root.path()).unwrap());
+    assert_eq!(scan_entries(entries).unwrap()[0].id, "readable");
+}

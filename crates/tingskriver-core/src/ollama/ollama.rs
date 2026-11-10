@@ -3,7 +3,6 @@ use std::sync::Arc;
 use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 use crate::host::{HostExt, HostHandle};
-use reqwest::Client;
 use tokio::time::{timeout, Duration, sleep};
 use tokio::sync::RwLock;
 use futures_util::StreamExt;
@@ -116,9 +115,10 @@ pub async fn get_ollama_models(endpoint: Option<String>) -> Result<Vec<OllamaMod
         Ok(Err(http_err)) => {
             // Only fallback to CLI if endpoint is localhost/empty
             if is_localhost_endpoint(endpoint.as_deref()) {
-                get_models_via_cli().map_err(|cli_err| {
-                    format!("{}\n\nAlso tried CLI: {}", http_err, cli_err)
-                })
+                tokio::task::spawn_blocking(get_models_via_cli)
+                    .await
+                    .map_err(|e| format!("Ollama discovery task failed: {e}"))?
+                    .map_err(|cli_err| format!("{}\n\nAlso tried CLI: {}", http_err, cli_err))
             } else {
                 Err(http_err)
             }
@@ -158,7 +158,7 @@ async fn get_models_via_http_with_retry(endpoint: Option<&str>) -> Result<Vec<Ol
 }
 
 async fn get_models_via_http_async(endpoint: Option<&str>) -> Result<Vec<OllamaModel>, String> {
-    let client = Client::new();
+    let client = crate::http::client();
     let base_url = endpoint.unwrap_or("http://localhost:11434");
     let url = format!("{}/api/tags", base_url);
 
@@ -276,7 +276,7 @@ pub async fn pull_ollama_model(
         log::info!("Started download tracking for model: {}", model_name);
     }
 
-    let client = Client::new();
+    let client = crate::http::client();
     let base_url = endpoint.as_deref().unwrap_or("http://localhost:11434");
     let url = format!("{}/api/pull", base_url);
 
@@ -288,7 +288,7 @@ pub async fn pull_ollama_model(
     let response = client
         .post(&url)
         .json(&payload)
-        .timeout(Duration::from_secs(600)) // 10 minutes timeout for pulling
+        .timeout(crate::http::TIMEOUT)
         .send()
         .await
         .map_err(|e| {
@@ -434,7 +434,7 @@ pub async fn delete_ollama_model(
     model_name: String,
     endpoint: Option<String>,
 ) -> Result<(), String> {
-    let client = Client::new();
+    let client = crate::http::client();
     let base_url = endpoint.as_deref().unwrap_or("http://localhost:11434");
     let url = format!("{}/api/delete", base_url);
 
@@ -447,7 +447,7 @@ pub async fn delete_ollama_model(
     let response = client
         .delete(&url)
         .json(&payload)
-        .timeout(Duration::from_secs(30))
+        .timeout(crate::http::TIMEOUT)
         .send()
         .await
         .map_err(|e| {

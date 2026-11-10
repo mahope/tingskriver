@@ -1,4 +1,3 @@
-use crate::parakeet_engine::model::ParakeetModel;
 use crate::parakeet_engine::pool::{self, BoxedModel, ModelPool};
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
@@ -277,6 +276,7 @@ pub struct ParakeetEngine {
 
 impl ParakeetEngine {
     /// Create a new Parakeet engine with optional custom models directory
+    #[allow(clippy::disallowed_methods)]
     pub fn new_with_models_dir(models_dir: Option<PathBuf>) -> Result<Self> {
         let models_dir = if let Some(dir) = models_dir {
             dir.join("parakeet") // Parakeet models in subdirectory
@@ -344,17 +344,24 @@ impl ParakeetEngine {
             for spec in specs {
                 let model_path = self.models_dir.join(spec.name);
                 let status = if model_path.exists() {
-                    match Self::validate_model_directory(&model_path, spec.artifacts) {
+                    let validation_path = model_path.clone();
+                    let artifacts = spec.artifacts;
+                    match tokio::task::spawn_blocking(move || {
+                        Self::validate_model_directory(&validation_path, artifacts)
+                    })
+                    .await
+                    .map_err(|e| anyhow!("Model validation task failed: {e}"))?
+                    {
                         Ok(()) => ModelStatus::Available,
                         Err(error) => {
-                            let file_size = spec
-                                .artifacts
-                                .iter()
-                                .filter_map(|artifact| {
-                                    std::fs::metadata(model_path.join(artifact.filename)).ok()
-                                })
-                                .map(|metadata| metadata.len())
-                                .sum();
+                            let mut file_size = 0;
+                            for artifact in spec.artifacts {
+                                if let Ok(metadata) =
+                                    tokio::fs::metadata(model_path.join(artifact.filename)).await
+                                {
+                                    file_size += metadata.len();
+                                }
+                            }
                             validation_errors.push((spec.name, error));
                             ModelStatus::Corrupted {
                                 file_size,
@@ -412,6 +419,7 @@ impl ParakeetEngine {
         }
     }
 
+    #[allow(clippy::disallowed_methods)]
     fn validate_model_directory(model_dir: &Path, artifacts: &[ArtifactSpec]) -> Result<()> {
         for artifact in artifacts {
             let path = model_dir.join(artifact.filename);
@@ -472,7 +480,7 @@ impl ParakeetEngine {
                         hook.load_started.notify_one();
                         runtime_handle.block_on(hook.continue_load.notified());
                     }
-                    ParakeetModel::new(&model_path, quantized)
+                    crate::stt::RemoteModel::load(&model_path, quantized)
                         .map(|model| Box::new(model) as BoxedModel)
                         .map_err(|error| error.to_string())
                 })
@@ -490,7 +498,7 @@ impl ParakeetEngine {
 
                 let loader_path = model_info.path.clone();
                 let loader: pool::Loader = Box::new(move || {
-                    ParakeetModel::new(&loader_path, quantized)
+                    crate::stt::RemoteModel::load(&loader_path, quantized)
                         .map(|model| Box::new(model) as BoxedModel)
                         .map_err(|error| error.to_string())
                 });
@@ -574,9 +582,24 @@ impl ParakeetEngine {
             .map_err(|e| anyhow!("Parakeet transcription task failed: {}", e))?
             .map_err(|e| anyhow!("Parakeet transcription failed: {}", e))?;
 
-        log::debug!("Parakeet transcription result: '{}'", text);
+        log::debug!("Parakeet transcription result: {} bytes", text.len());
 
         Ok(text)
+    }
+
+    pub async fn transcribe_audio_timed(
+        &self,
+        audio_data: Vec<f32>,
+    ) -> Result<Vec<crate::stt::TimedWord>> {
+        let pool = self
+            .current_model
+            .read()
+            .await
+            .clone()
+            .ok_or_else(|| anyhow!("No Parakeet model loaded"))?;
+        tokio::task::spawn_blocking(move || pool.transcribe_timed(audio_data))
+            .await?
+            .map_err(anyhow::Error::msg)
     }
 
     /// When the loaded model last finished a call, and how many calls run now.
@@ -901,8 +924,8 @@ impl ParakeetEngine {
         let client = reqwest::Client::builder()
             .tcp_nodelay(true)
             .pool_max_idle_per_host(1)
-            .timeout(Duration::from_secs(3600))
-            .connect_timeout(Duration::from_secs(30))
+            .timeout(crate::http::TIMEOUT)
+            .connect_timeout(crate::http::TIMEOUT)
             .build()
             .map_err(|error| anyhow!("Failed to create HTTP client: {}", error))?;
         let total_bytes: u64 = artifacts.iter().map(|artifact| artifact.exact_bytes).sum();
@@ -1039,7 +1062,7 @@ impl ParakeetEngine {
                         })?;
                         return Err(DownloadCancelled.into());
                     }
-                    chunk = timeout(Duration::from_secs(30), stream.next()) => chunk,
+                    chunk = timeout(crate::http::TIMEOUT, stream.next()) => chunk,
                 };
                 let chunk = match next_chunk {
                     Err(_) => {
@@ -1047,7 +1070,7 @@ impl ParakeetEngine {
                             anyhow!("Failed to preserve {} after timeout: {}", artifact.filename, error)
                         })?;
                         return Err(anyhow!(
-                            "Download timeout for {}: no data received for 30 seconds",
+                            "Download timeout for {}: no data received for 10 seconds",
                             artifact.filename
                         ));
                     }
@@ -1266,6 +1289,7 @@ impl ParakeetEngine {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
     use crossbeam::queue::SegQueue;

@@ -1,6 +1,6 @@
 use crate::api::TranscriptSegment;
 use anyhow::Result;
-use log::{debug, info};
+use log::info;
 use once_cell::sync::Lazy;
 use std::path::Path;
 use std::sync::Arc;
@@ -9,6 +9,39 @@ use uuid::Uuid;
 
 static ENGINE_LIFECYCLE_LOCK: Lazy<Arc<AsyncMutex<()>>> =
     Lazy::new(|| Arc::new(AsyncMutex::new(())));
+
+#[cfg(test)]
+pub(crate) fn assert_uses_blocking_pool<F: std::future::Future>(future: F) -> F::Output {
+    use std::task::Poll;
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .max_blocking_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    let (release, wait) = std::sync::mpsc::channel();
+    let (started, ready) = std::sync::mpsc::channel();
+    let blocker = runtime.spawn_blocking(move || {
+        started.send(()).unwrap();
+        wait.recv().unwrap();
+    });
+    ready.recv().unwrap();
+    runtime.block_on(async {
+        let mut future = std::pin::pin!(future);
+        let pending = std::future::poll_fn(|cx| {
+            Poll::Ready(matches!(future.as_mut().poll(cx), Poll::Pending))
+        })
+        .await;
+        release.send(()).unwrap();
+        assert!(
+            pending,
+            "disk operation completed outside the blocking pool"
+        );
+        let result = future.await;
+        blocker.await.unwrap();
+        result
+    })
+}
 
 pub(crate) async fn acquire_engine_lifecycle_lock() -> OwnedMutexGuard<()> {
     ENGINE_LIFECYCLE_LOCK.clone().lock_owned().await
@@ -47,7 +80,7 @@ pub(crate) async fn unload_engine_after_batch(use_parakeet: bool) {
 }
 
 /// Create transcript segments from transcription results.
-/// Each tuple is (text, start_ms, end_ms) from VAD timestamps.
+/// Each tuple is (text, start_ms, end_ms) on the original audio clock.
 pub(crate) fn create_transcript_segments(transcripts: &[(String, f64, f64)]) -> Vec<TranscriptSegment> {
     transcripts
         .iter()
@@ -69,149 +102,98 @@ pub(crate) fn create_transcript_segments(transcripts: &[(String, f64, f64)]) -> 
 }
 
 /// Write transcripts.json to a meeting folder (atomic write with temp file)
-pub(crate) fn write_transcripts_json(folder: &Path, segments: &[TranscriptSegment]) -> Result<()> {
-    let transcript_path = folder.join("transcripts.json");
-    let temp_path = folder.join(".transcripts.json.tmp");
+pub(crate) async fn write_transcripts_json(
+    folder: &Path,
+    segments: Vec<TranscriptSegment>,
+) -> Result<()> {
+    let folder = folder.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        #[allow(clippy::disallowed_methods)]
+        fn blocking(folder: &Path, segments: &[TranscriptSegment]) -> Result<()> {
+            let transcript_path = folder.join("transcripts.json");
+            let temp_path = folder.join(".transcripts.json.tmp");
 
-    let json = serde_json::json!({
-        "version": "1.0",
-        "last_updated": chrono::Utc::now().to_rfc3339(),
-        "total_segments": segments.len(),
-        "segments": segments.iter().enumerate().map(|(i, s)| {
-            serde_json::json!({
-                "id": s.id,
-                "text": s.text,
-                "timestamp": s.timestamp,
-                "audio_start_time": s.audio_start_time,
-                "audio_end_time": s.audio_end_time,
-                "duration": s.duration,
-                "sequence_id": i
-            })
-        }).collect::<Vec<_>>()
-    });
+            let json = serde_json::json!({
+                "version": "1.0",
+                "last_updated": chrono::Utc::now().to_rfc3339(),
+                "total_segments": segments.len(),
+                "segments": segments.iter().enumerate().map(|(i, s)| {
+                    serde_json::json!({
+                        "id": s.id,
+                        "text": s.text,
+                        "timestamp": s.timestamp,
+                        "audio_start_time": s.audio_start_time,
+                        "audio_end_time": s.audio_end_time,
+                        "duration": s.duration,
+                        "sequence_id": i
+                    })
+                }).collect::<Vec<_>>()
+            });
 
-    let json_string = serde_json::to_string_pretty(&json)?;
-    std::fs::write(&temp_path, &json_string)?;
-    std::fs::rename(&temp_path, &transcript_path)?;
+            let json_string = serde_json::to_string_pretty(&json)?;
+            std::fs::write(&temp_path, &json_string)?;
+            std::fs::rename(&temp_path, &transcript_path)?;
 
-    info!(
-        "Wrote transcripts.json with {} segments to {}",
-        segments.len(),
-        transcript_path.display()
-    );
-    Ok(())
+            info!(
+                "Wrote transcripts.json with {} segments to {}",
+                segments.len(),
+                transcript_path.display()
+            );
+            Ok(())
+        }
+        blocking(&folder, &segments)
+    })
+    .await?
 }
 
-/// Split a long speech segment at the lowest-energy (silence) point near the target size.
-///
-/// Scans for 100ms windows with minimal RMS energy within +/-3 seconds of each target
-/// split point. If no clear silence is found, falls back to a 1-second overlap split
-/// to avoid cutting words at boundaries.
+/// Split near quiet windows, retaining one second of shared boundary context.
+/// `max_samples` is a hard provider limit, including overlap.
 pub(crate) fn split_segment_at_silence(
     segment: &crate::audio::vad::SpeechSegment,
     max_samples: usize,
 ) -> Vec<crate::audio::vad::SpeechSegment> {
-    const SAMPLE_RATE: usize = 16000;
-    // 100ms window for energy measurement (1600 samples at 16kHz)
-    const ENERGY_WINDOW: usize = SAMPLE_RATE / 10;
-    // Search +/-3 seconds around the target split point
-    const SEARCH_RADIUS: usize = SAMPLE_RATE * 3;
-    // RMS threshold below which we consider a window "silent"
-    const SILENCE_RMS_THRESHOLD: f32 = 0.02;
-    // Overlap to use when no silence boundary is found (1 second)
-    const FALLBACK_OVERLAP: usize = SAMPLE_RATE;
-
+    const RATE: usize = 16000;
+    const WINDOW: usize = RATE / 10;
+    assert!(max_samples > RATE, "chunk limit must exceed the overlap");
     let total = segment.samples.len();
     if total <= max_samples {
         return vec![segment.clone()];
     }
-
-    let ms_per_sample = (segment.end_timestamp_ms - segment.start_timestamp_ms)
-        / segment.samples.len() as f64;
+    let ms_per_sample = (segment.end_timestamp_ms - segment.start_timestamp_ms) / total as f64;
     let mut result = Vec::new();
-    let mut pos = 0usize;
-
+    let mut pos = 0;
     while pos < total {
-        let remaining = total - pos;
-        if remaining <= max_samples {
-            // Last chunk - take everything remaining
-            let chunk_samples = segment.samples[pos..].to_vec();
-            let chunk_start_ms = segment.start_timestamp_ms + (pos as f64 * ms_per_sample);
-            let chunk_end_ms = segment.end_timestamp_ms;
-            result.push(crate::audio::vad::SpeechSegment {
-                samples: chunk_samples,
-                start_timestamp_ms: chunk_start_ms,
-                end_timestamp_ms: chunk_end_ms,
-                confidence: segment.confidence,
-            });
-            break;
-        }
-
-        // Target split point
-        let target = pos + max_samples;
-
-        // Search window: [target - SEARCH_RADIUS, target + SEARCH_RADIUS]
-        let search_start = target.saturating_sub(SEARCH_RADIUS).max(pos + SAMPLE_RATE);
-        let search_end = (target + SEARCH_RADIUS).min(total.saturating_sub(ENERGY_WINDOW));
-
-        // Find the lowest-energy 100ms window in the search range
-        let mut best_split = target.min(total); // fallback: exact target
-        let mut best_rms = f32::MAX;
-
-        if search_start + ENERGY_WINDOW <= search_end {
-            let mut idx = search_start;
-            while idx + ENERGY_WINDOW <= search_end {
-                let window = &segment.samples[idx..idx + ENERGY_WINDOW];
-                let rms = (window.iter().map(|s| s * s).sum::<f32>() / ENERGY_WINDOW as f32).sqrt();
-                if rms < best_rms {
-                    best_rms = rms;
-                    best_split = idx + ENERGY_WINDOW / 2; // split at center of quiet window
+        let limit = (pos + max_samples).min(total);
+        let mut end = limit;
+        if limit < total {
+            // Search before the limit so context never exceeds the provider budget.
+            let search_start = limit.saturating_sub(3 * RATE).max(pos + RATE + WINDOW);
+            let mut best_energy = 0.02f64.powi(2);
+            for start in (search_start..limit.saturating_sub(WINDOW)).step_by(RATE / 100) {
+                let energy = segment.samples[start..start + WINDOW].iter()
+                    .map(|s| f64::from(*s).powi(2)).sum::<f64>() / WINDOW as f64;
+                if energy < best_energy {
+                    best_energy = energy;
+                    end = start + WINDOW / 2;
                 }
-                // Step by 10ms (160 samples) for efficiency
-                idx += SAMPLE_RATE / 100;
             }
         }
-
-        let split_at = best_split;
-        if best_rms <= SILENCE_RMS_THRESHOLD {
-            debug!(
-                "Splitting at silence boundary: sample {} (RMS={:.4})",
-                split_at, best_rms
-            );
-        } else {
-            debug!(
-                "No silence found near target (best RMS={:.4}), splitting with overlap at sample {}",
-                best_rms, split_at
-            );
-        }
-
-        // Determine the actual end of this chunk (with overlap if no silence)
-        let chunk_end = if best_rms > SILENCE_RMS_THRESHOLD {
-            (split_at + FALLBACK_OVERLAP).min(total)
-        } else {
-            split_at
-        };
-
-        let chunk_samples = segment.samples[pos..chunk_end].to_vec();
-        let chunk_start_ms = segment.start_timestamp_ms + (pos as f64 * ms_per_sample);
-        let chunk_end_ms = segment.start_timestamp_ms + (chunk_end as f64 * ms_per_sample);
-
         result.push(crate::audio::vad::SpeechSegment {
-            samples: chunk_samples,
-            start_timestamp_ms: chunk_start_ms,
-            end_timestamp_ms: chunk_end_ms,
+            samples: segment.samples[pos..end].to_vec(),
+            start_timestamp_ms: segment.start_timestamp_ms + pos as f64 * ms_per_sample,
+            end_timestamp_ms: segment.start_timestamp_ms + end as f64 * ms_per_sample,
             confidence: segment.confidence,
         });
-
-        // Advance position to where the current chunk actually ends
-        // to avoid transcribing the overlap region twice
-        pos = chunk_end;
+        if end == total {
+            break;
+        }
+        pos = end - RATE;
     }
-
     result
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
 

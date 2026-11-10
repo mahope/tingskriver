@@ -7,7 +7,6 @@
 
 use std::time::{Duration, Instant};
 
-use once_cell::sync::Lazy;
 use reqwest::multipart::{Form, Part};
 use reqwest::{RequestBuilder, Response, StatusCode};
 use serde::{Deserialize, Serialize};
@@ -39,6 +38,7 @@ impl ResolvedLink {
     pub fn remote_timeout(&self) -> Duration {
         self.timeout
             .unwrap_or_else(|| self.function.default_remote_timeout())
+            .min(crate::http::TIMEOUT)
     }
 
     /// The limit the chain enforces around the whole attempt.
@@ -67,18 +67,7 @@ impl ResolvedLink {
 
 /// Shared HTTP client (connection pool) for all providers.
 pub fn http_client() -> reqwest::Client {
-    static CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
-        reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(10))
-            .build()
-            .unwrap_or_else(|e| {
-                log::warn!(
-                    "Provider HTTP client with connect timeout failed ({e}); using defaults"
-                );
-                reqwest::Client::new()
-            })
-    });
-    CLIENT.clone()
+    crate::http::client()
 }
 
 #[derive(Clone, Debug, Default)]
@@ -91,6 +80,8 @@ pub struct TranscriptionRequest {
     pub prompt: Option<String>,
     /// Ask for speaker labels. Only sent to providers with diarization.
     pub diarize: bool,
+    /// Request segment timestamps independently of speaker labels.
+    pub timestamps: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
@@ -110,6 +101,22 @@ pub struct Transcription {
     /// Speaker labels were asked for but this link does not deliver them.
     /// The UI shows the speakers as missing instead of guessing.
     pub speakers_missing: bool,
+}
+
+impl Transcription {
+    pub(crate) fn require_timestamps(&self) -> Result<(), ProviderError> {
+        if (!self.text.trim().is_empty() && self.segments.is_empty())
+            || self.segments.iter().any(|s| {
+                !matches!((s.start, s.end), (Some(start), Some(end))
+                    if start.is_finite() && end.is_finite() && start >= 0.0 && end >= start)
+            })
+        {
+            return Err(ProviderError::BadResponse {
+                detail: "Transcription is missing segment timestamps".into(),
+            });
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -186,7 +193,11 @@ pub async fn transcribe(
         .text("model", link.model.clone())
         .text(
             "response_format",
-            if diarize { "verbose_json" } else { "json" },
+            if diarize || request.timestamps {
+                "verbose_json"
+            } else {
+                "json"
+            },
         );
     if let Some(language) = request.language.as_deref().filter(|l| !l.trim().is_empty()) {
         form = form.text("language", language.to_string());
@@ -213,11 +224,15 @@ pub async fn transcribe(
         })
         .collect();
     let has_speakers = !segments.is_empty() && segments.iter().all(|s| s.speaker.is_some());
-    Ok(Transcription {
+    let transcript = Transcription {
         text: raw.text.trim().to_string(),
         speakers_missing: request.diarize && !has_speakers,
         segments,
-    })
+    };
+    if request.timestamps {
+        transcript.require_timestamps()?;
+    }
+    Ok(transcript)
 }
 
 fn speaker_label(value: serde_json::Value) -> Option<String> {
@@ -354,7 +369,10 @@ pub fn classify_status(status: StatusCode, retry_after: Option<&str>) -> Provide
         429 => ProviderError::RateLimited {
             retry_after_secs: retry_after.and_then(|v| parse_retry_after(v, chrono::Utc::now())),
         },
-        code => ProviderError::Http { status: code },
+        code => ProviderError::Http {
+            status: code,
+            retry_after_secs: retry_after.and_then(|v| parse_retry_after(v, chrono::Utc::now())),
+        },
     }
 }
 

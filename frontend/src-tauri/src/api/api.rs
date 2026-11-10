@@ -256,10 +256,14 @@ pub async fn api_get_meeting_transcripts<R: Runtime>(
     _app: AppHandle<R>,
     meeting_id: String,
     limit: i64,
-    offset: i64,
+    offset: Option<i64>,
+    after: Option<tingskriver_core::database::repositories::meeting::TranscriptCursor>,
     state: tauri::State<'_, AppState>,
 ) -> Result<PaginatedTranscriptsResponse, String> {
-    tingskriver_core::api::api::api_get_meeting_transcripts(meeting_id, limit, offset, &state).await
+    tingskriver_core::api::api::api_get_meeting_transcripts(
+        meeting_id, limit, offset, after, &state,
+    )
+    .await
 }
 
 #[tauri::command]

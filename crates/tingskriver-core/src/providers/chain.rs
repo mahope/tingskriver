@@ -203,6 +203,9 @@ where
             match local_call {
                 Some(call) => {
                     let mut transcription = call.await?;
+                    if request.timestamps {
+                        transcription.require_timestamps()?;
+                    }
                     transcription.speakers_missing |= request.diarize;
                     Ok(transcription)
                 }

@@ -56,6 +56,17 @@ pub fn before_uninstall() -> Vec<String> {
     report
 }
 
+/// Is there a per-user uninstall entry `name` (`HKCU\...\Uninstall\<name>`)?
+#[cfg(windows)]
+pub fn uninstall_entry_exists(name: &str) -> bool {
+    win::key_exists(&format!(r"{}\{name}", win::UNINSTALL_KEY))
+}
+
+#[cfg(not(windows))]
+pub fn uninstall_entry_exists(_name: &str) -> bool {
+    false
+}
+
 /// Leftover `meetily.exe`, shortcuts and registry entries ([`legacy`]).
 pub fn remove_legacy_leftovers() -> Vec<String> {
     let exists = |path: &str| Path::new(path).exists();

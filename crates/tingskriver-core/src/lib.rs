@@ -3,6 +3,9 @@
 //! later) calls into this crate and receives events through
 //! [`events::EventSink`].
 
+#![deny(clippy::disallowed_types)]
+#![deny(clippy::disallowed_methods)]
+
 // Performance optimization: Conditional logging macros for hot paths
 #[cfg(debug_assertions)]
 macro_rules! perf_debug {
@@ -33,28 +36,44 @@ pub(crate) use perf_debug;
 #[allow(unused_imports)]
 pub(crate) use perf_trace;
 
-pub mod analytics;
 pub mod anthropic;
 pub mod api;
 pub mod audio;
+pub mod calendar;
 pub mod config;
+pub mod crash_dumps;
 pub mod database;
+pub mod delivery;
+pub mod diagnose;
 pub mod dictation;
-pub mod host;
-pub mod install;
+pub mod fake_device;
+pub mod format_da;
 pub mod groq;
+pub mod host;
+mod http;
+pub mod install;
 pub mod logging;
+pub mod measurement;
 pub mod meeting_detect;
+pub mod notes;
 pub mod ollama;
 pub mod openai;
 pub mod openrouter;
 pub mod parakeet_engine;
 pub mod paths;
+pub mod playback;
 pub mod providers;
+pub mod recover;
 pub mod runtime;
 pub mod shortcuts;
 pub mod state;
+pub mod strings;
+pub mod stt;
 pub mod summary;
+pub mod transcript_merge;
+pub mod transcription_queue;
+pub mod vad_trim;
+pub mod wer;
 pub mod whisper_engine;
 
 #[cfg(target_os = "windows")]

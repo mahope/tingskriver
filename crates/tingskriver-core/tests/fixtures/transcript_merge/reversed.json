@@ -1,0 +1,39 @@
+{
+  "mic": [
+    {
+      "start_ms": 5,
+      "slut_ms": 2,
+      "tekst": "reverse",
+      "taler": null
+    }
+  ],
+  "system": [
+    {
+      "start_ms": 4,
+      "slut_ms": 8,
+      "tekst": "long",
+      "taler": "x"
+    }
+  ],
+  "diarized": true,
+  "expected": [
+    {
+      "start_ms": 4,
+      "slut_ms": 8,
+      "tekst": "long",
+      "kilde": "System",
+      "label": "Taler 1",
+      "overlapper": false,
+      "taler_mangler": false
+    },
+    {
+      "start_ms": 5,
+      "slut_ms": 5,
+      "tekst": "reverse",
+      "kilde": "Mikrofon",
+      "label": "Mig",
+      "overlapper": false,
+      "taler_mangler": false
+    }
+  ]
+}

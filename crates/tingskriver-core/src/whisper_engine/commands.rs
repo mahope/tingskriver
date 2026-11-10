@@ -12,6 +12,7 @@ static MODELS_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
 
 /// Initialize the models directory path using app_data_dir
 /// This should be called during app setup before whisper_init
+#[allow(clippy::disallowed_methods)]
 pub fn set_models_directory(app: &HostHandle) {
     let app_data_dir = app.app_data_dir()
         .expect("Failed to get app data dir");
@@ -28,31 +29,44 @@ pub fn set_models_directory(app: &HostHandle) {
 
     log::info!("Models directory set to: {}", models_dir.display());
 
-    let mut guard = MODELS_DIR.lock().unwrap();
+    let mut guard = MODELS_DIR
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     *guard = Some(models_dir);
 }
 
 /// Get the configured models directory
 fn get_models_directory() -> Option<PathBuf> {
-    MODELS_DIR.lock().unwrap().clone()
+    MODELS_DIR
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
 }
 
 pub async fn whisper_init() -> Result<(), String> {
-    let mut guard = WHISPER_ENGINE.lock().unwrap();
-    if guard.is_some() {
+    if WHISPER_ENGINE
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .is_some()
+    {
         return Ok(());
     }
-
     let models_dir = get_models_directory();
-    let engine = WhisperEngine::new_with_models_dir(models_dir)
-        .map_err(|e| format!("Failed to initialize whisper engine: {}", e))?;
-    *guard = Some(Arc::new(engine));
+    let engine =
+        tokio::task::spawn_blocking(move || WhisperEngine::new_with_models_dir(models_dir))
+            .await
+            .map_err(|e| format!("Model initialization task failed: {e}"))?
+            .map_err(|e| format!("Failed to initialize whisper engine: {e}"))?;
+    let mut guard = WHISPER_ENGINE.lock().unwrap_or_else(|p| p.into_inner());
+    guard.get_or_insert_with(|| Arc::new(engine));
     Ok(())
 }
 
 pub async fn whisper_get_available_models() -> Result<Vec<ModelInfo>, String> {
     let engine = {
-        let guard = WHISPER_ENGINE.lock().unwrap();
+        let guard = WHISPER_ENGINE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard.as_ref().cloned()
     };
 
@@ -64,12 +78,15 @@ pub async fn whisper_get_available_models() -> Result<Vec<ModelInfo>, String> {
     } else {
         // Fallback: scan models directory directly without initialized engine
         log::info!("Whisper engine not initialized, scanning models directory directly");
-        discover_models_standalone()
+        tokio::task::spawn_blocking(discover_models_standalone)
+            .await
+            .map_err(|e| format!("Model discovery task failed: {e}"))?
     }
 }
 
 /// Discover Whisper models by scanning the models directory directly
 /// Used when the Whisper engine isn't initialized (e.g., when using Parakeet for live transcription)
+#[allow(clippy::disallowed_methods)]
 fn discover_models_standalone() -> Result<Vec<ModelInfo>, String> {
     use crate::whisper_engine::ModelStatus;
 
@@ -126,7 +143,9 @@ pub async fn whisper_load_model(
     model_name: String
 ) -> Result<(), String> {
     let engine = {
-        let guard = WHISPER_ENGINE.lock().unwrap();
+        let guard = WHISPER_ENGINE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard.as_ref().cloned()
     };
 
@@ -176,7 +195,9 @@ pub async fn whisper_load_model(
 
 pub async fn whisper_get_current_model() -> Result<Option<String>, String> {
     let engine = {
-        let guard = WHISPER_ENGINE.lock().unwrap();
+        let guard = WHISPER_ENGINE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard.as_ref().cloned()
     };
 
@@ -189,7 +210,9 @@ pub async fn whisper_get_current_model() -> Result<Option<String>, String> {
 
 pub async fn whisper_is_model_loaded() -> Result<bool, String> {
     let engine = {
-        let guard = WHISPER_ENGINE.lock().unwrap();
+        let guard = WHISPER_ENGINE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard.as_ref().cloned()
     };
 
@@ -202,7 +225,9 @@ pub async fn whisper_is_model_loaded() -> Result<bool, String> {
 
 pub async fn whisper_has_available_models() -> Result<bool, String> {
     let engine = {
-        let guard = WHISPER_ENGINE.lock().unwrap();
+        let guard = WHISPER_ENGINE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard.as_ref().cloned()
     };
 
@@ -226,7 +251,9 @@ pub async fn whisper_has_available_models() -> Result<bool, String> {
 
 pub async fn whisper_validate_model_ready() -> Result<String, String> {
     let engine = {
-        let guard = WHISPER_ENGINE.lock().unwrap();
+        let guard = WHISPER_ENGINE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard.as_ref().cloned()
     };
 
@@ -274,7 +301,9 @@ pub async fn whisper_validate_model_ready_with_config(
     app: &HostHandle,
 ) -> Result<String, String> {
     let engine = {
-        let guard = WHISPER_ENGINE.lock().unwrap();
+        let guard = WHISPER_ENGINE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard.as_ref().cloned()
     };
 
@@ -375,7 +404,9 @@ pub async fn whisper_validate_model_ready_with_config(
 
 pub async fn whisper_transcribe_audio(audio_data: Vec<f32>) -> Result<String, String> {
     let engine = {
-        let guard = WHISPER_ENGINE.lock().unwrap();
+        let guard = WHISPER_ENGINE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard.as_ref().cloned()
     };
 
@@ -393,7 +424,9 @@ pub async fn whisper_transcribe_audio(audio_data: Vec<f32>) -> Result<String, St
 
 pub async fn whisper_get_models_directory() -> Result<String, String> {
     let engine = {
-        let guard = WHISPER_ENGINE.lock().unwrap();
+        let guard = WHISPER_ENGINE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard.as_ref().cloned()
     };
 
@@ -410,7 +443,9 @@ pub async fn whisper_download_model(
     model_name: String,
 ) -> Result<(), String> {
     let engine = {
-        let guard = WHISPER_ENGINE.lock().unwrap();
+        let guard = WHISPER_ENGINE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard.as_ref().cloned()
     };
 
@@ -479,7 +514,9 @@ pub async fn whisper_download_model(
 
 pub async fn whisper_cancel_download(model_name: String) -> Result<CancelDownloadOutcome, String> {
     let engine = {
-        let guard = WHISPER_ENGINE.lock().unwrap();
+        let guard = WHISPER_ENGINE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard.as_ref().cloned()
     };
 
@@ -495,7 +532,9 @@ pub async fn whisper_cancel_download(model_name: String) -> Result<CancelDownloa
 
 pub async fn whisper_delete_corrupted_model(model_name: String) -> Result<String, String> {
     let engine = {
-        let guard = WHISPER_ENGINE.lock().unwrap();
+        let guard = WHISPER_ENGINE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard.as_ref().cloned()
     };
 
@@ -516,7 +555,8 @@ pub async fn open_models_folder() -> Result<(), String> {
 
     // Ensure directory exists before trying to open it
     if !models_dir.exists() {
-        std::fs::create_dir_all(&models_dir)
+        tokio::fs::create_dir_all(&models_dir)
+            .await
             .map_err(|e| format!("Failed to create directory: {}", e))?;
     }
 

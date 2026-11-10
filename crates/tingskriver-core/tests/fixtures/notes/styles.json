@@ -1,0 +1,30 @@
+[
+  {
+    "type": "paragraph",
+    "props": {},
+    "content": [
+      {
+        "type": "text",
+        "text": "Fed",
+        "styles": {
+          "bold": true
+        }
+      }
+    ],
+    "children": []
+  },
+  {
+    "type": "paragraph",
+    "props": {},
+    "content": [
+      {
+        "type": "text",
+        "text": "Kursiv",
+        "styles": {
+          "italic": true
+        }
+      }
+    ],
+    "children": []
+  }
+]

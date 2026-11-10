@@ -121,6 +121,14 @@ jobs:
         working-directory: frontend
         run: pnpm install --frozen-lockfile
 
+      - name: Build isolated speech worker
+        shell: pwsh
+        run: |
+          cargo build --release --locked -p tingskriver-core --bin tingskriver-stt --features vulkan
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Force -Path "frontend/src-tauri/binaries" | Out-Null
+          Copy-Item "target/release/tingskriver-stt.exe" -Destination "frontend/src-tauri/binaries/tingskriver-stt-x86_64-pc-windows-msvc.exe"
+
       - name: Build llama-helper sidecar (CPU)
         shell: pwsh
         run: |
@@ -176,7 +184,9 @@ jobs:
 
       - name: List artifacts
         shell: bash
-        run: find target/x86_64-pc-windows-msvc/release/bundle -type f -exec ls -lh {} \;
+        run: |
+          find target/x86_64-pc-windows-msvc/release/bundle -type f -exec ls -lh {} \;
+          ls -lh target/x86_64-pc-windows-msvc/release/*.exe target/x86_64-pc-windows-msvc/release/*.pdb
 
       - name: Upload installer
         uses: actions/upload-artifact@v4
@@ -186,3 +196,13 @@ jobs:
             target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
             target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe.sig
           retention-days: 14
+
+      # The symbols for crash dumps (%LOCALAPPDATA%\dk.mahoje.tingskriver\dumps)
+      # and backtraces. Not in the installer; open a .dmp with this PDB.
+      - name: Upload debug symbols
+        uses: actions/upload-artifact@v4
+        with:
+          name: tingskriver-windows-x64-symbols-${{ steps.version.outputs.version }}-${{ github.sha }}
+          path: target/x86_64-pc-windows-msvc/release/tingskriver.pdb
+          if-no-files-found: error
+          retention-days: 90

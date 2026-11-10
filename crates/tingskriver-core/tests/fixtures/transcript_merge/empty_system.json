@@ -1,0 +1,23 @@
+{
+  "mic": [
+    {
+      "start_ms": 1,
+      "slut_ms": 3,
+      "tekst": "mic",
+      "taler": null
+    }
+  ],
+  "system": [],
+  "diarized": true,
+  "expected": [
+    {
+      "start_ms": 1,
+      "slut_ms": 3,
+      "tekst": "mic",
+      "kilde": "Mikrofon",
+      "label": "Mig",
+      "overlapper": false,
+      "taler_mangler": false
+    }
+  ]
+}

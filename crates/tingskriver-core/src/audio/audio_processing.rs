@@ -32,6 +32,7 @@ pub fn sanitize_filename(name: &str) -> String {
 /// * `base_path` - Base directory for meetings
 /// * `meeting_name` - Name of the meeting
 /// * `create_checkpoints_dir` - Whether to create .checkpoints/ subdirectory (only needed when auto_save is true)
+#[allow(clippy::disallowed_methods)]
 pub fn create_meeting_folder(
     base_path: &PathBuf,
     meeting_name: &str,
@@ -588,10 +589,16 @@ pub fn resample(input: &[f32], from_sample_rate: u32, to_sample_rate: u32) -> Re
     let waves_in = vec![input.to_vec()];
     let waves_out = resampler.process(&waves_in, None)?;
 
-    debug!("Resampling complete: {} samples → {} samples",
-           input.len(), waves_out[0].len());
-
-    Ok(waves_out.into_iter().next().unwrap())
+    let output = waves_out
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("Resampler returned no audio channel"))?;
+    debug!(
+        "Resampling complete: {} samples → {} samples",
+        input.len(),
+        output.len()
+    );
+    Ok(output)
 }
 
 // Alias for compatibility with existing code
@@ -617,6 +624,7 @@ pub fn write_audio_to_file(
     write_audio_to_file_with_meeting_name(audio, sample_rate, output_path, device, skip_encoding, None)
 }
 
+#[allow(clippy::disallowed_methods)]
 pub fn write_audio_to_file_with_meeting_name(
     audio: &[f32],
     sample_rate: u32,
@@ -646,7 +654,7 @@ pub fn write_audio_to_file_with_meeting_name(
     let file_path = final_output_path
         .join(format!("{}_{}.mp4", sanitized_device_name, timestamp))
         .to_str()
-        .expect("Failed to create valid path")
+        .ok_or_else(|| anyhow::anyhow!("Audio output path is not valid UTF-8"))?
         .to_string();
     let file_path_clone = file_path.clone();
     // Run FFmpeg in a separate task
@@ -662,6 +670,7 @@ pub fn write_audio_to_file_with_meeting_name(
 }
 
 /// Write transcript text to a file alongside the recording (legacy plain text format)
+#[allow(clippy::disallowed_methods)]
 pub fn write_transcript_to_file(
     transcript_text: &str,
     output_path: &PathBuf,
@@ -693,6 +702,7 @@ pub fn write_transcript_to_file(
 }
 
 /// Write structured transcript with timestamps to JSON file
+#[allow(clippy::disallowed_methods)]
 pub fn write_transcript_json_to_file(
     segments: &[super::recording_saver::TranscriptSegment],
     output_path: &PathBuf,

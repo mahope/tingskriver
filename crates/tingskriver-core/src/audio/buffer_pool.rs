@@ -20,7 +20,10 @@ impl AudioBufferPool {
 
     /// Get a buffer from the pool, or create a new one if pool is empty
     pub fn get_buffer(&self) -> Vec<f32> {
-        let mut pool = self.pool.lock().unwrap();
+        let mut pool = self
+            .pool
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
 
         match pool.pop_front() {
             Some(mut buffer) => {
@@ -40,7 +43,10 @@ impl AudioBufferPool {
         // Clear the buffer but keep its allocated capacity
         buffer.clear();
 
-        let mut pool = self.pool.lock().unwrap();
+        let mut pool = self
+            .pool
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
 
         // Only keep buffers if we haven't exceeded max pool size
         if pool.len() < self.max_size {
@@ -51,12 +57,18 @@ impl AudioBufferPool {
 
     /// Get current pool size (for monitoring)
     pub fn pool_size(&self) -> usize {
-        self.pool.lock().unwrap().len()
+        self.pool
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .len()
     }
 
     /// Clear all buffers in the pool
     pub fn clear(&self) {
-        self.pool.lock().unwrap().clear();
+        self.pool
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clear();
     }
 }
 
@@ -72,8 +84,9 @@ impl Clone for AudioBufferPool {
 
 /// RAII wrapper that automatically returns buffer to pool when dropped
 pub struct PooledBuffer {
-    buffer: Option<Vec<f32>>,
+    buffer: Vec<f32>,
     pool: AudioBufferPool,
+    return_to_pool: bool,
 }
 
 impl PooledBuffer {
@@ -81,31 +94,33 @@ impl PooledBuffer {
     pub fn new(pool: AudioBufferPool) -> Self {
         let buffer = pool.get_buffer();
         Self {
-            buffer: Some(buffer),
+            buffer,
             pool,
+            return_to_pool: true,
         }
     }
 
     /// Get mutable access to the underlying buffer
     pub fn as_mut(&mut self) -> &mut Vec<f32> {
-        self.buffer.as_mut().expect("Buffer should always be available")
+        &mut self.buffer
     }
 
     /// Get immutable access to the underlying buffer
     pub fn as_ref(&self) -> &Vec<f32> {
-        self.buffer.as_ref().expect("Buffer should always be available")
+        &self.buffer
     }
 
     /// Consume the wrapper and return the buffer (will not be returned to pool)
     pub fn into_inner(mut self) -> Vec<f32> {
-        self.buffer.take().expect("Buffer should always be available")
+        self.return_to_pool = false;
+        std::mem::take(&mut self.buffer)
     }
 }
 
 impl Drop for PooledBuffer {
     fn drop(&mut self) {
-        if let Some(buffer) = self.buffer.take() {
-            self.pool.return_buffer(buffer);
+        if self.return_to_pool {
+            self.pool.return_buffer(std::mem::take(&mut self.buffer));
         }
     }
 }
@@ -127,6 +142,43 @@ impl std::ops::DerefMut for PooledBuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pool_remains_usable_after_a_worker_panics() {
+        let pool = AudioBufferPool::new(2, 32);
+        let worker_pool = pool.clone();
+        assert!(std::thread::spawn(move || {
+            let _guard = worker_pool.pool.lock();
+            panic!("simulate a worker failure while holding the pool");
+        })
+        .join()
+        .is_err());
+        let mut buffer = pool.get_buffer();
+        buffer.push(1.0);
+        pool.return_buffer(buffer);
+        assert_eq!(pool.pool_size(), 1);
+        assert!(pool.get_buffer().is_empty());
+        pool.clear();
+        assert_eq!(pool.pool_size(), 0);
+    }
+
+    #[test]
+    fn into_inner_keeps_samples_and_does_not_return_the_buffer() {
+        let pool = AudioBufferPool::new(2, 32);
+        let mut buffer = PooledBuffer::new(pool.clone());
+        buffer.extend_from_slice(&[0.25, -0.5]);
+        assert_eq!(buffer.into_inner(), vec![0.25, -0.5]);
+        assert_eq!(pool.pool_size(), 0);
+    }
+
+    #[test]
+    fn empty_buffers_are_returned_unless_consumed() {
+        let pool = AudioBufferPool::new(2, 0);
+        drop(PooledBuffer::new(pool.clone()));
+        assert_eq!(pool.pool_size(), 1);
+        assert!(PooledBuffer::new(pool.clone()).into_inner().is_empty());
+        assert_eq!(pool.pool_size(), 0);
+    }
 
     #[test]
     fn test_buffer_pool() {

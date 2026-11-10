@@ -5,8 +5,13 @@ name: Rust
 # of the GPUI app as an artifact; Linux runs the platform independent tests
 # in tingskriver-core and checks the crate boundaries and the GPUI version
 # lock. Agents read the result with scripts/ci-status.sh.
-# clippy -D warnings and fmt --check are deferred until the fork code is
-# cleaned up (docs/agenter.md).
+#
+# Scope: a push to main always runs everything (the automatic release needs a
+# successful Rust run for every commit on main). On other branches the "scope"
+# job skips the builds when only site/, docs/ and the like changed
+# (.github/scripts/ci-scope.py). A skipped job counts as passed.
+# Lint: rustfmt on changed files only and clippy -D warnings on the crates in
+# .github/clippy-crates.txt (docs/agenter.md).
 
 on:
   push:
@@ -25,8 +30,106 @@ env:
   CARGO_INCREMENTAL: 0
 
 jobs:
+  scope:
+    name: Change scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      rust: ${{ steps.scope.outputs.rust }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Does this change need the Rust builds?
+        id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+        run: >-
+          python3 .github/scripts/ci-scope.py
+          --event-name "$EVENT_NAME" --ref-name "$REF_NAME" --ref-type "$REF_TYPE"
+
+  # Scheduled and reusable workflows are not exercised by pull request CI; a
+  # missing token permission only shows up at the next cron run (#192). Runs on
+  # every push, also when only .github/ changed.
+  workflows:
+    name: Workflow permissions and schedules
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Ensure PyYAML
+        run: python3 -c "import yaml" 2>/dev/null || sudo apt-get install -y --no-install-recommends python3-yaml
+
+      - name: Check workflows
+        run: |
+          python3 scripts/check-workflows.py
+          python3 scripts/tests/test_check_workflows.py
+
+  # Fast Linux gate on the changed files only. Files nobody touched may stay
+  # unformatted; main compares with the previous tip of main.
+  lint:
+    name: Format (changed files) and clippy (listed crates)
+    needs: scope
+    if: ${{ needs.scope.outputs.rust == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Install system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libasound2-dev cmake clang
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          prefix-key: tingskriver-linux-lint-v1
+
+      - name: rustfmt on changed files
+        shell: bash
+        env:
+          BEFORE: ${{ github.event.before }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ "$REF_NAME" = "main" ]; then
+            base="$BEFORE"
+            if [ -z "$base" ] || [ "${base//0/}" = "" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+              base="HEAD~1"
+            fi
+          else
+            git fetch --no-tags --quiet origin main
+            base="origin/main"
+          fi
+          .github/scripts/check-fmt-changed.sh "$base"
+
+      - name: clippy -D warnings on the listed crates
+        run: .github/scripts/annotate-errors.sh .github/scripts/clippy-ratchet.sh
+
+      - name: Test the CI scope and format gate scripts
+        run: |
+          python3 scripts/tests/test_ci_scope.py
+          bash scripts/tests/test_fmt_changed.sh
+
   windows:
     name: Windows workspace build and tests
+    needs: scope
+    if: ${{ needs.scope.outputs.rust == 'true' }}
     runs-on: windows-latest
     timeout-minutes: 90
     steps:
@@ -65,6 +168,14 @@ jobs:
           mkdir -p frontend/src-tauri/binaries
           touch frontend/src-tauri/binaries/llama-helper-x86_64-pc-windows-msvc.exe
 
+      # tauri-build copies staged sidecars into target/debug. An empty STT
+      # placeholder would overwrite the real worker used by integration tests.
+      - name: Stage real STT worker
+        shell: bash
+        run: |
+          cargo build --locked -p tingskriver-core --bin tingskriver-stt
+          cp target/debug/tingskriver-stt.exe frontend/src-tauri/binaries/tingskriver-stt-x86_64-pc-windows-msvc.exe
+
       - name: Build workspace
         shell: bash
         run: .github/scripts/annotate-errors.sh cargo build --workspace --locked
@@ -96,6 +207,8 @@ jobs:
 
   linux-core:
     name: Core tests and crate boundaries (Linux)
+    needs: scope
+    if: ${{ needs.scope.outputs.rust == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -108,7 +221,7 @@ jobs:
       - name: Install system libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libasound2-dev cmake clang
+          sudo apt-get install -y --no-install-recommends libasound2-dev cmake clang ffmpeg python3-jsonschema
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
@@ -135,6 +248,15 @@ jobs:
       - name: Test tingskriver-core
         run: .github/scripts/annotate-errors.sh cargo test --locked -p tingskriver-core
 
+      - name: Verify core I/O lint rejects blocking calls
+        run: bash scripts/check-async-io-guard.sh
+
+      - name: Validate published delivery schema
+        run: /usr/bin/python3 scripts/tests/test_delivery_schema.py
+
+      - name: Test recording soak verifier
+        run: .github/scripts/annotate-errors.sh cargo test --locked -p tingskriver-core --example recording_soak
+
       # The overlay's state model, layout and renderer are platform independent.
       - name: Test tingskriver-overlay
         run: .github/scripts/annotate-errors.sh cargo test --locked -p tingskriver-overlay
@@ -147,6 +269,8 @@ jobs:
   # docs/gpui.md (text input, IME, UI Automation, DPI, start time, no GPU).
   windows-gpui-app:
     name: GPUI app artifact (Windows release)
+    needs: scope
+    if: ${{ needs.scope.outputs.rust == 'true' }}
     runs-on: windows-latest
     timeout-minutes: 90
     steps:
@@ -166,13 +290,30 @@ jobs:
 
       - name: Build tingskriver-app (release)
         shell: bash
-        run: .github/scripts/annotate-errors.sh cargo build --release --locked -p tingskriver-app
+        run: .github/scripts/annotate-errors.sh cargo build --release --locked -p tingskriver-app -p tingskriver-core --bin tingskriver-app --bin tingskriver-stt
 
-      - name: Upload tingskriver-app.exe
+      # Same pinned runtime and archive checksum as the Tauri bundler.
+      - name: Stage ONNX Runtime for the isolated speech worker
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP "tingskriver-onnx.zip"
+          Invoke-WebRequest "https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-win-x64-1.22.0.zip" -OutFile $archive
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne "174c616efc0271194488642a72f1a514e01487da4dfe84c49296d66e40ebe0da") { throw "ONNX Runtime checksum mismatch" }
+          Expand-Archive $archive -DestinationPath (Join-Path $env:RUNNER_TEMP "tingskriver-onnx") -Force
+          $runtime = Join-Path $env:RUNNER_TEMP "tingskriver-onnx/onnxruntime-win-x64-1.22.0"
+          Copy-Item "$runtime/lib/onnxruntime.dll","$runtime/lib/onnxruntime_providers_shared.dll" target/release/
+          Copy-Item "$runtime/LICENSE" target/release/onnxruntime-LICENSE.txt
+
+      - name: Upload GPUI app and speech runtime
         uses: actions/upload-artifact@v4
         with:
           name: tingskriver-app-windows-x64
-          path: target/release/tingskriver-app.exe
+          path: |
+            target/release/tingskriver-app.exe
+            target/release/tingskriver-stt.exe
+            target/release/onnxruntime.dll
+            target/release/onnxruntime_providers_shared.dll
+            target/release/onnxruntime-LICENSE.txt
           if-no-files-found: error
           retention-days: 30
 
@@ -180,6 +321,8 @@ jobs:
   # LGPL crate anywhere in the tree fails this job.
   cargo-deny:
     name: Dependency licences (cargo deny)
+    needs: scope
+    if: ${{ needs.scope.outputs.rust == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -199,6 +342,8 @@ jobs:
   xwin-check:
     name: Windows check from Linux (cargo xwin)
     # Pinned so the LLVM 19 packages below exist.
+    needs: scope
+    if: ${{ needs.scope.outputs.rust == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:

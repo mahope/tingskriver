@@ -1,0 +1,14 @@
+[
+  {
+    "type": "paragraph",
+    "props": {},
+    "content": [
+      {
+        "type": "text",
+        "text": "En note",
+        "styles": {}
+      }
+    ],
+    "children": []
+  }
+]

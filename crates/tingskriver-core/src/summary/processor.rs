@@ -202,7 +202,7 @@ pub(crate) fn language_name_from_code(code: &str) -> Option<&'static str> {
     }
 }
 
-fn translation_system_prompt(target_language: &str) -> String {
+pub(crate) fn translation_system_prompt(target_language: &str) -> String {
     format!(
         r#"You are a precise translator. Translate the provided Markdown document into {target_language} while preserving structure exactly.
 
@@ -226,7 +226,7 @@ fn build_combine_summary_user_prompt(combined_text: &str) -> String {
         "{ENGLISH_BASE_SUMMARY_INSTRUCTION}\n\nThe following are consecutive summaries of a meeting. Combine them into a single, coherent, and detailed narrative summary that retains all important details, organized logically. Do not include reasoning, self-correction, or meta-commentary — output only the summary content.\n\n<summaries>\n{combined_text}\n</summaries>"
     )
 }
-fn build_final_report_system_prompt(
+pub(crate) fn build_final_report_system_prompt(
     section_instructions: &str,
     clean_template_markdown: &str,
 ) -> String {
@@ -392,6 +392,28 @@ pub(crate) async fn generate_meeting_summary(
         if let Some(cached) = resolve_cached_english(cached_english, summary_language) {
             info!("✓ Using cached English summary ({} chars), skipping pass 1", cached.len());
             (cached.to_string(), 1_i64, false)
+        } else if provider == &LLMProvider::BuiltInAI {
+            let data_dir = app_data_dir.ok_or("Appens datamappe mangler til den lokale model.")?;
+            let mut model = super::map_reduce::Builtin {
+                data_dir,
+                name: model_name,
+                cancellation: cancellation_token,
+                reasoning_stripped: false,
+            };
+            let budget = super::map_reduce::Budget::for_model(model_name)
+                .map_err(|_| "Den valgte lokale model kendes ikke.".to_string())?;
+            let report = super::map_reduce::english_report(
+                &mut model, &budget, text, template, custom_prompt,
+            )
+            .await
+            .map_err(|_| {
+                "Den lokale model kunne ikke lave referatet. Prøv igen.".to_string()
+            })?;
+            (
+                report.content,
+                report.stats.map_chunks.max(1) as i64,
+                model.reasoning_stripped,
+            )
         } else {
             let mut content_to_summarize = text.to_string();
             let successful_chunk_count;
@@ -430,7 +452,7 @@ pub(crate) async fn generate_meeting_summary(
                                 chunk_summaries.push(cleaned.markdown);
                                 break;
                             }
-                            Err(error)
+                            Err(_)
                                 if cancellation_token.is_some_and(CancellationToken::is_cancelled) =>
                             {
                                 return Err("Summary generation was cancelled".to_string());

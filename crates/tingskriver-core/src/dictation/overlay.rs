@@ -8,6 +8,9 @@ pub enum OverlayState {
     Recording { level: f32, locked: bool },
     Processing,
     Error,
+    /// Nothing was inserted, and why (short Danish text, never the field's
+    /// content). Drawn like an error.
+    Refused(&'static str),
     Hidden,
 }
 
@@ -18,4 +21,7 @@ pub trait Overlay: Send + Sync + 'static {
 
     /// Show `state`, or hide the pill for [`OverlayState::Hidden`].
     fn set(&self, state: OverlayState);
+
+    /// Selected mode for the current recording, including spoken mode changes.
+    fn set_mode(&self, _mode: Option<&super::modes::Mode>) {}
 }
