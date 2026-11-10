@@ -118,6 +118,27 @@ the pill. Its `Bridge` is the GPUI app's `AppHost`. Details, the shortcut
 settings file, the hook timing log and the Windows test are in
 [host.md](host.md).
 
+## Repeat a saved dictation
+
+`dictation::rerun` reads the newest history entry (timestamp, then id).
+`last_text` rejects empty text. `rerun` reads that entry's `audio_path`
+asynchronously, rejects missing or empty files and recordings at least 24 hours
+old, and returns a `Comparison` with the history id, original text, new text
+and a `changed` flag. It never overwrites history or inserts the new result.
+The injected async provider makes this path testable without credentials.
+
+The optional `InsertLast` and `RerunLast` shortcuts are stored as `insertLast`
+and `rerunLast` in `shortcuts.json`. The host dispatches them to the core
+service. Reinsertion uses the existing Windows target checks. Rerun switches
+between local Parakeet and Syv; local-only settings prevent cloud reruns.
+Missing audio produces a Danish pill message and no insertion.
+
+A successful rerun emits `dictation-rerun-comparison` through `AppHost`, with
+`historyId`, `before`, `after` and `changed`. **UI integration remains open:**
+neither shell currently displays this event or provides controls for the two
+new shortcut settings. A comparison viewer and explicit acceptance/insertion
+are needed before issue #76 can be closed.
+
 ## The pill overlay
 
 `crates/tingskriver-overlay` draws the dictation pill (and later the

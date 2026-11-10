@@ -187,6 +187,7 @@ mod tests {
             new_recording: new_recording.map(String::from),
             ask: ask.map(String::from),
             open_window: open_window.map(String::from),
+            ..Default::default()
         }
     }
 

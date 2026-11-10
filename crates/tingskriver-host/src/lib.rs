@@ -265,6 +265,18 @@ fn handle_trigger(
         Trigger::Menu(MenuEntry::Ask) | Trigger::Shortcut(ShortcutAction::Ask) => {
             Some(Request::Ask)
         }
+        Trigger::Shortcut(action @ (ShortcutAction::InsertLast | ShortcutAction::RerunLast)) => {
+            runtime.spawn(async move {
+                let result = match dictation::service::get() {
+                    Ok(service) => service.repeat_action(action).await,
+                    Err(error) => Err(error),
+                };
+                if let Err(error) = result {
+                    log::warn!("Dictation repeat failed: {error}");
+                }
+            });
+            None
+        }
         Trigger::Menu(MenuEntry::Quit) => Some(Request::Quit),
     };
     if let Some(request) = request {

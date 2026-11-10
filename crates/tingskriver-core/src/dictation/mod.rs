@@ -11,6 +11,7 @@ pub mod capture;
 pub mod logic;
 pub mod modes;
 pub mod overlay;
+pub mod rerun;
 pub mod secrets;
 pub mod service;
 pub mod settings;
