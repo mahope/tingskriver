@@ -188,6 +188,7 @@ pub fn clean_with(input: &str, options: &Options) -> Cleaned {
     } else {
         tokens
     };
+    let tokens = super::identifiers::format(tokens, options.style);
     let tokens = apply_matchers(tokens, &spoken_matchers(&options.rules.spoken));
     let tokens = if options.collapse_stutters {
         collapse_stutters(tokens)

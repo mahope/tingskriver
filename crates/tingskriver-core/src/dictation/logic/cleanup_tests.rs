@@ -722,14 +722,14 @@ fn code_urls_and_file_names_are_unchanged() {
         let expected = upper_first(input);
         assert_eq!(out, expected, "{input}");
     }
-    // Code mode: nothing is formatted.
+    // Code mode keeps number words but joins spoken code punctuation.
     assert_eq!(
         raw("klokken fjorten tredive tolv procent"),
         "klokken fjorten tredive tolv procent"
     );
     assert_eq!(
         raw("anna snabel-a eksempel punktum dk"),
-        "anna@eksempel. dk"
+        "anna@eksempel.dk"
     );
 }
 
@@ -911,4 +911,110 @@ fn stutter_collapsing_can_be_switched_off() {
 #[test]
 fn raw_style_keeps_repeated_words() {
     assert_eq!(raw("ls ls ls"), "ls ls ls");
+}
+
+#[test]
+fn code_identifiers() {
+    let cases = [
+        ("get user id camel case", "getUserId"),
+        ("get user id snake case", "get_user_id"),
+        ("get user id kebab case", "get-user-id"),
+        ("get user id pascal case", "GetUserId"),
+        ("get user id camelCase", "getUserId"),
+        ("get user id snake_case", "get_user_id"),
+        ("get user id kebab-case", "get-user-id"),
+        ("get user id PascalCase", "GetUserId"),
+        ("index punktum ts", "index.ts"),
+        ("main punktum rs", "main.rs"),
+        ("app punktum test punktum ts", "app.test.ts"),
+        ("git commit bindestreg m", "git commit -m"),
+        ("git status", "git status"),
+        ("user understreg id", "user_id"),
+        ("src skråstreg main punktum rs", "src/main.rs"),
+        ("hej verden", "hej verden"),
+        ("hent bruger navn camel case", "hentBrugerNavn"),
+        ("æble antal snake case", "æble_antal"),
+        (
+            "user id camel case komma next id snake case",
+            "userId, next_id",
+        ),
+        ("camel case", "camel case"),
+    ];
+    let mismatches: Vec<_> = cases
+        .iter()
+        .filter_map(|(input, expected)| {
+            let actual = raw(input);
+            (actual != *expected).then(|| format!("{input}: {actual:?} != {expected:?}"))
+        })
+        .collect();
+    assert!(
+        mismatches.is_empty(),
+        "{} of {} cases failed:\n{}",
+        mismatches.len(),
+        cases.len(),
+        mismatches.join("\n")
+    );
+}
+
+#[test]
+fn identifiers_leave_normal_danish_alone() {
+    for (input, expected) in [
+        ("get user id camel case", "Get user id camel case"),
+        ("vi taler om snake case", "Vi taler om snake case"),
+        ("hej verden", "Hej verden"),
+    ] {
+        assert_eq!(normal(input), expected, "{input}");
+    }
+    assert_eq!(raw("skriv ordet camel case"), "camel case");
+}
+
+#[test]
+fn identifier_style_comes_from_existing_app_rules() {
+    use super::super::app_style::{default_rules, style_for, AppStyleRule};
+    let rules = default_rules();
+    for process in ["Code.exe", "WindowsTerminal.exe"] {
+        assert_eq!(
+            clean(
+                "get user id camel case",
+                style_for(Some(process), &rules),
+                &Rules::default()
+            ),
+            "getUserId"
+        );
+    }
+    let rules = [AppStyleRule {
+        process: "Code.exe".into(),
+        style: Style::Normal,
+    }];
+    assert_eq!(
+        clean(
+            "get user id camel case",
+            style_for(Some("Code.exe"), &rules),
+            &Rules::default()
+        ),
+        "Get user id camel case"
+    );
+}
+
+#[test]
+fn identifiers_preserve_protected_text() {
+    let rules = Rules {
+        replacements: vec![Replacement {
+            from: "filnavnet".into(),
+            to: "index punktum ts".into(),
+            keep_english: true,
+        }],
+        snippets: vec![Snippet {
+            trigger: "kodeblok".into(),
+            text: "get user id camel case".into(),
+        }],
+        ..Rules::default()
+    };
+    for (input, expected) in [
+        ("filnavnet", "index punktum ts"),
+        ("kodeblok", "get user id camel case"),
+        ("skriv ordet punktum", "punktum"),
+    ] {
+        assert_eq!(clean(input, Style::Raw, &rules), expected, "{input}");
+    }
 }
