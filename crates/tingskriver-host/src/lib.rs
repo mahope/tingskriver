@@ -266,13 +266,26 @@ fn handle_trigger(
             Some(Request::Ask)
         }
         Trigger::Shortcut(action @ (ShortcutAction::InsertLast | ShortcutAction::RerunLast)) => {
+            let handle = handle.clone();
             runtime.spawn(async move {
                 let result = match dictation::service::get() {
-                    Ok(service) => service.repeat_action(action).await,
+                    Ok(service) => dictation::rerun::shortcut(action, &service, &handle).await,
                     Err(error) => Err(error),
                 };
                 if let Err(error) = result {
+                    use dictation::overlay::OverlayState;
                     log::warn!("Dictation repeat failed: {error}");
+                    let pill = overlay();
+                    let state = if error == dictation::rerun::AUDIO_UNAVAILABLE_MESSAGE {
+                        OverlayState::Refused(dictation::rerun::AUDIO_UNAVAILABLE_MESSAGE)
+                    } else {
+                        OverlayState::Error
+                    };
+                    pill.set(state);
+                    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+                    if !dictation::is_dictating() {
+                        pill.set(OverlayState::Hidden);
+                    }
                 }
             });
             None
@@ -387,13 +400,19 @@ impl Probe for CoreProbe {
     }
 }
 
-#[cfg(windows)]
 fn overlay() -> Arc<dyn dictation::overlay::Overlay> {
+    static PILL: std::sync::OnceLock<Arc<dyn dictation::overlay::Overlay>> =
+        std::sync::OnceLock::new();
+    PILL.get_or_init(make_overlay).clone()
+}
+
+#[cfg(windows)]
+fn make_overlay() -> Arc<dyn dictation::overlay::Overlay> {
     Arc::new(tingskriver_overlay::windows::CoreOverlay::new())
 }
 
 #[cfg(not(windows))]
-fn overlay() -> Arc<dyn dictation::overlay::Overlay> {
+fn make_overlay() -> Arc<dyn dictation::overlay::Overlay> {
     struct NoPill;
     impl dictation::overlay::Overlay for NoPill {
         fn ensure(&self) -> Result<(), String> {
@@ -436,6 +455,13 @@ mod tests {
                 .ok()
                 .flatten()
         })
+    }
+
+    #[test]
+    fn repeat_shortcuts_do_not_request_a_main_window() {
+        for action in [ShortcutAction::InsertLast, ShortcutAction::RerunLast] {
+            assert_eq!(run(Trigger::Shortcut(action)), None);
+        }
     }
 
     #[test]

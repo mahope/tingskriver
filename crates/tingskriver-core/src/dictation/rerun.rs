@@ -8,7 +8,7 @@ use sqlx::Row;
 use super::store::{Store, AUDIO_RETENTION_MS};
 
 pub const COMPARISON_EVENT: &str = "dictation-rerun-comparison";
-pub(super) const NO_AUDIO: &str =
+pub const AUDIO_UNAVAILABLE_MESSAGE: &str =
     "Lyden er slettet eller ældre end 24 timer. Der blev ikke indsat noget.";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -51,7 +51,7 @@ where
 {
     let entry = latest(store).await?;
     if now.saturating_sub(entry.created_at) >= AUDIO_RETENTION_MS {
-        return Err(NO_AUDIO.into());
+        return Err(AUDIO_UNAVAILABLE_MESSAGE.into());
     }
     let path: Option<String> =
         sqlx::query("SELECT audio_path FROM dictation_history WHERE id = ?1")
@@ -60,11 +60,11 @@ where
             .await
             .map_err(|e| format!("Databasefejl (diktering): {e}"))?
             .and_then(|row| row.get("audio_path"));
-    let wav = tokio::fs::read(path.ok_or(NO_AUDIO)?)
+    let wav = tokio::fs::read(path.ok_or(AUDIO_UNAVAILABLE_MESSAGE)?)
         .await
-        .map_err(|_| NO_AUDIO.to_string())?;
+        .map_err(|_| AUDIO_UNAVAILABLE_MESSAGE.to_string())?;
     if wav.is_empty() {
-        return Err(NO_AUDIO.into());
+        return Err(AUDIO_UNAVAILABLE_MESSAGE.into());
     }
     let after = nonempty(provider(entry.engine, wav).await?)?;
     Ok(Comparison {
@@ -75,8 +75,8 @@ where
     })
 }
 
-/// Execute a registered shortcut. Errors are surfaced by the service overlay.
-pub(super) async fn shortcut(
+/// Execute a registered shortcut. The host surfaces errors through its overlay.
+pub async fn shortcut(
     action: crate::shortcuts::ShortcutAction,
     service: &super::service::Service,
     host: &crate::host::HostHandle,
@@ -117,29 +117,26 @@ pub(super) async fn shortcut(
                 &service.store,
                 chrono::Utc::now().timestamp_millis(),
                 |previous, wav| async move {
-                    if previous == "local" {
-                        if settings.engine == "local" || settings.engine == "local-only" {
-                            return Err(
-                                "Vælg en anden udbyder. Kun lokal behandling er slået til.".into(),
-                            );
+                    match alternate_engine(&previous, &settings.engine)? {
+                        super::logic::engine::Engine::Syv => {
+                            let key = super::secrets::syv_key()
+                                .ok_or("En anden udbyder kræver en Syv.ai-nøgle")?;
+                            super::syv::transcribe_language(
+                                &service.http,
+                                &settings.syv_endpoint,
+                                &key,
+                                &settings.syv_model,
+                                wav,
+                                None,
+                                &settings.language,
+                            )
+                            .await
                         }
-                        let key = super::secrets::syv_key()
-                            .ok_or("En anden udbyder kræver en Syv.ai-nøgle")?;
-                        super::syv::transcribe_language(
-                            &service.http,
-                            &settings.syv_endpoint,
-                            &key,
-                            &settings.syv_model,
-                            wav,
-                            None,
-                            &settings.language,
-                        )
-                        .await
-                    } else if previous == "syv" {
-                        let samples = decode_saved_wav(&wav)?;
-                        crate::parakeet_engine::commands::parakeet_transcribe_audio(samples).await
-                    } else {
-                        Err("Den tidligere udbyder understøtter ikke genkørsel endnu".into())
+                        super::logic::engine::Engine::Local => {
+                            let samples = decode_saved_wav(&wav)?;
+                            crate::parakeet_engine::commands::parakeet_transcribe_audio(samples)
+                                .await
+                        }
                     }
                 },
             )
@@ -147,6 +144,21 @@ pub(super) async fn shortcut(
             host.emit(COMPARISON_EVENT, diff)
         }
         _ => Err("Genvejen er ikke en gentagelse".into()),
+    }
+}
+
+fn alternate_engine(
+    previous: &str,
+    preference: &str,
+) -> Result<super::logic::engine::Engine, String> {
+    use super::logic::engine::{Engine, EnginePreference};
+    match previous {
+        "local" if EnginePreference::parse(preference) == EnginePreference::LocalOnly => {
+            Err("Vælg en anden udbyder. Kun lokal behandling er slået til.".into())
+        }
+        "local" => Ok(Engine::Syv),
+        "syv" => Ok(Engine::Local),
+        _ => Err("Den tidligere udbyder understøtter ikke genkørsel endnu".into()),
     }
 }
 
@@ -202,6 +214,17 @@ mod tests {
             .await
             .unwrap();
         store
+    }
+
+    #[test]
+    fn switches_provider_without_overriding_local_only() {
+        use crate::dictation::logic::engine::Engine;
+        assert_eq!(alternate_engine("local", "auto").unwrap(), Engine::Syv);
+        assert_eq!(alternate_engine("syv", "auto").unwrap(), Engine::Local);
+        assert_eq!(alternate_engine("syv", "local").unwrap(), Engine::Local);
+        assert!(alternate_engine("local", "local").is_err());
+        assert!(alternate_engine("local", "local-only").is_err());
+        assert!(alternate_engine("unknown", "auto").is_err());
     }
 
     #[test]

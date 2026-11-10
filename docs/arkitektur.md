@@ -129,14 +129,14 @@ The injected async provider makes this path testable without credentials.
 
 The optional `InsertLast` and `RerunLast` shortcuts are stored as `insertLast`
 and `rerunLast` in `shortcuts.json`. The host dispatches them to the core
-service. Reinsertion uses the existing Windows target checks. Rerun switches
-between local Parakeet and Syv; local-only settings prevent cloud reruns.
+`dictation::rerun` module. Reinsertion uses the existing Windows target checks.
+Rerun switches between local Parakeet and Syv; local-only settings prevent cloud reruns.
 Missing audio produces a Danish pill message and no insertion.
 
 A successful rerun emits `dictation-rerun-comparison` through `AppHost`, with
 `historyId`, `before`, `after` and `changed`. **UI integration remains open:**
 neither shell currently displays this event or provides controls for the two
-new shortcut settings. A comparison viewer and explicit acceptance/insertion
+new shortcut settings. A comparison viewer and shortcut settings controls
 are needed before issue #76 can be closed.
 
 ## The pill overlay

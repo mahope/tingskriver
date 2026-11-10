@@ -197,6 +197,22 @@ mod tests {
     }
 
     #[test]
+    fn registers_both_repeat_actions() {
+        let system = FakeSystem::default();
+        let mut hotkeys = Hotkeys::new(system.clone());
+        let settings = ShortcutSettings {
+            insert_last: Some("Ctrl+Alt+F9".into()),
+            rerun_last: Some("Ctrl+Alt+F10".into()),
+            ..Default::default()
+        };
+        assert!(hotkeys.apply(None, &settings).is_empty());
+        for action in [ShortcutAction::InsertLast, ShortcutAction::RerunLast] {
+            assert_eq!(hotkeys.action(action.id()), Some(action));
+            assert!(system.ours.borrow().contains_key(&action.id()));
+        }
+    }
+
+    #[test]
     fn registers_and_maps_ids_back() {
         let system = FakeSystem::default();
         let mut hotkeys = Hotkeys::new(system.clone());

@@ -306,27 +306,6 @@ impl Service {
         }
     }
 
-    pub async fn repeat_action(
-        &self,
-        action: crate::shortcuts::ShortcutAction,
-    ) -> Result<(), String> {
-        let result = super::rerun::shortcut(action, self, &self.app).await;
-        self.set_error(result.as_ref().err().cloned());
-        if result.is_err() {
-            let state = if result
-                .as_ref()
-                .err()
-                .is_some_and(|e| e == super::rerun::NO_AUDIO)
-            {
-                OverlayState::Refused(super::rerun::NO_AUDIO)
-            } else {
-                OverlayState::Error
-            };
-            flash(&self.overlay, state);
-        }
-        result
-    }
-
     pub fn notify_history_changed(&self) {
         let _ = self.app.emit(HISTORY_CHANGED_EVENT, ());
     }

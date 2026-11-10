@@ -18,11 +18,11 @@ pub mod settings;
 pub mod sound;
 pub mod store;
 pub mod syv;
+#[cfg(windows)]
+pub mod target_win;
 pub mod text_hook;
 pub mod timings;
 pub mod warm;
-#[cfg(windows)]
-pub mod target_win;
 #[cfg(windows)]
 pub mod win;
 
