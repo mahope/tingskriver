@@ -362,17 +362,17 @@ need their own loop. The settings UI uses `config`, `save_config`,
 with the measured round trip).
 
 Connection tests use `providers::verify`, with an eight-second total deadline,
-HTTPS for public hosts and HTTP for loopback, private and link-local addresses
-or `.local` hosts, and no URL credentials or redirects. A redirect returns a
-Danish explanation without forwarding the key. A custom OpenAI-compatible
+the same URL policy as the provider settings, and no URL credentials or redirects.
+OpenAI-compatible and Ollama providers allow HTTP to any host; public HTTP
+endpoints produce a warning in `TestReport.warning` rather than an error.
+A redirect returns a Danish explanation without forwarding the key. A custom OpenAI-compatible
 gateway with a configured key also receives a random negative-control key.
 Accepting that key produces a warning in `TestReport.warning`, with a stronger
 warning for public gateways, while connectivity still succeeds. Keyless endpoints
 only test connectivity. Existing HTTP, network and timeout error classes retain
 their Danish explanations. Latency measures only the real request and its body,
-excluding the control. Only successful results are cached in memory for 60 seconds
-per endpoint, provider kind, key fingerprint and timeout. Tests can inject an
-independent cache and clock without pausing Tokio time.
+excluding the control. Every Test invocation makes a fresh request; results are
+not cached, so repeated tests measure the current connection and latency.
 GPUI presentation of the verification states remains separate work for #53.
 
 Database safety copies use a unique folder on every attempt, including the
