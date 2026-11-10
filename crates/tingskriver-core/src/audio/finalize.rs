@@ -1074,6 +1074,102 @@ mod tests {
     }
 
     #[test]
+    fn mixed_wav_timeline_has_constant_headroom_across_gaps() {
+        let ffmpeg = ffmpeg().expect("ffmpeg is required for the mix regression");
+        let dir = tempfile::tempdir().unwrap();
+        let rate = 48_000usize;
+        let tone: Vec<i16> = (0..4 * rate)
+            .map(|i| {
+                (28_000.0 * (std::f64::consts::TAU * 440.0 * i as f64 / rate as f64).sin()).round()
+                    as i16
+            })
+            .collect();
+        let continuous = dir.path().join("continuous.wav");
+        let interrupted = dir.path().join("interrupted.wav");
+        write_segment(&continuous, &tone, tone.len() as u64);
+        // Starts at 0.25 s, stops at 2.75 s, with a silent second in between.
+        let mut other = tone[rate / 4..rate].to_vec();
+        other.extend(vec![0; rate]);
+        other.extend_from_slice(&tone[2 * rate..2 * rate + 3 * rate / 4]);
+        write_segment(&interrupted, &other, other.len() as u64);
+        let originals = [
+            std::fs::read(&continuous).unwrap(),
+            std::fs::read(&interrupted).unwrap(),
+        ];
+        // Exercise both microphone/system roles, including exhaustion of either reader.
+        for reverse in [false, true] {
+            let mut tracks = vec![
+                ScannedTrack {
+                    kind: TrackKind::Microphone,
+                    offset_samples: 0,
+                    sources: vec![Source::File {
+                        path: continuous.clone(),
+                        samples: tone.len() as u64,
+                    }],
+                    segment_count: 1,
+                },
+                ScannedTrack {
+                    kind: TrackKind::System,
+                    offset_samples: (rate / 4) as u64,
+                    sources: vec![Source::File {
+                        path: interrupted.clone(),
+                        samples: other.len() as u64,
+                    }],
+                    segment_count: 1,
+                },
+            ];
+            if reverse {
+                tracks.reverse();
+            }
+            let scanned = ScannedTracks {
+                sample_rate: rate as u32,
+                tracks,
+                problems: vec![],
+                complete: true,
+            };
+            let output = dir.path().join("mix.mp4");
+            encode_mix(&ffmpeg, &scanned, &output).unwrap();
+            let first = std::fs::read(&output).unwrap();
+            encode_mix(&ffmpeg, &scanned, &output).unwrap();
+            assert_eq!(
+                first,
+                std::fs::read(&output).unwrap(),
+                "deterministic AAC output"
+            );
+            let decoded = super::super::decoder::decode_audio_file(&output).unwrap();
+            assert!((decoded.duration_seconds - 4.0).abs() < 0.05);
+            // Compare RMS away from AAC edges: fixed gain, no flat clipped peaks,
+            // no zero holes, and no gain rise when the other track ends.
+            for (start, end, gain) in [
+                (0.05, 0.20, 0.5),
+                (0.35, 0.9, 1.0),
+                (1.1, 1.9, 0.5),
+                (2.1, 2.6, 1.0),
+                (2.9, 3.9, 0.5),
+            ] {
+                let samples =
+                    &decoded.samples[(start * rate as f64) as usize..(end * rate as f64) as usize];
+                let rms = (samples.iter().map(|&s| (s as f64).powi(2)).sum::<f64>()
+                    / samples.len() as f64)
+                    .sqrt();
+                let expected = gain * 28_000.0 / 32768.0 / 2.0f64.sqrt();
+                assert!(
+                    (rms - expected).abs() < 0.02,
+                    "{start}..{end}: rms {rms}, expected {expected}"
+                );
+                let longest_zero_run = samples
+                    .split(|s| s.abs() > 0.0001)
+                    .map(|s| s.len())
+                    .max()
+                    .unwrap_or(0);
+                assert!(longest_zero_run <= rate / 200, "zero hole over 5 ms");
+            }
+        }
+        assert_eq!(originals[0], std::fs::read(continuous).unwrap());
+        assert_eq!(originals[1], std::fs::read(interrupted).unwrap());
+    }
+
+    #[test]
     fn mixes_without_clipping() {
         assert_eq!(mix_samples(1000, 2000), 3000);
         assert_eq!(mix_samples(i16::MAX, i16::MAX), i16::MAX);
