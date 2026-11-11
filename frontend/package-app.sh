@@ -11,7 +11,7 @@ rm -rf src-tauri/target/release
 echo "Installing dependencies..."
 pnpm install
 
-echo "Building Next.js app..."
+echo "Building web frontend..."
 pnpm build
 
 echo "Building Tauri app..."

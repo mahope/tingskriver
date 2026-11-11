@@ -1,80 +1,37 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code in this repository. The rules for everyone (the table from changed component to CI check, skipped checks, porting) are in [AGENTS.md](AGENTS.md); each crate has its own `AGENTS.md`. This file only adds what is useful to know before you start.
 
 ## Project Overview
 
-**Tingskriver** is a privacy-first AI meeting assistant that captures, transcribes, and summarizes meetings entirely on local infrastructure. The supported application is the Tauri desktop app with a Rust core.
+**Tingskriver** is a privacy-first meeting assistant for Windows that records, transcribes and summarizes meetings entirely on the user's machine. The supported application is the **GPUI desktop app** with a Rust core. The older Tauri app in `frontend/` is being phased out; keep it running, but put new logic in `crates/tingskriver-core`. The Python/FastAPI backend in `backend/` is archived and unsupported: do not add endpoints to it.
 
-1. **Frontend**: Tauri-based desktop application (Rust + Next.js + TypeScript)
-2. **Rust Backend**: Tauri commands, audio capture, transcription, storage, and summarization orchestration
-3. **Legacy Backend Archive**: the old Python/FastAPI, Docker, and standalone whisper-server backend under `backend/` is archived and unsupported
+| Where | What |
+|---|---|
+| `crates/tingskriver-core` | all logic, no UI crate ([AGENTS.md](crates/tingskriver-core/AGENTS.md)) |
+| `crates/tingskriver-app` | the GPUI app ([AGENTS.md](crates/tingskriver-app/AGENTS.md), [docs/gpui.md](docs/gpui.md)) |
+| `crates/tingskriver-host` | keyboard hook, shortcuts, tray ([AGENTS.md](crates/tingskriver-host/AGENTS.md), [docs/host.md](docs/host.md)) |
+| `crates/tingskriver-overlay` | the dictation pill ([AGENTS.md](crates/tingskriver-overlay/AGENTS.md)) |
+| `installer/` | Velopack installer ([AGENTS.md](installer/AGENTS.md)) |
+| `frontend/` | the older Tauri app (being phased out) |
+| `llama-helper/` | local LLM sidecar for summaries |
 
-### Key Technology Stack
-- **Desktop App**: Tauri 2.x (Rust) + Next.js 14 + React 18
-- **Audio Processing**: Rust (cpal, whisper-rs, professional audio mixing)
-- **Transcription**: Whisper.cpp / whisper-rs and Parakeet paths in the Tauri app
-- **App API Surface**: Tauri commands and events, not a separate FastAPI service
-- **LLM Integration**: Ollama (local), Claude, Groq, OpenRouter
+Crate boundaries and how core talks to the UI (`AppHost`): [docs/arkitektur.md](docs/arkitektur.md).
 
-## Essential Development Commands
+## Commands
 
-### Frontend Development (Tauri Desktop App)
-
-**Location**: `/frontend`
+Agents on Linux cannot build or run the Windows app. Use the commands in [docs/agenter.md](docs/agenter.md) and [docs/testing.md](docs/testing.md), for example:
 
 ```bash
-# macOS Development
-./clean_run.sh              # Clean build and run with info logging
-./clean_run.sh debug        # Run with debug logging
-./clean_build.sh            # Production build
-
-# Windows Development
-clean_run_windows.bat       # Clean build and run
-clean_build_windows.bat     # Production build
-
-# Manual Commands
-pnpm install                # Install dependencies
-pnpm run dev                # Next.js dev server (port 3118)
-pnpm run tauri:dev          # Full Tauri development mode
-pnpm run tauri:build        # Production build
-
-# GPU-Specific Builds (for testing acceleration)
-pnpm run tauri:dev:metal    # macOS Metal GPU
-pnpm run tauri:dev:cuda     # NVIDIA CUDA
-pnpm run tauri:dev:vulkan   # AMD/Intel Vulkan
-pnpm run tauri:dev:cpu      # CPU-only (no GPU)
+cargo test --locked -p tingskriver-core
+cargo xwin check --locked --target x86_64-pc-windows-msvc -p tingskriver-core -p tingskriver-overlay -p tingskriver-host -p tingskriver-app
+cargo deny --locked check licenses bans
+rustfmt --edition 2021 <file>      # only files you touch
 ```
 
-### Legacy Backend Archive
+Build instructions for people: [docs/BUILDING.md](docs/BUILDING.md).
 
-**Location**: `/backend`
-
-The Python/FastAPI backend, Docker setup, and standalone whisper-server scripts are archived for historical reference and migration context only. Do not use them for current development, new installs, production deployments, or issue triage for the supported app.
-
-The archived FastAPI service had unauthenticated, development-oriented CORS behavior. Treat that behavior as obsolete legacy context, not as a supported production API.
-
-### Service Endpoints
-- **Frontend Dev**: http://localhost:3118
-
-## High-Level Architecture
-
-### Tauri Desktop Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    Frontend (Tauri Desktop App)                  │
-│  ┌──────────────────┐  ┌─────────────────┐  ┌────────────────┐ │
-│  │   Next.js UI     │  │  Rust Backend   │  │ Whisper Engine │ │
-│  │  (React/TS)      │←→│  (Audio + IPC)  │←→│  (Local STT)   │ │
-│  └──────────────────┘  └─────────────────┘  └────────────────┘ │
-│         ↑ Tauri Events           ↑ Audio Pipeline               │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-The current app does not require a separate FastAPI tier. Meeting persistence, local transcription, and summary orchestration are handled through the Rust/Tauri core.
-
-### Audio Recording Path (Critical Understanding)
+## Audio recording path (critical understanding)
 
 The recording only captures and saves. There is no VAD, transcription model or
 ffmpeg during a recording, so a crash in any of them cannot cost audio:
@@ -93,322 +50,31 @@ and returns within seconds). Encoding, verification and deletion of the raw
 tracks (only on status `ok`) happen afterwards; transcription runs from the
 saved files. See [docs/arkitektur.md](docs/arkitektur.md#recording-the-audio-is-saved-first).
 
-### Audio Device Modularization (Recently Completed)
+Related: Mute never changes the microphone device ([docs/enheder.md](docs/enheder.md)); the capture callback never allocates, logs or blocks ([docs/audio-callback.md](docs/audio-callback.md)).
 
-**Context**: The audio system was refactored from a monolithic 1028-line `core.rs` file into focused modules. See [AUDIO_MODULARIZATION_PLAN.md](AUDIO_MODULARIZATION_PLAN.md) for details.
+Where to look in `crates/tingskriver-core/src/audio/`:
+- Device detection: `devices/discovery.rs`, `devices/platform/{windows,macos,linux}.rs`
+- Capture streams: `capture/microphone.rs`, `capture/system.rs`
+- Capture processing: `pipeline.rs`; saving: `recording_writer.rs` and `track_writer.rs`; final files and crash recovery: `finalize.rs`
+- Recording workflow: `recording_manager.rs`, `recording_commands.rs`
 
-```
-crates/tingskriver-core/src/audio/
-├── devices/                    # Device discovery and configuration
-│   ├── discovery.rs           # list_audio_devices, trigger_audio_permission
-│   ├── microphone.rs          # default_input_device
-│   ├── speakers.rs            # default_output_device
-│   ├── configuration.rs       # AudioDevice types, parsing
-│   └── platform/              # Platform-specific implementations
-│       ├── windows.rs         # WASAPI logic (~200 lines)
-│       ├── macos.rs           # ScreenCaptureKit logic
-│       └── linux.rs           # ALSA/PulseAudio logic
-├── capture/                   # Audio stream capture
-│   ├── microphone.rs          # Microphone capture stream
-│   ├── system.rs              # System audio capture stream
-│   └── core_audio.rs          # macOS ScreenCaptureKit integration
-├── pipeline.rs                # Capture processing (resampling, mic filters) -> writer
-├── recording_manager.rs       # High-level recording coordination
-├── recording_commands.rs      # Start/stop orchestration (Tauri wrappers in frontend/src-tauri/src/audio/)
-└── recording_saver.rs         # Audio file writing
-```
+## Adding a Tauri command (older Tauri app)
 
-**When working on audio features**:
-- Device detection issues → `devices/discovery.rs` or `devices/platform/{windows,macos,linux}.rs`
-- Microphone/speaker problems → `devices/microphone.rs` or `devices/speakers.rs`
-- Audio capture issues → `capture/microphone.rs` or `capture/system.rs`
-- Capture processing problems → `pipeline.rs`; saving → `recording_writer.rs` / `track_writer.rs`; final files and crash recovery → `finalize.rs`
-- Recording workflow → `recording_manager.rs`
+Put the logic in `crates/tingskriver-core` as a plain function (take a `HostHandle` instead of an `AppHandle` if it emits events). Add a thin `#[tauri::command]` wrapper in `frontend/src-tauri/src` with the same name and arguments, and register it in the `tauri::Builder` `invoke_handler`. See [docs/arkitektur.md](docs/arkitektur.md).
 
-### Rust ↔ Frontend Communication (Tauri Architecture)
+## Conventions
 
-**Command Pattern** (Frontend → Rust):
-```typescript
-// Frontend: src/app/page.tsx
-await invoke('start_recording', {
-  mic_device_name: "Built-in Microphone",
-  system_device_name: "BlackHole 2ch",
-  meeting_name: "Team Standup"
-});
-```
+- Rust uses `anyhow::Result`. Use `perf_debug!()`/`perf_trace!()` for hot-path logging (zero cost in release).
+- Share state across async tasks with `Arc<RwLock<T>>`, simple flags with `Arc<AtomicBool>`.
+- Audio devices are called "microphone" and "system" (not "input"/"output").
+- Use Tauri/GPUI path APIs, never hard-coded paths. Models live in `%APPDATA%\dk.mahoje.tingskriver\models` in production (`app_data_dir().join("models")`, see `tingskriver_core::paths`) and `frontend/models/` in development.
+- Branches: `main` is stable; work on `fix/*`, `enhance/*` or `issue/<n>-*` and open a PR to `main` ([CONTRIBUTING.md](CONTRIBUTING.md)).
+- The repository is public: no secrets, personal data or private paths. Test with synthetic fixtures ([docs/testing.md](docs/testing.md)).
 
-```rust
-// Rust: src/lib.rs
-#[tauri::command]
-async fn start_recording<R: Runtime>(
-    app: AppHandle<R>,
-    mic_device_name: Option<String>,
-    system_device_name: Option<String>,
-    meeting_name: Option<String>
-) -> Result<(), String> {
-    // Implementation delegates to audio::recording_commands
-}
-```
+## graphify
 
-**Event Pattern** (Rust → Frontend):
-```rust
-// Rust: Emit transcript updates
-app.emit("transcript-update", TranscriptUpdate {
-    text: "Hello world".to_string(),
-    timestamp: chrono::Utc::now(),
-    // ...
-})?;
-```
-
-```typescript
-// Frontend: Listen for events
-await listen<TranscriptUpdate>('transcript-update', (event) => {
-  setTranscripts(prev => [...prev, event.payload]);
-});
-```
-
-### Whisper Model Management
-
-**Model Storage Locations**:
-- **Development**: `frontend/models/`
-- **Production (macOS)**: `~/Library/Application Support/Tingskriver/models/`
-- **Production (Windows)**: `%APPDATA%\Tingskriver\models\`
-
-**Model Loading** (crates/tingskriver-core/src/whisper_engine/whisper_engine.rs):
-```rust
-pub async fn load_model(&self, model_name: &str) -> Result<()> {
-    // Automatically detects GPU capabilities (Metal/CUDA/Vulkan)
-    // Falls back to CPU if GPU unavailable
-}
-```
-
-**GPU Acceleration**:
-- **macOS**: Metal + CoreML (automatically enabled)
-- **Windows/Linux**: CUDA (NVIDIA), Vulkan (AMD/Intel), or CPU
-- Configure via Cargo features: `--features cuda`, `--features vulkan`
-
-## Critical Development Patterns
-
-### 1. Audio Buffer Management
-
-**Separate tracks, mixed after stop** (pipeline.rs, recording_writer.rs, finalize.rs):
-- Mic and system audio arrive asynchronously at different rates and are never mixed live
-- `AudioCapture` resamples each stream and sends it with its position on the recording clock over a bounded channel (it drops rather than blocks)
-- The writer thread keeps one WAV track per source and fills gaps with silence, so both tracks stay on the same time axis
-- `finalize.rs` mixes the tracks into `audio.mp4` after stop
-
-### 2. Thread Safety and Async Boundaries
-
-**Recording State** (recording_state.rs):
-```rust
-pub struct RecordingState {
-    is_recording: Arc<AtomicBool>,
-    audio_sender: Arc<RwLock<Option<mpsc::UnboundedSender<AudioChunk>>>>,
-    // ...
-}
-```
-
-**Key Pattern**: Use `Arc<RwLock<T>>` for shared state across async tasks, `Arc<AtomicBool>` for simple flags.
-
-### 3. Error Handling and Logging
-
-**Performance-Aware Logging** (lib.rs):
-```rust
-#[cfg(debug_assertions)]
-macro_rules! perf_debug {
-    ($($arg:tt)*) => { log::debug!($($arg)*) };
-}
-
-#[cfg(not(debug_assertions))]
-macro_rules! perf_debug {
-    ($($arg:tt)*) => {};  // Zero overhead in release builds
-}
-```
-
-**Usage**: Use `perf_debug!()` and `perf_trace!()` for hot-path logging that should be eliminated in production.
-
-### 4. Frontend State Management
-
-**Sidebar Context** (components/Sidebar/SidebarProvider.tsx):
-- Global state for meetings list, current meeting, recording status
-- Communicates with the Rust/Tauri core through Tauri commands and events
-- Keeps React state synchronized with native recording, meeting, transcript, and summary state
-
-**Pattern**: Tauri commands update Rust state → Emit events → Frontend listeners update React state → Context propagates to components
-
-## Common Development Tasks
-
-### Adding a New Audio Device Platform
-
-1. Create platform file: `audio/devices/platform/{platform_name}.rs`
-2. Implement device enumeration for the platform
-3. Add platform-specific configuration in `audio/devices/configuration.rs`
-4. Update `audio/devices/platform/mod.rs` to export new platform functions
-5. Test with `cargo check` and platform-specific device tests
-
-### Adding a New Tauri Command
-
-1. Put the logic in `crates/tingskriver-core` as a plain function (take a `HostHandle` instead of an `AppHandle` if it emits events):
-   ```rust
-   pub async fn my_command(arg: String) -> Result<String, String> { /* ... */ }
-   ```
-2. Add a thin wrapper in `frontend/src-tauri/src` with the same name and arguments:
-   ```rust
-   #[tauri::command]
-   async fn my_command(arg: String) -> Result<String, String> {
-       tingskriver_core::my_module::my_command(arg).await
-   }
-   ```
-3. Register in `tauri::Builder`:
-   ```rust
-   .invoke_handler(tauri::generate_handler![
-       start_recording,
-       my_command,  // Add here
-   ])
-   ```
-4. Call from frontend:
-   ```typescript
-   const result = await invoke<string>('my_command', { arg: 'value' });
-   ```
-
-### Modifying Audio Pipeline Behavior
-
-**Location**: `crates/tingskriver-core/src/audio/pipeline.rs`
-
-Key components:
-- `AudioCapture` (pipeline.rs): resampling, mic filters, hand-off to the writer
-- The writer thread (`spawn_writer`, recording_writer.rs) and `TrackWriter` (track_writer.rs): WAV segments, gap filling, storage errors
-- `finalize_raw_tracks` (finalize.rs): encode, verify, mix and crash recovery
-
-**Testing Audio Changes**:
-```bash
-# Enable verbose audio logging
-RUST_LOG=tingskriver_core::audio=debug ./clean_run.sh
-
-# Monitor audio metrics in real-time
-# Check Developer Console in the app (Cmd+Shift+I on macOS)
-```
-
-### Tauri Backend Development
-
-Current app behavior should be implemented in the Rust core, not in the archived Python backend. The logic lives in `crates/tingskriver-core` (no Tauri or GPUI dependencies); `frontend/src-tauri/src` holds thin `#[tauri::command]` wrappers and Tauri-only code (windows, tray, notifications, dialogs). Core reaches the UI through the `AppHost` trait (`tingskriver_core::host`), which `frontend/src-tauri/src/core_bridge.rs` implements. See [docs/arkitektur.md](docs/arkitektur.md).
-
-Do not add new endpoints to `backend/app/main.py`; that FastAPI code is legacy archive material only.
-
-## Testing and Debugging
-
-### Frontend Debugging
-
-**Enable Rust Logging**:
-```bash
-# macOS
-RUST_LOG=debug ./clean_run.sh
-
-# Windows (PowerShell)
-$env:RUST_LOG="debug"; ./clean_run_windows.bat
-```
-
-**Developer Tools**:
-- Open DevTools: `Cmd+Shift+I` (macOS) or `Ctrl+Shift+I` (Windows)
-- Console Toggle: Built into app UI (console icon)
-- View Rust logs: Check terminal output
-
-### Audio Pipeline Debugging
-
-**Key Metrics** (emitted by pipeline):
-- Writer backlog (seconds of audio waiting for the disk)
-- Dropped chunk and storage error warnings
-- Per-track summary at stop (saved, silence filled, lost)
-
-**Monitor via Developer Console**: The app includes real-time metrics display when recording.
-
-## Platform-Specific Notes
-
-### macOS
-- **Audio Capture**: Uses ScreenCaptureKit for system audio (macOS 13+)
-- **GPU**: Metal + CoreML automatically enabled
-- **Permissions**: Requires microphone + screen recording permissions
-- **System Audio**: Requires virtual audio device (BlackHole) for system capture
-
-### Windows
-- **Audio Capture**: Uses WASAPI (Windows Audio Session API)
-- **GPU**: CUDA (NVIDIA) or Vulkan (AMD/Intel) via Cargo features
-- **Build Tools**: Requires Visual Studio Build Tools with C++ workload
-- **System Audio**: Uses WASAPI loopback for system capture
-
-### Linux
-- **Audio Capture**: ALSA/PulseAudio
-- **GPU**: CUDA (NVIDIA) or Vulkan via Cargo features
-- **Dependencies**: Requires cmake, llvm, libomp
-
-## Performance Optimization Guidelines
-
-### Audio Processing
-- Use `perf_debug!()` / `perf_trace!()` for hot-path logging (zero cost in release)
-- Batch audio metrics using `AudioMetricsBatcher` (batch_processor.rs)
-- Pre-allocate buffers with `AudioBufferPool` (buffer_pool.rs)
-- VAD runs in transcription from the saved file, not during the recording
-
-### Whisper Transcription
-- **Model Selection**: Balance accuracy vs speed
-  - Development: `base` or `small` (fast iteration)
-  - Production: `medium` or `large-v3` (best quality)
-- **GPU Acceleration**: 5-10x faster than CPU
-- **Parallel Processing**: Available in `whisper_engine/parallel_processor.rs` for batch workloads
-
-### Frontend Performance
-- React state updates batched via Sidebar context
-- Transcript rendering virtualized for large meetings
-- Audio level monitoring throttled to 60fps
-
-## Important Constraints and Gotchas
-
-1. **Audio Chunk Size**: Pipeline expects consistent 48kHz sample rate. Resampling happens at capture time.
-
-2. **Platform Audio Quirks**:
-   - macOS: ScreenCaptureKit requires macOS 13+, needs screen recording permission
-   - Windows: WASAPI exclusive mode can conflict with other apps
-   - System audio requires virtual device (BlackHole on macOS, WASAPI loopback on Windows)
-
-3. **Whisper Model Loading**: Models are loaded once and cached. Changing models requires app restart or manual unload/reload.
-
-4. **No Separate Backend Dependency**: Meeting persistence, transcription, and LLM features are handled by the Tauri app. Do not reintroduce the archived FastAPI backend as a supported requirement.
-
-5. **Legacy FastAPI Security Context**: The archived FastAPI/CORS behavior is unsupported legacy code and must not be treated as a supported production API.
-
-6. **File Paths**: Use Tauri's path APIs (`downloadDir`, etc.) for cross-platform compatibility. Never hardcode paths.
-
-7. **Audio Permissions**: Request permissions early. macOS requires both microphone AND screen recording for system audio.
-
-## Repository-Specific Conventions
-
-- **Logging Format**: Rust logs should include enough module context to diagnose app behavior
-- **Error Handling**: Rust uses `anyhow::Result`, frontend uses try-catch with user-friendly messages
-- **Naming**: Audio devices use "microphone" and "system" consistently (not "input"/"output")
-- **Git Branches**:
-  - `main`: Stable releases
-  - `fix/*`: Bug fixes
-  - `enhance/*`: Feature enhancements
-  - Current: `fix/audio-mixing` (working on audio pipeline improvements)
-
-## Key Files Reference
-
-**Core Coordination**:
-- [frontend/src-tauri/src/lib.rs](frontend/src-tauri/src/lib.rs) - Main Tauri entry point, command registration
-- [frontend/src-tauri/src/core_bridge.rs](frontend/src-tauri/src/core_bridge.rs) - Tauri implementation of core's `AppHost`
-- [crates/tingskriver-core/src/host.rs](crates/tingskriver-core/src/host.rs) - What core needs from the UI (events, database, settings)
-- [crates/tingskriver-core/src/audio/mod.rs](crates/tingskriver-core/src/audio/mod.rs) - Audio module exports
-- [crates/tingskriver-core/src/database/mod.rs](crates/tingskriver-core/src/database/mod.rs) - Local database module
-
-**Audio System**:
-- [crates/tingskriver-core/src/audio/recording_commands.rs](crates/tingskriver-core/src/audio/recording_commands.rs) - Start/stop recording orchestration
-- [crates/tingskriver-core/src/audio/recording_manager.rs](crates/tingskriver-core/src/audio/recording_manager.rs) - Recording orchestration
-- [crates/tingskriver-core/src/audio/pipeline.rs](crates/tingskriver-core/src/audio/pipeline.rs) - Capture processing and hand-off to the disk writer
-- [crates/tingskriver-core/src/audio/recording_saver.rs](crates/tingskriver-core/src/audio/recording_saver.rs) - Audio file writing
-
-**UI Components**:
-- [frontend/src/app/page.tsx](frontend/src/app/page.tsx) - Main recording interface
-- [frontend/src/components/Sidebar/SidebarProvider.tsx](frontend/src/components/Sidebar/SidebarProvider.tsx) - Global state management
-
-**Whisper Integration**:
-- [crates/tingskriver-core/src/whisper_engine/whisper_engine.rs](crates/tingskriver-core/src/whisper_engine/whisper_engine.rs) - Whisper model management and transcription
+Code graph (graphify, AST only, no LLM). If `~/graphify/tingskriver/` exists on this machine, use it before broad grep:
+- Overview: `~/graphify/tingskriver/BRIEF.md` (about 1.5 KB).
+- Lookups: `~/.local/bin/graphify query "<question>" --graph ~/graphify/tingskriver/graphify-out/graph.json --budget 1500`; also `explain "<symbol>"` and `affected "<symbol>"` with the same `--graph`.
+- Do not read `GRAPH_REPORT.md` in full (about 100 KB).
+- The graph reflects the default branch, rebuilt every 30 minutes by a timer. It is not your branch: check the code in your worktree before changing it. Do not run graphify inside the repo, and never commit `graphify-out/`.
