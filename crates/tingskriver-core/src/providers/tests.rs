@@ -1367,9 +1367,15 @@ async fn verification_retries_after_server_starts() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     drop(listener);
-    let target = link("offline", &format!("http://{addr}/v1"), None);
+    let mut target = link("offline", &format!("http://{addr}/v1"), None);
+    // Windows retries a refused connection for about 2 s before giving up, so
+    // the helper's 1.5 s limit would turn it into a timeout there.
+    target.timeout = Some(Duration::from_secs(9));
     let error = client::test(&target).await.unwrap_err();
-    assert!(matches!(error, ProviderError::Unreachable { .. }));
+    assert!(
+        matches!(error, ProviderError::Unreachable { .. }),
+        "{error:?}"
+    );
     assert!(error.message("Test").contains("kunne ikke nås"));
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     let serve = async {
