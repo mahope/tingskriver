@@ -523,11 +523,15 @@ metadata on the blocking pool. Dictation also loads and parses spoken rules
 there during initialization and reload. Tests hold the blocking pool busy
 to verify that these operations yield until a disk worker is available.
 
-Core HTTP uses asynchronous reqwest with a total deadline of at most ten
-seconds, including the response body. Provider-specific shorter deadlines
-are preserved. This also bounds model downloads, pulls and remote inference;
-a slow operation returns an error and can be retried. Local inference does
-not use HTTP and retains its existing cancellation and timing policy.
+Core HTTP uses asynchronous reqwest with a ten-second connection deadline.
+Ordinary requests also have a ten-second total deadline, including the body.
+Model downloads go through the shared downloader in `model_download`: a
+ten-second connection deadline, no total deadline (the files are gigabytes)
+and an abort after 60 seconds without data, which keeps the `.part` file so
+the next attempt resumes. Summary generation allows 300 seconds;
+provider inference uses the function default or the explicit per-link limit,
+including limits longer than ten seconds. Local inference does not use HTTP
+and retains its existing cancellation and timing policy.
 
 `crates/tingskriver-core/clippy.toml` bans blocking reqwest and synchronous
 filesystem calls. Core denies both `disallowed_methods` and `disallowed_types`.

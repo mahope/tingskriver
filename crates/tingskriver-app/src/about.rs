@@ -16,23 +16,41 @@ pub fn update_status() -> UpdateStatus {
 }
 
 pub fn metadata() -> String {
+    metadata_with(
+        VERSION,
+        BUILD_DATE,
+        COMMIT,
+        &tingskriver_core::whisper_engine::build_info::os_version(),
+        std::env::consts::ARCH,
+    )
+}
+
+/// The About text for given build values. Screenshot fixtures pass fixed
+/// values, so the reference images do not change with every commit or day.
+pub fn metadata_with(
+    version: &str,
+    build_date: &str,
+    commit: &str,
+    os: &str,
+    arch: &str,
+) -> String {
     format!(
         "{} {}\n{}: {}\n{}: {}\n{}: {}\n{}: {} / {}",
         strings::APP_NAME,
-        VERSION,
+        version,
         strings::ABOUT_BUILD,
-        BUILD_DATE,
+        build_date,
         strings::ABOUT_COMMIT,
-        COMMIT,
+        commit,
         strings::ABOUT_CHANNEL,
-        if crate::update::is_prerelease(VERSION) {
+        if crate::update::is_prerelease(version) {
             strings::ABOUT_BETA
         } else {
             strings::ABOUT_STABLE
         },
         strings::ABOUT_PLATFORM,
-        tingskriver_core::whisper_engine::build_info::os_version(),
-        std::env::consts::ARCH
+        os,
+        arch
     )
 }
 

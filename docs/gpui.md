@@ -6,6 +6,7 @@ apps by the gpui-component maintainers as `gpui-pre`, and mixed versions
 break the build with E0277. This page records what the shell proves, how the
 version is locked, and the manual Windows tests that decide go or no-go.
 
+Automated PNG tests and reference updates: [GPUI screenshots](gpui-screenshots.md).
 The meeting-list port and its verification limits are described in
 [meeting-list.md](meeting-list.md).
 

@@ -6,7 +6,7 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-const REQUEST_TIMEOUT_DURATION: Duration = crate::http::TIMEOUT;
+const REQUEST_TIMEOUT_DURATION: Duration = Duration::from_secs(300);
 
 async fn await_or_cancel<T>(
     operation: impl Future<Output = T>,
@@ -1080,6 +1080,44 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn slow_summary_outlives_short_http_deadline() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            read_http_request(&mut stream).await;
+            tokio::time::sleep(Duration::from_secs(11)).await;
+            let body = br#"{"choices":[{"message":{"content":"Meeting summary."}}]}"#;
+            let headers = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            stream.write_all(headers.as_bytes()).await.unwrap();
+            stream.write_all(body).await.unwrap();
+        });
+        let endpoint = format!("http://{address}");
+        let completion = generate_summary(
+            &crate::http::client(),
+            &LLMProvider::Ollama,
+            "model",
+            "",
+            "system",
+            "user",
+            Some(&endpoint),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(completion.content, "Meeting summary.");
+        server.await.unwrap();
+    }
+
     #[test]
     fn claude_response_uses_exact_block_types() {
         let response: ClaudeChatResponse = serde_json::from_value(json!({
@@ -1111,4 +1149,10 @@ fn provider_name(provider: &LLMProvider) -> &str {
         LLMProvider::OpenRouter => "OpenRouter",
         LLMProvider::CustomOpenAI => "Custom OpenAI",
     }
+}
+
+#[cfg(test)]
+#[test]
+fn generation_retains_five_minute_budget() {
+    assert_eq!(REQUEST_TIMEOUT_DURATION, Duration::from_secs(300));
 }

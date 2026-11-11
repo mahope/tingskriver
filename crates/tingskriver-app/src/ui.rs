@@ -38,6 +38,9 @@ pub struct AppModel {
     /// Whether the first-frame time is still to be reported. Off for
     /// `--hidden`, where the window opens long after process start.
     pub report_first_frame: bool,
+    pub display_version: &'static str,
+    /// Fixed About text for screenshot fixtures; `None` reads the real build.
+    pub about_metadata: Option<String>,
     /// A meeting that sleep or logoff ended, until the user has seen it.
     pub interrupted: Option<InterruptNotice>,
     pub rerun_comparison: Option<tingskriver_core::dictation::rerun::Comparison>,
@@ -62,6 +65,8 @@ impl AppModel {
             clock,
             start_page: Page::Meetings,
             report_first_frame: true,
+            display_version: crate::about::VERSION,
+            about_metadata: None,
             interrupted: None,
             rerun_comparison: None,
         }
@@ -354,6 +359,60 @@ pub struct Shell {
 }
 
 impl Shell {
+    /// Fixed shell state for raster tests, without opening a database,
+    /// reading credentials, registering shortcuts or starting audio.
+    #[cfg(feature = "screenshot-tests")]
+    pub fn fixture(
+        page: Page,
+        db: DbState,
+        runtime: Handle,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Entity<Self> {
+        let model = cx.new(|_| AppModel {
+            db,
+            app_data_dir: None,
+            log_path: Some(PathBuf::from("fixtures/tingskriver.log")),
+            runtime,
+            meeting_jobs: Vec::new(),
+            clock: StartupClock::start(),
+            start_page: page,
+            report_first_frame: false,
+            display_version: "0.0.0-test",
+            about_metadata: Some(crate::about::metadata_with(
+                "0.0.0-test",
+                "2026-01-01",
+                "0000000000000000000000000000000000000000",
+                "test",
+                "x86_64",
+            )),
+            interrupted: None,
+            rerun_comparison: None,
+        });
+        init(model, cx);
+        let shell = cx.new(|cx| Shell::new(None, window, cx));
+        shell.update(cx, |shell, cx| {
+            shell.measurement = cx.new(|cx| {
+                crate::measurement::MeasurementView::fixture(
+                    shell.model.read(cx).runtime.clone(),
+                    window,
+                    cx,
+                )
+            });
+            shell.probe_line.update(cx, |input, cx| {
+                input.set_value("æøå ÆØÅ é ü @ €", window, cx)
+            });
+            shell.probe_text.update(cx, |input, cx| {
+                input.set_value(
+                    "Et syntetisk eksempel.\nIngen mødedata indlæses.",
+                    window,
+                    cx,
+                )
+            });
+        });
+        shell
+    }
+
     fn new(state_path: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let model = model(cx);
         let focus_handle = cx.focus_handle().tab_stop(false);
@@ -477,7 +536,7 @@ impl Shell {
                     .px(space::SM)
                     .text_size(typography::XS)
                     .text_color(palette.muted_foreground)
-                    .child(strings::version(crate::about::VERSION)),
+                    .child(strings::version(self.model.read(cx).display_version)),
             )
     }
 
@@ -530,7 +589,15 @@ impl Shell {
         let body =
             v_flex()
                 .gap(space::LG)
-                .child(paragraph(&crate::about::metadata(), cx))
+                .child(paragraph(
+                    &self
+                        .model
+                        .read(cx)
+                        .about_metadata
+                        .clone()
+                        .unwrap_or_else(crate::about::metadata),
+                    cx,
+                ))
                 .child(section_title(strings::ABOUT_UPDATES))
                 .child(paragraph(&crate::about::update_status().label(), cx))
                 .child(

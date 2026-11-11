@@ -99,6 +99,7 @@ Se [målemetoden](docs/ydeevne.md) og [release-checklisten](docs/release-checkli
 - Logfiler: `%LOCALAPPDATA%\dk.mahoje.tingskriver\logs\` (`tingskriver.log`, roterer ved 5 MB, de to seneste filer gemmes også). Åbn mappen fra Indstillinger under "Logfiler". Enhedsskift står som `[DEVICE_FOLLOW]`-linjer med tidsstempel.
 - Lange optagelser: import og gen-transskription deler ved pauser med overlap, samler ud fra ordtider og gemmer hvert færdigt svar, så en afbrudt kørsel kan genoptages. Se [profiler, checkpoints og testbegrænsninger](docs/transcription-chunks.md).
 - Test af diktering: `cargo test -p tingskriver-core dictation` (renskrivning, genvej, dobbelttryk, reservevalg, SQLite-lager og Syv.ai-kaldet mod en falsk server; kører på Linux og i CI).
+- GPUI-skærmbilledtest: [headless golden images, Windows-rendering og PR-artefakter](docs/gpui-screenshots.md).
 - Lyd-callbacken bruger en låsefri kø til en DSP-arbejdstråd. Se [test og måling af callbacken](docs/audio-callback.md), herunder Windows-målingen af p99 og fejlgrænserne pr. minut.
 - Ingen brugsstatistik eller telemetri indsamles.
 - Afbrudte referater: ved opstart markeres ventende referater ældre end generationstimeout (15 minutter) som fejlede og kan prøves igen. Et tidligere referat bevares.

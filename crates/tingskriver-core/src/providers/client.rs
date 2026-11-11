@@ -38,7 +38,6 @@ impl ResolvedLink {
     pub fn remote_timeout(&self) -> Duration {
         self.timeout
             .unwrap_or_else(|| self.function.default_remote_timeout())
-            .min(crate::http::TIMEOUT)
     }
 
     /// The limit the chain enforces around the whole attempt.
