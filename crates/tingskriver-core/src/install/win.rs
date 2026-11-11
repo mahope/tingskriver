@@ -298,3 +298,11 @@ pub fn delete_credentials_with_prefix(prefix: &str) -> Result<usize, String> {
     }
     Ok(removed)
 }
+
+/// Remove only our per-user protocol tree; missing keys are harmless.
+pub fn delete_protocol() -> Result<(), String> {
+    match unsafe { RegDeleteTreeW(HKEY_CURRENT_USER, &HSTRING::from(super::protocol::KEY)) } {
+        ERROR_SUCCESS | ERROR_FILE_NOT_FOUND => Ok(()),
+        error => Err(format!("RegDeleteTreeW(protocol): {error:?}")),
+    }
+}

@@ -120,6 +120,12 @@ the pill. Its `Bridge` is the GPUI app's `AppHost`. Details, the shortcut
 settings file, the hook timing log and the Windows test are in
 [host.md](host.md).
 
+External CLI and URL commands use the existing single-instance endpoint, now
+implemented in core behind a transport trait. Commands run on the core runtime
+without showing a window. See [kommandolinje.md](kommandolinje.md) for the
+command vocabulary, queue acknowledgement, account boundary and current
+meeting workflow limitation.
+
 ## Repeat a saved dictation
 
 `dictation::rerun` reads the newest history entry (timestamp, then id).

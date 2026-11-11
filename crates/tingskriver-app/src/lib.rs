@@ -13,6 +13,7 @@
 pub mod about;
 pub mod args;
 pub mod assets;
+pub mod console;
 pub mod crash;
 mod measurement;
 mod meetings;
@@ -30,7 +31,7 @@ use tingskriver_core::host::AppHost;
 use tingskriver_host::{Host, Request};
 
 use crate::args::StartupArgs;
-use crate::single_instance::{Instance, Message};
+use crate::single_instance::{Launch, Message};
 use crate::startup::StartupClock;
 
 /// Log file of the GPUI app in `tingskriver_core::paths::log_dir()`.
@@ -42,7 +43,10 @@ pub fn run() {
     crash::install_panic_hook(log_path.clone());
     // Installer hooks exit here.
     update::handle_installer_events();
-    let args = StartupArgs::from_env();
+    let mut args = StartupArgs::from_env();
+    if args.command.is_some() {
+        args.hidden = true;
+    }
     log::info!(
         "Tingskriver {} (GPUI) starting{}; log file: {}",
         about::VERSION,
@@ -70,34 +74,57 @@ pub fn run() {
     };
     tingskriver_core::runtime::set_handle(runtime.handle().clone());
 
-    let message = (!args.hidden).then_some(Message::Show);
-    let claimed = if std::env::var_os(single_instance::RESTART_ENV).is_some() {
-        runtime.block_on(single_instance::claim_after_restart(
-            message,
+    let message = args
+        .command
+        .clone()
+        .map(Message::Command)
+        .or_else(|| (!args.hidden).then_some(Message::Show));
+    let launched = if std::env::var_os(single_instance::RESTART_ENV).is_some() {
+        // The grace period is the retry window here.
+        let claimed = runtime.block_on(single_instance::claim_after_restart(
+            message.clone(),
             std::time::Duration::from_secs(5),
-        ))
+        ));
+        single_instance::settle(claimed, message.as_ref())
     } else {
-        runtime.block_on(single_instance::claim(message))
+        runtime.block_on(single_instance::launch(
+            &single_instance::LocalTransport,
+            message.clone(),
+        ))
     };
-    let messages = match claimed {
-        Ok(Instance::Primary(messages)) => Some(messages),
-        Ok(Instance::Forwarded) => {
+    let messages = match launched {
+        Ok(Launch::Primary(messages)) => Some(messages),
+        Ok(Launch::Forwarded) => {
             log::info!("Tingskriver already runs; handed over to it");
             return;
         }
-        Err(error) => {
-            log::warn!("Single-instance check failed, starting anyway: {error}");
+        Ok(Launch::Unforwarded) => {
+            log::warn!(
+                "Single-instance endpoint is not available to this launch; starting without forwarding"
+            );
             None
         }
+        // A second instance would mean a second keyboard hook and doubled
+        // text, so a launch that cannot settle the question exits.
+        Err(code) => {
+            match code.explanation() {
+                Some(text) => log::error!("{text}"),
+                None => log::error!("Startup stopped with exit code {}", code as i32),
+            }
+            std::process::exit(code as i32);
+        }
     };
+    // Everything the terminal was borrowed for has been said.
+    console::release();
     // Only the sole instance may replace the installed files.
     update::apply_pending_update(messages.is_some());
     update::start_background_checks();
 
-    // Tray, shortcuts and dictation, on their own threads. Normally only the
-    // first instance gets here, so there is one keyboard hook per user; if
-    // the single-instance check failed, a second instance would add a second
-    // hook and insert every dictation twice.
+    // Tray, shortcuts and dictation, on their own threads. Only the first
+    // instance gets here, so there is one keyboard hook per user; the one
+    // exception is a launch that cannot use the endpoint at all (another
+    // account holds it, or none can be created), which starts without
+    // forwarding.
     let data_dir = startup::app_data_dir(std::env::var_os(startup::DATA_DIR_ENV));
     let (host, requests) = match data_dir {
         Some(dir) => {
@@ -109,6 +136,38 @@ pub fn run() {
             (None, None)
         }
     };
+    let command_host = host.as_ref().map(Host::handle);
+    let messages = messages.map(|mut messages| {
+        let (show, receiver) = tokio::sync::mpsc::unbounded_channel();
+        runtime.spawn(async move {
+            let execute = |command| {
+                let host = command_host.clone();
+                async move {
+                    if let Some(host) = host {
+                        if let Err(error) =
+                            tingskriver_core::cli_dispatch::execute(host, command).await
+                        {
+                            log::warn!("External command failed: {error}");
+                        }
+                    } else {
+                        log::warn!("External command unavailable: no application data folder");
+                    }
+                }
+            };
+            if let Some(Message::Command(command)) = message {
+                execute(command).await;
+            }
+            while let Some(message) = messages.recv().await {
+                match message {
+                    Message::Show => {
+                        let _ = show.send(());
+                    }
+                    Message::Command(command) => execute(command).await,
+                }
+            }
+        });
+        receiver
+    });
     let bridge = host.as_ref().map(|h| h.bridge().clone());
     let events = bridge.as_ref().map(|bridge| bridge.subscribe());
     // With a tray icon, closing the window hides the app to the tray.
@@ -197,10 +256,8 @@ pub fn run() {
 
             if let Some(mut messages) = messages {
                 cx.spawn(async move |cx| {
-                    while let Some(message) = messages.recv().await {
-                        match message {
-                            Message::Show => cx.update(ui::show_main_window),
-                        }
+                    while let Some(()) = messages.recv().await {
+                        cx.update(ui::show_main_window);
                     }
                 })
                 .detach();

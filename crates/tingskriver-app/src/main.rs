@@ -4,21 +4,15 @@
 mod args;
 
 fn main() {
+    if tingskriver_app::update::is_hook_invocation(&std::env::args().skip(1).collect::<Vec<_>>()) {
+        tingskriver_app::run();
+        return;
+    }
+    // Invalid arguments and `--diagnose` write to the terminal and exit; any
+    // other launch lets go of it once startup has settled (`run`).
+    tingskriver_app::console::attach();
     let args = args::StartupArgs::from_env();
     if args.diagnose || args.validate_delivery.is_some() {
-        #[cfg(windows)]
-        unsafe {
-            #[link(name = "kernel32")]
-            unsafe extern "system" {
-                fn AttachConsole(process: u32) -> i32;
-                fn GetStdHandle(kind: u32) -> *mut std::ffi::c_void;
-            }
-            // Preserve redirected handles; otherwise attach to the invoking terminal.
-            let stdout = GetStdHandle(-11i32 as u32);
-            if stdout.is_null() || stdout as isize == -1 {
-                AttachConsole(u32::MAX);
-            }
-        }
         if let Some(folder) = args.validate_delivery {
             if folder.is_empty() {
                 eprintln!("--valider-aflevering kræver en mappe.");

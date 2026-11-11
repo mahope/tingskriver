@@ -9,6 +9,7 @@
 
 pub mod autostart;
 pub mod legacy;
+pub mod protocol;
 pub mod user_data;
 #[cfg(windows)]
 mod win;
@@ -56,6 +57,9 @@ pub fn after_install(exe: &Path) -> Vec<String> {
         )),
         Err(e) => report.push(format!("could not enable start with Windows: {e}")),
     }
+    if let Err(e) = protocol::register(exe) {
+        report.push(format!("could not register URL protocol: {e}"));
+    }
     report.extend(remove_legacy_leftovers());
     report
 }
@@ -74,6 +78,9 @@ pub fn after_update(exe: &Path) -> Vec<String> {
             }
         }
     }
+    if let Err(e) = protocol::register(exe) {
+        report.push(format!("could not register URL protocol: {e}"));
+    }
     report.extend(remove_legacy_leftovers());
     report
 }
@@ -84,6 +91,9 @@ pub fn before_uninstall() -> Vec<String> {
     let mut report = Vec::new();
     if let Err(e) = autostart::disable() {
         report.push(format!("could not remove start with Windows: {e}"));
+    }
+    if let Err(e) = protocol::unregister() {
+        report.push(format!("could not remove URL protocol: {e}"));
     }
     report.extend(user_data::remove_if_requested());
     report

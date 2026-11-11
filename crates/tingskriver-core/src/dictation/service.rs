@@ -38,6 +38,9 @@ use super::timings::{LatencyReport, LatencyWarning, NewTiming, Timings, LATENCY_
 /// Emitted to the main window when the history list changes.
 pub const HISTORY_CHANGED_EVENT: &str = "dictation-history-changed";
 
+#[path = "service_external.rs"]
+pub mod external;
+
 mod flow;
 use flow::Flow;
 pub use flow::{DictationBackend, DictationRun, DictationState};
@@ -633,18 +636,20 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant, Optio
                     let start_focus = focus_now();
                     let (target_app, window_class, title) = foreground_context();
                     let settings = service.settings();
-                    let mode = settings
-                        .modes
-                        .select(&Context {
-                            process: target_app.as_deref(),
-                            window_class: window_class.as_deref(),
-                            title: title.as_deref(),
-                            shortcut: selected_shortcut
-                                .as_deref()
-                                .or(Some(settings.shortcut.as_str())),
-                            ..Context::default()
-                        })
-                        .cloned();
+                    let mode = external::selected_mode(&settings).or_else(|| {
+                        settings
+                            .modes
+                            .select(&Context {
+                                process: target_app.as_deref(),
+                                window_class: window_class.as_deref(),
+                                title: title.as_deref(),
+                                shortcut: selected_shortcut
+                                    .as_deref()
+                                    .or(Some(settings.shortcut.as_str())),
+                                ..Context::default()
+                            })
+                            .cloned()
+                    });
                     service.overlay.set_mode(mode.as_ref());
                     let _ = service.app.emit("dictation-mode-changed", &mode);
                     // Load the local model while the user speaks, so neither

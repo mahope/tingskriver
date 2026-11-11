@@ -45,6 +45,10 @@ Leftovers of earlier builds (`tingskriver_core::install::legacy`): before 0.5.0-
 
 A working upstream Meetily installation (exe and uninstaller still there) is left alone.
 
+The install and update hooks also register the per-user `tingskriver://` URL
+protocol; uninstall removes it. Commands, exit codes and security are described
+in [docs/kommandolinje.md](../docs/kommandolinje.md).
+
 ## Updates
 
 The app checks GitHub Releases 60 s after start and then every 6 hours (`update::start_background_checks`, only in an installed copy, only in the primary instance). The feed is the `releases.win.json` asset of each of the ten newest releases in the repo, joined; Velopack's GitHub source asks for ten (`per_page=10`) and only then drops pre-releases for a release build. A few Tauri releases in between do no harm, but if the newest Velopack release is not among the ten newest releases of any kind (or, for a release build, the newest stable Velopack release is not among them), the app cannot see it: it logs a warning and `update::status()` says `NoReleaseFound`, not "up to date". So keep fewer than ten Tauri or pre-releases between two Velopack releases until the move below, after which only Velopack releases are published. A fixed feed (a `releases.win.json` at a stable URL) would remove the limit and is worth it if the two release tracks keep running side by side. A newer version is downloaded in the background, as a delta package when the release has one for the installed version, otherwise as the full package. It is installed the next time the app starts as the only instance (`update::apply_pending_update`, after the single-instance check: Velopack's updater waits for the process to exit, installs and restarts the app with the same arguments, so a `--hidden` start stays hidden). A second launch, such as opening the window from the Start menu while the app runs in the tray, only hands over to the running instance and never applies the update, so a recording is never cut off. `update::status()` tells where it is, with a Danish label for a settings page.

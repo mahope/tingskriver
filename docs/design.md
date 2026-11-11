@@ -69,7 +69,8 @@ The first column is the exact identifier in the code; the script checks it.
 | `assets` | Embedded fonts and icons (`Assets`). | Adding a font or an icon. |
 | `startup` | Startup clock, first-frame budget log, database open with Danish error classification (`DbFailure`). | Timing and database start. Not for rendering. |
 | `window_state` | Saves and restores window position and size (`SavedWindow`). | Window geometry only. |
-| `single_instance` | One app per user over a named pipe or socket; a second launch shows the first window. | Process-level behaviour. |
+| `console` | On Windows, attaches to the launching terminal for CLI output, then frees it once startup is decided and clears the console's standard handles. | Process-level behaviour. |
+| `single_instance` | One app per user over a named pipe or socket; a second launch shows the first window or queues a core command; parsing and transport live in core. | Process-level behaviour. |
 | `args` | Command line (`StartupArgs`): `--hidden`, `--page`. | Start options. |
 | `crash` | Panic hook that turns graphics failures into a log entry and a native error dialog. | Never a place for UI. |
 | `update` | Velopack installer hooks, background update check and download, applying an update at next start. | Update behaviour. The update screen is not built yet. |
@@ -142,7 +143,7 @@ Change a row when the experience changes.
 | See app settings | `settings_page`, `setting_group` | Read-only. |
 | See app information and copy diagnostics | `about_page`, `about`, `page`, `paragraph`, `section_title` | Offline metadata and legal documents; diagnostics include only build information and catalogue-owned model names. Update status is a snapshot. |
 | Database cannot open | `database_error_page` | Replaces sidebar and page. |
-| Second launch, hidden start | `single_instance`, `args` | Shows the existing window; tray is the host's. |
+| Second launch, hidden start | `single_instance`, `args` | Shows the existing window, or dispatches CLI/URL commands while hidden; tray is the host's. |
 | Dictate | pill (overlay), host | Not a GPUI screen. |
 
 ## Naming
