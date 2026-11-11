@@ -10743,6 +10743,7 @@ dependencies = [
  "ffmpeg-sidecar",
  "futures-channel",
  "futures-util",
+ "hmac",
  "lazy_static",
  "log",
  "ndarray",

@@ -122,3 +122,26 @@ pub async fn delivery_approve(
         .await
         .map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+pub async fn delivery_has_signing_secret(app: AppHandle, id: String) -> Result<bool, String> {
+    service(&app)
+        .await?
+        .has_signing_secret(&id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Write-only: the key is never returned. `None` removes it.
+#[tauri::command]
+pub async fn delivery_set_signing_secret(
+    app: AppHandle,
+    id: String,
+    secret: Option<String>,
+) -> Result<(), String> {
+    service(&app)
+        .await?
+        .set_signing_secret(&id, secret)
+        .await
+        .map_err(|e| e.to_string())
+}

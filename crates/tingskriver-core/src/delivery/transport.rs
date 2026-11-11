@@ -73,6 +73,7 @@ pub(super) async fn send(
     bundle: &Bundle,
     id: &str,
     url: Option<&ApiKey>,
+    signing: Option<&ApiKey>,
 ) -> Result<(), Error> {
     if !safe_id(id) {
         return Err(Error::Invalid);
@@ -89,14 +90,28 @@ pub(super) async fn send(
         Destination::Webhook { format } => {
             let url = url.ok_or(Error::Credential)?.expose();
             validate_url(url)?;
-            let response = reqwest::Client::builder()
+            // Sign the exact bytes that go on the wire.
+            let body = serde_json::to_vec(&webhook_payload(*format, bundle, id))
+                .map_err(|_| Error::Invalid)?;
+            let mut request = reqwest::Client::builder()
                 .timeout(Duration::from_secs(30))
                 .redirect(reqwest::redirect::Policy::none())
                 .build()
                 .map_err(|_| Error::Transport)?
                 .post(url)
                 .header("Idempotency-Key", id)
-                .json(&webhook_payload(*format, bundle, id))
+                .header(reqwest::header::CONTENT_TYPE, "application/json");
+            if let Some(secret) = signing {
+                let timestamp = Utc::now().timestamp();
+                request = request
+                    .header(super::signing::TIMESTAMP_HEADER, timestamp.to_string())
+                    .header(
+                        super::signing::SIGNATURE_HEADER,
+                        super::signing::sign(secret.expose().as_bytes(), timestamp, &body),
+                    );
+            }
+            let response = request
+                .body(body)
                 .send()
                 .await
                 .map_err(|_| Error::Transport)?;

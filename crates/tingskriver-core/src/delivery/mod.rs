@@ -1,5 +1,6 @@
 //! Explicitly approved, durable exports. No transport runs during configuration.
 pub mod meeting;
+pub mod signing;
 mod store;
 mod transport;
 

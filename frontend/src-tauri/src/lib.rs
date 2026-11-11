@@ -547,6 +547,8 @@ pub fn run() {
             delivery::delivery_status,
             delivery::delivery_save_target,
             delivery::delivery_delete_target,
+            delivery::delivery_has_signing_secret,
+            delivery::delivery_set_signing_secret,
             delivery::delivery_set_policy,
             delivery::delivery_test,
             delivery::delivery_retry,
