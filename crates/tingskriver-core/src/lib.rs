@@ -53,6 +53,7 @@ mod file_ops;
 pub mod format_da;
 pub mod groq;
 pub mod host;
+pub mod hotwords;
 mod http;
 pub mod install;
 pub mod logging;
