@@ -61,3 +61,51 @@ Manual Windows check: import your sample, enter its reference, select a local
 installed model, then compare selected remote services. Confirm missing-key
 messages, tariff input with decimal comma, responsive navigation during inference,
 local JSON persistence after restarting, keyboard focus, and both light/dark themes.
+
+## Headless måling: `tingskriver-bench` (#212)
+
+Samme måling uden GPUI, til agenter og CI. Binæren bruger samme WAV-import
+(mono, 16 kHz, PCM16, højst 90 s), samme motorkald, dansk sprog (`da`) og samme
+WER-normalisering som Målingssiden. Kun installerede lokale modeller (Parakeet og
+Whisper) måles; intet downloades, ingen skyudbyder kaldes, og modellerne køres én
+ad gangen.
+
+```sh
+cargo build --release -p tingskriver-core --bin tingskriver-bench
+tingskriver-bench --list-models [--models-dir <mappe>] [--json]
+tingskriver-bench --file proeve.wav --model parakeet-tdt-0.6b-v3-int8 --repeat 5 \
+  [--reference facit.txt] [--models-dir <mappe>] [--json]
+```
+
+`--model` kan gives flere gange. `--models-dir` er som standard appens modelmappe
+(`paths::app_data_dir()/models`, på Windows
+`%APPDATA%\dk.mahoje.tingskriver\models\`). På Windows skal `onnxruntime.dll` ligge ved
+siden af exe-filen, eller `ORT_DYLIB_PATH` pege på den.
+
+JSON (`schema_version` 1) har pr. model: `status` (`completed`, `skipped` hvis
+modellen ikke er installeret, `failed` ved indlæsnings- eller kørselsfejl),
+`load_ms`, `timing` med `runs_ms`,
+`best_ms`, `median_ms`, `mean_ms`, `rtf_best` og `rtf_median` (lydsekunder pr.
+beregningssekund, højere er hurtigere), `wer` og `score` (kun med `--reference`)
+og `peak_rss_mb` (Linux: procesens spidshukommelse, som aldrig falder, så kør én
+model pr. proces for et rent tal). `--repeat` er 1–100; én fejlet kørsel gør hele
+modellens måling til `failed`, så der aldrig rapporteres delvise statistikker.
+Afslutningskode: 0 alt målt, 1 mindst én model fejlet, 3 ingen fejlet men mindst
+én model sprunget over (ikke installeret), 2 ugyldige argumenter eller lyd.
+Som på Målingssiden udelades loadtid fra ventetiden; `load_ms` er med separat.
+Ingen lyd, facit eller tekst skrives til uddata eller logs.
+
+Tal fra Målingssiden og fra `tingskriver-bench` for samme lyd og model er
+sammenlignelige inden for målestøj (første kørsel er ofte langsommere end de
+følgende, derfor `--repeat`). Kør `--repeat 5` og brug `median_ms` til
+sammenligning.
+
+Test uden modeller: `cargo test --locked -p tingskriver-core measurement::bench --lib`
+(median/bedste, argumenter, WER kun med facit, fejlede kørsler, afslutningskoder,
+manglende model giver `skipped`, beskadiget installation giver `failed`).
+Selve motorkørslen og "samme tal som Målingssiden" er ikke dækket af automatiske tests, fordi de kræver installerede modeller: det
+skal bevises med en kørsel af begge veje på en maskine med en model.
+
+Målingsside og indstillinger er uændrede: kommandolinjen er et udviklerværktøj og
+vises ikke i appen. Hvis Mads vil se tallene i appen, skal Målingssiden læse de
+samme `bench::Report`-rapporter.
