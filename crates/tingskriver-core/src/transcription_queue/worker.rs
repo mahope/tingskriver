@@ -64,9 +64,11 @@ impl Queue {
         )
         .await;
         match result {
-            Ok(value) => {
-                self.complete(&job, &value).await?;
-                emit(event(&job, "completed", None, None));
+            Ok(mut value) => {
+                self.complete_carrying_over(&job, &mut value).await?;
+                let mut done = event(&job, "completed", None, None);
+                done.rejected = value["rejected"]["message"].as_str().map(str::to_string);
+                emit(done);
             }
             Err(retry_after) => {
                 let finished =
@@ -84,6 +86,15 @@ impl Queue {
     }
 }
 
+impl Queue {
+    /// Complete `job`; if the meeting already has a current version of this
+    /// chunk, keep its confirmed names and corrections and reject a truncated
+    /// rerun. The result is stored either way, and the old version untouched.
+    async fn complete_carrying_over(&self, job: &Job, value: &mut serde_json::Value) -> Result<()> {
+        self.complete_with(job, value, true).await
+    }
+}
+
 fn event(job: &Job, status: &str, next_attempt: Option<i64>, track: Option<&str>) -> QueueEvent {
     QueueEvent {
         job_id: job.id.clone(),
@@ -92,6 +103,7 @@ fn event(job: &Job, status: &str, next_attempt: Option<i64>, track: Option<&str>
         status: status.into(),
         next_attempt,
         track: track.map(str::to_string),
+        rejected: None,
     }
 }
 

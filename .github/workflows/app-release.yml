@@ -3,7 +3,7 @@ name: GPUI app release (Velopack)
 # Packs the GPUI app (crates/tingskriver-app) with Velopack: Tingskriver-Setup.exe,
 # full and delta packages and the update feed releases.win.json (installer/README.md).
 #
-# - A tag app-v<version> publishes a GitHub Release. <version> must equal the
+# - A tag app-v<version> creates a draft, promoted only after the gates pass. <version> must equal the
 #   workspace version in Cargo.toml. Versions with a suffix (0.5.1-dev.1) become
 #   pre-releases. The release is never marked "latest": the Tauri app's updater
 #   reads releases/latest/download/latest.json, and it keeps doing so until the
@@ -23,6 +23,7 @@ on:
     paths:
       - 'installer/**'
       - '.github/workflows/app-release.yml'
+      - '.github/workflows/velopack-package.yml'
       - 'crates/tingskriver-app/src/update.rs'
       - 'crates/tingskriver-core/src/install/**'
   workflow_dispatch:
@@ -32,152 +33,126 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write
-
-env:
-  CARGO_TERM_COLOR: always
-  CARGO_INCREMENTAL: 0
-  # Keep equal to the velopack crate in crates/tingskriver-app/Cargo.toml.
-  VPK_VERSION: 1.2.161
+  contents: read
 
 jobs:
   package:
-    name: Velopack package (Windows x64)
-    runs-on: windows-latest
-    timeout-minutes: 120
+    uses: ./.github/workflows/velopack-package.yml
+    with:
+      release: ${{ github.ref_type == 'tag' }}
+
+  draft:
+    permissions:
+      contents: write
+    needs: package
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
     steps:
-      # sqlx checks migration checksums; CRLF checkouts break them (upstream #843).
-      - name: Disable CRLF conversion
-        run: git config --global core.autocrlf false
-
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Read version
-        id: version
-        shell: bash
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Require a main commit and changelog
+        env:
+          VERSION: ${{ needs.package.outputs.version }}
         run: |
           set -euo pipefail
-          version="$(cargo metadata --no-deps --format-version 1 --locked | jq -r '.packages[] | select(.name == "tingskriver-app") | .version')"
-          if [ -z "$version" ] || [ "$version" = "null" ]; then
-            echo "::error::Could not read the version of tingskriver-app"
-            exit 1
-          fi
-          publish=false
-          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
-            publish=true
-            if [ "$GITHUB_REF_NAME" != "app-v$version" ]; then
-              echo "::error::Tag $GITHUB_REF_NAME does not match the workspace version $version (expected app-v$version). Bump version in Cargo.toml first."
-              exit 1
-            fi
-          fi
-          prerelease=false
-          case "$version" in *-*) prerelease=true ;; esac
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "publish=$publish" >> "$GITHUB_OUTPUT"
-          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
-          echo "Version $version, publish $publish, pre-release $prerelease"
-
-      # Same portable CPU baseline as the Tauri installer (docs/BUILDING.md).
-      - name: Configure portable build
-        shell: pwsh
-        run: |
-          $cmakeHook = (Join-Path $env:GITHUB_WORKSPACE ".github/force-portable-ggml.cmake").Replace('\', '/')
-          "CMAKE_PROJECT_INCLUDE=$cmakeHook" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "RUSTFLAGS=-C target-cpu=x86-64-v2" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
+          git fetch origin main
+          git merge-base --is-ancestor HEAD origin/main
+          test -s "docs/changelog/$VERSION.md"
+      - uses: actions/download-artifact@v4
         with:
-          prefix-key: tingskriver-windows-velopack-v1
-
-      - name: Build tingskriver-app (release)
-        shell: bash
-        run: .github/scripts/annotate-errors.sh cargo build --release --locked -p tingskriver-app -p tingskriver-core --bin tingskriver-app --bin tingskriver-stt
-
-      # Same pinned runtime and archive checksum as the Tauri bundler.
-      - name: Stage ONNX Runtime for the isolated speech worker
-        shell: pwsh
+          name: ${{ needs.package.outputs.artifact }}
+          path: release-files
+      - name: Create draft with changelog and installation notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.package.outputs.version }}
+          PRERELEASE: ${{ needs.package.outputs.prerelease }}
         run: |
-          $archive = Join-Path $env:RUNNER_TEMP "tingskriver-onnx.zip"
-          Invoke-WebRequest "https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-win-x64-1.22.0.zip" -OutFile $archive
-          if ((Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne "174c616efc0271194488642a72f1a514e01487da4dfe84c49296d66e40ebe0da") { throw "ONNX Runtime checksum mismatch" }
-          Expand-Archive $archive -DestinationPath (Join-Path $env:RUNNER_TEMP "tingskriver-onnx") -Force
-          $runtime = Join-Path $env:RUNNER_TEMP "tingskriver-onnx/onnxruntime-win-x64-1.22.0"
-          Copy-Item "$runtime/lib/onnxruntime.dll","$runtime/lib/onnxruntime_providers_shared.dll" target/release/
-          Copy-Item "$runtime/LICENSE" target/release/onnxruntime-LICENSE.txt
+          set -euo pipefail
+          cat "docs/changelog/$VERSION.md" installer/release-notes.md > release-notes.md
+          flags=(--draft --latest=false --title "Tingskriver $VERSION (ny app)" --notes-file release-notes.md --verify-tag)
+          if [ "$PRERELEASE" = true ]; then flags+=(--prerelease); fi
+          gh release create "$GITHUB_REF_NAME" "${flags[@]}" release-files/*
 
-      - name: Verify portable Whisper build
-        run: node .github/verify-portable-ggml.cjs target/release
+  performance:
+    needs: [package, draft]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test performance gate and README figures
+        run: |
+          set -euo pipefail
+          python3 scripts/tests/test_ydeevne_port.py
+          python3 scripts/ydeevne-port.py --tjek-readme
+      - name: Require the stable reference measurement
+        if: needs.package.outputs.prerelease != 'true'
+        env:
+          VERSION: ${{ needs.package.outputs.version }}
+        run: python3 scripts/ydeevne-port.py "docs/changelog/$VERSION.performance.json" --profil release
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+  smoke:
+    needs: [package, draft]
+    uses: ./.github/workflows/installer-smoke.yml
+    with:
+      package-artifact: ${{ needs.package.outputs.artifact }}
+
+  publish:
+    permissions:
+      contents: write
+    needs: [package, draft, performance, smoke]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
         with:
-          dotnet-version: '8.0.x'
+          fetch-depth: 0
+      - name: Promote only a draft on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.package.outputs.version }}
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git merge-base --is-ancestor HEAD origin/main
+          test -s "docs/changelog/$VERSION.md"
+          test "$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)" = true
+          gh release edit "$GITHUB_REF_NAME" --draft=false --latest=false
 
-      - name: Install vpk
-        shell: bash
-        run: dotnet tool install -g vpk --version "$VPK_VERSION"
-
-      # Only releases build deltas; unpublished builds may have the same or
-      # an older version than the newest published package, which vpk rejects.
-      # Before the first release there is none; then only the full package.
-      - name: Download previous release
-        if: steps.version.outputs.publish == 'true'
+  update-smoke:
+    name: Published update reaches the installed predecessor
+    needs: [package, publish]
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download the previous installer in the same update channel
+        id: previous
         shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.package.outputs.version }}
         run: |
           set -euo pipefail
-          mkdir -p installer/Releases
-          # Only "no earlier release" may skip the delta; any other failure
-          # (network, API) fails the job instead of silently dropping it.
-          earlier=$(gh release list --repo "${{ github.repository }}" --limit 100 --json tagName \
-            --jq '[.[] | select(.tagName | startswith("app-v"))] | length')
-          if [ "$earlier" = "0" ]; then
-            echo "::notice::No earlier Velopack release found; publishing a full package only"
-          else
-            vpk download github --repoUrl "https://github.com/${{ github.repository }}" --channel win --pre \
-              --token "$GITHUB_TOKEN" --outputDir installer/Releases
-          fi
-
-      - name: Pack
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100" > releases.json
+          tag=$(python scripts/previous-release.py "$VERSION" < releases.json)
+          echo "version=${tag#app-v}" >> "$GITHUB_OUTPUT"
+          gh release download "$tag" --pattern Tingskriver-Setup.exe --dir previous
+      - name: Install predecessor and require the published update
         shell: pwsh
+        env:
+          PREVIOUS_VERSION: ${{ steps.previous.outputs.version }}
+          VERSION: ${{ needs.package.outputs.version }}
         run: |
-          ./installer/pack.ps1 -Version "${{ steps.version.outputs.version }}" -Exe target/release/tingskriver-app.exe -Extra target/release/tingskriver-stt.exe,target/release/onnxruntime.dll,target/release/onnxruntime_providers_shared.dll,target/release/onnxruntime-LICENSE.txt
-          Get-Content -Raw installer/Releases/upload/releases.win.json
-
-      - name: Upload release files
+          # Exercise the installed app's anonymous GitHub source, without an override.
+          Remove-Item Env:TINGSKRIVER_UPDATE_FEED -ErrorAction SilentlyContinue
+          ./installer/smoke-test.ps1 -PreviousVersion -Setup previous/Tingskriver-Setup.exe -OutputDir update-smoke-out -ExpectedInstalledVersion $env:PREVIOUS_VERSION -ExpectedUpdateVersion $env:VERSION
+      - name: Upload update smoke evidence
+        if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: tingskriver-app-velopack-${{ steps.version.outputs.version }}-${{ github.sha }}
-          path: installer/Releases/upload/*
-          if-no-files-found: error
+          name: published-update-smoke-files
+          path: update-smoke-out/*
+          if-no-files-found: warn
           retention-days: 30
-
-      - name: Publish GitHub Release
-        if: steps.version.outputs.publish == 'true'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ steps.version.outputs.version }}
-          PRERELEASE: ${{ steps.version.outputs.prerelease }}
-        run: |
-          set -euo pipefail
-          notes="$RUNNER_TEMP/notes.md"
-          {
-            echo "Den nye Tingskriver (GPUI) til Windows, version $VERSION."
-            echo
-            echo "Hent \`Tingskriver-Setup.exe\` nedenfor. Installationen kræver ikke administrator og lægger programmet i din egen brugermappe. Installeren er ikke kodesigneret, så Windows SmartScreen advarer første gang (\"Flere oplysninger\" og derefter \"Kør alligevel\")."
-            echo
-            echo "Installerede versioner henter selv opdateringer og installerer dem, næste gang programmet starter."
-          } > "$notes"
-          flags=(--latest=false --title "Tingskriver $VERSION (ny app)" --notes-file "$notes" --verify-tag)
-          if [ "$PRERELEASE" = "true" ]; then
-            flags+=(--prerelease)
-          fi
-          gh release create "$GITHUB_REF_NAME" "${flags[@]}" installer/Releases/upload/*

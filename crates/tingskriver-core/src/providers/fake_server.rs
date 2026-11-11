@@ -14,6 +14,7 @@ pub enum Reply {
         status: &'static str,
         headers: Vec<(&'static str, String)>,
         body: String,
+        delay: Duration,
     },
     /// Read the request, then never answer.
     Hang,
@@ -27,11 +28,19 @@ impl Reply {
             status,
             headers: Vec::new(),
             body: body.into(),
+            delay: Duration::ZERO,
         }
     }
 
     pub fn ok(body: impl Into<String>) -> Reply {
         Reply::json("200 OK", body)
+    }
+
+    pub fn with_delay(mut self, delay: Duration) -> Reply {
+        if let Reply::Respond { delay: value, .. } = &mut self {
+            *value = delay;
+        }
+        self
     }
 
     pub fn with_header(self, name: &'static str, value: impl Into<String>) -> Reply {
@@ -40,12 +49,14 @@ impl Reply {
                 status,
                 mut headers,
                 body,
+                delay,
             } => {
                 headers.push((name, value.into()));
                 Reply::Respond {
                     status,
                     headers,
                     body,
+                    delay,
                 }
             }
             other => other,
@@ -103,7 +114,9 @@ async fn serve(mut socket: TcpStream, reply: Reply, seen: Arc<Mutex<Vec<String>>
             status,
             headers,
             body,
+            delay,
         } => {
+            tokio::time::sleep(delay).await;
             let mut head = format!(
                 "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n",
                 body.len()

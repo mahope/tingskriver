@@ -6,7 +6,7 @@ by older Tingskriver development flows.
 ## Current Supported Integration
 
 The supported Tingskriver app no longer requires a manually started whisper-server
-HTTP service. The Next.js UI communicates with the Rust/Tauri core through
+HTTP service. The UI communicates with the Rust/Tauri core through
 Tauri commands and events, and local transcription is handled inside the
 desktop application.
 
