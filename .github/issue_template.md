@@ -13,9 +13,8 @@
 3. [And so on...]
 
 ## Environment
-- OS: [e.g., macOS, Windows, Linux]
-- Browser: [e.g., Chrome, Firefox, Safari]
-- Version: [e.g., 1.0.0]
+- Windows version: [e.g., Windows 11 23H2]
+- Tingskriver version: [e.g., 0.5.0]
 
 ## Screenshots
 [If applicable, add screenshots to help explain your problem]
