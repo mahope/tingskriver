@@ -63,6 +63,7 @@ The first column is the exact identifier in the code; the script checks it.
 | `theme` | Tokens (`Palette`, `space`, `typography`, `layout`, `icon_size`, radii), mapping onto gpui-component's theme (`apply`), live light/dark (`sync_with_window`). | All visual values. Not for page structure. |
 | `ui` | Main window, `Shell` (sidebar plus the page in the window), the pages and the shared page building blocks below. | New pages and page-level blocks. |
 | `measurement` | The Måling page: compare a user's sample against a reference text, per model. | Only this page. |
+| `about` | Offline build metadata, an update-status snapshot, allowlisted diagnostics and bundled legal documents. | The Om page and copying diagnostics. Opening the page never starts an update check. |
 | `probe` | Describes what the keyboard produced (code points, uncomposed dead keys) for the test field on the Diktering page. | Manual input tests. |
 | `assets` | Embedded fonts and icons (`Assets`). | Adding a font or an icon. |
 | `startup` | Startup clock, first-frame budget log, database open with Danish error classification (`DbFailure`). | Timing and database start. Not for rendering. |
@@ -78,7 +79,7 @@ The first column is the exact identifier in the code; the script checks it.
 | Name | Responsibility | Use it for / do not use it for |
 |---|---|---|
 | `Shell` | The window content: sidebar plus the current page, or the database error page instead of both. Owns page selection, appearance observer and the debounced window-position save. | The one root view. Do not add a second root. |
-| `Page` | The pages in the sidebar (Møder, Diktering, Måling, Indstillinger), their Danish labels, icons and `--page` names. | Adding a page: add a variant, `label`, `icon`, `from_arg` and the arm in `Shell::render`. |
+| `Page` | The pages in the sidebar (Møder, Diktering, Måling, Indstillinger, Om), their Danish labels, icons and `--page` names. | Adding a page: add a variant, `label`, `icon`, `from_arg` and the arm in `Shell::render`. |
 | `AppModel` | Shared state: database state (`DbState`: loading, not created, ready, failed), data folder, log path, runtime handle. | Reading state in a page. Core is only called on its runtime, never on the UI thread. |
 | `sidebar` | Sidebar with the app name and one menu item per `Page`. | Navigation. |
 | `page` | Frame around every page: scroll area, heading, optional subtitle, content width limit. | Every page body. Do not rebuild the frame. |
@@ -92,6 +93,7 @@ The first column is the exact identifier in the code; the script checks it.
 | `meetings_page` | Møder: loading, first-launch and no-meetings states. The list is not built yet. | |
 | `dictation_page` | Diktering: placeholder text plus the input test field. | |
 | `settings_page` | Indstillinger: read-only groups (appearance, data folder and database, log) and the buttons "Åbn logmappen" and "Afslut". | |
+| `about_page` | Om: build metadata, update status, copying diagnostics with progress and result feedback, and bundled legal documents. | Reuses the page frame, text helpers and gpui-component buttons. |
 | `database_error_page` | Full-window error: icon, summary, advice, technical error, paths, "Åbn logmappen" and "Prøv igen". | The model for any blocking error: say what happened, what to do, where the log is. |
 | `MeasurementView` | The view behind the Måling page (inputs, model choices, result). | |
 | `ProposalReview` | The view behind `proposals`: pending proposals for one meeting with their diffs and buttons. | |
@@ -136,6 +138,7 @@ Change a row when the experience changes.
 | Test Danish input | `dictation_page`, `probe` | Manual Windows test 2 and 3 in [gpui.md](gpui.md). |
 | Compare transcription on own sample | `MeasurementView`, `Page` | See [measurement.md](measurement.md). |
 | See app settings | `settings_page`, `setting_group` | Read-only. |
+| See app information and copy diagnostics | `about_page`, `about`, `page`, `paragraph`, `section_title` | Offline metadata and legal documents; diagnostics include only build information and catalogue-owned model names. Update status is a snapshot. |
 | Database cannot open | `database_error_page` | Replaces sidebar and page. |
 | Second launch, hidden start | `single_instance`, `args` | Shows the existing window; tray is the host's. |
 | Dictate | pill (overlay), host | Not a GPUI screen. |

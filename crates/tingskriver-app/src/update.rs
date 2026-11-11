@@ -40,7 +40,9 @@ pub const RETRY_DELAY: Duration = Duration::from_secs(60 * 60);
 pub enum Feed {
     /// GitHub Releases of [`REPO_URL`]; pre-releases only for builds that
     /// are pre-releases themselves (`0.5.1-dev.1`).
-    GitHub { prerelease: bool },
+    GitHub {
+        prerelease: bool,
+    },
     Folder(PathBuf),
     Http(String),
     Off,
@@ -73,13 +75,21 @@ pub fn is_installed_layout(exe: &Path, exists: impl Fn(&Path) -> bool) -> bool {
     let Some(current) = exe.parent() else {
         return false;
     };
-    let named_current = current.file_name().is_some_and(|name| name.eq_ignore_ascii_case("current"));
-    named_current && current.parent().is_some_and(|root| exists(&root.join("Update.exe")))
+    let named_current = current
+        .file_name()
+        .is_some_and(|name| name.eq_ignore_ascii_case("current"));
+    named_current
+        && current
+            .parent()
+            .is_some_and(|root| exists(&root.join("Update.exe")))
 }
 
 /// Where the updater is.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum UpdateStatus {
+    /// Reserved About-page slot until the update UI is connected (#170).
+    #[default]
+    Unavailable,
     /// Not an installed copy, or updates are off.
     Inactive,
     Checking,
@@ -88,21 +98,33 @@ pub enum UpdateStatus {
     /// more than ten newer releases of other kinds (Tauri, pre-releases for
     /// a release build) hide it (`installer/README.md`, "Updates").
     NoReleaseFound,
-    Downloading { version: String },
+    Downloading {
+        version: String,
+    },
     /// Downloaded; installs at the next start.
-    ReadyAtRestart { version: String },
-    Failed { detail: String },
+    ReadyAtRestart {
+        version: String,
+    },
+    Failed {
+        detail: String,
+    },
 }
 
 impl UpdateStatus {
     /// Danish text for a settings or about page.
     pub fn label(&self) -> String {
         match self {
-            UpdateStatus::Inactive => "Automatisk opdatering er slået fra for denne kopi.".to_string(),
+            UpdateStatus::Unavailable => {
+                tingskriver_core::strings::ABOUT_UPDATES_UNAVAILABLE.to_string()
+            }
+            UpdateStatus::Inactive => {
+                "Automatisk opdatering er slået fra for denne kopi.".to_string()
+            }
             UpdateStatus::Checking => "Søger efter opdateringer …".to_string(),
             UpdateStatus::UpToDate => "Du har den nyeste version.".to_string(),
             UpdateStatus::NoReleaseFound => {
-                "Fandt ingen udgivelser at opdatere fra. Tingskriver prøver igen senere.".to_string()
+                "Fandt ingen udgivelser at opdatere fra. Tingskriver prøver igen senere."
+                    .to_string()
             }
             UpdateStatus::Downloading { version } => format!("Henter version {version} …"),
             UpdateStatus::ReadyAtRestart { version } => {
@@ -117,7 +139,9 @@ impl UpdateStatus {
     /// How long until the next check after this result.
     pub fn next_check(&self) -> Option<Duration> {
         match self {
-            UpdateStatus::Inactive | UpdateStatus::ReadyAtRestart { .. } => None,
+            UpdateStatus::Unavailable
+            | UpdateStatus::Inactive
+            | UpdateStatus::ReadyAtRestart { .. } => None,
             UpdateStatus::Failed { .. } => Some(RETRY_DELAY),
             _ => Some(CHECK_INTERVAL),
         }
@@ -128,7 +152,10 @@ static STATUS: Mutex<UpdateStatus> = Mutex::new(UpdateStatus::Inactive);
 
 /// The updater's state now.
 pub fn status() -> UpdateStatus {
-    STATUS.lock().map(|s| s.clone()).unwrap_or(UpdateStatus::Inactive)
+    STATUS
+        .lock()
+        .map(|s| s.clone())
+        .unwrap_or(UpdateStatus::Inactive)
 }
 
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -145,7 +172,8 @@ fn installed_exe() -> Option<PathBuf> {
 
 /// Is this start a Velopack hook (`--veloapp-install 0.5.1` and so on)?
 pub fn is_hook_invocation(args: &[String]) -> bool {
-    args.first().is_some_and(|arg| arg.to_ascii_lowercase().starts_with("--veloapp-"))
+    args.first()
+        .is_some_and(|arg| arg.to_ascii_lowercase().starts_with("--veloapp-"))
 }
 
 /// Set when Velopack restarted the app right after applying an update.
@@ -206,7 +234,7 @@ pub fn start_background_checks() {
         return;
     }
     let env = std::env::var(FEED_ENV).ok();
-    let feed = Feed::choose(env.as_deref(), env!("CARGO_PKG_VERSION"));
+    let feed = Feed::choose(env.as_deref(), crate::about::VERSION);
     if feed == Feed::Off {
         log::info!("update: turned off by {FEED_ENV}");
         return;
@@ -257,11 +285,17 @@ mod platform {
             .set_auto_apply_on_startup(false)
             .on_after_install_fast_callback(move |version| {
                 log::info!("installer: installed {version}");
-                log_report("install", tingskriver_core::install::after_install(&install_exe));
+                log_report(
+                    "install",
+                    tingskriver_core::install::after_install(&install_exe),
+                );
             })
             .on_after_update_fast_callback(move |version| {
                 log::info!("installer: updated to {version}");
-                log_report("update", tingskriver_core::install::after_update(&update_exe));
+                log_report(
+                    "update",
+                    tingskriver_core::install::after_update(&update_exe),
+                );
             })
             .on_before_uninstall_fast_callback(|version| {
                 log::info!("installer: uninstalling {version}");
@@ -294,7 +328,9 @@ mod platform {
 
     fn manager(feed: &Feed) -> Result<UpdateManager, velopack::Error> {
         match feed {
-            Feed::GitHub { prerelease } => UpdateManager::new(GithubSource::new(REPO_URL, None, *prerelease), None, None),
+            Feed::GitHub { prerelease } => {
+                UpdateManager::new(GithubSource::new(REPO_URL, None, *prerelease), None, None)
+            }
             Feed::Folder(dir) => UpdateManager::new(FileSource::new(dir), None, None),
             Feed::Http(url) => UpdateManager::new(HttpSource::new(url), None, None),
             Feed::Off => Err(velopack::Error::Other("updates are off".to_string())),
@@ -302,7 +338,9 @@ mod platform {
     }
 
     pub fn check_and_download(feed: &Feed) -> UpdateStatus {
-        let failed = |e: velopack::Error| UpdateStatus::Failed { detail: e.to_string() };
+        let failed = |e: velopack::Error| UpdateStatus::Failed {
+            detail: e.to_string(),
+        };
         let manager = match manager(feed) {
             Ok(manager) => manager,
             Err(e) => return failed(e),
@@ -323,7 +361,11 @@ mod platform {
             Err(e) => return failed(e),
         };
         let version = update.TargetFullRelease.Version.clone();
-        let kind = if update.DeltasToTarget.is_empty() { "full" } else { "delta" };
+        let kind = if update.DeltasToTarget.is_empty() {
+            "full"
+        } else {
+            "delta"
+        };
         log::info!("update: downloading {version} ({kind})");
         set_status(UpdateStatus::Downloading {
             version: version.clone(),
@@ -358,8 +400,14 @@ mod tests {
             Feed::choose(None, "0.5.1-dev.1"),
             Feed::GitHub { prerelease: true }
         );
-        assert_eq!(Feed::choose(None, "0.5.1"), Feed::GitHub { prerelease: false });
-        assert_eq!(Feed::choose(Some("  "), "0.5.1"), Feed::GitHub { prerelease: false });
+        assert_eq!(
+            Feed::choose(None, "0.5.1"),
+            Feed::GitHub { prerelease: false }
+        );
+        assert_eq!(
+            Feed::choose(Some("  "), "0.5.1"),
+            Feed::GitHub { prerelease: false }
+        );
         assert!(!is_prerelease("0.5.1+build-7"));
     }
 
@@ -384,9 +432,14 @@ mod tests {
         let installed = root.join("current").join("tingskriver-app.exe");
         assert!(is_installed_layout(&installed, |p| p == update_exe));
         assert!(!is_installed_layout(&installed, |_| false));
-        let dev = PathBuf::from("target").join("release").join("tingskriver-app.exe");
+        let dev = PathBuf::from("target")
+            .join("release")
+            .join("tingskriver-app.exe");
         assert!(!is_installed_layout(&dev, |_| true));
-        assert!(!is_installed_layout(Path::new("tingskriver-app.exe"), |_| true));
+        assert!(!is_installed_layout(
+            Path::new("tingskriver-app.exe"),
+            |_| true
+        ));
     }
 
     #[test]
@@ -415,13 +468,24 @@ mod tests {
         assert_eq!(ready.next_check(), None);
         assert_eq!(UpdateStatus::Inactive.next_check(), None);
         assert_eq!(UpdateStatus::UpToDate.next_check(), Some(CHECK_INTERVAL));
-        assert_eq!(UpdateStatus::NoReleaseFound.next_check(), Some(CHECK_INTERVAL));
-        assert_ne!(UpdateStatus::NoReleaseFound.label(), UpdateStatus::UpToDate.label());
         assert_eq!(
-            UpdateStatus::Failed { detail: "offline".into() }.next_check(),
+            UpdateStatus::NoReleaseFound.next_check(),
+            Some(CHECK_INTERVAL)
+        );
+        assert_ne!(
+            UpdateStatus::NoReleaseFound.label(),
+            UpdateStatus::UpToDate.label()
+        );
+        assert_eq!(
+            UpdateStatus::Failed {
+                detail: "offline".into()
+            }
+            .next_check(),
             Some(RETRY_DELAY)
         );
         assert!(ready.label().contains("0.5.2"));
-        assert!(UpdateStatus::Failed { detail: "x".into() }.label().starts_with("Kunne ikke"));
+        assert!(UpdateStatus::Failed { detail: "x".into() }
+            .label()
+            .starts_with("Kunne ikke"));
     }
 }

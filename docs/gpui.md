@@ -196,3 +196,12 @@ gpui-component's next release; the rest are fixable in the app.
 - The pages are placeholders: no meeting list, settings or dictation yet.
 - `AppHost` is implemented by `tingskriver-host`'s bridge ([host.md](host.md));
   the pages do not subscribe to its events yet.
+
+About diagnostics report the compiled Whisper GPU backend (or CPU), never
+CUDA/Vulkan SDK environment variables. On Windows, the platform line includes
+the Windows product version and build number from sysinfo. Opening About from
+the tray or settings does not change the startup page.
+
+Light/dark About screenshots currently use `scripts/screenshot-about.py`
+manually. Automated screenshot coverage follows in #49 / PR #172; #171 stays
+open until that acceptance criterion is covered.

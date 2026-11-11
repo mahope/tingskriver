@@ -1,6 +1,6 @@
 # Tingskriver Privacy Policy
 
-*Last updated: 10 November 2026. Applies to the current Tingskriver app (GPUI) and, where noted, the Tauri app it replaces.*
+*Last updated: 11 November 2026. Applies to the current Tingskriver app (GPUI) and, where noted, the Tauri app it replaces.*
 
 Tingskriver records, transcribes and summarizes meetings on your own computer. There is no Tingskriver server, no account, no analytics and no telemetry: the project operates nothing that receives your data. This page lists every feature that makes a network request, what leaves your machine, to whom, and how to turn it off. Everything not in the table stays on your machine.
 
@@ -19,6 +19,7 @@ This table is the single source of truth for the in-app privacy page (#84) and f
 | Calendar (private ICS address) | A request for the calendar file, with the ETag from the last fetch. Redirects are not followed. Titles and participants are read on your machine and are not sent anywhere. | The host of the ICS address you pasted (for example Google or Microsoft). The address is stored in Windows Credential Manager. | Delete the saved address; this removes the stored credential |
 | Approved delivery of a meeting | The transcript, approved summary, notes and metadata (no audio) when you approve an export. Channel webhooks get an abbreviated summary. | The folder, webhook (generic, Slack, Discord or Teams) or SSH/SFTP server you configured | Off by default. "Kun lokal" and "Privat tilstand" block every delivery, including tests and queued retries. See [delivery](docs/delivery.md). |
 | Update check | A standard HTTPS request for the list of releases and, when a newer version exists, the download: your IP address and the version in the request. No meeting data, no identifier. The first check runs about a minute after start, then every six hours. | GitHub (`github.com`, and `api.github.com` for the release list of the Tauri app and its move to the new app) | Set the environment variable `TINGSKRIVER_UPDATE_FEED=off`. There is no switch in the app yet. |
+| Website link on the About page (only when you click it) | Nothing from Tingskriver. Your browser opens the page and sends what any page visit sends, such as your IP address. | `mahoje.dk` | Do not click the link |
 | Logs and crash dumps | Nothing; both stay on your computer. | Nobody | See below |
 
 Sending to a provider or a webhook only happens when you configure it. Those services have their own privacy policies; Tingskriver does not control what they do with the data.

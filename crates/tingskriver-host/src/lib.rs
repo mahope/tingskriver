@@ -47,6 +47,7 @@ use watch::{Probe, Shared, Wanted};
 pub enum Request {
     /// Show and focus the main window (tray click, "Åbn", shortcut).
     ShowWindow,
+    ShowAbout,
     /// Start a meeting recording ("Ny optagelse").
     NewRecording,
     /// Open the assistant ("Spørg").
@@ -265,6 +266,7 @@ fn handle_trigger(
         Trigger::Menu(MenuEntry::Ask) | Trigger::Shortcut(ShortcutAction::Ask) => {
             Some(Request::Ask)
         }
+        Trigger::Menu(MenuEntry::About) => Some(Request::ShowAbout),
         Trigger::Shortcut(action @ (ShortcutAction::InsertLast | ShortcutAction::RerunLast)) => {
             let handle = handle.clone();
             runtime.spawn(async move {
@@ -476,6 +478,10 @@ mod tests {
         assert_eq!(
             run(Trigger::Shortcut(ShortcutAction::OpenWindow)),
             Some(Request::ShowWindow)
+        );
+        assert_eq!(
+            run(Trigger::Menu(MenuEntry::About)),
+            Some(Request::ShowAbout)
         );
         assert_eq!(run(Trigger::Menu(MenuEntry::Quit)), Some(Request::Quit));
         assert_eq!(run(Trigger::Menu(MenuEntry::Ask)), Some(Request::Ask));

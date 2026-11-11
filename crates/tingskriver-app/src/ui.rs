@@ -72,6 +72,7 @@ impl AppModel {
 struct Globals {
     model: Entity<AppModel>,
     main_window: Option<WindowHandle<Root>>,
+    shell: Option<gpui::WeakEntity<Shell>>,
 }
 
 impl Global for Globals {}
@@ -80,6 +81,7 @@ pub fn init(model: Entity<AppModel>, cx: &mut App) {
     cx.set_global(Globals {
         model,
         main_window: None,
+        shell: None,
     });
 }
 
@@ -147,6 +149,27 @@ pub fn load_database(cx: &mut App) {
     .detach();
 }
 
+/// Navigate to About in an existing or newly opened window.
+pub fn show_about(cx: &mut App) {
+    show_main_window(cx);
+    if let Some(handle) = cx.global::<Globals>().main_window {
+        let shell = cx
+            .global::<Globals>()
+            .shell
+            .as_ref()
+            .and_then(|shell| shell.upgrade());
+        let _ = handle.update(cx, |_, window, cx| {
+            if let Some(shell) = shell {
+                shell.update(cx, |shell, cx| {
+                    shell.page = Page::About;
+                    shell.about_copy_focus.focus(window, cx);
+                    cx.notify();
+                });
+            }
+        });
+    }
+}
+
 /// Show the main window, opening it if needed.
 pub fn show_main_window(cx: &mut App) {
     if let Some(handle) = cx.global::<Globals>().main_window {
@@ -197,6 +220,7 @@ fn open_main_window(cx: &mut App) -> anyhow::Result<WindowHandle<Root>> {
         move |window, cx| {
             theme::sync_with_window(window, cx);
             let shell = cx.new(|cx| Shell::new(state_path, window, cx));
+            cx.global_mut::<Globals>().shell = Some(shell.downgrade());
             let model = model(cx);
             window.on_next_frame(move |_, cx| {
                 model.update(cx, |m, _| {
@@ -218,15 +242,17 @@ pub enum Page {
     Meetings,
     Dictation,
     Settings,
+    About,
     Measurement,
 }
 
 impl Page {
-    pub const ALL: [Page; 4] = [
+    pub const ALL: [Page; 5] = [
         Page::Meetings,
         Page::Dictation,
         Page::Measurement,
         Page::Settings,
+        Page::About,
     ];
 
     /// The page for a `--page` argument (English or Danish name).
@@ -234,6 +260,7 @@ impl Page {
         match name.to_lowercase().as_str() {
             "meetings" | "møder" => Some(Page::Meetings),
             "dictation" | "diktering" => Some(Page::Dictation),
+            "about" | "om" => Some(Page::About),
             "settings" | "indstillinger" => Some(Page::Settings),
             "measurement" | "måling" => Some(Page::Measurement),
             _ => None,
@@ -244,6 +271,7 @@ impl Page {
         match self {
             Page::Meetings => strings::MEETINGS,
             Page::Dictation => strings::DICTATION,
+            Page::About => strings::ABOUT,
             Page::Settings => strings::SETTINGS,
             Page::Measurement => strings::MEASURE_TITLE,
         }
@@ -253,6 +281,7 @@ impl Page {
         match self {
             Page::Meetings => IconName::Calendar,
             Page::Dictation => IconName::Mic,
+            Page::About => IconName::Info,
             Page::Settings => IconName::Settings,
             Page::Measurement => IconName::Mic,
         }
@@ -260,6 +289,10 @@ impl Page {
 }
 
 pub struct Shell {
+    focus_handle: gpui::FocusHandle,
+    about_copy_focus: gpui::FocusHandle,
+    about_document_scroll: Vec<gpui::ScrollHandle>,
+    diagnosis_status: Option<&'static str>,
     model: Entity<AppModel>,
     page: Page,
     measurement: Entity<crate::measurement::MeasurementView>,
@@ -274,6 +307,8 @@ pub struct Shell {
 impl Shell {
     fn new(state_path: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let model = model(cx);
+        let focus_handle = cx.focus_handle().tab_stop(false);
+        focus_handle.focus(window, cx);
         let probe_line = cx.new(|cx| InputState::new(window, cx).placeholder(strings::PROBE_LINE));
         let probe_text = cx.new(|cx| {
             TextareaState::new(window, cx)
@@ -310,6 +345,13 @@ impl Shell {
         });
         let page = model.read(cx).start_page;
         Shell {
+            focus_handle,
+            about_copy_focus: cx.focus_handle(),
+            about_document_scroll: crate::about::DOCUMENTS
+                .iter()
+                .map(|_| gpui::ScrollHandle::new())
+                .collect(),
+            diagnosis_status: None,
             model,
             page,
             measurement,
@@ -355,21 +397,36 @@ impl Shell {
                         .child(strings::APP_NAME),
                 ),
             )
-            .child(SidebarMenu::new().children(Page::ALL.map(|page| {
-                SidebarMenuItem::new(page.label())
-                    .icon(page.icon())
-                    .active(self.page == page)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.page = page;
-                        cx.notify();
-                    }))
-            })))
+            .child(
+                SidebarMenu::new().children(
+                    Page::ALL
+                        .into_iter()
+                        .filter(|page| *page != Page::About)
+                        .map(|page| {
+                            SidebarMenuItem::new(page.label())
+                                .icon(page.icon())
+                                .active(self.page == page)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.page = page;
+                                    cx.notify();
+                                }))
+                        }),
+                ),
+            )
             .footer(
-                div()
+                v_flex()
+                    .child(
+                        Button::new("nav-about")
+                            .label(strings::ABOUT)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.page = Page::About;
+                                cx.notify();
+                            })),
+                    )
                     .px(space::SM)
                     .text_size(typography::XS)
                     .text_color(palette.muted_foreground)
-                    .child(strings::version(env!("CARGO_PKG_VERSION"))),
+                    .child(strings::version(crate::about::VERSION)),
             )
     }
 
@@ -434,6 +491,110 @@ impl Shell {
         page(strings::DICTATION, None, body.into_any_element(), cx)
     }
 
+    fn about_page(&self, cx: &mut Context<Self>) -> AnyElement {
+        let body =
+            v_flex()
+                .gap(space::LG)
+                .child(paragraph(&crate::about::metadata(), cx))
+                .child(section_title(strings::ABOUT_UPDATES))
+                .child(paragraph(&crate::about::update_status().label(), cx))
+                .child(
+                    Button::new("about-copy")
+                        .track_focus(&self.about_copy_focus)
+                        .label(strings::ABOUT_COPY)
+                        .loading(self.diagnosis_status == Some(strings::ABOUT_COPYING))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.diagnosis_status = Some(strings::ABOUT_COPYING);
+                            cx.notify();
+                            let task = this
+                                .model
+                                .read(cx)
+                                .runtime
+                                .spawn(crate::about::diagnostics());
+                            cx.spawn(async move |this, cx| {
+                                let status = match task.await {
+                                    Ok(report) => {
+                                        cx.update(|cx| {
+                                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                                report,
+                                            ))
+                                        });
+                                        strings::ABOUT_COPIED
+                                    }
+                                    Err(_) => strings::ABOUT_COPY_FAILED,
+                                };
+                                let _ = this.update(cx, |this, cx| {
+                                    this.diagnosis_status = Some(status);
+                                    cx.notify();
+                                });
+                            })
+                            .detach();
+                        })),
+                )
+                .when_some(self.diagnosis_status, |body, status| {
+                    body.child(
+                        div()
+                            .id("about-copy-status")
+                            .role(gpui::Role::Status)
+                            .child(status),
+                    )
+                })
+                .child(
+                    Button::new("about-privacy")
+                        .label(strings::ABOUT_PRIVACY)
+                        .on_click(|_, _, cx| {
+                            cx.open_url(
+                                "https://github.com/mahope/tingskriver/blob/main/PRIVACY_POLICY.md",
+                            );
+                        }),
+                )
+                .child(
+                    Button::new("about-contact")
+                        .label(strings::ABOUT_CONTACT)
+                        .on_click(|_, _, cx| {
+                            cx.open_url("https://mahoje.dk");
+                        }),
+                )
+                .children(crate::about::DOCUMENTS.iter().enumerate().map(
+                    |(index, (title, text))| {
+                        v_flex().gap(space::SM).child(section_title(title)).child(
+                            div()
+                                .id(("about-document", index))
+                                .h(gpui::px(240.))
+                                .flex_shrink_0()
+                                .overflow_y_scroll()
+                                .track_scroll(&self.about_document_scroll[index])
+                                .on_key_down(cx.listener(
+                                    move |this, event: &gpui::KeyDownEvent, _, cx| {
+                                        let scroll = &this.about_document_scroll[index];
+                                        let mut offset = scroll.offset();
+                                        let page = scroll.bounds().size.height;
+                                        offset.y = match event.keystroke.key.as_str() {
+                                            "down" => offset.y - gpui::px(32.),
+                                            "up" => offset.y + gpui::px(32.),
+                                            "pagedown" => offset.y - page,
+                                            "pageup" => offset.y + page,
+                                            "home" => gpui::px(0.),
+                                            "end" => -scroll.max_offset().y,
+                                            _ => return,
+                                        };
+                                        offset.y =
+                                            offset.y.clamp(-scroll.max_offset().y, gpui::px(0.));
+                                        scroll.set_offset(offset);
+                                        cx.stop_propagation();
+                                        cx.notify();
+                                    },
+                                ))
+                                .tab_index(0)
+                                .role(gpui::Role::Document)
+                                .aria_label(*title)
+                                .child(paragraph(text, cx)),
+                        )
+                    },
+                ));
+        page(strings::ABOUT, None, body.into_any_element(), cx)
+    }
+
     fn settings_page(&self, cx: &mut Context<Self>) -> AnyElement {
         let model = self.model.read(cx);
         let mode = if cx.theme().mode.is_dark() {
@@ -461,6 +622,15 @@ impl Shell {
 
         let body = v_flex()
             .gap(space::XL)
+            .child(
+                Button::new("settings-about")
+                    .label(strings::ABOUT)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.page = Page::About;
+                        this.about_copy_focus.focus(window, cx);
+                        cx.notify();
+                    })),
+            )
             .child(paragraph(strings::SETTINGS_LATER, cx))
             .child(setting_group(
                 strings::APPEARANCE,
@@ -612,6 +782,7 @@ impl Render for Shell {
             page(strings::RERUN_TITLE, None, body.into_any_element(), cx)
         } else {
             match (&failure, self.page) {
+                (_, Page::About) => self.about_page(cx),
                 (Some(failure), _) => self.database_error_page(failure, cx),
                 (None, Page::Meetings) => self.meetings_page(cx),
                 (None, Page::Dictation) => self.dictation_page(cx),
@@ -620,6 +791,7 @@ impl Render for Shell {
             }
         };
         h_flex()
+            .track_focus(&self.focus_handle)
             .size_full()
             .bg(palette.background)
             .text_color(palette.foreground)
@@ -758,12 +930,17 @@ mod tests {
     #[test]
     fn navigation_is_danish_and_ordered() {
         let labels: Vec<_> = Page::ALL.iter().map(|p| p.label()).collect();
-        assert_eq!(labels, ["Møder", "Diktering", "Måling", "Indstillinger"]);
+        assert_eq!(
+            labels,
+            ["Møder", "Diktering", "Måling", "Indstillinger", "Om"]
+        );
     }
 
     #[test]
     fn pages_can_be_named_on_the_command_line() {
         assert_eq!(Page::from_arg("settings"), Some(Page::Settings));
+        assert_eq!(Page::from_arg("about"), Some(Page::About));
+        assert_eq!(Page::from_arg("Om"), Some(Page::About));
         assert_eq!(Page::from_arg("Diktering"), Some(Page::Dictation));
         assert_eq!(Page::from_arg("møder"), Some(Page::Meetings));
         assert_eq!(Page::from_arg("assistent"), None);
