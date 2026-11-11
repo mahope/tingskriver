@@ -3,6 +3,7 @@ use sqlx::{Result, Sqlite, SqlitePool, Transaction};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use super::changes::ChangeNotifier;
 use super::init::{
     backup_after_failure, backup_before_open, kind_from_io, kind_from_migrate, kind_from_sqlx,
     DbFailureInfo, DbFailureKind, DbInitError, BACKUP_DIR, BUSY_TIMEOUT,
@@ -14,6 +15,7 @@ const LEGACY_DATABASE_FILE: &str = "meeting_minutes.db";
 #[derive(Clone)]
 pub struct DatabaseManager {
     pool: SqlitePool,
+    changes: ChangeNotifier,
 }
 
 /// Connection settings for every connection in the pool: WAL, so a write
@@ -74,7 +76,13 @@ impl DatabaseManager {
         let migrator = sqlx::migrate!("./migrations");
 
         let options = connect_options(database_path, busy_timeout).create_if_missing(true);
+        let changes = ChangeNotifier::new();
+        let hook_target = changes.clone();
         let pool = SqlitePoolOptions::new()
+            .after_connect(move |conn, _meta| {
+                let notifier = hook_target.clone();
+                Box::pin(async move { notifier.attach(conn).await })
+            })
             .connect_with(options)
             .await
             .map_err(|e| fail(kind_from_sqlx(&e), e.to_string()))?;
@@ -92,7 +100,7 @@ impl DatabaseManager {
             return Err(fail(kind_from_sqlx(&e), e.to_string()));
         }
 
-        Ok(DatabaseManager { pool })
+        Ok(DatabaseManager { pool, changes })
     }
 
     async fn check_database_version(database_path: &Path) -> std::result::Result<(), DbInitError> {
@@ -251,6 +259,11 @@ impl DatabaseManager {
 
         // Now use the standard initialization which will detect and migrate the legacy db
         Self::new_from_app_data_dir(app_data_dir).await
+    }
+
+    /// The feed of committed changes, per table. See [`ChangeNotifier`].
+    pub fn changes(&self) -> &ChangeNotifier {
+        &self.changes
     }
 
     pub fn pool(&self) -> &SqlitePool {
