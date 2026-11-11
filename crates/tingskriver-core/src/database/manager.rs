@@ -70,13 +70,16 @@ impl DatabaseManager {
             log::info!("Creating database at {}", database_path.display());
         }
 
+        Self::check_database_version(database_path).await?;
+        let migrator = sqlx::migrate!("./migrations");
+
         let options = connect_options(database_path, busy_timeout).create_if_missing(true);
         let pool = SqlitePoolOptions::new()
             .connect_with(options)
             .await
             .map_err(|e| fail(kind_from_sqlx(&e), e.to_string()))?;
 
-        if let Err(e) = sqlx::migrate!("./migrations").run(&pool).await {
+        if let Err(e) = migrator.run(&pool).await {
             pool.close().await;
             return Err(fail(kind_from_migrate(&e), e.to_string()));
         }
@@ -92,18 +95,46 @@ impl DatabaseManager {
         Ok(DatabaseManager { pool })
     }
 
+    async fn check_database_version(database_path: &Path) -> std::result::Result<(), DbInitError> {
+        let migrator = sqlx::migrate!("./migrations");
+        let known: Vec<i64> = migrator.iter().map(|m| m.version).collect();
+        if let Some(unknown) = super::init::unknown_applied_migrations(database_path, &known).await
+        {
+            if !unknown.is_empty() {
+                return Err(DbInitError::new(
+                    DbFailureKind::NewerDatabase,
+                    DbFailureInfo {
+                        detail: format!("migrations unknown to this version: {unknown:?}"),
+                        database_path: database_path.to_path_buf(),
+                        backup_path: None,
+                        log_path: crate::logging::log_file(),
+                    },
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Open the database in `app_data_dir` at startup. A database that was
     /// not closed cleanly (a `-wal` or `-journal` left behind) is copied to
     /// `app_data_dir/backups` before it is opened, and the copy is removed
     /// again when it opens. On failure without such a copy, the database
     /// (with its `-wal` and `-shm` files) is copied when the kind of failure
     /// calls for it. The error is logged and says what the UI should show.
-    /// Never deletes the database or its journals.
+    /// Newer databases are refused before copying. Never deletes the
+    /// database or its journals.
     pub async fn open(app_data_dir: &Path) -> std::result::Result<Self, DbInitError> {
         let started = Instant::now();
         let database_path = app_data_dir.join(crate::paths::DATABASE_FILE);
         let legacy_path = app_data_dir.join(LEGACY_DATABASE_FILE);
         log::info!("Database path: {}", database_path.display());
+        // Refuse newer schemas before copying even an uncheckpointed WAL.
+        Self::check_database_version(&database_path)
+            .await
+            .map_err(|error| {
+                log::error!("Database failed to open ({:?}): {}", error.kind(), error);
+                error
+            })?;
         let backup_dir = Self::backup_dir(app_data_dir);
         let backup_database_path = database_path.clone();
         let backup_root = backup_dir.clone();
@@ -134,6 +165,9 @@ impl DatabaseManager {
             Err(mut error) => {
                 log::error!("Database failed to open ({:?}): {}", error.kind(), error);
                 match safety_copy {
+                    Some(copy) if error.kind() == DbFailureKind::NewerDatabase => {
+                        let _ = tokio::task::spawn_blocking(move || copy.discard()).await;
+                    }
                     // The files as they were before SQLite touched them.
                     Some(copy) => error.set_backup_path(Some(copy.folder().to_path_buf())),
                     None => {

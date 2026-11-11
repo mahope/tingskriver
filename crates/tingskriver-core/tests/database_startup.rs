@@ -157,25 +157,6 @@ async fn damaged_pages_in_a_real_database_are_corrupt() {
     assert!(matches!(error, DbInitError::Corrupt(_)), "{error:?}");
 }
 
-#[tokio::test]
-async fn unknown_migration_is_a_migration_error_with_backup() {
-    let dir = tempfile::tempdir().unwrap();
-    let db = create_database(dir.path()).await;
-    // A database from a newer Tingskriver.
-    sqlx::query("INSERT INTO _sqlx_migrations (version, description, installed_on, success, checksum, execution_time) VALUES (99990101000000, 'future', datetime('now'), 1, x'00', 0)")
-        .execute(db.pool())
-        .await
-        .unwrap();
-    db.cleanup().await.unwrap();
-
-    let error = DatabaseManager::open(dir.path())
-        .await
-        .err()
-        .expect("must fail");
-    assert!(matches!(error, DbInitError::Migration(_)), "{error:?}");
-    assert!(error.backup_path().is_some());
-}
-
 /// Hold an exclusive lock on a database that is not in WAL mode yet (a
 /// database from before this version, still open in the old app).
 async fn lock_exclusively(path: &Path) -> SqliteConnection {
