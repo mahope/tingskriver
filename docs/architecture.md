@@ -1,6 +1,6 @@
 # System Architecture
 
-Tingskriver is a self-contained desktop application built with [Tauri](https://tauri.app/). It combines a Rust-based backend with a Next.js frontend into a single, efficient, and cross-platform application.
+Tingskriver is a self-contained desktop application built with [Tauri](https://tauri.app/). This page describes the Tauri app, which is being phased out in favour of the GPUI app (see [arkitektur.md](arkitektur.md)). It combines a Rust-based backend with a web frontend (Next.js) into a single, efficient, and cross-platform application.
 
 ## High-Level Architecture Diagram
 
@@ -29,7 +29,7 @@ Crate boundaries and the dependency direction between core and the UIs are descr
 
 ## Component Details
 
-### Frontend (Next.js)
+### Frontend (Next.js, Tauri app, being phased out)
 
 *   Provides the user interface for managing meetings, displaying transcriptions, and configuring the application.
 *   Communicates with the Rust core through Tauri's command system.

@@ -414,16 +414,9 @@ fn timeline_sources(track: &ScannedTrack) -> Vec<Source> {
     sources
 }
 
-/// Sum two tracks without clipping: a sum beyond full scale is scaled back
-/// to full scale (the live mixer's rule).
+/// Equal-gain headroom when both tracks are active.
 pub fn mix_samples(a: i16, b: i16) -> i16 {
-    let sum = a as f32 / i16::MAX as f32 + b as f32 / i16::MAX as f32;
-    let scaled = if sum.abs() > 1.0 {
-        sum / sum.abs()
-    } else {
-        sum
-    };
-    (scaled * i16::MAX as f32).round() as i16
+    ((a as i32 + b as i32) / 2) as i16
 }
 
 const BLOCK: usize = 48_000;
@@ -440,25 +433,170 @@ fn encode_track(
     })
 }
 
+/// A block counts as speech when its RMS (mean removed, so a DC offset does
+/// not count) is above about -60 dBFS. A microphone's noise floor is well
+/// below that, and unlike an exact-zero test it also holds for a system track
+/// that never goes digitally silent.
+const ACTIVITY_MEAN_SQUARE: i128 = 1_074;
+/// How long a track keeps counting as active after its last speech block
+/// (blocks are 10 ms): pauses between sentences do not change the mix.
+const HOLD_BLOCKS: u32 = 400;
+/// The slowest move of the weight when one track goes quiet: 0.5 per second.
+const RELEASE_STEP: f64 = 0.5 / 100.0;
+
+fn block_is_active(block: &[i16]) -> bool {
+    let n = block.len() as i128;
+    let (sum, squares) = block.iter().fold((0i64, 0u64), |(sum, squares), &s| {
+        (sum + s as i64, squares + (s as i64 * s as i64) as u64)
+    });
+    // n * n * variance, in integers: the same answer on every platform.
+    n * squares as i128 - (sum as i128).pow(2) > ACTIVITY_MEAN_SQUARE * n * n
+}
+
+/// How the two tracks share the mix. The output is always
+/// `weight * first + (1 - weight) * second` with the weight in 0..=1, so a
+/// sample can never exceed the larger input and the mix cannot clip.
+///
+/// - Both tracks active (speech within the hold): half each.
+/// - Only one active: that track at unity and the quiet one (noise floor
+///   only) dropped, so solo speech keeps its level.
+/// - Neither active: the weight stays where it was.
+///
+/// The weight moves at once when a track starts to speak (so its first
+/// syllable is not faded in and the other track makes room before it) but
+/// only slowly when a partner has been quiet for the whole hold, so the level
+/// does not jump at pauses.
+struct MixGain {
+    tracks: usize,
+    hold: [u32; 2],
+    weight: Option<f64>,
+}
+
+impl MixGain {
+    fn new(tracks: usize) -> Self {
+        Self {
+            tracks,
+            hold: [0; 2],
+            weight: None,
+        }
+    }
+
+    /// Feed the next block, in order. Returns the weight of the first track
+    /// at the start of that block.
+    fn advance(&mut self, a: &[i16], b: &[i16]) -> f64 {
+        if self.tracks < 2 {
+            return 1.0;
+        }
+        let was = [self.hold[0] > 0, self.hold[1] > 0];
+        for (hold, block) in self.hold.iter_mut().zip([a, b]) {
+            *hold = if block_is_active(block) {
+                HOLD_BLOCKS
+            } else {
+                hold.saturating_sub(1)
+            };
+        }
+        // `slow`: the track that gains weight was already active and its
+        // partner has just gone quiet.
+        let (target, slow) = match [self.hold[0] > 0, self.hold[1] > 0] {
+            [true, true] => (0.5, false),
+            [true, false] => (1.0, was[0]),
+            [false, true] => (0.0, was[1]),
+            [false, false] => (self.weight.unwrap_or(0.5), false),
+        };
+        let weight = match self.weight {
+            Some(current) if slow => {
+                current + (target - current).clamp(-RELEASE_STEP, RELEASE_STEP)
+            }
+            _ => target,
+        };
+        self.weight = Some(weight);
+        weight
+    }
+}
+
+/// Mix one block, moving the weight linearly from `start` to `end`.
+fn mix_block(a: &mut [i16], b: &[i16], start: f64, end: f64) {
+    let len = a.len().max(1) as f64;
+    for (i, (a, &b)) in a.iter_mut().zip(b).enumerate() {
+        let weight = if start == end {
+            start
+        } else {
+            start + (end - start) * i as f64 / len
+        };
+        *a = if weight == 0.5 {
+            mix_samples(*a, b)
+        } else {
+            (*a as f64 * weight + b as f64 * (1.0 - weight)).round() as i16
+        };
+    }
+}
+
+/// Mixes the two tracks block by block. The next block is read ahead so the
+/// weight is already in place when a track starts to speak.
+struct BlockMixer {
+    gain: MixGain,
+    parts: [Vec<i16>; 2],
+    start: f64,
+}
+
+impl BlockMixer {
+    fn new(tracks: usize, first: [Vec<i16>; 2]) -> Self {
+        let mut gain = MixGain::new(tracks);
+        let start = gain.advance(&first[0], &first[1]);
+        Self {
+            gain,
+            parts: first,
+            start,
+        }
+    }
+
+    fn is_done(&self) -> bool {
+        self.parts[0].is_empty()
+    }
+
+    /// The mixed current block; `next` becomes the current block.
+    fn mix_next(&mut self, next: [Vec<i16>; 2]) -> Vec<i16> {
+        let end = self.gain.advance(&next[0], &next[1]);
+        let [mut a, b] = std::mem::replace(&mut self.parts, next);
+        mix_block(&mut a, &b, self.start, end);
+        self.start = end;
+        a
+    }
+}
+
+fn read_mix_block(readers: &mut [SourceReader], size: usize) -> io::Result<[Vec<i16>; 2]> {
+    if readers.len() > 2 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("a mix takes at most two tracks, got {}", readers.len()),
+        ));
+    }
+    let mut parts = [Vec::new(), Vec::new()];
+    for (reader, part) in readers.iter_mut().zip(&mut parts) {
+        reader.read_block(part, size)?;
+    }
+    let len = parts[0].len().max(parts[1].len());
+    for part in &mut parts {
+        part.resize(len, 0);
+    }
+    Ok(parts)
+}
+
 fn encode_mix(ffmpeg: &Path, scanned: &ScannedTracks, output: &Path) -> anyhow::Result<()> {
     let mut readers: Vec<SourceReader> = scanned
         .tracks
         .iter()
         .map(|t| SourceReader::new(timeline_sources(t)))
         .collect();
-    let mut part = Vec::new();
+    let size = (scanned.sample_rate as usize / 100).max(1);
+    let mut mixer = BlockMixer::new(readers.len(), read_mix_block(&mut readers, size)?);
     encode_pcm_s16(ffmpeg, scanned.sample_rate, "128k", output, |block| {
-        block.clear();
-        for reader in readers.iter_mut() {
-            reader.read_block(&mut part, BLOCK)?;
-            if block.len() < part.len() {
-                block.resize(part.len(), 0);
-            }
-            for (out, &s) in block.iter_mut().zip(part.iter()) {
-                *out = mix_samples(*out, s);
-            }
+        if mixer.is_done() {
+            block.clear();
+            return Ok(false);
         }
-        Ok(!block.is_empty())
+        *block = mixer.mix_next(read_mix_block(&mut readers, size)?);
+        Ok(true)
     })
 }
 
@@ -1076,10 +1214,533 @@ mod tests {
     }
 
     #[test]
+    fn mixed_wav_timeline_preserves_solo_level_across_gaps() {
+        let ffmpeg = ffmpeg().expect("ffmpeg is required for the mix regression");
+        let dir = tempfile::tempdir().unwrap();
+        let rate = 48_000usize;
+        let tone: Vec<i16> = (0..16 * rate)
+            .map(|i| {
+                (28_000.0 * (std::f64::consts::TAU * 440.0 * i as f64 / rate as f64).sin()).round()
+                    as i16
+            })
+            .collect();
+        let continuous = dir.path().join("continuous.wav");
+        let interrupted = dir.path().join("interrupted.wav");
+        write_segment(&continuous, &tone, tone.len() as u64);
+        // Speaks 0.25-1.0 s and 8.0-8.75 s, with seven digitally silent seconds
+        // in between (longer than the hold plus the release).
+        let mut other = tone[rate / 4..rate].to_vec();
+        other.extend(vec![0; 7 * rate]);
+        other.extend_from_slice(&tone[8 * rate..8 * rate + 3 * rate / 4]);
+        write_segment(&interrupted, &other, other.len() as u64);
+        let originals = [
+            std::fs::read(&continuous).unwrap(),
+            std::fs::read(&interrupted).unwrap(),
+        ];
+        // Exercise both microphone/system roles, including exhaustion of either reader.
+        for reverse in [false, true] {
+            let mut tracks = vec![
+                ScannedTrack {
+                    kind: TrackKind::Microphone,
+                    offset_samples: 0,
+                    sources: vec![Source::File {
+                        path: continuous.clone(),
+                        samples: tone.len() as u64,
+                    }],
+                    segment_count: 1,
+                },
+                ScannedTrack {
+                    kind: TrackKind::System,
+                    offset_samples: (rate / 4) as u64,
+                    sources: vec![Source::File {
+                        path: interrupted.clone(),
+                        samples: other.len() as u64,
+                    }],
+                    segment_count: 1,
+                },
+            ];
+            if reverse {
+                // Recovery can represent the same hole as a separate silence source.
+                // The tone has an integer number of periods in each piece.
+                tracks[1].sources = vec![
+                    Source::File {
+                        path: interrupted.clone(),
+                        samples: (3 * rate / 4) as u64,
+                    },
+                    Source::Silence(7 * rate as u64),
+                    Source::File {
+                        path: interrupted.clone(),
+                        samples: (3 * rate / 4) as u64,
+                    },
+                ];
+                tracks[0].kind = TrackKind::System;
+                tracks[1].kind = TrackKind::Microphone;
+                tracks.reverse();
+            }
+            let scanned = ScannedTracks {
+                sample_rate: rate as u32,
+                tracks,
+                problems: vec![],
+                complete: true,
+            };
+            let output = dir.path().join("mix.mp4");
+            encode_mix(&ffmpeg, &scanned, &output).unwrap();
+            let first = std::fs::read(&output).unwrap();
+            encode_mix(&ffmpeg, &scanned, &output).unwrap();
+            assert_eq!(
+                first,
+                std::fs::read(&output).unwrap(),
+                "deterministic AAC output"
+            );
+            let decoded = super::super::decoder::decode_audio_file(&output).unwrap();
+            assert!((decoded.duration_seconds - 16.0).abs() < 0.05);
+            // Compare RMS away from AAC edges and gain transitions: no clipped
+            // peaks or zero holes, unity gain during solo speech, and half gain
+            // while the silent partner is still inside the 4 s hold (the
+            // overlapping tones are identical, so overlap keeps the tone level).
+            for (start, end, gain) in [
+                (0.05, 0.20, 1.0),
+                (0.35, 0.9, 1.0),
+                (1.2, 1.9, 0.5),
+                (3.0, 4.5, 0.5),
+                (6.2, 7.8, 1.0),
+                (8.1, 8.7, 1.0),
+                (9.0, 12.5, 0.5),
+                (14.2, 15.9, 1.0),
+            ] {
+                let samples =
+                    &decoded.samples[(start * rate as f64) as usize..(end * rate as f64) as usize];
+                let rms = (samples.iter().map(|&s| (s as f64).powi(2)).sum::<f64>()
+                    / samples.len() as f64)
+                    .sqrt();
+                let expected = gain * 28_000.0 / 32768.0 / 2.0f64.sqrt();
+                assert!(
+                    (rms - expected).abs() < 0.02,
+                    "{start}..{end}: rms {rms}, expected {expected}"
+                );
+                let longest_zero_run = samples
+                    .split(|s| s.abs() > 0.0001)
+                    .map(|s| s.len())
+                    .max()
+                    .unwrap_or(0);
+                assert!(longest_zero_run <= rate / 200, "zero hole over 5 ms");
+            }
+        }
+        let scanned = ScannedTracks {
+            sample_rate: rate as u32,
+            tracks: vec![ScannedTrack {
+                kind: TrackKind::System,
+                offset_samples: 0,
+                sources: vec![Source::File {
+                    path: continuous.clone(),
+                    samples: tone.len() as u64,
+                }],
+                segment_count: 1,
+            }],
+            problems: vec![],
+            complete: true,
+        };
+        let single = dir.path().join("single.mp4");
+        encode_mix(&ffmpeg, &scanned, &single).unwrap();
+        let decoded = super::super::decoder::decode_audio_file(&single).unwrap();
+        assert_eq!(decoded.sample_rate, rate as u32);
+        assert_eq!(decoded.channels, 1);
+        let rms = (decoded.samples[rate..2 * rate]
+            .iter()
+            .map(|&s| (s as f64).powi(2))
+            .sum::<f64>()
+            / rate as f64)
+            .sqrt();
+        assert!(
+            (rms - 28_000.0 / 32768.0 / 2.0f64.sqrt()).abs() < 0.02,
+            "single track keeps unity gain"
+        );
+        let single_bytes = std::fs::read(&single).unwrap();
+        let silent_file = dir.path().join("silent.wav");
+        write_segment(&silent_file, &vec![0; tone.len()], tone.len() as u64);
+        for silent_source in [
+            Source::Silence(tone.len() as u64),
+            Source::File {
+                path: silent_file,
+                samples: tone.len() as u64,
+            },
+        ] {
+            for reverse in [false, true] {
+                let mut tracks = scanned.tracks.clone();
+                tracks.push(ScannedTrack {
+                    kind: TrackKind::Microphone,
+                    offset_samples: 0,
+                    sources: vec![silent_source.clone()],
+                    segment_count: 1,
+                });
+                if reverse {
+                    tracks.reverse();
+                }
+                let with_silence = ScannedTracks {
+                    sample_rate: scanned.sample_rate,
+                    tracks,
+                    problems: vec![],
+                    complete: true,
+                };
+                encode_mix(
+                    &ffmpeg,
+                    &with_silence,
+                    &dir.path().join("silent-partner.mp4"),
+                )
+                .unwrap();
+                assert_eq!(
+                    single_bytes,
+                    std::fs::read(dir.path().join("silent-partner.mp4")).unwrap(),
+                    "a silent partner must not change encoded solo level or bytes"
+                );
+            }
+        }
+        assert_eq!(originals[0], std::fs::read(continuous).unwrap());
+        assert_eq!(originals[1], std::fs::read(interrupted).unwrap());
+    }
+
+    /// Adds a sine to `track` between `from` and `to` seconds.
+    fn add_tone(track: &mut [i16], rate: usize, freq: f64, amplitude: f64, from: f64, to: f64) {
+        for i in (from * rate as f64) as usize..(to * rate as f64) as usize {
+            let s = amplitude * (std::f64::consts::TAU * freq * i as f64 / rate as f64).sin();
+            track[i] = track[i].saturating_add(s.round() as i16);
+        }
+    }
+
+    /// Deterministic noise of up to `peak` units either way plus a DC offset:
+    /// a recording's noise floor.
+    fn add_noise(track: &mut [i16], seed: u32, peak: i16, offset: i16) {
+        let mut state = seed;
+        for s in track.iter_mut() {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let noise = ((state >> 16) % (2 * peak as u32 + 1)) as i16 - peak;
+            *s = s.saturating_add(noise + offset);
+        }
+    }
+
+    fn rms(samples: &[i16]) -> f64 {
+        (samples.iter().map(|&s| (s as f64).powi(2)).sum::<f64>() / samples.len() as f64).sqrt()
+    }
+
+    /// Runs two equally long tracks through the same block mixer that
+    /// `encode_mix` uses.
+    fn mix_pcm(a: &[i16], b: &[i16], size: usize) -> Vec<i16> {
+        assert_eq!(a.len(), b.len());
+        let block = |i: usize| -> [Vec<i16>; 2] {
+            let range = (i * size).min(a.len())..((i + 1) * size).min(a.len());
+            [a[range.clone()].to_vec(), b[range].to_vec()]
+        };
+        let mut mixer = BlockMixer::new(2, block(0));
+        let mut out = Vec::new();
+        let mut i = 1;
+        while !mixer.is_done() {
+            out.extend(mixer.mix_next(block(i)));
+            i += 1;
+        }
+        assert_eq!(out.len(), a.len());
+        out
+    }
+
+    #[test]
+    fn activity_ignores_noise_floor_and_dc_offset() {
+        let size = 480;
+        let rate = 48_000;
+        let mut block = vec![0i16; size];
+        assert!(!block_is_active(&block), "digital silence");
+        assert!(!block_is_active(&[]), "no samples");
+        add_noise(&mut block, 7, 3, 0);
+        assert!(!block_is_active(&block), "noise floor of a few units");
+        let mut offset = vec![0i16; size];
+        add_noise(&mut offset, 8, 3, 300);
+        assert!(!block_is_active(&offset), "a DC offset is not speech");
+        let mut faint = vec![0i16; 2 * size];
+        add_tone(&mut faint, rate, 440.0, 20.0, 0.0, 0.02);
+        assert!(!block_is_active(&faint[..size]), "about -67 dBFS");
+        for amplitude in [200.0, 5_000.0, 32_767.0] {
+            let mut speech = vec![0i16; 2 * size];
+            add_tone(&mut speech, rate, 440.0, amplitude, 0.0, 0.02);
+            assert!(block_is_active(&speech[..size]), "amplitude {amplitude}");
+        }
+    }
+
+    #[test]
+    fn mix_weight_holds_for_seconds_and_releases_slowly() {
+        let size = 160;
+        let loud: Vec<i16> = (0..size)
+            .map(|i| if i % 2 == 0 { 5_000 } else { -5_000 })
+            .collect();
+        let quiet: Vec<i16> = (0..size).map(|i| if i % 2 == 0 { 2 } else { -2 }).collect();
+        let zeros = vec![0i16; size];
+        let mut gain = MixGain::new(2);
+        let mut run = |a: &Vec<i16>, b: &Vec<i16>, blocks: usize| -> Vec<f64> {
+            (0..blocks).map(|_| gain.advance(a, b)).collect()
+        };
+
+        let solo = run(&loud, &zeros, 20);
+        assert!(solo.iter().all(|&w| w == 1.0), "solo speech is unity");
+
+        // The partner starts: half each from its first block, not faded in.
+        let overlap = run(&loud, &loud, 5);
+        assert!(overlap.iter().all(|&w| w == 0.5), "{overlap:?}");
+
+        // The partner goes quiet (noise floor): half gain is held for 4 s.
+        let quiet_partner = run(&loud, &quiet, 600);
+        assert!(
+            quiet_partner[..399].iter().all(|&w| w == 0.5),
+            "held through the pause"
+        );
+        let release = &quiet_partner[399..];
+        let mut previous = 0.5;
+        for &w in release {
+            assert!(
+                w >= previous && w - previous <= RELEASE_STEP + 1e-12,
+                "release moves at most {RELEASE_STEP} per 10 ms: {previous} -> {w}"
+            );
+            previous = w;
+        }
+        let full = release.iter().position(|&w| w > 1.0 - 1e-9);
+        assert!(matches!(full, Some(99 | 100)), "1 s swing: {full:?}");
+        assert!(release.iter().all(|&w| w <= 1.0));
+        assert_eq!(*release.last().unwrap(), 1.0);
+
+        // The partner speaks again: half gain at once.
+        assert_eq!(run(&loud, &loud, 1), [0.5]);
+
+        // Roles swapped: the second track ends up at unity (weight 0).
+        let swapped = run(&quiet, &loud, 600);
+        assert!(swapped[..399].iter().all(|&w| w == 0.5));
+        assert_eq!(*swapped.last().unwrap(), 0.0);
+
+        // Nobody speaks: the weight stays; a track that starts alone is at
+        // unity from its first block.
+        assert!(run(&quiet, &zeros, 1_000).iter().all(|&w| w == 0.0));
+        assert_eq!(run(&loud, &quiet, 1), [1.0]);
+        assert_eq!(
+            run(&quiet, &loud, 1),
+            [0.5],
+            "the first track is still held"
+        );
+    }
+
+    #[test]
+    fn a_single_track_always_keeps_unity() {
+        let mut gain = MixGain::new(1);
+        let quiet = vec![3i16; 160];
+        assert_eq!(gain.advance(&quiet, &[0; 160]), 1.0);
+        let mut block = quiet.clone();
+        mix_block(&mut block, &[0; 160], 1.0, 1.0);
+        assert_eq!(block, quiet);
+    }
+
+    #[test]
+    fn mix_blocks_move_the_weight_smoothly_and_never_clip() {
+        for rate in [16_000usize, 44_100, 48_000] {
+            let size = rate / 100;
+            let zeros = vec![0i16; size];
+            let solo = vec![28_000i16; size];
+            // Exactly unity for either track when the other is silent.
+            let mut a = solo.clone();
+            mix_block(&mut a, &zeros, 1.0, 1.0);
+            assert_eq!(a, solo);
+            let mut a = zeros.clone();
+            mix_block(&mut a, &solo, 0.0, 0.0);
+            assert_eq!(a, solo);
+            // Equal samples keep their value at half each, even at full scale.
+            for sample in [i16::MIN, -30_000, 30_000, i16::MAX] {
+                let mut a = vec![sample; size];
+                let b = a.clone();
+                mix_block(&mut a, &b, 0.5, 0.5);
+                assert!(a.iter().all(|&s| s == sample), "overlap without clipping");
+            }
+            // Fade to half and back within one block: no step larger than the
+            // gain change spread over the block.
+            let limit = (28_000 / 2 / size + 1) as i32;
+            let mut down = solo.clone();
+            mix_block(&mut down, &zeros, 1.0, 0.5);
+            assert_eq!(down[0], 28_000);
+            assert!(down[size - 1] > 14_000 && down[size - 1] < 14_000 + 2 * limit as i16);
+            let mut up = solo.clone();
+            mix_block(&mut up, &zeros, 0.5, 1.0);
+            for ramp in [&down, &up] {
+                assert!(ramp
+                    .windows(2)
+                    .all(|s| (s[1] as i32 - s[0] as i32).abs() <= limit));
+            }
+            // Opposite full-scale samples while the weight moves: the result
+            // moves smoothly between the two inputs.
+            let mut a = vec![i16::MAX; size];
+            let b = vec![i16::MIN; size];
+            mix_block(&mut a, &b, 1.0, 0.0);
+            assert!(a.windows(2).all(|s| s[1] <= s[0]));
+        }
+    }
+
+    /// A microphone with a noise floor and speech, and a system track with
+    /// speech in short bursts separated by 300 ms of digital zeros (Teams and
+    /// Zoom): the level must not move with the pauses.
+    #[test]
+    fn mix_level_does_not_pump_at_short_pauses() {
+        let rate = 48_000;
+        let len = 14 * rate;
+        let mut mic = vec![0i16; len];
+        add_noise(&mut mic, 11, 3, 0);
+        add_tone(&mut mic, rate, 440.0, 8_000.0, 0.5, 5.5);
+        let mut system = vec![0i16; len];
+        let mut start = 1.0;
+        while start < 13.0 {
+            add_tone(&mut system, rate, 300.0, 6_000.0, start, start + 0.2);
+            start += 0.5;
+        }
+        for swap in [false, true] {
+            let (a, b) = if swap {
+                (&system, &mic)
+            } else {
+                (&mic, &system)
+            };
+            let out = mix_pcm(a, b, rate / 100);
+            assert_eq!(out, mix_pcm(a, b, rate / 100), "deterministic PCM");
+            let at = |seconds: f64| (seconds * rate as f64) as usize;
+            // From the first overlap until 4 s after the microphone's last
+            // speech: half of each track, in the bursts and in every pause.
+            for i in at(1.0)..at(9.4) {
+                let expected = (a[i] as i32 + b[i] as i32) as f64 / 2.0;
+                assert!(
+                    (out[i] as f64 - expected).abs() <= 1.0,
+                    "sample {i} ({}s): {} vs {expected}",
+                    i as f64 / rate as f64,
+                    out[i]
+                );
+            }
+            // Then the hold has run out and the gain has been released: the
+            // remaining speaker is at unity and the idle noise floor is gone.
+            for i in at(10.6)..len {
+                assert_eq!(out[i], system[i], "sample {i}");
+            }
+        }
+    }
+
+    /// The other track is only noise (a few units, with a DC offset): speech
+    /// keeps its full level, within 0.5 dB.
+    #[test]
+    fn mix_keeps_full_level_when_the_other_track_is_only_noise() {
+        let rate = 48_000;
+        let len = 8 * rate;
+        for offset in [0, 40] {
+            let mut speaker = vec![0i16; len];
+            add_noise(&mut speaker, 21, 3, 0);
+            add_tone(&mut speaker, rate, 440.0, 8_000.0, 1.0, 6.0);
+            let mut noise = vec![0i16; len];
+            add_noise(&mut noise, 22, 3, offset);
+            for swap in [false, true] {
+                let (a, b) = if swap {
+                    (&noise, &speaker)
+                } else {
+                    (&speaker, &noise)
+                };
+                let out = mix_pcm(a, b, rate / 100);
+                let speech = rate..6 * rate;
+                let change = 20.0 * (rms(&out[speech.clone()]) / rms(&speaker[speech])).log10();
+                assert!(
+                    change.abs() < 0.5,
+                    "speech changed by {change} dB (offset {offset}, swap {swap})"
+                );
+            }
+        }
+    }
+
+    /// Both tracks at full scale at once: the sum would be twice full scale,
+    /// but each track gets half and nothing is clipped.
+    #[test]
+    fn mix_never_clips_when_both_tracks_talk() {
+        let rate = 16_000;
+        let size = rate / 100;
+        let square: Vec<i16> = (0..4 * rate)
+            .map(|i| {
+                if (i / 80) % 2 == 0 {
+                    i16::MAX
+                } else {
+                    i16::MIN
+                }
+            })
+            .collect();
+        let out = mix_pcm(&square, &square, size);
+        assert_eq!(out, square, "half of each track is the track itself");
+
+        let mut other: Vec<i16> = square.iter().map(|&s| s.saturating_neg()).collect();
+        other.rotate_left(40);
+        let out = mix_pcm(&square, &other, size);
+        for (i, &s) in out.iter().enumerate() {
+            let expected = (square[i] as i32 + other[i] as i32) / 2;
+            assert!((s as i32 - expected).abs() <= 1, "sample {i}");
+        }
+
+        // Random speech and pauses at full scale on both tracks, so the
+        // weight moves around: every sample stays between the two inputs, which
+        // a sum with gain steps could not promise.
+        let mut state = 5u32;
+        let mut next = move || {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            state >> 16
+        };
+        let len = 60 * rate;
+        let mut tracks = [vec![0i16; len], vec![0i16; len]];
+        for track in &mut tracks {
+            let mut i = 0;
+            while i < len {
+                let end = (i + (next() as usize % 2 * rate + rate / 10)).min(len);
+                let kind = next() % 3;
+                for s in &mut track[i..end] {
+                    *s = match kind {
+                        0 => 0,
+                        1 => (next() % 5) as i16 - 2,
+                        _ if next() % 2 == 0 => i16::MAX,
+                        _ => i16::MIN,
+                    };
+                }
+                i = end;
+            }
+        }
+        let out = mix_pcm(&tracks[0], &tracks[1], size);
+        for (i, &s) in out.iter().enumerate() {
+            let (a, b) = (tracks[0][i], tracks[1][i]);
+            assert!(s >= a.min(b) && s <= a.max(b), "sample {i}: {a} {b} -> {s}");
+        }
+        assert!(out.iter().any(|&s| s == i16::MAX) && out.iter().any(|&s| s == i16::MIN));
+    }
+
+    /// A third track cannot be mixed: fail instead of dropping it silently.
+    #[test]
+    fn mixing_more_than_two_tracks_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let track = ScannedTrack {
+            kind: TrackKind::Microphone,
+            offset_samples: 0,
+            sources: vec![Source::Silence(1_000)],
+            segment_count: 1,
+        };
+        let scanned = ScannedTracks {
+            sample_rate: 48_000,
+            tracks: vec![track.clone(), track.clone(), track],
+            problems: vec![],
+            complete: true,
+        };
+        let output = dir.path().join("mix.mp4");
+        let error = encode_mix(Path::new("no-such-ffmpeg"), &scanned, &output).unwrap_err();
+        assert!(
+            error.to_string().contains("at most two tracks"),
+            "{error:#}"
+        );
+        assert!(!output.exists());
+    }
+
+    #[test]
     fn mixes_without_clipping() {
-        assert_eq!(mix_samples(1000, 2000), 3000);
+        assert_eq!(mix_samples(1000, 2000), 1500);
         assert_eq!(mix_samples(i16::MAX, i16::MAX), i16::MAX);
-        assert_eq!(mix_samples(-30000, -30000), -i16::MAX);
+        assert_eq!(mix_samples(-30000, -30000), -30000);
+        assert_eq!(mix_samples(i16::MIN, i16::MIN), i16::MIN);
+        assert_eq!(mix_samples(28000, 0), 14000);
+        assert_eq!(mix_samples(0, -28000), -14000);
     }
 
     #[test]

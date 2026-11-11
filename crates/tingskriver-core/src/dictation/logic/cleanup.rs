@@ -188,6 +188,12 @@ pub fn clean_with(input: &str, options: &Options) -> Cleaned {
     } else {
         tokens
     };
+    let tokens = if options.style == Style::Raw {
+        remove_fillers(tokens, options.style)
+    } else {
+        tokens
+    };
+    let tokens = super::identifiers::format(tokens, options.style, &options.rules.spoken);
     let tokens = apply_matchers(tokens, &spoken_matchers(&options.rules.spoken));
     let tokens = if options.collapse_stutters {
         collapse_stutters(tokens)
@@ -667,7 +673,11 @@ fn collapse_stutters(tokens: Vec<Tok>) -> Vec<Tok> {
         let mut end = i + 1;
         let mut count = 1;
         loop {
-            let next = if matches!(tokens.get(end), Some(Tok::Punct(','))) { end + 1 } else { end };
+            let next = if matches!(tokens.get(end), Some(Tok::Punct(','))) {
+                end + 1
+            } else {
+                end
+            };
             if word_at(next).as_deref() == Some(word.as_str()) {
                 count += 1;
                 end = next + 1;

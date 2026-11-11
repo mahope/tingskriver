@@ -72,6 +72,7 @@ jobs:
         run: |
           python3 scripts/check-workflows.py
           python3 scripts/tests/test_check_workflows.py
+          python3 scripts/tests/test_previous_release.py
 
   # Fast Linux gate on the changed files only. Files nobody touched may stay
   # unformatted; main compares with the previous tip of main.

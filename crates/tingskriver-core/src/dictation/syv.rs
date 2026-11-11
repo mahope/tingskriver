@@ -63,16 +63,30 @@ pub async fn transcribe_in(
     }
 
     let response = client
-        .post(format!("{}/audio/transcriptions", endpoint.trim_end_matches('/')))
+        .post(format!(
+            "{}/audio/transcriptions",
+            endpoint.trim_end_matches('/')
+        ))
         .bearer_auth(api_key)
         .multipart(form)
         .timeout(crate::http::TIMEOUT)
         .send()
         .await
-        .map_err(|e| format!("Syv.ai kunne ikke nås: {}", e.without_url()))?;
+        .map_err(|e| {
+            let kind = if e.is_timeout() {
+                "timeout"
+            } else if e.is_connect() {
+                "connection"
+            } else {
+                "request"
+            };
+            log::warn!("Dictation Syv request failed: {kind}");
+            format!("Syv.ai kunne ikke nås: {}", e.without_url())
+        })?;
 
     let status = response.status();
     if !status.is_success() {
+        log::warn!("Dictation Syv request failed: HTTP {}", status.as_u16());
         return Err(format!("Syv.ai svarede {status}"));
     }
     let body: TranscriptionResponse = response
@@ -83,7 +97,11 @@ pub async fn transcribe_in(
 }
 
 /// Check the key against `/models` and measure the round trip.
-pub async fn test_key(client: &reqwest::Client, endpoint: &str, api_key: &str) -> Result<u64, String> {
+pub async fn test_key(
+    client: &reqwest::Client,
+    endpoint: &str,
+    api_key: &str,
+) -> Result<u64, String> {
     let start = Instant::now();
     let response = client
         .get(format!("{}/models", endpoint.trim_end_matches('/')))
@@ -95,7 +113,9 @@ pub async fn test_key(client: &reqwest::Client, endpoint: &str, api_key: &str) -
     let elapsed = start.elapsed().as_millis() as u64;
     match response.status() {
         s if s.is_success() => Ok(elapsed),
-        s if s.as_u16() == 401 || s.as_u16() == 403 => Err("Nøglen blev afvist af Syv.ai".to_string()),
+        s if s.as_u16() == 401 || s.as_u16() == 403 => {
+            Err("Nøglen blev afvist af Syv.ai".to_string())
+        }
         s => Err(format!("Syv.ai svarede {s}")),
     }
 }
@@ -108,7 +128,10 @@ mod tests {
 
     /// Minimal OpenAI-compatible server: answers one request and hands the raw
     /// request back for inspection.
-    async fn fake_server(status: &'static str, body: &'static str) -> (String, tokio::task::JoinHandle<String>) {
+    async fn fake_server(
+        status: &'static str,
+        body: &'static str,
+    ) -> (String, tokio::task::JoinHandle<String>) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let handle = tokio::spawn(async move {
@@ -122,7 +145,11 @@ mod tests {
                 if let Some(header_end) = text.find("\r\n\r\n") {
                     let length = text[..header_end]
                         .lines()
-                        .find_map(|l| l.to_lowercase().strip_prefix("content-length: ").map(|v| v.trim().parse::<usize>().unwrap()))
+                        .find_map(|l| {
+                            l.to_lowercase()
+                                .strip_prefix("content-length: ")
+                                .map(|v| v.trim().parse::<usize>().unwrap())
+                        })
                         .unwrap_or(0);
                     if request.len() >= header_end + 4 + length {
                         break;
@@ -146,9 +173,17 @@ mod tests {
     async fn sends_the_mode_language() {
         let (endpoint, server) = fake_server("200 OK", r#"{"text":"Hello."}"#).await;
         let client = reqwest::Client::new();
-        let text = transcribe_in(&client, &endpoint, "hv_test", "syv-transcribe", " EN", vec![1], None)
-            .await
-            .unwrap();
+        let text = transcribe_in(
+            &client,
+            &endpoint,
+            "hv_test",
+            "syv-transcribe",
+            " EN",
+            vec![1],
+            None,
+        )
+        .await
+        .unwrap();
         assert_eq!(text, "Hello.");
         let request = server.await.unwrap();
         assert!(request.contains("name=\"language\"\r\n\r\nen\r\n"));
@@ -158,15 +193,28 @@ mod tests {
     async fn sends_openai_compatible_request() {
         let (endpoint, server) = fake_server("200 OK", r#"{"text":"Hej Mads."}"#).await;
         let client = reqwest::Client::new();
-        let text = transcribe(&client, &endpoint, "hv_test", "syv-transcribe", vec![1, 2, 3], Some("Mahoje, Syv.ai".into()))
-            .await
-            .unwrap();
+        let text = transcribe(
+            &client,
+            &endpoint,
+            "hv_test",
+            "syv-transcribe",
+            vec![1, 2, 3],
+            Some("Mahoje, Syv.ai".into()),
+        )
+        .await
+        .unwrap();
         assert_eq!(text, "Hej Mads.");
 
         let request = server.await.unwrap();
         assert!(request.starts_with("POST /v1/audio/transcriptions "));
-        assert!(request.to_lowercase().contains("authorization: bearer hv_test"));
-        for (name, value) in [("model", "syv-transcribe"), ("language", "da"), ("prompt", "Mahoje, Syv.ai")] {
+        assert!(request
+            .to_lowercase()
+            .contains("authorization: bearer hv_test"));
+        for (name, value) in [
+            ("model", "syv-transcribe"),
+            ("language", "da"),
+            ("prompt", "Mahoje, Syv.ai"),
+        ] {
             assert!(
                 request.contains(&format!("name=\"{name}\"\r\n\r\n{value}\r\n")),
                 "missing field {name}"
@@ -177,10 +225,18 @@ mod tests {
 
     #[tokio::test]
     async fn reports_http_errors_without_key() {
-        let (endpoint, _server) = fake_server("500 Internal Server Error", r#"{"error":"boom"}"#).await;
-        let error = transcribe(&reqwest::Client::new(), &endpoint, "hv_secret", "m", vec![0], None)
-            .await
-            .unwrap_err();
+        let (endpoint, _server) =
+            fake_server("500 Internal Server Error", r#"{"error":"boom"}"#).await;
+        let error = transcribe(
+            &reqwest::Client::new(),
+            &endpoint,
+            "hv_secret",
+            "m",
+            vec![0],
+            None,
+        )
+        .await
+        .unwrap_err();
         assert!(error.contains("500"));
         assert!(!error.contains("hv_secret"));
     }
@@ -188,7 +244,9 @@ mod tests {
     #[tokio::test]
     async fn key_test_maps_rejection() {
         let (endpoint, _server) = fake_server("401 Unauthorized", "{}").await;
-        let error = test_key(&reqwest::Client::new(), &endpoint, "bad").await.unwrap_err();
+        let error = test_key(&reqwest::Client::new(), &endpoint, "bad")
+            .await
+            .unwrap_err();
         assert_eq!(error, "Nøglen blev afvist af Syv.ai");
     }
 }
