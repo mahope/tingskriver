@@ -7,7 +7,7 @@ mod worker;
 pub use store::{Job, JobSpec, Queue, Version, MAX_ATTEMPTS};
 pub use worker::transcribe_local;
 
-#[derive(Clone, Debug, serde::Serialize)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QueueEvent {
     pub job_id: String,

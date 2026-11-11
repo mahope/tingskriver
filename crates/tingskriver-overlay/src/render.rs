@@ -271,7 +271,13 @@ fn draw_check(pixmap: &mut Pixmap, cx: f32, cy: f32, s: f32) {
 /// Copy a premultiplied RGBA pixmap into premultiplied BGRA rows, the
 /// layout a 32-bit top-down DIB for `UpdateLayeredWindow` expects.
 pub fn to_bgra(pixmap: &Pixmap, out: &mut [u8]) {
-    for (src, dst) in pixmap.data().chunks_exact(4).zip(out.chunks_exact_mut(4)) {
+    for (src, dst) in pixmap
+        .data()
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(out.as_chunks_mut::<4>().0)
+    {
         dst[0] = src[2];
         dst[1] = src[1];
         dst[2] = src[0];

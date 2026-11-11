@@ -59,6 +59,7 @@ mod http;
 pub mod install;
 pub mod logging;
 pub mod measurement;
+pub mod meeting_list;
 pub mod model_download;
 pub mod notes;
 pub mod ollama;

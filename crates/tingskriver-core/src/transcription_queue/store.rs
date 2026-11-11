@@ -356,8 +356,12 @@ impl Queue {
     }
 
     pub async fn statuses(&self) -> Result<Vec<super::QueueEvent>> {
+        Self::statuses_from_pool(&self.pool).await
+    }
+
+    pub(crate) async fn statuses_from_pool(pool: &SqlitePool) -> Result<Vec<super::QueueEvent>> {
         let rows = sqlx::query("SELECT id,meeting_id,status,attempts,next_attempt,CASE WHEN json_type(result, '$.rejected.message') = 'text' THEN json_extract(result, '$.rejected.message') END AS rejected FROM transcription_jobs ORDER BY created_at,rowid")
-            .fetch_all(&self.pool).await?;
+            .fetch_all(pool).await?;
         rows.into_iter()
             .map(|row| {
                 Ok(super::QueueEvent {

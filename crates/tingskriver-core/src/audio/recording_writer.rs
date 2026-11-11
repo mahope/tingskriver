@@ -47,36 +47,121 @@ const QUEUE_RECOVERY: Duration = Duration::from_secs(2);
 
 pub const MANIFEST_FILE: &str = "tracks.json";
 
-static LIVE_WRITERS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+pub(crate) const WRITER_LOCK: &str = ".writer.lock";
 
-pub(crate) fn has_live_writer(dir: &Path) -> bool {
-    let dir = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
-    LIVE_WRITERS
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .iter()
-        .any(|live| live.canonicalize().unwrap_or_else(|_| live.clone()) == dir)
-}
+pub(crate) struct RawFolderLock(std::fs::File);
 
-struct LiveWriter(PathBuf);
-
-impl LiveWriter {
-    fn register(dir: &Path) -> Self {
-        let dir = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
-        LIVE_WRITERS
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .push(dir.clone());
-        Self(dir)
+impl Drop for RawFolderLock {
+    fn drop(&mut self) {
+        // Closing alone can leave the lock held by a child between fork and exec.
+        if let Err(error) = self.0.unlock() {
+            log::warn!("Could not unlock raw recording folder: {error}");
+        }
     }
 }
 
-impl Drop for LiveWriter {
-    fn drop(&mut self) {
-        let mut live = LIVE_WRITERS.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(index) = live.iter().position(|dir| dir == &self.0) {
-            live.remove(index);
+/// How long taking the folder lock keeps retrying while someone else holds it.
+/// The status checks in the meeting list and recovery take the lock for a few
+/// microseconds, so a recording start or finalize that collides with one must
+/// wait it out instead of failing. A real writer holds it for the whole
+/// recording and is still reported after this wait.
+pub(crate) const LOCK_WAIT: Duration = Duration::from_secs(2);
+
+/// Pause between lock attempts while waiting.
+const LOCK_RETRY: Duration = Duration::from_millis(20);
+
+/// Why the folder lock could not be taken.
+#[derive(Debug)]
+pub(crate) enum LockError {
+    /// A recording, a finalize or a delete holds the lock (even after waiting).
+    Held,
+    /// The lock file could not be opened or locked at all.
+    Io(io::Error),
+}
+
+impl std::fmt::Display for LockError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Held => "Optagelsens mappe bruges af en optagelse eller en samling.",
+            Self::Io(_) => "Optagelsens mappe kunne ikke låses.",
+        })
+    }
+}
+
+impl std::error::Error for LockError {}
+
+impl From<LockError> for io::Error {
+    fn from(error: LockError) -> Self {
+        match error {
+            LockError::Held => io::Error::new(io::ErrorKind::WouldBlock, error),
+            LockError::Io(source) => {
+                log::error!("Could not lock the raw recording folder: {source}");
+                io::Error::new(source.kind(), LockError::Io(source))
+            }
         }
+    }
+}
+
+#[allow(clippy::disallowed_methods)]
+fn open_lock_file(dir: &Path) -> Result<std::fs::File, LockError> {
+    std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(dir.join(WRITER_LOCK))
+        .map_err(LockError::Io)
+}
+
+/// Take the exclusive folder lock, retrying for up to [`LOCK_WAIT`] while it is
+/// held. Blocking: call it from a thread that may sleep.
+pub(crate) fn lock_raw_folder(dir: &Path) -> Result<RawFolderLock, LockError> {
+    lock_raw_folder_within(dir, LOCK_WAIT)
+}
+
+pub(crate) fn lock_raw_folder_within(
+    dir: &Path,
+    wait: Duration,
+) -> Result<RawFolderLock, LockError> {
+    use std::fs::TryLockError;
+    let file = open_lock_file(dir)?;
+    let started = Instant::now();
+    loop {
+        match file.try_lock() {
+            Ok(()) => return Ok(RawFolderLock(file)),
+            Err(TryLockError::Error(error)) => return Err(LockError::Io(error)),
+            Err(TryLockError::WouldBlock) => {
+                if started.elapsed() >= wait {
+                    return Err(LockError::Held);
+                }
+                std::thread::sleep(LOCK_RETRY);
+            }
+        }
+    }
+}
+
+/// Is the folder locked by a recording, a finalize or a delete?
+///
+/// The probe takes a shared lock and releases it at once, so concurrent probes
+/// (the meeting list checks every few seconds) never block each other and a
+/// writer or finalize starting at the same moment only has to wait a moment.
+pub(crate) fn has_live_writer(dir: &Path) -> bool {
+    use std::fs::TryLockError;
+    if matches!(dir.try_exists(), Ok(false)) {
+        return false;
+    }
+    // Fail closed if the lock cannot be inspected. Never repair uncertain audio.
+    let Ok(file) = open_lock_file(dir) else {
+        return true;
+    };
+    match file.try_lock_shared() {
+        Ok(()) => {
+            if let Err(error) = file.unlock() {
+                log::warn!("Could not release the folder probe lock: {error}");
+            }
+            false
+        }
+        Err(TryLockError::WouldBlock | TryLockError::Error(_)) => true,
     }
 }
 
@@ -331,7 +416,11 @@ where
         dropped_samples: dropped.clone(),
         sample_rate,
     };
-    let live_writer = LiveWriter::register(&dir);
+    // Synchronous startup must create the folder and acquire its lock before
+    // returning a sender; otherwise capture could start without a live writer.
+    #[allow(clippy::disallowed_methods)]
+    std::fs::create_dir_all(&dir)?;
+    let live_writer = lock_raw_folder(&dir)?;
     let thread_status = status.clone();
     let thread = std::thread::Builder::new()
         .name("recording-writer".to_string())
@@ -590,11 +679,82 @@ where
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[allow(clippy::disallowed_methods)]
-mod tests {
+pub(crate) mod tests {
     use super::super::track_writer::tests::{MemoryStorage, DISK_FULL};
     use super::super::track_writer::{inspect_wav, segment_file_name};
     use super::*;
     use std::collections::HashMap;
+
+    /// Holds the exclusive folder lock for `hold`, like a slow status check.
+    /// Returns once the lock is held; join the thread to wait for the release.
+    pub(crate) fn hold_lock(dir: &Path, hold: Duration) -> std::thread::JoinHandle<()> {
+        let (held_tx, held_rx) = std::sync::mpsc::channel();
+        let dir = dir.to_path_buf();
+        let thread = std::thread::spawn(move || {
+            let lock = lock_raw_folder_within(&dir, Duration::ZERO).unwrap();
+            held_tx.send(()).unwrap();
+            std::thread::sleep(hold);
+            drop(lock);
+        });
+        held_rx.recv().unwrap();
+        thread
+    }
+
+    #[test]
+    fn writer_starts_when_a_status_check_holds_the_lock_briefly() {
+        let dir = tempfile::tempdir().unwrap();
+        let check = hold_lock(dir.path(), Duration::from_millis(300));
+        let started = Instant::now();
+        let (tx, handle) =
+            spawn_writer(dir.path().to_path_buf(), 48000, Arc::new(LogObserver)).unwrap();
+        assert!(started.elapsed() >= Duration::from_millis(200));
+        tx.send(TrackKind::Microphone, vec![0.1; 480], Some(0.01))
+            .unwrap();
+        drop(tx);
+        assert!(handle.join().unwrap().duration_seconds() > 0.0);
+        check.join().unwrap();
+    }
+
+    #[test]
+    fn lock_wait_separates_held_from_unreadable() {
+        let dir = tempfile::tempdir().unwrap();
+        let held = lock_raw_folder_within(dir.path(), Duration::ZERO).unwrap();
+        assert!(matches!(
+            lock_raw_folder_within(dir.path(), Duration::from_millis(100)),
+            Err(LockError::Held)
+        ));
+        drop(held);
+        assert!(lock_raw_folder_within(dir.path(), Duration::ZERO).is_ok());
+        let missing = dir.path().join("missing");
+        assert!(matches!(
+            lock_raw_folder_within(&missing, Duration::from_millis(100)),
+            Err(LockError::Io(_))
+        ));
+    }
+
+    #[test]
+    fn a_status_check_releases_the_lock_at_once_and_never_blocks_other_checks() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!has_live_writer(dir.path()));
+        let other_check = open_lock_file(dir.path()).unwrap();
+        other_check.try_lock_shared().unwrap();
+        assert!(!has_live_writer(dir.path()));
+        other_check.unlock().unwrap();
+        let writer = lock_raw_folder_within(dir.path(), Duration::ZERO).unwrap();
+        assert!(has_live_writer(dir.path()));
+        drop(writer);
+    }
+
+    #[test]
+    fn recovery_lock_releases_even_with_an_inherited_descriptor() {
+        let dir = tempfile::tempdir().unwrap();
+        let lock = lock_raw_folder(dir.path()).unwrap();
+        let inherited = lock.0.try_clone().unwrap();
+        assert!(has_live_writer(dir.path()));
+        drop(lock);
+        assert!(!has_live_writer(dir.path()));
+        drop(inherited);
+    }
 
     #[derive(Default)]
     struct RecordingObserver {

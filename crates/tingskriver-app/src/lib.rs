@@ -15,6 +15,7 @@ pub mod args;
 pub mod assets;
 pub mod crash;
 mod measurement;
+mod meetings;
 pub mod probe;
 pub mod proposals;
 pub mod single_instance;
@@ -144,6 +145,25 @@ pub fn run() {
                 model
             });
             if let Some(bridge) = bridge {
+                let mut events = bridge.subscribe();
+                let event_model = model.clone();
+                cx.spawn(async move |cx| {
+                    while let Some(event) = events.recv().await {
+                        if event.name == "transcription-queue-status" {
+                            if let Ok(status) = serde_json::from_str::<
+                                tingskriver_core::transcription_queue::QueueEvent,
+                            >(&event.payload_json)
+                            {
+                                event_model.update(cx, |model, cx| {
+                                    model.meeting_jobs.retain(|job| job.job_id != status.job_id);
+                                    model.meeting_jobs.push(status);
+                                    cx.notify();
+                                });
+                            }
+                        }
+                    }
+                })
+                .detach();
                 // Core features that need the database get it once it is open.
                 cx.observe(&model, move |model, cx| {
                     if let startup::DbState::Ready(db) = &model.read(cx).db {

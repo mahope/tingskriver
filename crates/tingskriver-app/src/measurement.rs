@@ -299,6 +299,12 @@ impl Render for MeasurementView {
                     }
                 }),
         );
-        page(strings::MEASURE_TITLE, None, body.into_any_element(), cx)
+        page(
+            strings::MEASURE_TITLE,
+            None,
+            false,
+            body.into_any_element(),
+            cx,
+        )
     }
 }

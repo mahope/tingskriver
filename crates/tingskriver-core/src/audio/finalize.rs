@@ -707,18 +707,70 @@ pub fn is_finalizing() -> bool {
         .is_some_and(|set| !set.is_empty())
 }
 
-pub(super) struct FolderGuard(PathBuf);
+pub(super) struct FolderGuard {
+    folder: PathBuf,
+    _raw_lock: Option<super::recording_writer::RawFolderLock>,
+}
+
+/// Why a folder could not be claimed for finalizing.
+#[derive(Debug)]
+pub(super) enum FolderError {
+    /// This process is already finalizing the folder.
+    InProgress,
+    /// A recording or another process holds the raw folder lock.
+    Locked,
+    /// The folder or its lock could not be read (the audio is left untouched).
+    Unavailable,
+}
+
+impl std::fmt::Display for FolderError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::InProgress => "Lyden samles allerede.",
+            Self::Locked => "Lyden optages eller samles allerede. Prøv igen om lidt.",
+            Self::Unavailable => "Mødets lydmappe kunne ikke læses. Lyden er ikke rørt.",
+        })
+    }
+}
+
+impl std::error::Error for FolderError {}
 
 impl FolderGuard {
-    pub(super) fn acquire(folder: &Path) -> Option<Self> {
-        let folder = folder.canonicalize().ok()?;
-        let mut guard = IN_PROGRESS.lock().unwrap_or_else(|e| e.into_inner());
-        let set = guard.get_or_insert_with(HashSet::new);
-        if set.insert(folder.clone()) {
-            Some(Self(folder))
-        } else {
-            None
+    pub(super) fn acquire(folder: &Path) -> Result<Self, FolderError> {
+        let folder = folder.canonicalize().map_err(|error| {
+            log::error!("Cannot resolve {}: {error}", folder.display());
+            FolderError::Unavailable
+        })?;
+        // Claim the folder in this process first: a second finalize of the same
+        // folder is refused at once instead of waiting for the file lock.
+        {
+            let mut guard = IN_PROGRESS.lock().unwrap_or_else(|e| e.into_inner());
+            if !guard
+                .get_or_insert_with(HashSet::new)
+                .insert(folder.clone())
+            {
+                return Err(FolderError::InProgress);
+            }
         }
+        // From here the guard releases the claim on every early return.
+        let mut claimed = Self {
+            folder,
+            _raw_lock: None,
+        };
+        let raw = claimed.folder.join(RAW_DIR);
+        if raw.is_dir() {
+            // Waits briefly: a status check holding the lock for a moment must
+            // not make the audio fail to save.
+            let lock = super::recording_writer::lock_raw_folder(&raw).map_err(|error| {
+                log::warn!("Cannot lock {}: {error:?}", raw.display());
+                match error {
+                    super::recording_writer::LockError::Held => FolderError::Locked,
+                    super::recording_writer::LockError::Io(_) => FolderError::Unavailable,
+                }
+            })?;
+            claimed._raw_lock = Some(lock);
+        }
+        Ok(claimed)
     }
 }
 
@@ -726,7 +778,7 @@ impl Drop for FolderGuard {
     fn drop(&mut self) {
         let mut guard = IN_PROGRESS.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(set) = guard.as_mut() {
-            set.remove(&self.0);
+            set.remove(&self.folder);
         }
     }
 }
@@ -749,8 +801,9 @@ fn finalize_tracks(
     ffmpeg: Option<&Path>,
     keep_raw: bool,
 ) -> FinalizeOutcome {
-    let Some(_guard) = FolderGuard::acquire(meeting_folder) else {
-        return FinalizeOutcome::failed("Lyden samles allerede.".to_string(), None);
+    let _guard = match FolderGuard::acquire(meeting_folder) {
+        Ok(guard) => guard,
+        Err(error) => return FinalizeOutcome::failed(error.to_string(), None),
     };
     let raw_dir = meeting_folder.join(RAW_DIR);
     match std::fs::remove_file(raw_dir.join(VERIFIED_MARKER)) {
@@ -1162,6 +1215,51 @@ mod tests {
         }
         drop(tx);
         handle.join().unwrap();
+    }
+
+    #[test]
+    fn folder_guard_waits_out_a_status_check_holding_the_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let raw = dir.path().join(RAW_DIR);
+        std::fs::create_dir_all(&raw).unwrap();
+        let check = super::super::recording_writer::tests::hold_lock(
+            &raw,
+            std::time::Duration::from_millis(300),
+        );
+        let started = std::time::Instant::now();
+        let guard = FolderGuard::acquire(dir.path()).unwrap();
+        assert!(started.elapsed() >= std::time::Duration::from_millis(200));
+        drop(guard);
+        check.join().unwrap();
+    }
+
+    #[test]
+    fn folder_guard_tells_a_held_lock_from_an_unreadable_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let raw = dir.path().join(RAW_DIR);
+        std::fs::create_dir_all(&raw).unwrap();
+        let writer = super::super::recording_writer::lock_raw_folder(&raw).unwrap();
+        let error = FolderGuard::acquire(dir.path()).err().unwrap();
+        assert!(matches!(error, FolderError::Locked));
+        assert_eq!(
+            error.to_string(),
+            "Lyden optages eller samles allerede. Prøv igen om lidt."
+        );
+        let outcome = finalize_raw_tracks(dir.path(), None);
+        assert_eq!(outcome.status, AudioSaveStatus::Failed);
+        assert_eq!(outcome.message, error.to_string());
+        drop(writer);
+        // The refused attempts released their claim on the folder.
+        drop(FolderGuard::acquire(dir.path()).unwrap());
+
+        let error = FolderGuard::acquire(&dir.path().join("missing"))
+            .err()
+            .unwrap();
+        assert!(matches!(error, FolderError::Unavailable));
+        assert_eq!(
+            error.to_string(),
+            "Mødets lydmappe kunne ikke læses. Lyden er ikke rørt."
+        );
     }
 
     #[test]

@@ -30,6 +30,7 @@ pub struct AppModel {
     pub app_data_dir: Option<PathBuf>,
     pub log_path: Option<PathBuf>,
     pub runtime: Handle,
+    pub meeting_jobs: Vec<tingskriver_core::transcription_queue::QueueEvent>,
     pub clock: StartupClock,
     /// The page a new window opens on.
     pub start_page: Page,
@@ -54,6 +55,7 @@ impl AppModel {
             app_data_dir,
             log_path,
             runtime,
+            meeting_jobs: Vec::new(),
             clock,
             start_page: Page::Meetings,
             report_first_frame: true,
@@ -296,6 +298,7 @@ pub struct Shell {
     model: Entity<AppModel>,
     page: Page,
     measurement: Entity<crate::measurement::MeasurementView>,
+    meetings: Entity<crate::meetings::MeetingsView>,
     probe_line: Entity<InputState>,
     probe_text: Entity<TextareaState>,
     state_path: Option<PathBuf>,
@@ -333,6 +336,7 @@ impl Shell {
                 cx,
             )
         });
+        let meetings = cx.new(|cx| crate::meetings::MeetingsView::new(model.clone(), cx));
         let save_path = state_path.clone();
         window.on_window_should_close(cx, move |window, _| {
             if let Some(path) = &save_path {
@@ -355,6 +359,7 @@ impl Shell {
             model,
             page,
             measurement,
+            meetings,
             probe_line,
             probe_text,
             state_path,
@@ -430,24 +435,8 @@ impl Shell {
             )
     }
 
-    fn meetings_page(&self, cx: &mut Context<Self>) -> AnyElement {
-        let body = match &self.model.read(cx).db {
-            DbState::Loading => loading(strings::LOADING_MEETINGS, cx),
-            DbState::NotCreated => empty_state(
-                IconName::Inbox,
-                strings::NO_MEETINGS,
-                strings::FIRST_MEETING,
-                cx,
-            ),
-            DbState::Ready(_) => empty_state(
-                IconName::Inbox,
-                strings::NO_MEETINGS_YET,
-                strings::MEETINGS_LATER,
-                cx,
-            ),
-            DbState::Failed(_) => div().into_any_element(),
-        };
-        page(strings::MEETINGS, None, body, cx)
+    fn meetings_page(&self, _cx: &mut Context<Self>) -> AnyElement {
+        self.meetings.clone().into_any_element()
     }
 
     fn dictation_page(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -488,7 +477,7 @@ impl Shell {
                             }),
                     ),
             );
-        page(strings::DICTATION, None, body.into_any_element(), cx)
+        page(strings::DICTATION, None, false, body.into_any_element(), cx)
     }
 
     fn about_page(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -592,7 +581,7 @@ impl Shell {
                         )
                     },
                 ));
-        page(strings::ABOUT, None, body.into_any_element(), cx)
+        page(strings::ABOUT, None, false, body.into_any_element(), cx)
     }
 
     fn settings_page(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -675,7 +664,7 @@ impl Shell {
                             ),
                     ),
             );
-        page(strings::SETTINGS, None, body.into_any_element(), cx)
+        page(strings::SETTINGS, None, false, body.into_any_element(), cx)
     }
 
     fn database_error_page(&self, failure: &DbFailure, cx: &mut Context<Self>) -> AnyElement {
@@ -779,7 +768,13 @@ impl Render for Shell {
                             });
                         }),
                 );
-            page(strings::RERUN_TITLE, None, body.into_any_element(), cx)
+            page(
+                strings::RERUN_TITLE,
+                None,
+                false,
+                body.into_any_element(),
+                cx,
+            )
         } else {
             match (&failure, self.page) {
                 (_, Page::About) => self.about_page(cx),
@@ -809,17 +804,24 @@ fn palette(cx: &App) -> &'static Palette {
     Palette::for_mode(cx.theme().mode)
 }
 
-pub(crate) fn page(title: &str, subtitle: Option<&str>, body: AnyElement, cx: &App) -> AnyElement {
+pub(crate) fn page(
+    title: &str,
+    subtitle: Option<&str>,
+    virtualized: bool,
+    body: AnyElement,
+    cx: &App,
+) -> AnyElement {
     v_flex()
         .id(SharedString::from(format!("page-{title}")))
         .size_full()
-        .overflow_y_scroll()
+        .when(!virtualized, |this| this.overflow_y_scroll())
         .px(space::XXL)
         .py(space::XL)
         .child(
             v_flex()
                 .w_full()
                 .max_w(layout::CONTENT_MAX_WIDTH)
+                .when(virtualized, |this| this.h_full().min_h_0())
                 .gap(space::LG)
                 .child(heading(title))
                 .when_some(subtitle, |this, subtitle| this.child(muted(subtitle, cx)))
@@ -851,7 +853,7 @@ pub(crate) fn paragraph(text: &str, cx: &App) -> impl IntoElement {
         .child(text.to_string())
 }
 
-fn muted(text: &str, cx: &App) -> impl IntoElement {
+pub(crate) fn muted(text: &str, cx: &App) -> impl IntoElement {
     div()
         .text_size(typography::SM)
         .text_color(palette(cx).muted_foreground)
@@ -885,7 +887,7 @@ fn setting_group(title: &str, lines: Vec<String>, cx: &App) -> impl IntoElement 
         .children(lines.into_iter().map(|line| muted(&line, cx)))
 }
 
-fn loading(text: &str, cx: &App) -> AnyElement {
+pub(crate) fn loading(text: &str, cx: &App) -> AnyElement {
     h_flex()
         .gap(space::SM)
         .py(space::XL)
@@ -895,7 +897,7 @@ fn loading(text: &str, cx: &App) -> AnyElement {
         .into_any_element()
 }
 
-fn empty_state(icon: IconName, title: &str, text: &str, cx: &App) -> AnyElement {
+pub(crate) fn empty_state(icon: IconName, title: &str, text: &str, cx: &App) -> AnyElement {
     let palette = palette(cx);
     v_flex()
         .items_center()

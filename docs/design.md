@@ -62,6 +62,7 @@ The first column is the exact identifier in the code; the script checks it.
 |---|---|---|
 | `theme` | Tokens (`Palette`, `space`, `typography`, `layout`, `icon_size`, radii), mapping onto gpui-component's theme (`apply`), live light/dark (`sync_with_window`). | All visual values. Not for page structure. |
 | `ui` | Main window, `Shell` (sidebar plus the page in the window), the pages and the shared page building blocks below. | New pages and page-level blocks. |
+| `meetings` | Virtual meeting list backed by the core list model, inline rename/delete confirmation, startup recovery and navigation handoffs. | Only meeting-list presentation; data, status mapping and mutations live in core. |
 | `measurement` | The Måling page: compare a user's sample against a reference text, per model. | Only this page. |
 | `about` | Offline build metadata, an update-status snapshot, allowlisted diagnostics and bundled legal documents. | The Om page and copying diagnostics. Opening the page never starts an update check. |
 | `probe` | Describes what the keyboard produced (code points, uncomposed dead keys) for the test field on the Diktering page. | Manual input tests. |
@@ -90,7 +91,8 @@ The first column is the exact identifier in the code; the script checks it.
 | `setting_group` | Card with a title and muted lines. | Read-only groups on the Indstillinger page. Editable settings need their own component when the first one is built. |
 | `loading` | Spinner with a text. | Anything waiting for core (the Møder page while the database opens). |
 | `empty_state` | Card with an icon, a title and a short explanation. | Every list without content. Every new list needs one. |
-| `meetings_page` | Møder: loading, first-launch and no-meetings states. The list is not built yet. | |
+| `meetings_page` | Hosts `MeetingsView`. | Møder navigation. |
+| `MeetingsView` | Fixed viewport with GPUI `list`, date groups, durations and job explanations; empty/loading/error states, rename, confirmed deletion and recovery. | Reuses `page`, `loading`, `empty_state`, text blocks, Button and Input. Recording and meeting-document screens remain separate ports; opens the saved audio folder. |
 | `dictation_page` | Diktering: placeholder text plus the input test field. | |
 | `settings_page` | Indstillinger: read-only groups (appearance, data folder and database, log) and the buttons "Åbn logmappen" and "Afslut". | |
 | `about_page` | Om: build metadata, update status, copying diagnostics with progress and result feedback, and bundled legal documents. | Reuses the page frame, text helpers and gpui-component buttons. |
@@ -134,7 +136,7 @@ Change a row when the experience changes.
 | Experience | Components | Notes |
 |---|---|---|
 | Start | `startup`, `Shell`, `loading` | First frame within 500 ms; the database opens in the background. |
-| Look at meetings | `meetings_page`, `empty_state`, `loading` | Placeholder states only: loading, "Ingen møder endnu". |
+| Look at meetings | `meetings_page`, `MeetingsView`, `empty_state`, `loading` | Virtual date groups; open audio folder, rename, confirmed deletion and recovery of interrupted audio. Recording and document handoffs explain the pending ports. |
 | Test Danish input | `dictation_page`, `probe` | Manual Windows test 2 and 3 in [gpui.md](gpui.md). |
 | Compare transcription on own sample | `MeasurementView`, `Page` | See [measurement.md](measurement.md). |
 | See app settings | `settings_page`, `setting_group` | Read-only. |
@@ -180,3 +182,29 @@ verifies that:
   template has the reuse field.
 
 It reads source text only, takes well under a second and needs no build.
+
+## Meeting-list verification pending #49
+
+After #49 / PR #172 lands, add light and dark fixtures for: empty and loading
+lists; grouped meetings with all job statuses and unknown duration; load failure
+and retry; recovery banner with multiple candidates and failed/partial recovery;
+rename with an empty title; delete confirmation and cancellation; meeting-folder
+handoff and the new-recording handoff. Include a narrow window and long titles.
+No snapshots are added before that harness is merged.
+
+Core `meeting_list` owns local-date grouping, status explanations, title
+validation, deletion guards and recovery candidate selection. Its viewport API
+returns borrowed slices; the 1,000-meeting test checks their addresses against
+the original storage for every scroll position. The GPUI list only creates
+elements for the visible range (plus a small overdraw). Date headers and
+meeting rows may have different heights, and action buttons have their own
+line so explanations can wrap at the minimum window size. The existing transcription queue is not wired
+to a host worker yet (see transcription-queue.md); `load_with_jobs` accepts its
+status snapshot when that integration is available and reads persisted queue rows
+when the queue table exists in the meeting database. Unchanged rows preserve
+viewport measurements across refreshes. The page layout takes an explicit flag
+for a virtualized body. A raw-folder OS lock protects active recordings across
+processes from recovery, finalization and deletion. Persisted transcripts also
+identify transcribed meetings after restart; summary states are case-insensitive
+and include cancelled generation. Open meetings are selected by id across list
+refreshes. Recovery resolves FFmpeg on a blocking worker before restoring audio.

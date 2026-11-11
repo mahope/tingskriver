@@ -29,6 +29,25 @@ catalogue! {
     ABOUT_PRIVACY = "Privatlivspolitik";
     ABOUT_CONTACT = "Kontakt: Mahoje (mahoje.dk)";
     APP_NAME = "Tingskriver";
+    MEETING_OPEN = "Åbn";
+    MEETING_RENAME = "Omdøb";
+    MEETING_DELETE = "Slet";
+    MEETING_SAVE = "Gem titel";
+    MEETING_CANCEL = "Annuller";
+    MEETING_NEW = "Ny optagelse";
+    MEETING_REFRESH = "Opdater";
+    MEETING_RECOVERED = "Lyden er gendannet og mødet er gemt. Åbn det i den nuværende app for at transskribere.";
+    MEETING_RECOVERED_PARTIAL = "Mødet er gemt, men noget lyd mangler. Originalfilerne er bevaret. Åbn lydmappen for at se dem.";
+    MEETING_RECOVERY = "En optagelse blev afbrudt. Gendan den gemte lyd her.";
+    MEETING_RESTORE = "Gendan optagelse: {value}";
+    MEETING_DELETE_CONFIRM = "Vil du slette mødet og dets tekst? Dette kan ikke fortrydes. Lydfilerne beholdes på disken.";
+    MEETING_ACTION_FAILED = "Handlingen kunne ikke gennemføres. Prøv igen.";
+    MEETING_SCAN_FAILED = "Efterladte optagelser kunne ikke undersøges. Prøv at opdatere listen. Dine lydfiler er ikke ændret.";
+    MEETING_LOAD_FAILED = "Møder eller efterladte optagelser kunne ikke indlæses. Prøv at opdatere listen.";
+    MEETING_DOCUMENT_LATER = "Mødedokumentet er endnu ikke flyttet til denne app. Du kan åbne lydmappen her eller læse teksten i den nuværende app.";
+    MEETING_RECORDING_LATER = "Optageskærmen er endnu ikke flyttet hertil. Start din optagelse i den nuværende app.";
+    MEETING_FOLDER = "Åbn lydmappe";
+    MEETING_BACK = "Tilbage til møder";
     MEETINGS = "Møder";
     TRANSCRIPT_TRUNCATED = "Den nye transskription er væsentligt kortere end den forrige og er ikke gjort aktuel. Den er gemt som version, og den forrige er stadig i brug.";
     DICTATION = "Diktering";
@@ -186,6 +205,7 @@ macro_rules! parameterized {
     };
 }
 parameterized! {
+    meeting_restore => MEETING_RESTORE;
     measure_errors => MEASURE_ERRORS;
     measure_wer => MEASURE_WER;
     measure_ms => MEASURE_MS;

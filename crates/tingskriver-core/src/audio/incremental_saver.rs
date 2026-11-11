@@ -103,8 +103,7 @@ fn recover_legacy_mp4_checkpoints(
     folder_path: &Path,
     checkpoints_dir: &Path,
 ) -> Result<AudioRecoveryStatus, String> {
-    let _guard =
-        FolderGuard::acquire(folder_path).ok_or_else(|| "Lyden samles allerede.".to_string())?;
+    let _guard = FolderGuard::acquire(folder_path).map_err(|e| e.to_string())?;
     match std::fs::remove_file(checkpoints_dir.join(VERIFIED_MARKER)) {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -288,8 +287,7 @@ pub async fn cleanup_checkpoints(meeting_folder: String) -> Result<(), String> {
 
     #[allow(clippy::disallowed_methods)] // Cleanup runs on the blocking pool.
     tokio::task::spawn_blocking(move || {
-        let _guard = FolderGuard::acquire(&folder_path)
-            .ok_or_else(|| "Lyden samles allerede.".to_string())?;
+        let _guard = FolderGuard::acquire(&folder_path).map_err(|e| e.to_string())?;
         verify_saved_outputs(&checkpoints_dir).map_err(|e| format!("{KEPT_MESSAGE} ({e})"))?;
         std::fs::remove_dir_all(&checkpoints_dir)
             .map_err(|e| format!("Failed to remove checkpoints directory: {}", e))?;
