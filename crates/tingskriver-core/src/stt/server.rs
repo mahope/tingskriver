@@ -2,7 +2,77 @@ use super::{ipc, Request};
 use crate::parakeet_engine::pool::BoxedModel;
 use std::io::{BufReader, BufWriter};
 
+/// Test hook: `TINGSKRIVER_STT_FAULT=<abort|segv|hang>@<init|load|run>[:gpu]`.
+/// `init` fires at process start, `load` on the first request (the model
+/// load) and `run` on every later one. With `:gpu` only a worker started for
+/// the GPU misbehaves, so a CPU retry can be shown to work. Debug builds only.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum FaultKind {
+    Abort,
+    Segv,
+    Hang,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum FaultPhase {
+    Init,
+    Load,
+    Run,
+}
+
+pub(super) fn parse_fault(spec: &str, cpu_worker: bool) -> Option<(FaultKind, FaultPhase)> {
+    let (spec, gpu_only) = match spec.strip_suffix(":gpu") {
+        Some(rest) => (rest, true),
+        None => (spec, false),
+    };
+    if gpu_only && cpu_worker {
+        return None;
+    }
+    let (kind, phase) = spec.split_once('@')?;
+    let kind = match kind {
+        "abort" => FaultKind::Abort,
+        "segv" => FaultKind::Segv,
+        "hang" => FaultKind::Hang,
+        _ => return None,
+    };
+    let phase = match phase {
+        "init" => FaultPhase::Init,
+        "load" => FaultPhase::Load,
+        "run" => FaultPhase::Run,
+        _ => return None,
+    };
+    Some((kind, phase))
+}
+
+fn trigger(kind: FaultKind) -> ! {
+    match kind {
+        FaultKind::Abort => std::process::abort(),
+        FaultKind::Segv => {
+            // Not a real memory fault: a deliberate crash that works the same
+            // on every platform and leaves no core dump behind.
+            std::process::abort()
+        }
+        FaultKind::Hang => loop {
+            std::thread::sleep(std::time::Duration::from_secs(3600));
+        },
+    }
+}
+
+fn injected_fault() -> Option<(FaultKind, FaultPhase)> {
+    if !cfg!(debug_assertions) {
+        return None;
+    }
+    parse_fault(
+        &std::env::var("TINGSKRIVER_STT_FAULT").ok()?,
+        super::worker_forced_cpu(),
+    )
+}
+
 pub(super) fn run() -> anyhow::Result<()> {
+    let fault = injected_fault();
+    if let Some((kind, FaultPhase::Init)) = fault {
+        trigger(kind);
+    }
+    let mut requests = 0u64;
     let mut input = BufReader::new(std::io::stdin().lock());
     let mut output = BufWriter::new(std::io::stdout().lock());
     let mut model: Option<BoxedModel> = None;
@@ -12,6 +82,12 @@ pub(super) fn run() -> anyhow::Result<()> {
         .enable_all()
         .build()?;
     while let Some(frame) = ipc::read_frame(&mut input)? {
+        requests += 1;
+        match fault {
+            Some((kind, FaultPhase::Load)) if requests == 1 => trigger(kind),
+            Some((kind, FaultPhase::Run)) if requests > 1 => trigger(kind),
+            _ => {}
+        }
         let request: Request = serde_json::from_slice(&frame.control)?;
         let response = match request {
             Request::Whisper { directory, name } => {
@@ -166,4 +242,28 @@ fn initialize_ort() -> anyhow::Result<()> {
             .commit()?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_fault_specs() {
+        assert_eq!(
+            parse_fault("hang@run", false),
+            Some((FaultKind::Hang, FaultPhase::Run))
+        );
+        assert_eq!(
+            parse_fault("abort@load:gpu", false),
+            Some((FaultKind::Abort, FaultPhase::Load))
+        );
+        assert_eq!(parse_fault("abort@load:gpu", true), None);
+        assert_eq!(
+            parse_fault("segv@init", true).map(|f| f.0),
+            Some(FaultKind::Segv)
+        );
+        assert_eq!(parse_fault("nonsense", false), None);
+        assert_eq!(parse_fault("abort@feed", false), None);
+    }
 }

@@ -3,7 +3,7 @@ mod client;
 pub mod ipc;
 mod server;
 
-pub use client::Client;
+pub use client::{gpu_unavailable, Client, Device, DevicePolicy};
 mod words;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -12,6 +12,19 @@ pub use words::TimedWord;
 pub(crate) use words::{words_from_token_bytes, words_from_tokens};
 
 static WORKER: AtomicBool = AtomicBool::new(false);
+
+/// Whether this build can run Whisper on a GPU at all.
+pub(crate) fn gpu_possible() -> bool {
+    !matches!(
+        crate::whisper_engine::WhisperCompiledBackend::current(),
+        crate::whisper_engine::WhisperCompiledBackend::Cpu
+    ) && !crate::diagnose::cpu_required()
+}
+
+/// True in a worker the client started for the CPU only.
+pub fn worker_forced_cpu() -> bool {
+    std::env::var_os(client::DEVICE_ENV).is_some_and(|v| v == "cpu")
+}
 
 pub fn is_worker() -> bool {
     WORKER.load(Ordering::Relaxed)
@@ -158,7 +171,7 @@ impl VadClient {
         })
         .map_err(|e| e.to_string())?;
         Ok(Self {
-            client: Client::new(init)?,
+            client: Client::with_policy(init, DevicePolicy::Cpu)?,
         })
     }
     pub fn process(
@@ -215,7 +228,7 @@ impl RemoteModel {
         })
         .map_err(|e| e.to_string())?;
         Ok(Self {
-            client: Client::new(init)?,
+            client: Client::with_policy(init, DevicePolicy::Cpu)?,
         })
     }
 }
