@@ -526,6 +526,27 @@ single-worker fake-server test covers stalled headers, stalled bodies and
 concurrent core calls. `read_audio_file` has already been removed; playback
 uses the core playback API instead of JSON arrays of audio bytes.
 
+## Speaker identity and suggestions
+
+`tingskriver_core::speakers` contains pure logic, with no UI, network or database
+calls. `identity::from_email` derives a tentative personal name and retains the
+company domain as evidence; common Danish and international webmail domains
+never count as a company. The major webmail providers are matched across TLDs.
+Email names ignore plus-address tags and digits, and split on dots, underscores
+and hyphens. Whole local-part placeholders (including separated “No Reply”
+variants) and ambiguous local parts are refused. Personal names accept both
+straight and typographic apostrophes.
+
+`suggest::SpeakerStore` supplies a meeting's transcript, speaker IDs, participants
+and dictionary through a read-only boundary. `build_prompt` encodes that context
+as JSON data; output validation in `parse_response` provides the protection.
+The parser prefers Markdown-fenced JSON and uses JSON parsing to separate arrays
+from surrounding prose, even when that prose contains brackets. It skips invalid
+entries and duplicate IDs, and rejects responses containing unknown speaker IDs.
+Suggestions require user confirmation;
+they are evidence for review, not verified identities. Provider invocation, UI
+integration and saving accepted names are outside this change (Refs #87; saving
+is deferred to #229).
 ## Dictionary suggestions from corrections (#81)
 
 `dictation::logic::suggest` compares word snapshots of the inserted span within

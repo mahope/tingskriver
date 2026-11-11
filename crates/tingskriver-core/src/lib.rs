@@ -74,6 +74,7 @@ pub mod recover;
 pub mod runtime;
 pub mod settings_transfer;
 pub mod shortcuts;
+pub mod speakers;
 pub mod state;
 pub mod strings;
 pub mod stt;
