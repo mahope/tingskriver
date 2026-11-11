@@ -294,8 +294,15 @@ Recovery retains the complete 16-bit PCM samples, ignores an incomplete trailing
 byte, and keeps the truncated header and original file unchanged. Verification
 still reports partial audio, so repeated recovery cannot authorize deletion of
 the damaged originals. The recovery fixtures cover scanning without UI storage,
-verified restore, database and encoder failures, retries, empty folders, and a
-terminated writer with both tracks and at most two seconds of loss.
+verified restore, database and encoder failures, retries, empty folders, and
+crash snapshots of both tracks with at most two seconds of loss. The loss
+budget test drives the production track writers and real WAV storage with a
+controlled clock, checking every 10 ms of audio without a final commit. It
+also freezes the clock to exercise sample-count commits after a burst.
+Snapshots are taken between writes, without repairing a live writer's files;
+threaded queue draining and slow storage are covered by the recording-writer
+tests. This isolates the commit budget from CI thread scheduling and queued
+audio, rather than assuming a successful channel send has reached disk.
 
 ## AI providers: one model, a chain per function
 

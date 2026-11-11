@@ -1135,7 +1135,9 @@ mod tests {
     use super::super::recording_writer::{
         spawn_writer, write_manifest, LogObserver, ManifestTrack,
     };
-    use super::super::track_writer::{segment_file_name, write_wav_header};
+    use super::super::track_writer::{
+        segment_file_name, write_wav_header, TrackWriter, WavSegmentStorage,
+    };
     use super::*;
     use std::io::Write;
     use std::sync::Arc;
@@ -2131,36 +2133,45 @@ mod tests {
 
     #[test]
     fn crash_recovery_loses_at_most_two_seconds() {
-        // Synthetic 10 s recording through the real writer thread, killed
-        // without stop: the thread is leaked with its channel still open.
-        let dir = tempfile::tempdir().unwrap();
-        let raw = dir.path().join(RAW_DIR);
-        std::fs::create_dir_all(&raw).unwrap();
-        let (tx, handle) = spawn_writer(raw.clone(), 48000, Arc::new(LogObserver)).unwrap();
-        let started = std::time::Instant::now();
-        let mut fed = 0u32;
-        // Real time, so commits happen as in the app.
-        while started.elapsed() < std::time::Duration::from_secs(10) {
-            let end = (fed + 1) as f64 * 0.01;
-            tx.send(TrackKind::Microphone, vec![0.2; 480], Some(end))
-                .unwrap();
-            tx.send(TrackKind::System, vec![0.1; 480], Some(end))
-                .unwrap();
-            fed += 1;
-            std::thread::sleep(std::time::Duration::from_millis(10));
+        // Drive the production track writers synchronously: a successful
+        // channel send is not a completed write on a busy CI runner.
+        for burst in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let raw = dir.path().join(RAW_DIR);
+            std::fs::create_dir_all(&raw).unwrap();
+            let mut writers = TrackKind::ALL.map(|kind| {
+                TrackWriter::new(WavSegmentStorage::new(raw.clone(), kind, 48000), 48000)
+            });
+            let started = std::time::Instant::now();
+            for step in 1..=1000u64 {
+                let fed = step * 480;
+                // A frozen clock also exercises commits by sample count,
+                // as when queued audio arrives in a burst after a stall.
+                let now = if burst {
+                    started
+                } else {
+                    started + std::time::Duration::from_millis(step * 10)
+                };
+                for writer in &mut writers {
+                    writer.push(&[0.2; 480], Some(fed));
+                    assert_eq!(writer.tick(now), None);
+                }
+                // No finish/stop or forced commit. Each quiescent snapshot
+                // models a crash here, before pending audio reaches disk.
+                let scanned = scan_raw_tracks(&raw, false).unwrap();
+                assert_eq!(scanned.tracks.len(), 2);
+                for track in &scanned.tracks {
+                    let recovered = track.samples();
+                    assert!(recovered <= fed);
+                    assert!(
+                        fed - recovered <= 2 * 48000,
+                        "burst {burst}, {:?}: fed {:.2}s, recovered {:.2}s",
+                        track.kind,
+                        fed as f64 / 48000.0,
+                        recovered as f64 / 48000.0
+                    );
+                }
+            }
         }
-        let fed_seconds = fed as f64 * 0.01;
-        // "Kill": scan what is on disk while the writer still holds data.
-        let scanned = scan_raw_tracks(&raw, true).unwrap();
-        let recovered = scanned.duration_seconds();
-        assert!(
-            fed_seconds - recovered <= 2.0,
-            "fed {fed_seconds:.2}s, recovered {recovered:.2}s"
-        );
-        for track in &scanned.tracks {
-            assert!(fed_seconds - track.end() as f64 / 48000.0 <= 2.0);
-        }
-        drop(tx);
-        handle.join().unwrap();
     }
 }
