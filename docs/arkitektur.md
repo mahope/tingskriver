@@ -401,6 +401,48 @@ single-worker fake-server test covers stalled headers, stalled bodies and
 concurrent core calls. `read_audio_file` has already been removed; playback
 uses the core playback API instead of JSON arrays of audio bytes.
 
+## Dictation without the main window
+
+On main before #46, `tingskriver-host::Host::start` already initialized
+`dictation::init` independently of the GPUI window. Core owned the keyboard
+hook control thread, capture, Syv.ai deadline and local Parakeet fallback,
+cleanup, insertion ordering and Windows clipboard/SendInput insertion.
+
+`dictation::service::Service::subscribe_states` now exposes content-free
+lifecycle events through a broadcast channel: inactive → recording →
+processing → inserting → inactive. Error and cancellation return to inactive
+as well. Each overlapping dictation has its own lifecycle; the service stream
+can interleave those lifecycles. `cancel_processing` cancels pending processing;
+an insertion already handed to the operating system cannot be recalled. Its
+processing future and insertion turn remain alive until insertion completes,
+so cancellation cannot release the next insertion early. Cancelling processing
+hides its pill synchronously, before a newer recording can show its own pill.
+Interrupted keyboard chords cancel only the current capture. Released turns
+continue processing when a chord is interrupted or settings reinstall the hook.
+
+`Service::open_for_test` opens an isolated service with a fake `AppHost`,
+overlay and `DictationBackend`, without registering the singleton or keyboard
+hook. Its `test_trigger` accepts 16 kHz mono samples and runs the ordinary
+`Service::process` on a dedicated thread/runtime, returning a per-run state
+channel, cancellation handle and join handle. It disables history for that
+run and requires an injected backend, so the trigger cannot accidentally use
+real providers. Engine planning, fallback, cleanup, ordering and timing remain
+the production implementations. Dropping a cancelled transcription also aborts
+its outstanding Syv request task. Already spawned blocking local inference
+continues after its awaiting future is dropped. Text hooks use
+`kill_on_drop(true)`, so dropping their future kills
+the child process (without guaranteeing termination of its descendants).
+No new dependencies are required.
+
+`cargo test --locked -p tingskriver-core --test dictation_flow` exercises a
+real Syv HTTP request rejected with 401 by a localhost fake server, mock
+Parakeet fallback, fake insertion, cancellation during local inference,
+engine/insertion failures and
+captured logs without dictated text, keys or keyboard events. It does not
+exercise real audio capture, model inference or Windows insertion.
+The manual acceptance checks in #46 (Notepad, measured latency and Start menu
+launch) remain for a Windows session.
+
 ## Code dictation identifiers
 
 The pure `dictation::logic::identifiers` token pass runs only for `Style::Raw`,
