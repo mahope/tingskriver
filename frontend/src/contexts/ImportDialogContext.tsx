@@ -4,6 +4,7 @@ import { createContext, useContext, useCallback, useRef, ReactNode } from 'react
 import { useRouter } from 'next/navigation';
 import { invoke } from '@tauri-apps/api/core';
 import { useConfig } from './ConfigContext';
+import { useSidebar } from '@/components/Sidebar/SidebarProvider';
 import { isSubtitleExtension } from '@/constants/subtitleFormats';
 import { toast } from 'sonner';
 
@@ -38,6 +39,7 @@ interface ImportDialogProviderProps {
 export function ImportDialogProvider({ children, onOpen }: ImportDialogProviderProps) {
   const { betaFeatures } = useConfig();
   const router = useRouter();
+  const { refetchMeetings } = useSidebar();
   const importingRef = useRef(false);
 
   const openImportDialog = useCallback((filePath?: string | null) => {
@@ -81,6 +83,7 @@ export function ImportDialogProvider({ children, onOpen }: ImportDialogProviderP
           description: 'Mødet og transskriptet er gemt. Brug "Lav referat igen" på mødet.',
         });
       }
+      await refetchMeetings();
       router.push(`/meeting-details?id=${outcome.meeting_id}`);
     } catch (err: any) {
       const message = typeof err === 'string' ? err : (err?.message || 'Filen kunne ikke importeres');
@@ -88,7 +91,7 @@ export function ImportDialogProvider({ children, onOpen }: ImportDialogProviderP
     } finally {
       importingRef.current = false;
     }
-  }, [router]);
+  }, [router, refetchMeetings]);
 
   return (
     <ImportDialogContext.Provider value={{ openImportDialog, importTranscript }}>
