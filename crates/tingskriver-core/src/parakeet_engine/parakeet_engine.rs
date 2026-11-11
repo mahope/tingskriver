@@ -360,13 +360,28 @@ impl ParakeetEngine {
                 let status = if model_path.exists() {
                     let validation_path = model_path.clone();
                     let artifacts = files_of(spec.name);
+                    let validation_artifacts = artifacts.clone();
                     match tokio::task::spawn_blocking(move || {
-                        Self::validate_model_directory(&validation_path, &artifacts)
+                        Self::validate_model_directory(&validation_path, &validation_artifacts)
                     })
                     .await
                     .map_err(|e| anyhow!("Model validation task failed: {e}"))?
                     {
-                        Ok(()) => ModelStatus::Available,
+                        Ok(()) => {
+                            // The sizes are right. A model whose SHA-256 check already failed
+                            // (and whose files have not changed since) would be refused when
+                            // loaded, so it is not offered as available.
+                            if Self::failed_hash_check(&model_path, &artifacts).await {
+                                let expected_bytes: u64 =
+                                    artifacts.iter().map(|artifact| artifact.size).sum();
+                                ModelStatus::Corrupted {
+                                    file_size: expected_bytes,
+                                    expected_min_size: expected_bytes,
+                                }
+                            } else {
+                                ModelStatus::Available
+                            }
+                        }
                         Err(error) => {
                             let mut file_size = 0;
                             let expected_bytes: u64 =
@@ -436,6 +451,19 @@ impl ParakeetEngine {
             }
             return Ok(models);
         }
+    }
+
+    /// True when the last SHA-256 check of one of these exact files (same size and modification
+    /// time) rejected it. Uses the cached verdict only, so it never hashes a model file.
+    async fn failed_hash_check(model_dir: &Path, artifacts: &[FileEntry]) -> bool {
+        for artifact in artifacts {
+            if model_download::installed_is_corrupted(&model_dir.join(&artifact.name), artifact)
+                .await
+            {
+                return true;
+            }
+        }
+        false
     }
 
     #[allow(clippy::disallowed_methods)]
@@ -1950,6 +1978,78 @@ mod tests {
                 .status,
             ModelStatus::Corrupted { .. }
         ));
+    }
+
+    #[tokio::test]
+    async fn discovery_does_not_offer_a_model_that_failed_its_hash_check() {
+        let (_temp_dir, engine, model_dir) = test_engine().await;
+        let artifacts = small_artifacts();
+        let discover = || async {
+            engine
+                .discover_models_from_specs(SMALL_MODEL_SPECS, &|_| small_artifacts())
+                .await
+                .expect("discover models")
+                .remove(0)
+                .status
+        };
+        fs::create_dir_all(&model_dir)
+            .await
+            .expect("create model directory");
+        // Exactly the pinned sizes but not the pinned content.
+        for artifact in &artifacts {
+            fs::write(
+                model_dir.join(&artifact.name),
+                vec![0; artifact.size as usize],
+            )
+            .await
+            .expect("seed wrong content");
+        }
+        assert!(
+            matches!(discover().await, ModelStatus::Available),
+            "nothing has hashed the files yet, so only the sizes can be judged"
+        );
+
+        // Loading checks the hashes and finds the files changed.
+        for artifact in &artifacts {
+            let error =
+                model_download::verify_installed(&model_dir, artifact, &CancellationToken::new())
+                    .await
+                    .expect_err("wrong content must be rejected");
+            assert!(matches!(
+                error,
+                model_download::TransferError::InstalledMismatch { .. }
+            ));
+        }
+
+        assert!(
+            matches!(discover().await, ModelStatus::Corrupted { .. }),
+            "a model that was rejected must not be shown as available again"
+        );
+        for artifact in &artifacts {
+            assert!(
+                model_dir.join(&artifact.name).exists(),
+                "the check never deletes an installed file"
+            );
+        }
+
+        // Putting the pinned content back (new modification time) makes it available again.
+        let later = std::time::SystemTime::now() + Duration::from_secs(5);
+        for (name, content) in [
+            ("encoder.bin", &b"ABCD"[..]),
+            ("decoder.bin", &b"XYZ"[..]),
+            ("nemo.bin", &b"NO"[..]),
+            ("vocab.txt", &b"V"[..]),
+        ] {
+            let path = model_dir.join(name);
+            fs::write(&path, content).await.expect("restore content");
+            std::fs::File::options()
+                .write(true)
+                .open(&path)
+                .expect("open restored file")
+                .set_modified(later)
+                .expect("set modification time");
+        }
+        assert!(matches!(discover().await, ModelStatus::Available));
     }
 
     #[tokio::test]
