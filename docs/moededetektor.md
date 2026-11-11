@@ -93,7 +93,10 @@ igangværende optagelse. Gentagne startforslag gentages indtil værten melder
 `recording_active`; værten håndterer eventuel afvisning/notifikationsfrekvens.
 Efter stop huskes mikrofonforløbets kilde, proces og starttid. Samme forløb
 giver `meeting_already_stopped`, så kalenderstop ikke straks genstarter mødet.
-Et nyt forløb kan starte normalt. Værten bør behandle stop før næste snapshot.
+Et nyt forløb kan starte normalt. Stoppede forløb nedprioriteres før valg af
+mikrofon og mødekandidat, så de ikke blokerer andre møder. Hvis kun det stoppede
+forløb er til stede, bevares `meeting_already_stopped`.
+Værten bør behandle stop før næste snapshot.
 
 ## Verifikation
 

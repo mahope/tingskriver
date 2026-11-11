@@ -73,6 +73,13 @@ pub fn detect(snapshot: &Snapshot, previous: &DetectorState) -> (Decision, Detec
         return (empty(Reason::ClockMovedBackwards), previous.clone());
     }
     let end = calendar_end(snapshot);
+    let available = |candidate: &Candidate| {
+        !previous.stopped_session.as_ref().is_some_and(|session| {
+            session.source == candidate.source
+                && session.microphone_process == candidate.microphone_process
+                && session.microphone_started_at == candidate.started_at
+        })
+    };
     let candidate = snapshot
         .windows
         .iter()
@@ -96,10 +103,18 @@ pub fn detect(snapshot: &Snapshot, previous: &DetectorState) -> (Decision, Detec
                     foreground: window.is_foreground,
                     stable: elapsed(snapshot.now, mic.started_at, MICROPHONE_SECONDS),
                 })
-                .max_by_key(|c| (c.stable, c.started_at, c.microphone_process.clone()))
+                .max_by_key(|c| {
+                    (
+                        available(c),
+                        c.stable,
+                        c.started_at,
+                        c.microphone_process.clone(),
+                    )
+                })
         })
         .max_by_key(|c| {
             (
+                available(c),
                 snapshot.recording_active
                     || snapshot.start_modes.get(&c.source) != Some(&StartMode::Off),
                 c.stable,
