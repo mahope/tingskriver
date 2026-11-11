@@ -4,8 +4,8 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use super::logic::app_style::{self, AppStyleRule};
 use super::capture::CaptureOptions;
+use super::logic::app_style::{self, AppStyleRule};
 use super::logic::audio::Channel;
 use super::logic::cleanup::Style;
 use super::logic::hotkey::Chord;
@@ -36,6 +36,9 @@ pub struct AppStyleSetting {
 pub struct DictationSettings {
     pub enabled: bool,
     pub shortcut: String,
+    /// "hold", "toggle", "hybrid" or "double-tap" (the existing default).
+    pub shortcut_mode: super::logic::gesture::ShortcutMode,
+    pub hybrid_threshold_ms: u64,
     /// "auto" (Syv.ai with key, otherwise local) or "local".
     pub engine: String,
     pub syv_endpoint: String,
@@ -90,6 +93,8 @@ impl Default for DictationSettings {
         DictationSettings {
             enabled: true,
             shortcut: Chord::DEFAULT.to_string(),
+            shortcut_mode: super::logic::gesture::ShortcutMode::default(),
+            hybrid_threshold_ms: 300,
             engine: "auto".to_string(),
             syv_endpoint: SYV_DEFAULT_ENDPOINT.to_string(),
             syv_model: SYV_DEFAULT_MODEL.to_string(),
@@ -141,7 +146,11 @@ impl DictationSettings {
     pub fn apply_mode(&mut self, mode: &Mode) {
         if let Some(provider) = &mode.provider {
             if self.engine != "local" {
-                self.engine = if provider == "syv" { "auto".into() } else { provider.clone() };
+                self.engine = if provider == "syv" {
+                    "auto".into()
+                } else {
+                    provider.clone()
+                };
             }
         }
         if let Some(model) = &mode.model {
@@ -184,8 +193,11 @@ impl DictationSettings {
 
     /// Validate and normalise user input before saving.
     pub fn normalized(mut self) -> Result<Self, String> {
+        self.hybrid_threshold_ms = self.hybrid_threshold_ms.clamp(100, 1000);
         self.language = self.language.trim().to_lowercase();
-        if self.language.is_empty() { self.language = DEFAULT_LANGUAGE.into(); }
+        if self.language.is_empty() {
+            self.language = DEFAULT_LANGUAGE.into();
+        }
         if !modes::valid_language(&self.language) {
             return Err(format!("Ukendt sprogkode: {}", self.language));
         }
@@ -198,7 +210,9 @@ impl DictationSettings {
             self.syv_endpoint = SYV_DEFAULT_ENDPOINT.to_string();
         }
         self.syv_endpoint = self.syv_endpoint.trim().trim_end_matches('/').to_string();
-        if !self.syv_endpoint.starts_with("https://") && !self.syv_endpoint.starts_with("http://localhost") {
+        if !self.syv_endpoint.starts_with("https://")
+            && !self.syv_endpoint.starts_with("http://localhost")
+        {
             return Err("Syv.ai-adressen skal starte med https://".to_string());
         }
         if self.syv_model.trim().is_empty() {
@@ -242,6 +256,32 @@ mod mode_tests {
     use super::*;
 
     #[test]
+    fn hybrid_threshold_defaults_and_bounds() {
+        let old: DictationSettings = serde_json::from_str("{}").unwrap();
+        assert_eq!(old.hybrid_threshold_ms, 300);
+        for (input, expected) in [
+            (0, 100),
+            (100, 100),
+            (300, 300),
+            (650, 650),
+            (1000, 1000),
+            (u64::MAX, 1000),
+        ] {
+            let mut settings = old.clone();
+            settings.hybrid_threshold_ms = input;
+            let settings = settings.normalized().unwrap();
+            assert_eq!(settings.hybrid_threshold_ms, expected);
+            let saved = serde_json::to_string(&settings).unwrap();
+            assert_eq!(
+                serde_json::from_str::<DictationSettings>(&saved)
+                    .unwrap()
+                    .hybrid_threshold_ms,
+                expected
+            );
+        }
+    }
+
+    #[test]
     fn mode_overrides_leave_global_settings_untouched() {
         let mut settings = DictationSettings::default();
         let mode = &mut settings.modes.modes[1];
@@ -249,7 +289,10 @@ mod mode_tests {
         mode.model = Some("chosen-model".into());
         mode.language = Some("en".into());
         mode.polish = Some(true);
-        let (effective, mode) = settings.for_context(&Context { process: Some("Slack.exe"), ..Context::default() });
+        let (effective, mode) = settings.for_context(&Context {
+            process: Some("Slack.exe"),
+            ..Context::default()
+        });
         assert_eq!(effective.engine, "local");
         assert_eq!(effective.syv_model, "chosen-model");
         assert!(effective.polish_enabled);
@@ -260,8 +303,13 @@ mod mode_tests {
 
     #[test]
     fn old_settings_gain_presets_without_losing_preferences() {
-        let settings: DictationSettings = serde_json::from_str(r#"{"engine":"local","polishEnabled":true}"#).unwrap();
+        let settings: DictationSettings =
+            serde_json::from_str(r#"{"engine":"local","polishEnabled":true}"#).unwrap();
         assert_eq!(settings.modes.modes.len(), 4);
+        assert_eq!(
+            settings.shortcut_mode,
+            super::super::logic::gesture::ShortcutMode::DoubleTap
+        );
         assert_eq!(settings.engine, "local");
         assert!(settings.polish_enabled);
     }
@@ -303,7 +351,6 @@ pub async fn load_spoken_table(dir: &Path) -> (SpokenTable, Option<String>) {
     })
 }
 
-
 #[cfg(test)]
 #[allow(clippy::disallowed_methods)]
 mod spoken_tests {
@@ -337,7 +384,8 @@ mod text_settings_tests {
 
     #[test]
     fn old_settings_keep_danish_formatting_defaults() {
-        let settings: DictationSettings = serde_json::from_str(r#"{"engine":"local","polishEnabled":true}"#).unwrap();
+        let settings: DictationSettings =
+            serde_json::from_str(r#"{"engine":"local","polishEnabled":true}"#).unwrap();
         assert_eq!(settings.language, "da");
         assert!(settings.format_numbers && settings.format_addresses);
         assert!(settings.polish_enabled);
@@ -346,7 +394,10 @@ mod text_settings_tests {
 
     #[test]
     fn local_only_wins_over_mode_provider() {
-        let mut settings = DictationSettings { engine: "local".into(), ..Default::default() };
+        let mut settings = DictationSettings {
+            engine: "local".into(),
+            ..Default::default()
+        };
         let mut mode = settings.modes.modes[0].clone();
         mode.provider = Some("syv".into());
         settings.apply_mode(&mode);
@@ -360,22 +411,50 @@ mod text_settings_tests {
         assert!(!old.text_hook_enabled);
         assert_eq!((old.microphone.as_str(), old.channel.as_str()), ("", "mix"));
         assert!(!old.keep_mic_open && !old.sound_enabled);
-        let loud = DictationSettings { sound_volume: 500, channel: "RIGHT".into(), microphone: " USB ".into(), ..Default::default() };
+        let loud = DictationSettings {
+            sound_volume: 500,
+            channel: "RIGHT".into(),
+            microphone: " USB ".into(),
+            ..Default::default()
+        };
         let loud = loud.normalized().unwrap();
-        assert_eq!((loud.sound_volume, loud.channel.as_str(), loud.microphone.as_str()), (100, "right", "USB"));
-        let on = DictationSettings { text_hook_enabled: true, ..Default::default() };
+        assert_eq!(
+            (
+                loud.sound_volume,
+                loud.channel.as_str(),
+                loud.microphone.as_str()
+            ),
+            (100, "right", "USB")
+        );
+        let on = DictationSettings {
+            text_hook_enabled: true,
+            ..Default::default()
+        };
         assert!(on.clone().normalized().unwrap().text_hook_enabled);
-        let on = DictationSettings { text_hook_script: "../x.cmd".into(), ..on };
+        let on = DictationSettings {
+            text_hook_script: "../x.cmd".into(),
+            ..on
+        };
         assert!(on.normalized().is_err());
-        let ok = DictationSettings { text_hook_enabled: true, text_hook_script: " ret.ps1 ".into(), ..Default::default() };
+        let ok = DictationSettings {
+            text_hook_enabled: true,
+            text_hook_script: " ret.ps1 ".into(),
+            ..Default::default()
+        };
         assert_eq!(ok.normalized().unwrap().text_hook_script, "ret.ps1");
-        let off = DictationSettings { text_hook_script: "a&b.cmd".into(), ..Default::default() };
+        let off = DictationSettings {
+            text_hook_script: "a&b.cmd".into(),
+            ..Default::default()
+        };
         assert_eq!(off.normalized().unwrap().text_hook_script, "");
     }
 
     #[test]
     fn language_is_normalized_and_validated() {
-        let mut settings = DictationSettings { language: " EN ".into(), ..Default::default() };
+        let mut settings = DictationSettings {
+            language: " EN ".into(),
+            ..Default::default()
+        };
         assert_eq!(settings.clone().normalized().unwrap().language, "en");
         settings.language = "dansk".into();
         assert!(settings.normalized().is_err());

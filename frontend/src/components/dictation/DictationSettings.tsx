@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Plus, Trash2, Pencil } from 'lucide-react';
 import { toast } from 'sonner';
+import { strings } from './strings';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
@@ -273,10 +274,45 @@ export function DictationSettings() {
             </Button>
           </div>
           <p id="dict-shortcut-hint" className="text-sm text-muted-foreground">
-            Fx Ctrl+Win, Ctrl+Alt+Space eller F9. Hold for at tale, slip for at indsætte. To hurtige tryk dikterer
-            uden at holde tasterne, til du trykker igen.
+            Fx Ctrl+Win, Ctrl+Alt+Space eller F9. Vælg nedenfor, hvordan genvejen starter og stopper dikteringen.
           </p>
         </div>
+        <div className="space-y-2">
+          <label htmlFor="dict-shortcut-mode" className="font-medium text-foreground">{strings.shortcutMode}</label>
+          <select
+            id="dict-shortcut-mode"
+            className={`${selectClass} w-full`}
+            value={settings.shortcutMode}
+            onChange={(e) => save({ shortcutMode: e.target.value as Settings['shortcutMode'] })}
+          >
+            {Object.entries(strings.modes).map(([value, label]) => (
+              <option key={value} value={value}>{label}</option>
+            ))}
+          </select>
+        </div>
+        {settings.shortcutMode === 'hybrid' && (
+          <div className="space-y-2">
+            <label htmlFor="dict-hybrid-threshold" className="font-medium text-foreground">{strings.hybridThreshold}</label>
+            <Input
+              id="dict-hybrid-threshold"
+              type="number"
+              min={100}
+              max={1000}
+              step={10}
+              defaultValue={settings.hybridThresholdMs}
+              aria-describedby="dict-hybrid-hint"
+              onBlur={(e) => {
+                const value = Number(e.target.value);
+                const hybridThresholdMs = Number.isFinite(value) && e.target.value !== ''
+                  ? Math.min(1000, Math.max(100, Math.round(value))) : 300;
+                e.target.value = String(hybridThresholdMs);
+                if (hybridThresholdMs !== settings.hybridThresholdMs) save({ hybridThresholdMs });
+              }}
+              className="max-w-xs"
+            />
+            <p id="dict-hybrid-hint" className="text-sm text-muted-foreground">{strings.hybridHelp}</p>
+          </div>
+        )}
       </Section>
 
       <Section

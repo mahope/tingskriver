@@ -21,6 +21,13 @@ pub mod vk {
     pub const F1: u32 = 0x70;
 }
 
+/// Modified Escape belongs to the foreground application or Windows.
+pub fn escape_can_cancel(mut key_down: impl FnMut(u32) -> bool) -> bool {
+    ![vk::CONTROL, vk::SHIFT, vk::MENU, vk::LWIN, vk::RWIN]
+        .into_iter()
+        .any(&mut key_down)
+}
+
 const MOD_CTRL: u8 = 1;
 const MOD_WIN: u8 = 2;
 const MOD_SHIFT: u8 = 4;
@@ -81,7 +88,10 @@ impl Chord {
             return Err("Genvejen er tom".to_string());
         }
         if key.is_none() && modifiers.count_ones() < 2 {
-            return Err("En genvej uden almindelig tast skal have mindst to af Ctrl, Win, Alt og Skift".to_string());
+            return Err(
+                "En genvej uden almindelig tast skal have mindst to af Ctrl, Win, Alt og Skift"
+                    .to_string(),
+            );
         }
         Ok(Chord { modifiers, key })
     }
@@ -109,7 +119,12 @@ impl Chord {
     /// Canonical text form, e.g. "Ctrl+Win".
     pub fn label(&self) -> String {
         let mut parts: Vec<String> = Vec::new();
-        for (bit, name) in [(MOD_CTRL, "Ctrl"), (MOD_WIN, "Win"), (MOD_ALT, "Alt"), (MOD_SHIFT, "Shift")] {
+        for (bit, name) in [
+            (MOD_CTRL, "Ctrl"),
+            (MOD_WIN, "Win"),
+            (MOD_ALT, "Alt"),
+            (MOD_SHIFT, "Shift"),
+        ] {
             if self.modifiers & bit != 0 {
                 parts.push(name.to_string());
             }
@@ -149,7 +164,9 @@ fn key_name(vk_code: u32) -> String {
     match vk_code {
         vk::SPACE => "Space".to_string(),
         c if (vk::F1..vk::F1 + 24).contains(&c) => format!("F{}", c - vk::F1 + 1),
-        c => char::from_u32(c).map(|ch| ch.to_string()).unwrap_or_else(|| format!("0x{c:02X}")),
+        c => char::from_u32(c)
+            .map(|ch| ch.to_string())
+            .unwrap_or_else(|| format!("0x{c:02X}")),
     }
 }
 
@@ -310,12 +327,32 @@ mod tests {
     }
 
     #[test]
+    fn modified_escape_passes_through() {
+        assert!(escape_can_cancel(|_| false));
+        for held in [
+            vec![vk::CONTROL],
+            vec![vk::CONTROL, vk::SHIFT],
+            vec![vk::MENU],
+            vec![vk::LWIN],
+            vec![vk::RWIN],
+        ] {
+            assert!(!escape_can_cancel(|vk| held.contains(&vk)));
+        }
+    }
+
+    #[test]
     fn parses_shortcuts() {
         assert_eq!(Chord::parse("Ctrl+Win").unwrap().label(), "Ctrl+Win");
         assert_eq!(Chord::parse("win + ctrl").unwrap().label(), "Ctrl+Win");
-        assert_eq!(Chord::parse("Ctrl+Alt+Space").unwrap().label(), "Ctrl+Alt+Space");
+        assert_eq!(
+            Chord::parse("Ctrl+Alt+Space").unwrap().label(),
+            "Ctrl+Alt+Space"
+        );
         assert_eq!(Chord::parse("F9").unwrap().label(), "F9");
-        assert_eq!(Chord::parse("ctrl+shift+d").unwrap().label(), "Ctrl+Shift+D");
+        assert_eq!(
+            Chord::parse("ctrl+shift+d").unwrap().label(),
+            "Ctrl+Shift+D"
+        );
         assert!(Chord::parse("").is_err());
         assert!(Chord::parse("Ctrl").is_err());
         assert!(Chord::parse("Ctrl+A+B").is_err());
@@ -430,7 +467,10 @@ mod tests {
         t.key_down(vk::LCONTROL);
         t.key_down(vk::LWIN);
         assert!(t.is_active());
-        assert_eq!(t.resync(|vk| vk == vk::CONTROL), Some(ChordSignal::Interrupted));
+        assert_eq!(
+            t.resync(|vk| vk == vk::CONTROL),
+            Some(ChordSignal::Interrupted)
+        );
         assert!(!t.is_active());
     }
 

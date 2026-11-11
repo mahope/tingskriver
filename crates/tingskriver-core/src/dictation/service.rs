@@ -15,6 +15,7 @@ use crate::host::{HostExt, HostHandle};
 use super::capture::Recorder;
 use super::logic::app_style;
 use super::logic::audio;
+use super::logic::cancellation::{Cancellation, Pending};
 use super::logic::cleanup::{self, Options, Rules, Style};
 use super::logic::engine::{self, Attempt, Engine, EnginePreference, Next};
 use super::logic::gesture::{Gesture, GestureAction, GestureConfig, GestureEvent};
@@ -42,6 +43,12 @@ pub use flow::{DictationBackend, DictationRun, DictationState};
 
 static SERVICE: OnceLock<Arc<Service>> = OnceLock::new();
 static DICTATING: AtomicBool = AtomicBool::new(false);
+static CANCELLATION: Cancellation = Cancellation::new();
+
+#[cfg(windows)]
+pub fn cancel_from_escape() -> bool {
+    CANCELLATION.cancel()
+}
 
 /// True while the dictation microphone is open. Meeting code can use this to
 /// keep dictation speech out of the meeting's microphone track.
@@ -487,6 +494,7 @@ impl Service {
 
 struct Session {
     flow: Flow,
+    pending: Pending<'static>,
     recorder: Recorder,
     target_app: Option<String>,
     target_window: usize,
@@ -507,6 +515,22 @@ fn gesture_event(signal: ChordSignal) -> GestureEvent {
         ChordSignal::Released => GestureEvent::Released,
         ChordSignal::Interrupted => GestureEvent::Interrupted,
     }
+}
+
+fn gesture_feedback(actions: &[GestureAction]) -> Option<OverlayState> {
+    actions
+        .contains(&GestureAction::Cancel)
+        .then_some(OverlayState::Refused("Afbrudt"))
+}
+
+async fn commit_output<T>(
+    pending: &Pending<'_>,
+    output: impl std::future::Future<Output = T>,
+) -> Option<T> {
+    if !pending.commit() {
+        return None;
+    }
+    Some(output.await)
 }
 
 #[cfg(windows)]
@@ -575,6 +599,15 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant, Optio
         let (actions, at) = match rx.recv_timeout(Duration::from_millis(50)) {
             Ok((signal, at, shortcut)) => {
                 if signal == ChordSignal::Pressed && session.is_none() {
+                    let settings = service.settings();
+                    gesture.set_mode(settings.shortcut_mode);
+                    gesture.set_tap_max_ms(
+                        if settings.shortcut_mode == super::logic::gesture::ShortcutMode::Hybrid {
+                            settings.hybrid_threshold_ms
+                        } else {
+                            300
+                        },
+                    );
                     selected_shortcut = shortcut;
                 }
                 (gesture.on_event(gesture_event(signal), ms(at)), at)
@@ -586,6 +619,9 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant, Optio
             Err(RecvTimeoutError::Disconnected) => break,
         };
 
+        if let Some(state) = gesture_feedback(&actions) {
+            flash(&service.overlay, state);
+        }
         for action in actions {
             match action {
                 GestureAction::Start => {
@@ -613,6 +649,7 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant, Optio
                     // Load the local model while the user speaks, so neither
                     // the local engine nor the fallback pays for a load.
                     super::warm::prewarm_parakeet();
+                    let pending = CANCELLATION.begin();
                     let flow = Flow::new(service.states.clone(), None);
                     match Recorder::start(&settings.capture_options()) {
                         Ok(recorder) => {
@@ -620,6 +657,7 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant, Optio
                             DICTATING.store(true, Ordering::Relaxed);
                             session = Some(Session {
                                 flow,
+                                pending,
                                 recorder,
                                 target_app,
                                 target_window,
@@ -644,7 +682,6 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant, Optio
                     if let Some(s) = session.take() {
                         s.flow.set(DictationState::Cancelled);
                         DICTATING.store(false, Ordering::Relaxed);
-                        service.overlay.set(OverlayState::Hidden);
                     }
                 }
                 GestureAction::Stop => {
@@ -669,23 +706,31 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant, Optio
                                 service: service.clone(),
                                 ticket,
                                 flow: s.flow,
+                                pending: s.pending,
                             };
                             service
-                                .run_processing(
-                                    cancel,
-                                    &turn,
-                                    service.clone().process(
-                                        samples,
-                                        target_app,
-                                        s.target_window,
-                                        s.start_focus,
-                                        (s.settings, s.mode),
-                                        at,
-                                        start_ms,
-                                        &turn,
-                                    ),
-                                )
+                                .run_processing(cancel, &turn, async {
+                                    tokio::select! {
+                                        biased;
+                                        _ = turn.cancelled() => {
+                                            turn.flow.set(DictationState::Cancelled);
+                                        }
+                                        _ = service.clone().process(
+                                            samples,
+                                            target_app,
+                                            s.target_window,
+                                            s.start_focus,
+                                            (s.settings, s.mode),
+                                            at,
+                                            start_ms,
+                                            &turn,
+                                        ) => {}
+                                    }
+                                })
                                 .await;
+                            if turn.pending.is_cancelled() {
+                                flash(&service.overlay, OverlayState::Refused("Afbrudt"));
+                            }
                         });
                     }
                 }
@@ -752,12 +797,17 @@ struct Turn {
     service: Arc<Service>,
     ticket: u64,
     flow: Flow,
+    pending: Pending<'static>,
 }
 
 /// A dictation never waits longer than this for the one before it.
 const TURN_TIMEOUT: Duration = Duration::from_secs(30);
 
 impl Turn {
+    async fn cancelled(&self) {
+        self.pending.cancelled().await;
+    }
+
     async fn wait(&self) {
         let mut turn = self.service.insert_turn.subscribe();
         let ticket = self.ticket;
@@ -1182,8 +1232,15 @@ impl Service {
         {
             self.overlay.set(OverlayState::Hidden);
             turn.wait().await;
-            turn.flow.set(DictationState::Inserting);
-            self.run_edit_command(command).await;
+            let committed = commit_output(&turn.pending, async {
+                turn.flow.set(DictationState::Inserting);
+                self.run_edit_command(command).await;
+            })
+            .await;
+            if committed.is_none() {
+                turn.flow.set(DictationState::Cancelled);
+                flash(&self.overlay, OverlayState::Refused("Afbrudt"));
+            }
             return;
         }
         let mut text = cleaned.text;
@@ -1205,82 +1262,83 @@ impl Service {
         }
 
         turn.wait().await;
-        let insert_started = Instant::now();
-        let options = InsertOptions {
-            restore_after: Duration::from_millis(settings.restore_clipboard_ms),
-            paste_timeout: Duration::from_millis(settings.paste_timeout_ms),
-            app: target_app.clone(),
-        };
-        turn.flow.set(DictationState::Inserting);
-        let inserted = match &self.backend {
-            Some(b) => b
-                .insert(text.clone())
-                .await
-                .map(|()| ("fake", Instant::now(), None)),
-            None => {
-                insert(
-                    text.clone(),
-                    options,
-                    enter,
-                    target_window,
-                    start_focus.as_ref().map(|f| f.id.clone()),
-                )
-                .await
-            }
-        };
-        let mut refusal = None;
-        let (insert_method, inserted_at) = match inserted {
-            Ok((method, at, field)) => {
-                self.set_error(None);
-                if enter {
-                    self.forget_insertion();
-                } else {
-                    self.remember_insertion(&text, field, at);
+        let output = async {
+            let insert_started = Instant::now();
+            let options = InsertOptions {
+                restore_after: Duration::from_millis(settings.restore_clipboard_ms),
+                paste_timeout: Duration::from_millis(settings.paste_timeout_ms),
+                app: target_app.clone(),
+            };
+            turn.flow.set(DictationState::Inserting);
+            let inserted = match &self.backend {
+                Some(b) => b
+                    .insert(text.clone())
+                    .await
+                    .map(|()| ("fake", Instant::now(), None)),
+                None => {
+                    insert(
+                        text.clone(),
+                        options,
+                        enter,
+                        target_window,
+                        start_focus.as_ref().map(|f| f.id.clone()),
+                    )
+                    .await
                 }
-                (Some(method), at)
-            }
-            Err(e) => {
-                turn.flow.set(DictationState::Error);
-                log::warn!("Dictation insert failed");
-                refusal = Refusal::from_message(&e);
-                if let Some(r) = refusal {
-                    self.set_error(Some(r.message().to_string()));
-                    flash(&self.overlay, OverlayState::Refused(r.pill_text()));
-                } else {
-                    self.set_error(Some(format!("Teksten kunne ikke indsættes: {e}")));
+            };
+            let mut refusal = None;
+            let (insert_method, inserted_at) = match inserted {
+                Ok((method, at, field)) => {
+                    self.set_error(None);
+                    if enter {
+                        self.forget_insertion();
+                    } else {
+                        self.remember_insertion(&text, field, at);
+                    }
+                    (Some(method), at)
                 }
-                (None, Instant::now())
-            }
-        };
-        let latency_ms = inserted_at
-            .saturating_duration_since(released_at)
-            .as_millis() as i64;
-        let steps = Steps {
-            start_ms,
-            audio_ms,
-            capture_ms,
-            transcribe_ms,
-            polish_ms,
-            insert_ms: inserted_at
-                .saturating_duration_since(insert_started)
-                .as_millis() as u64,
-            total_ms: latency_ms as u64,
-        };
-        log::info!(
+                Err(e) => {
+                    turn.flow.set(DictationState::Error);
+                    log::warn!("Dictation insert failed");
+                    refusal = Refusal::from_message(&e);
+                    if let Some(r) = refusal {
+                        self.set_error(Some(r.message().to_string()));
+                        flash(&self.overlay, OverlayState::Refused(r.pill_text()));
+                    } else {
+                        self.set_error(Some(format!("Teksten kunne ikke indsættes: {e}")));
+                    }
+                    (None, Instant::now())
+                }
+            };
+            let latency_ms = inserted_at
+                .saturating_duration_since(released_at)
+                .as_millis() as i64;
+            let steps = Steps {
+                start_ms,
+                audio_ms,
+                capture_ms,
+                transcribe_ms,
+                polish_ms,
+                insert_ms: inserted_at
+                    .saturating_duration_since(insert_started)
+                    .as_millis() as u64,
+                total_ms: latency_ms as u64,
+            };
+            log::info!(
             "Dictation steps: start {} ms, capture {capture_ms} ms, transcribe {transcribe_ms} ms, polish {} ms, insert {} ms",
             start_ms.map(|ms| ms.to_string()).unwrap_or_else(|| "-".to_string()),
             polish_ms.map(|ms| ms.to_string()).unwrap_or_else(|| "-".to_string()),
             steps.insert_ms,
         );
-        self.record_timing(NewTiming {
-            created_at: now_ms(),
-            provider: transcript.engine.as_str(),
-            fallback: transcript.fallback_reason.is_some(),
-            inserted: insert_method.is_some(),
-            steps,
-        })
-        .await;
-        log::info!(
+            self.record_timing(NewTiming {
+                created_at: now_ms(),
+                provider: transcript.engine.as_str(),
+                fallback: transcript.fallback_reason.is_some(),
+                inserted: insert_method.is_some(),
+                steps,
+            })
+            .await;
+            log::info!(
             "Dictation: {latency_ms} ms from release to text (engine {}, {audio_ms} ms audio, {} chars, app {}, method {})",
             transcript.engine.as_str(),
             text.chars().count(),
@@ -1288,28 +1346,33 @@ impl Service {
             insert_method.unwrap_or("none"),
         );
 
-        // Text dictated into a password field is never kept, not even in the
-        // history, whatever made the insertion fail: the field is judged from
-        // when dictation started as well as from the insertion.
-        let from_password = start_focus
-            .as_ref()
-            .is_some_and(|f| f.probe.password == Some(true));
-        if settings.history_enabled
-            && !from_password
-            && !refusal.is_some_and(Refusal::keeps_text_out_of_history)
-        {
-            self.save_history(
-                &settings,
-                &samples,
-                text,
-                target_app,
-                style,
-                transcript,
-                latency_ms,
-                audio_ms,
-                insert_method,
-            )
-            .await;
+            // Text dictated into a password field is never kept, not even in the
+            // history, whatever made the insertion fail: the field is judged from
+            // when dictation started as well as from the insertion.
+            let from_password = start_focus
+                .as_ref()
+                .is_some_and(|f| f.probe.password == Some(true));
+            if settings.history_enabled
+                && !from_password
+                && !refusal.is_some_and(Refusal::keeps_text_out_of_history)
+            {
+                self.save_history(
+                    &settings,
+                    &samples,
+                    text,
+                    target_app,
+                    style,
+                    transcript,
+                    latency_ms,
+                    audio_ms,
+                    insert_method,
+                )
+                .await;
+            }
+        };
+        if commit_output(&turn.pending, output).await.is_none() {
+            turn.flow.set(DictationState::Cancelled);
+            flash(&self.overlay, OverlayState::Refused("Afbrudt"));
         }
     }
 
@@ -1517,6 +1580,65 @@ mod tests {
     use super::*;
 
     #[test]
+    fn dictation_interruption_only_reports_actual_cancellation() {
+        let mut gesture = Gesture::new(GestureConfig::default());
+        let idle = gesture.on_event(gesture_event(ChordSignal::Interrupted), 0);
+        assert_eq!(gesture_feedback(&idle), None);
+        gesture.on_event(GestureEvent::Pressed, 10);
+        let active = gesture.on_event(gesture_event(ChordSignal::Interrupted), 20);
+        assert_eq!(active, vec![GestureAction::Cancel]);
+        assert_eq!(
+            gesture_feedback(&active),
+            Some(OverlayState::Refused("Afbrudt"))
+        );
+        let again = gesture.on_event(gesture_event(ChordSignal::Interrupted), 30);
+        assert_eq!(gesture_feedback(&again), None);
+    }
+
+    #[tokio::test]
+    async fn dictation_commit_precedes_all_output_effects() {
+        #[derive(Default)]
+        struct FakeInserter {
+            calls: Vec<&'static str>,
+        }
+        impl FakeInserter {
+            fn effect(&mut self, name: &'static str, pending: &Pending<'_>) {
+                assert!(!pending.commit(), "output must follow commit");
+                self.calls.push(name);
+            }
+        }
+        for cancelled in [false, true] {
+            for edit in [false, true] {
+                let cancellation = Cancellation::new();
+                let pending = cancellation.begin();
+                if cancelled {
+                    assert!(cancellation.cancel());
+                }
+                let mut inserter = FakeInserter::default();
+                let result = commit_output(&pending, async {
+                    if edit {
+                        inserter.effect("run_edit_command", &pending);
+                    } else {
+                        inserter.effect("insert", &pending);
+                        inserter.effect("record_timing", &pending);
+                        inserter.effect("save_history", &pending);
+                    }
+                })
+                .await;
+                assert_eq!(result.is_some(), !cancelled);
+                let expected = if cancelled {
+                    vec![]
+                } else if edit {
+                    vec!["run_edit_command"]
+                } else {
+                    vec!["insert", "record_timing", "save_history"]
+                };
+                assert_eq!(inserter.calls, expected);
+            }
+        }
+    }
+
+    #[test]
     fn dictation_microphone_logs_only_failure_classes() {
         for (error, class) in [
             ("Ingen mikrofon fundet", "device_not_found"),
@@ -1643,6 +1765,7 @@ mod tests {
                 service: service.clone(),
                 ticket: 0,
                 flow,
+                pending: CANCELLATION.begin(),
             };
             service.next_ticket.store(1, Ordering::SeqCst);
             let mut settings = service.settings();

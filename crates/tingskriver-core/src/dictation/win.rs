@@ -7,59 +7,65 @@
 
 use std::cell::RefCell;
 use std::ffi::c_void;
-use std::sync::mpsc::Sender;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::mpsc::Sender;
 use std::sync::{Mutex, OnceLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use windows::core::{PCWSTR, PWSTR};
 use windows::Win32::Foundation::{
-    CloseHandle, GetLastError, GlobalFree, ERROR_NOT_FOUND, HANDLE, HGLOBAL, HWND, LPARAM, LRESULT, RECT,
-    WPARAM,
+    CloseHandle, GetLastError, GlobalFree, ERROR_NOT_FOUND, HANDLE, HGLOBAL, HWND, LPARAM, LRESULT,
+    RECT, WPARAM,
 };
 use windows::Win32::Graphics::Gdi::{
-    DeleteEnhMetaFile, GetEnhMetaFileBits, GetMonitorInfoW, MonitorFromWindow, SetEnhMetaFileBits, HENHMETAFILE,
-    MONITORINFO, MONITOR_DEFAULTTOPRIMARY,
+    DeleteEnhMetaFile, GetEnhMetaFileBits, GetMonitorInfoW, MonitorFromWindow, SetEnhMetaFileBits,
+    HENHMETAFILE, MONITORINFO, MONITOR_DEFAULTTOPRIMARY,
 };
 use windows::Win32::Security::Credentials::{
-    CredDeleteW, CredFree, CredReadW, CredWriteW, CREDENTIALW, CRED_FLAGS, CRED_PERSIST_LOCAL_MACHINE,
-    CRED_TYPE_GENERIC,
+    CredDeleteW, CredFree, CredReadW, CredWriteW, CREDENTIALW, CRED_FLAGS,
+    CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC,
 };
 use windows::Win32::Security::{
-    GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation, TokenIntegrityLevel, TOKEN_MANDATORY_LABEL,
-    TOKEN_QUERY,
+    GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation, TokenIntegrityLevel,
+    TOKEN_MANDATORY_LABEL, TOKEN_QUERY,
 };
 use windows::Win32::System::DataExchange::{
-    CloseClipboard, EmptyClipboard, EnumClipboardFormats, GetClipboardData, GetClipboardFormatNameW,
-    GetClipboardOwner, IsClipboardFormatAvailable, OpenClipboard, RegisterClipboardFormatW, SetClipboardData,
+    CloseClipboard, EmptyClipboard, EnumClipboardFormats, GetClipboardData,
+    GetClipboardFormatNameW, GetClipboardOwner, IsClipboardFormatAvailable, OpenClipboard,
+    RegisterClipboardFormatW, SetClipboardData,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE};
+use windows::Win32::System::Memory::{
+    GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE,
+};
 use windows::Win32::System::Ole::CF_UNICODETEXT;
 use windows::Win32::System::Threading::{
-    GetCurrentProcess, GetCurrentThreadId, OpenProcess, OpenProcessToken, QueryFullProcessImageNameW,
-    PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+    GetCurrentProcess, GetCurrentThreadId, OpenProcess, OpenProcessToken,
+    QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
-    KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, VIRTUAL_KEY, VK_CONTROL, VK_LWIN, VK_MENU,
-    VK_RETURN, VK_RWIN, VK_SHIFT,
+    KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, VIRTUAL_KEY, VK_CONTROL, VK_LWIN,
+    VK_MENU, VK_RETURN, VK_RWIN, VK_SHIFT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetForegroundWindow,
-    GetMessageW, GetWindowLongPtrW, GetWindowThreadProcessId, PeekMessageW, PostThreadMessageW, RegisterClassW,
-    SetWindowLongPtrW, SetWindowPos, SetWindowsHookExW, ShowWindow, TranslateMessage, UnhookWindowsHookEx,
-    GWL_EXSTYLE, HC_ACTION, HWND_MESSAGE, HWND_TOPMOST, KBDLLHOOKSTRUCT, MSG, PM_NOREMOVE, PM_REMOVE,
-    SWP_NOACTIVATE, SWP_SHOWWINDOW, SW_HIDE, WH_KEYBOARD_LL, WINDOW_EX_STYLE, WINDOW_STYLE, WM_KEYDOWN, WM_KEYUP,
-    WM_APP, WM_QUIT, WM_RENDERALLFORMATS, WM_RENDERFORMAT, WM_SYSKEYDOWN, WM_SYSKEYUP, WNDCLASSW, WS_EX_NOACTIVATE,
+    CallNextHookEx, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
+    GetForegroundWindow, GetMessageW, GetWindowLongPtrW, GetWindowThreadProcessId, PeekMessageW,
+    PostThreadMessageW, RegisterClassW, SetWindowLongPtrW, SetWindowPos, SetWindowsHookExW,
+    ShowWindow, TranslateMessage, UnhookWindowsHookEx, GWL_EXSTYLE, HC_ACTION, HWND_MESSAGE,
+    HWND_TOPMOST, KBDLLHOOKSTRUCT, MSG, PM_NOREMOVE, PM_REMOVE, SWP_NOACTIVATE, SWP_SHOWWINDOW,
+    SW_HIDE, WH_KEYBOARD_LL, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_KEYDOWN, WM_KEYUP, WM_QUIT,
+    WM_RENDERALLFORMATS, WM_RENDERFORMAT, WM_SYSKEYDOWN, WM_SYSKEYUP, WNDCLASSW, WS_EX_NOACTIVATE,
     WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
 };
 
 use super::logic::hook_stats::{HookSummary, HookTimes};
 use super::logic::hotkey::{Chord, ChordSignal, ChordTracker};
-use super::logic::paste::{self, FormatKind, Observed, Outcome, SaveCheck, TargetAccess, WhenBlocked};
+use super::logic::paste::{
+    self, FormatKind, Observed, Outcome, SaveCheck, TargetAccess, WhenBlocked,
+};
 
 /// Marks input we inject ourselves, so the hook lets it straight through.
 const INJECT_MARKER: usize = 0x5453_4B52; // "TSKR"
@@ -77,6 +83,7 @@ fn wide(text: &str) -> Vec<u16> {
 struct HookShared {
     trackers: Vec<(ChordTracker, Option<String>)>,
     sender: Sender<(ChordSignal, Instant, Option<String>)>,
+    escape_down: bool,
 }
 
 static HOOK_STATE: Mutex<Option<HookShared>> = Mutex::new(None);
@@ -114,13 +121,24 @@ pub struct KeyboardHook {
 
 impl KeyboardHook {
     /// Install the hook on its own thread with a message loop.
-    pub fn start(chord: Chord, shortcuts: Vec<Chord>, sender: Sender<(ChordSignal, Instant, Option<String>)>) -> Result<KeyboardHook, String> {
+    pub fn start(
+        chord: Chord,
+        shortcuts: Vec<Chord>,
+        sender: Sender<(ChordSignal, Instant, Option<String>)>,
+    ) -> Result<KeyboardHook, String> {
         let mut seen = std::collections::HashSet::new();
         let trackers = std::iter::once((ChordTracker::new(chord), None))
-            .chain(shortcuts.into_iter().filter(|c| *c != chord && seen.insert(*c)).map(|c| (ChordTracker::new(c), Some(c.label())))).collect();
+            .chain(
+                shortcuts
+                    .into_iter()
+                    .filter(|c| *c != chord && seen.insert(*c))
+                    .map(|c| (ChordTracker::new(c), Some(c.label()))),
+            )
+            .collect();
         *HOOK_STATE.lock().map_err(|_| "hook state poisoned")? = Some(HookShared {
             trackers,
             sender,
+            escape_down: false,
         });
 
         let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Result<u32, String>>();
@@ -137,7 +155,12 @@ impl KeyboardHook {
                         return;
                     }
                 };
-                let hook = match SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_proc), Some(module.into()), 0) {
+                let hook = match SetWindowsHookExW(
+                    WH_KEYBOARD_LL,
+                    Some(hook_proc),
+                    Some(module.into()),
+                    0,
+                ) {
                     Ok(h) => h,
                     Err(e) => {
                         let _ = ready_tx.send(Err(format!("SetWindowsHookExW: {e}")));
@@ -207,20 +230,51 @@ unsafe fn handle_key(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
                 let decision = match HOOK_STATE.try_lock() {
                     Ok(mut guard) => guard.as_mut().map(|state| {
                         let mut combined = super::logic::hotkey::HookDecision::default();
+                        if kb.vkCode == 0x1B {
+                            if is_down
+                                && !state.escape_down
+                                && super::logic::hotkey::escape_can_cancel(|vk| {
+                                    key_is_down(VIRTUAL_KEY(vk as u16))
+                                })
+                                && super::service::cancel_from_escape()
+                            {
+                                state.escape_down = true;
+                                let _ = state.sender.send((
+                                    ChordSignal::Interrupted,
+                                    Instant::now(),
+                                    None,
+                                ));
+                            }
+                            if state.escape_down {
+                                state.escape_down = !is_up;
+                                combined.swallow = true;
+                                return combined;
+                            }
+                        }
                         for (tracker, shortcut) in &mut state.trackers {
                             let decision = if is_down {
-                                if let Some(signal) = tracker.resync(|vk| key_is_down(VIRTUAL_KEY(vk as u16))) {
-                                    let _ = state.sender.send((signal, Instant::now(), shortcut.clone()));
+                                if let Some(signal) =
+                                    tracker.resync(|vk| key_is_down(VIRTUAL_KEY(vk as u16)))
+                                {
+                                    let _ = state.sender.send((
+                                        signal,
+                                        Instant::now(),
+                                        shortcut.clone(),
+                                    ));
                                 }
                                 tracker.key_down(kb.vkCode)
                             } else {
                                 tracker.key_up(kb.vkCode)
                             };
                             if let Some(signal) = decision.signal {
-                                let _ = state.sender.send((signal, Instant::now(), shortcut.clone()));
+                                let _ =
+                                    state
+                                        .sender
+                                        .send((signal, Instant::now(), shortcut.clone()));
                             }
                             combined.swallow |= decision.swallow;
-                            combined.inject_win_release = combined.inject_win_release.or(decision.inject_win_release);
+                            combined.inject_win_release =
+                                combined.inject_win_release.or(decision.inject_win_release);
                         }
                         combined
                     }),
@@ -294,7 +348,12 @@ fn process_for(hwnd: HWND) -> Option<String> {
         let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
         let mut buf = [0u16; 1024];
         let mut len = buf.len() as u32;
-        let ok = QueryFullProcessImageNameW(process, PROCESS_NAME_WIN32, PWSTR(buf.as_mut_ptr()), &mut len);
+        let ok = QueryFullProcessImageNameW(
+            process,
+            PROCESS_NAME_WIN32,
+            PWSTR(buf.as_mut_ptr()),
+            &mut len,
+        );
         let _ = CloseHandle(process);
         ok.ok()?;
         let path = String::from_utf16_lossy(&buf[..len as usize]);
@@ -310,8 +369,11 @@ pub fn foreground_context() -> (Option<String>, Option<String>, Option<String>) 
         let mut title = [0u16; 2048];
         let c = GetClassNameW(hwnd, &mut class).max(0) as usize;
         let t = GetWindowTextW(hwnd, &mut title).max(0) as usize;
-        (process_for(hwnd), (c > 0).then(|| String::from_utf16_lossy(&class[..c])),
-         (t > 0).then(|| String::from_utf16_lossy(&title[..t])))
+        (
+            process_for(hwnd),
+            (c > 0).then(|| String::from_utf16_lossy(&class[..c])),
+            (t > 0).then(|| String::from_utf16_lossy(&title[..t])),
+        )
     }
 }
 
@@ -377,7 +439,8 @@ fn render_offer() {
             return;
         };
         let units: &[u16] = if offer.withdrawn { &[0] } else { &offer.utf16 };
-        let bytes = unsafe { std::slice::from_raw_parts(units.as_ptr() as *const u8, units.len() * 2) };
+        let bytes =
+            unsafe { std::slice::from_raw_parts(units.as_ptr() as *const u8, units.len() * 2) };
         if let Err(e) = unsafe { set_clipboard_bytes(CF_UNICODETEXT.0 as u32, bytes) } {
             log::warn!("Dictation: could not render clipboard text: {e}");
         }
@@ -389,7 +452,12 @@ fn render_offer() {
     });
 }
 
-unsafe extern "system" fn clipboard_owner_proc(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+unsafe extern "system" fn clipboard_owner_proc(
+    hwnd: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
     match message {
         WM_RENDERFORMAT => {
             if wparam.0 as u32 == CF_UNICODETEXT.0 as u32 {
@@ -426,7 +494,10 @@ fn register_owner_class() -> Result<(), String> {
             // The class keeps the name pointer for the life of the process.
             std::mem::forget(name);
             if RegisterClassW(&class) == 0 {
-                return Err(format!("RegisterClassW: {}", windows::core::Error::from_win32()));
+                return Err(format!(
+                    "RegisterClassW: {}",
+                    windows::core::Error::from_win32()
+                ));
             }
             Ok(())
         })
@@ -638,7 +709,9 @@ fn save_clipboard(owner: &ClipboardOwner) -> Result<SavedClipboard, String> {
                     }
                     formats.push((format, data));
                 }
-                Some(None) => log::debug!("Dictation: clipboard format {format} could not be read; skipped"),
+                Some(None) => {
+                    log::debug!("Dictation: clipboard format {format} could not be read; skipped")
+                }
                 None => {}
             }
             format = EnumClipboardFormats(format);
@@ -651,7 +724,8 @@ fn save_clipboard(owner: &ClipboardOwner) -> Result<SavedClipboard, String> {
 }
 
 unsafe fn set_clipboard_bytes(format: u32, bytes: &[u8]) -> Result<(), String> {
-    let global = GlobalAlloc(GMEM_MOVEABLE, bytes.len().max(1)).map_err(|e| format!("GlobalAlloc: {e}"))?;
+    let global =
+        GlobalAlloc(GMEM_MOVEABLE, bytes.len().max(1)).map_err(|e| format!("GlobalAlloc: {e}"))?;
     let ptr = GlobalLock(global) as *mut u8;
     if ptr.is_null() {
         let _ = GlobalFree(Some(global));
@@ -732,7 +806,10 @@ fn key_is_down(vk: VIRTUAL_KEY) -> bool {
 fn wait_for_modifiers_released(timeout: Duration) {
     let start = Instant::now();
     while start.elapsed() < timeout {
-        if ![VK_LWIN, VK_RWIN, VK_MENU, VK_SHIFT].iter().any(|vk| key_is_down(*vk)) {
+        if ![VK_LWIN, VK_RWIN, VK_MENU, VK_SHIFT]
+            .iter()
+            .any(|vk| key_is_down(*vk))
+        {
             return;
         }
         std::thread::sleep(Duration::from_millis(10));
@@ -855,23 +932,41 @@ fn foreground_integrity_level() -> Option<u32> {
 /// target does not read it within `paste_timeout`, the field blocks paste:
 /// the text is typed with `SendInput`, and the original is restored after
 /// `paste::LATE_READ_GRACE` (a late read in between gets an empty string).
-pub fn insert_text(text: &str, options: &InsertOptions) -> Result<(InsertMethod, Instant, Option<super::logic::spoken::FieldId>), String> {
+pub fn insert_text(
+    text: &str,
+    options: &InsertOptions,
+) -> Result<(InsertMethod, Instant, Option<super::logic::spoken::FieldId>), String> {
     insert_output(text, options, false)
 }
 
-pub fn insert_output(text: &str, options: &InsertOptions, enter: bool) -> Result<(InsertMethod, Instant, Option<super::logic::spoken::FieldId>), String> {
+pub fn insert_output(
+    text: &str,
+    options: &InsertOptions,
+    enter: bool,
+) -> Result<(InsertMethod, Instant, Option<super::logic::spoken::FieldId>), String> {
     insert_output_at(text, options, enter, foreground_window(), None)
 }
 
-pub fn insert_output_at(text: &str, options: &InsertOptions, enter: bool, target: usize, expected: Option<&super::logic::spoken::FieldId>) -> Result<(InsertMethod, Instant, Option<super::logic::spoken::FieldId>), String> {
+pub fn insert_output_at(
+    text: &str,
+    options: &InsertOptions,
+    enter: bool,
+    target: usize,
+    expected: Option<&super::logic::spoken::FieldId>,
+) -> Result<(InsertMethod, Instant, Option<super::logic::spoken::FieldId>), String> {
     let _one_at_a_time = INSERT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     check_target(target)?;
     let result = insert_text_inner(text, options, enter, target, expected)?;
     if enter {
-        if [VK_CONTROL, VK_LWIN, VK_RWIN, VK_MENU, VK_SHIFT].iter().any(|vk| key_is_down(*vk)) {
+        if [VK_CONTROL, VK_LWIN, VK_RWIN, VK_MENU, VK_SHIFT]
+            .iter()
+            .any(|vk| key_is_down(*vk))
+        {
             return Err("Teksten er indsat; slip genvejstasterne før Enter".into());
         }
-        if !paste::same_target(target, foreground_window()) || super::logic::app_style::is_code_editor(foreground_process().as_deref()) {
+        if !paste::same_target(target, foreground_window())
+            || super::logic::app_style::is_code_editor(foreground_process().as_deref())
+        {
             return Err("Programmet skiftede før Enter; teksten er indsat".into());
         }
         require_field_ok(result.2.as_ref())?;
@@ -900,7 +995,13 @@ fn check_target(target: usize) -> Result<(), String> {
     }
 }
 
-fn insert_text_inner(text: &str, options: &InsertOptions, enter: bool, target: usize, expected: Option<&super::logic::spoken::FieldId>) -> Result<(InsertMethod, Instant, Option<super::logic::spoken::FieldId>), String> {
+fn insert_text_inner(
+    text: &str,
+    options: &InsertOptions,
+    enter: bool,
+    target: usize,
+    expected: Option<&super::logic::spoken::FieldId>,
+) -> Result<(InsertMethod, Instant, Option<super::logic::spoken::FieldId>), String> {
     wait_for_modifiers_released(Duration::from_millis(1500));
     // Read before anything is touched: a password, read-only or disabled
     // field is refused here, with nothing put on the clipboard.
@@ -911,7 +1012,8 @@ fn insert_text_inner(text: &str, options: &InsertOptions, enter: bool, target: u
     // `expected` is the field that had focus when dictation started: if the
     // user moved to another field while the speech was processed, refuse.
     if expected.is_some() {
-        super::logic::target_check::verify(expected, focus.as_ref()).map_err(|r| r.message().to_string())?;
+        super::logic::target_check::verify(expected, focus.as_ref())
+            .map_err(|r| r.message().to_string())?;
     }
     let field = focus.map(|focus| focus.id);
     let typed = |text: &str| {
@@ -987,7 +1089,10 @@ fn insert_text_inner(text: &str, options: &InsertOptions, enter: bool, target: u
         "Dictation paste: {outcome:?} after {} ms (target read {})",
         sent_at.elapsed().as_millis(),
         read_after_paste
-            .map(|at| format!("{} ms after Ctrl+V", at.saturating_duration_since(sent_at).as_millis()))
+            .map(|at| format!(
+                "{} ms after Ctrl+V",
+                at.saturating_duration_since(sent_at).as_millis()
+            ))
             .unwrap_or_else(|| "nothing".to_string())
     );
 
@@ -995,10 +1100,17 @@ fn insert_text_inner(text: &str, options: &InsertOptions, enter: bool, target: u
     // a busy target may handle its queued Ctrl+V late, and must then paste
     // nothing rather than the original clipboard (or the text a second time).
     let result = match outcome {
-        Outcome::PastedUnconfirmed | Outcome::Replaced { typed: false } if enter =>
-            Err("Indsættelsen kunne ikke bekræftes; Enter blev ikke sendt".into()),
-        Outcome::Pasted => Ok((InsertMethod::Paste, read_after_paste.unwrap_or(sent_at), field.clone())),
-        Outcome::PastedUnconfirmed | Outcome::Replaced { typed: false } => Ok((InsertMethod::Paste, sent_at, field.clone())),
+        Outcome::PastedUnconfirmed | Outcome::Replaced { typed: false } if enter => {
+            Err("Indsættelsen kunne ikke bekræftes; Enter blev ikke sendt".into())
+        }
+        Outcome::Pasted => Ok((
+            InsertMethod::Paste,
+            read_after_paste.unwrap_or(sent_at),
+            field.clone(),
+        )),
+        Outcome::PastedUnconfirmed | Outcome::Replaced { typed: false } => {
+            Ok((InsertMethod::Paste, sent_at, field.clone()))
+        }
         Outcome::Blocked | Outcome::Replaced { typed: true } => match paste::when_blocked(access) {
             WhenBlocked::Type => {
                 log::info!("Dictation: the field did not take Ctrl+V; typing instead");
@@ -1010,13 +1122,16 @@ fn insert_text_inner(text: &str, options: &InsertOptions, enter: bool, target: u
     };
 
     if outcome.restore() {
-        let until = Instant::now() + paste::restore_wait(outcome, options.restore_after, options.paste_timeout);
+        let until = Instant::now()
+            + paste::restore_wait(outcome, options.restore_after, options.paste_timeout);
         while Instant::now() < until {
             owner.pump();
             std::thread::sleep(Duration::from_millis(5));
         }
         if outcome == Outcome::Blocked && owner.observed().1.is_some() {
-            log::info!("Dictation: the target read the clipboard late; it got nothing (text was typed)");
+            log::info!(
+                "Dictation: the target read the clipboard late; it got nothing (text was typed)"
+            );
         }
         if owner.owns_clipboard() {
             if let Err(e) = restore_clipboard(&owner, &saved) {
@@ -1058,7 +1173,8 @@ pub fn credential_read(target: &str) -> Result<Option<String>, String> {
     let mut ptr: *mut CREDENTIALW = std::ptr::null_mut();
     let result = unsafe { CredReadW(PCWSTR(target_w.as_ptr()), CRED_TYPE_GENERIC, None, &mut ptr) };
     if let Err(e) = result {
-        if unsafe { GetLastError() } == ERROR_NOT_FOUND || e.code() == ERROR_NOT_FOUND.to_hresult() {
+        if unsafe { GetLastError() } == ERROR_NOT_FOUND || e.code() == ERROR_NOT_FOUND.to_hresult()
+        {
             return Ok(None);
         }
         return Err(format!("CredReadW: {e}"));
@@ -1068,7 +1184,10 @@ pub fn credential_read(target: &str) -> Result<Option<String>, String> {
         let secret = if credential.CredentialBlob.is_null() || credential.CredentialBlobSize == 0 {
             None
         } else {
-            let bytes = std::slice::from_raw_parts(credential.CredentialBlob, credential.CredentialBlobSize as usize);
+            let bytes = std::slice::from_raw_parts(
+                credential.CredentialBlob,
+                credential.CredentialBlobSize as usize,
+            );
             Some(String::from_utf8_lossy(bytes).into_owned())
         };
         CredFree(ptr as *const c_void);
@@ -1098,7 +1217,8 @@ pub fn make_overlay_window(raw: isize) {
     unsafe {
         let window = hwnd(raw);
         let style = GetWindowLongPtrW(window, GWL_EXSTYLE);
-        let extra = (WS_EX_NOACTIVATE | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_TOPMOST).0 as isize;
+        let extra =
+            (WS_EX_NOACTIVATE | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_TOPMOST).0 as isize;
         SetWindowLongPtrW(window, GWL_EXSTYLE, style | extra);
     }
 }
@@ -1129,7 +1249,15 @@ pub fn show_overlay(raw: isize, width: i32, height: i32, margin: i32) {
         };
         let x = work.left + (work.right - work.left - w) / 2;
         let y = work.bottom - h - m;
-        let _ = SetWindowPos(window, Some(HWND_TOPMOST), x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        let _ = SetWindowPos(
+            window,
+            Some(HWND_TOPMOST),
+            x,
+            y,
+            w,
+            h,
+            SWP_NOACTIVATE | SWP_SHOWWINDOW,
+        );
     }
 }
 
@@ -1152,12 +1280,12 @@ pub fn hide_overlay(raw: isize) {
 #[cfg(test)]
 mod insertion_window {
     use super::*;
+    use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
     use windows::Win32::UI::WindowsAndMessaging::{
         CallWindowProcW, GetWindowTextLengthW, GetWindowTextW, SendMessageW, SetForegroundWindow,
-        SetWindowTextW, ShowWindow as Show, ES_AUTOHSCROLL, GWLP_WNDPROC, SW_SHOW, WM_PASTE, WNDPROC,
-        WS_OVERLAPPEDWINDOW, WS_VISIBLE,
+        SetWindowTextW, ShowWindow as Show, ES_AUTOHSCROLL, GWLP_WNDPROC, SW_SHOW, WM_PASTE,
+        WNDPROC, WS_OVERLAPPEDWINDOW, WS_VISIBLE,
     };
-    use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
 
     /// Raw handles cross threads as integers.
     #[derive(Clone, Copy)]
@@ -1168,11 +1296,18 @@ mod insertion_window {
     static ORIGINAL_EDIT_PROC: OnceLock<isize> = OnceLock::new();
 
     /// An edit field that ignores paste, like a password or "retype" field.
-    unsafe extern "system" fn paste_blocking_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    unsafe extern "system" fn paste_blocking_proc(
+        hwnd: HWND,
+        msg: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
         if msg == WM_PASTE {
             return LRESULT(0);
         }
-        let original: WNDPROC = ORIGINAL_EDIT_PROC.get().and_then(|p| std::mem::transmute::<isize, WNDPROC>(*p));
+        let original: WNDPROC = ORIGINAL_EDIT_PROC
+            .get()
+            .and_then(|p| std::mem::transmute::<isize, WNDPROC>(*p));
         CallWindowProcW(original, hwnd, msg, wparam, lparam)
     }
 
@@ -1200,7 +1335,11 @@ mod insertion_window {
             )
             .expect("edit window");
             if block_paste {
-                let original = SetWindowLongPtrW(edit, GWLP_WNDPROC, paste_blocking_proc as *const () as isize);
+                let original = SetWindowLongPtrW(
+                    edit,
+                    GWLP_WNDPROC,
+                    paste_blocking_proc as *const () as isize,
+                );
                 let _ = ORIGINAL_EDIT_PROC.set(original);
             }
             let _ = Show(edit, SW_SHOW);
@@ -1211,14 +1350,19 @@ mod insertion_window {
             ]);
             let _ = SetForegroundWindow(edit);
             let _ = SetFocus(Some(edit));
-            tx.send(Handles { edit: edit.0 as isize }).expect("report window");
+            tx.send(Handles {
+                edit: edit.0 as isize,
+            })
+            .expect("report window");
             let mut msg = MSG::default();
             while GetMessageW(&mut msg, None, 0, 0).0 > 0 {
                 let _ = TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }
         });
-        let handles = rx.recv_timeout(Duration::from_secs(5)).expect("test window started");
+        let handles = rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("test window started");
         std::thread::sleep(Duration::from_millis(300));
         handles
     }
@@ -1237,7 +1381,12 @@ mod insertion_window {
         let empty = wide("");
         unsafe {
             let _ = SetWindowTextW(hwnd(handles.edit), PCWSTR(empty.as_ptr()));
-            let _ = SendMessageW(hwnd(handles.edit), 0x00B1 /* EM_SETSEL */, Some(WPARAM(0)), Some(LPARAM(0)));
+            let _ = SendMessageW(
+                hwnd(handles.edit),
+                0x00B1, /* EM_SETSEL */
+                Some(WPARAM(0)),
+                Some(LPARAM(0)),
+            );
         }
     }
 
@@ -1255,7 +1404,10 @@ mod insertion_window {
         dib.extend_from_slice(&((w * h * 4) as u32).to_le_bytes());
         dib.extend_from_slice(&[0u8; 16]);
         dib.extend((0..(w * h * 4) as usize).map(|i| (i % 251) as u8));
-        let text: Vec<u16> = "ORIGINAL æøå".encode_utf16().chain(std::iter::once(0)).collect();
+        let text: Vec<u16> = "ORIGINAL æøå"
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
         let _guard = owner.open().expect("open clipboard");
         unsafe {
             EmptyClipboard().expect("empty clipboard");
@@ -1270,8 +1422,13 @@ mod insertion_window {
         let _guard = owner.open().expect("open clipboard");
         unsafe {
             let text = read_memory_format(CF_UNICODETEXT.0 as u32).unwrap_or_default();
-            let units: Vec<u16> = text.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
-            let text = String::from_utf16_lossy(&units).trim_end_matches('\0').to_string();
+            let units: Vec<u16> = text
+                .chunks_exact(2)
+                .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                .collect();
+            let text = String::from_utf16_lossy(&units)
+                .trim_end_matches('\0')
+                .to_string();
             (text, read_memory_format(8).unwrap_or_default())
         }
     }
@@ -1295,10 +1452,17 @@ mod insertion_window {
             let text = format!("Diktat nummer {i}: æøå, ÆØÅ og «citat».");
             let (method, _, _) = insert_text(&text, &options()).expect("insert");
             std::thread::sleep(Duration::from_millis(50));
-            assert_eq!(edit_text(handles), text, "dictation {i} gave wrong or stale text");
+            assert_eq!(
+                edit_text(handles),
+                text,
+                "dictation {i} gave wrong or stale text"
+            );
             assert_eq!(method, InsertMethod::Paste, "dictation {i} was not pasted");
             let (clip_text, clip_dib) = read_back(&setup);
-            assert_eq!(clip_text, "ORIGINAL æøå", "clipboard text changed after dictation {i}");
+            assert_eq!(
+                clip_text, "ORIGINAL æøå",
+                "clipboard text changed after dictation {i}"
+            );
             assert!(
                 clip_dib.len() >= dib.len() && clip_dib[..dib.len()] == dib[..],
                 "clipboard image changed after dictation {i}"

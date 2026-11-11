@@ -4,6 +4,7 @@
 pub mod address;
 pub mod app_style;
 pub mod audio;
+pub mod cancellation;
 pub mod cleanup;
 pub mod engine;
 pub mod gesture;

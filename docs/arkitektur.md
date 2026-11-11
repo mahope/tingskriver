@@ -476,6 +476,30 @@ single-worker fake-server test covers stalled headers, stalled bodies and
 concurrent core calls. `read_audio_file` has already been removed; playback
 uses the core playback API instead of JSON arrays of audio bytes.
 
+## Dictation shortcut gestures
+
+`dictation::logic::gesture` supports `hold`, `toggle`, `hybrid` and
+`double-tap` through the persisted `shortcutMode` setting. Existing settings
+keep `double-tap`. Hybrid switches to hands-free recording for a press shorter
+than `hybridThresholdMs` (default 300 ms, clamped to 100–1000 ms) and stops
+on release for a longer press. All four modes are selectable in dictation settings. Release bounce is filtered
+for 30 ms, with a 50 ms release grace period. Double-tap keeps its 400 ms window.
+Tracker interruptions cancel and clear the gesture immediately: the tracker
+deactivates without a later release signal, so the next shortcut can start again.
+
+One unmodified Escape cancels all pending dictations, including earlier turns
+still processing or waiting for insertion. Ctrl+Esc, Ctrl+Shift+Esc and other
+modified Escape shortcuts pass through to Windows. Cancellation wakes waiting
+turns through `tokio::sync::Notify`, without polling.
+
+The Windows hook consumes Escape only during an active dictation, including
+transcription, polishing and waiting for an insertion turn. It shows “Afbrudt”.
+`dictation::logic::cancellation` carries the cancellation generation from capture
+to processing and atomically checks it at the insertion boundary. Cancelled
+attempts cannot enter insertion, voice editing or history. Once insertion has
+begun, Escape belongs to the foreground application again. This boundary also
+prevents a later dictation's Escape from interrupting clipboard restoration.
+
 ## Notes editing
 
 `notes::edit::Editor` edits `notes::model::Document` without UI dependencies.

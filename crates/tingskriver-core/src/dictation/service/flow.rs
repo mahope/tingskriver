@@ -193,6 +193,7 @@ impl Service {
                         ticket,
                         service: service.clone(),
                         flow: Flow::new(service.states.clone(), Some(tx)),
+                        pending: CANCELLATION.begin(),
                     };
                     turn.flow.set(DictationState::Recording);
                     let mut settings = service.settings();

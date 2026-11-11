@@ -8,6 +8,8 @@ export interface AppStyleSetting {
 export interface DictationSettings {
   enabled: boolean;
   shortcut: string;
+  shortcutMode: 'hold' | 'toggle' | 'hybrid' | 'double-tap';
+  hybridThresholdMs: number;
   engine: 'auto' | 'local';
   syvEndpoint: string;
   syvModel: string;
