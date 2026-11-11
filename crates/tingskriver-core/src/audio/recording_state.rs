@@ -1,10 +1,10 @@
+use anyhow::Result;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
-use anyhow::Result;
 
-use super::devices::AudioDevice;
 use super::buffer_pool::AudioBufferPool;
+use super::devices::AudioDevice;
 use super::recording_writer::{StorageSendError, StorageSender};
 use super::track_writer::TrackKind;
 
@@ -113,6 +113,7 @@ pub struct RecordingStats {
 
 /// Unified state management for audio recording
 pub struct RecordingState {
+    system_generation: Mutex<SystemGeneration>,
     // Core recording state
     is_recording: AtomicBool,
     is_paused: AtomicBool,
@@ -157,9 +158,84 @@ pub struct RecordingState {
     system_stream_error: Mutex<Option<String>>,
 }
 
+#[derive(Default)]
+struct SystemGeneration {
+    next: u64,
+    active: u64,
+    starts_at: f64,
+    last_end: f64,
+}
+
 impl RecordingState {
+    pub(super) fn new_system_generation(&self) -> u64 {
+        let mut generation = self
+            .system_generation
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        generation.next += 1;
+        // Standalone capture callers have no manager; only the first stream
+        // starts active. Every replacement waits for explicit installation.
+        if generation.next == 1 {
+            generation.active = 1;
+        }
+        generation.next
+    }
+
+    pub(super) fn activate_system_generation(&self, id: u64) {
+        let mut generation = self
+            .system_generation
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if generation.active != id {
+            generation.starts_at = self
+                .callback_position()
+                .unwrap_or_default()
+                .as_secs_f64()
+                .max(generation.last_end);
+            generation.active = id;
+        }
+    }
+
+    pub(super) fn send_generation_chunk(
+        &self,
+        id: Option<u64>,
+        mut chunk: AudioChunk,
+        position: Option<f64>,
+    ) -> Result<bool> {
+        // Hold the gate through enqueue: activation cannot race a checked sender.
+        let mut generation = self
+            .system_generation
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if id.is_some_and(|id| id != generation.active) {
+            return Ok(false);
+        }
+        if id.is_some() {
+            if let Some(end) = position {
+                // A candidate's DSP queue can still contain callbacks from before
+                // installation. Keep only samples on its side of the handover.
+                let keep = ((end - generation.starts_at).max(0.0) * chunk.sample_rate as f64)
+                    .round() as usize;
+                if keep == 0 {
+                    return Ok(false);
+                }
+                if keep < chunk.data.len() {
+                    chunk.data.drain(..chunk.data.len() - keep);
+                }
+            }
+        }
+        self.send_audio_chunk_at(chunk, position)?;
+        if id.is_some() {
+            if let Some(end) = position {
+                generation.last_end = generation.last_end.max(end);
+            }
+        }
+        Ok(true)
+    }
+
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
+            system_generation: Mutex::new(SystemGeneration::default()),
             is_recording: AtomicBool::new(false),
             is_paused: AtomicBool::new(false),
             active_origin_ns: AtomicU64::new(0),
@@ -256,7 +332,10 @@ impl RecordingState {
             .recording_start
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Instant::now());
-        self.error_window.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        self.error_window
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
         self.error_count.store(0, Ordering::SeqCst);
         self.recoverable_error_count.store(0, Ordering::SeqCst);
         *self
@@ -327,11 +406,20 @@ impl RecordingState {
             .take()
         {
             let pause_duration = pause_start.elapsed();
-            *self.total_pause_duration.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) += pause_duration;
-            log::info!("Recording resumed after pause of {:.2}s", pause_duration.as_secs_f64());
+            *self
+                .total_pause_duration
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) += pause_duration;
+            log::info!(
+                "Recording resumed after pause of {:.2}s",
+                pause_duration.as_secs_f64()
+            );
         }
 
-        self.active_origin_ns.fetch_add(clock_ns().saturating_sub(self.pause_clock_ns.load(Ordering::Acquire)), Ordering::AcqRel);
+        self.active_origin_ns.fetch_add(
+            clock_ns().saturating_sub(self.pause_clock_ns.load(Ordering::Acquire)),
+            Ordering::AcqRel,
+        );
         self.is_paused.store(false, Ordering::SeqCst);
         Ok(())
     }
@@ -345,8 +433,12 @@ impl RecordingState {
     }
 
     pub(super) fn callback_position(&self) -> Option<Duration> {
-        if !self.is_active() { return None; }
-        Some(Duration::from_nanos(clock_ns().saturating_sub(self.active_origin_ns.load(Ordering::Acquire))))
+        if !self.is_active() {
+            return None;
+        }
+        Some(Duration::from_nanos(clock_ns().saturating_sub(
+            self.active_origin_ns.load(Ordering::Acquire),
+        )))
     }
 
     pub fn is_active(&self) -> bool {
@@ -404,7 +496,11 @@ impl RecordingState {
         self.send_audio_chunk_at(chunk, self.get_active_recording_duration())
     }
 
-    pub(super) fn send_audio_chunk_at(&self, chunk: AudioChunk, position: Option<f64>) -> Result<()> {
+    pub(super) fn send_audio_chunk_at(
+        &self,
+        chunk: AudioChunk,
+        position: Option<f64>,
+    ) -> Result<()> {
         let kind = match chunk.device_type {
             DeviceType::Microphone => TrackKind::Microphone,
             DeviceType::System => TrackKind::System,
@@ -413,7 +509,9 @@ impl RecordingState {
             let guard = self.audio_sender.lock().unwrap_or_else(|e| e.into_inner());
             let Some(sender) = guard.as_ref() else {
                 // Return an error when no sender is available (pipeline not ready)
-                return Err(anyhow::anyhow!("Audio pipeline not ready - no sender available"));
+                return Err(anyhow::anyhow!(
+                    "Audio pipeline not ready - no sender available"
+                ));
             };
             sender.send(kind, chunk.data, position)
         };
@@ -424,7 +522,9 @@ impl RecordingState {
                 stats.last_activity = Some(Instant::now());
                 Ok(())
             }
-            Err(StorageSendError::Closed) => Err(anyhow::anyhow!("Recording writer channel closed")),
+            Err(StorageSendError::Closed) => {
+                Err(anyhow::anyhow!("Recording writer channel closed"))
+            }
         }
     }
 
@@ -457,18 +557,27 @@ impl RecordingState {
     fn report_error_at(&self, error: AudioError, now: Instant) {
         let should_stop = {
             let mut window = self.error_window.lock().unwrap_or_else(|e| e.into_inner());
-            while window.front().is_some_and(|(at, _)| now.saturating_duration_since(*at) >= Duration::from_secs(60)) {
+            while window.front().is_some_and(|(at, _)| {
+                now.saturating_duration_since(*at) >= Duration::from_secs(60)
+            }) {
                 window.pop_front();
             }
             window.push_back((now, error.is_recoverable()));
             let count = window.len() as u32;
-            let recoverable = window.iter().filter(|(_, recoverable)| *recoverable).count() as u32;
+            let recoverable = window
+                .iter()
+                .filter(|(_, recoverable)| *recoverable)
+                .count() as u32;
             self.error_count.store(count, Ordering::SeqCst);
-            self.recoverable_error_count.store(recoverable, Ordering::SeqCst);
+            self.recoverable_error_count
+                .store(recoverable, Ordering::SeqCst);
             !error.is_recoverable() || recoverable >= 10 || count >= 15
         };
         if should_stop && self.is_recording() {
-            log::error!("Stopping recording: {} (error limit within 60 seconds)", error.user_message());
+            log::error!(
+                "Stopping recording: {} (error limit within 60 seconds)",
+                error.user_message()
+            );
             self.stop_recording();
         }
 
@@ -486,7 +595,6 @@ impl RecordingState {
         {
             callback(&error);
         }
-
     }
 
     pub fn get_error_count(&self) -> u32 {
@@ -516,7 +624,10 @@ impl RecordingState {
             .map_or(true, |e| e.is_recoverable());
         if last_is_recoverable {
             self.recoverable_error_count.store(0, Ordering::SeqCst);
-            self.error_window.lock().unwrap_or_else(|e| e.into_inner()).clear();
+            self.error_window
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clear();
             self.error_count.store(0, Ordering::SeqCst);
         }
     }
@@ -549,20 +660,23 @@ impl RecordingState {
     }
 
     pub fn get_active_recording_duration(&self) -> Option<f64> {
-        self.recording_start.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).map(|start| {
-            let total_duration = start.elapsed().as_secs_f64();
-            let pause_duration = self.get_total_pause_duration();
-            let current_pause = if self.is_paused() {
-                self.pause_start
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner())
-                    .map(|p| p.elapsed().as_secs_f64())
-                    .unwrap_or(0.0)
-            } else {
-                0.0
-            };
-            total_duration - pause_duration - current_pause
-        })
+        self.recording_start
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .map(|start| {
+                let total_duration = start.elapsed().as_secs_f64();
+                let pause_duration = self.get_total_pause_duration();
+                let current_pause = if self.is_paused() {
+                    self.pause_start
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .map(|p| p.elapsed().as_secs_f64())
+                        .unwrap_or(0.0)
+                } else {
+                    0.0
+                };
+                total_duration - pause_duration - current_pause
+            })
     }
 
     pub fn get_total_pause_duration(&self) -> f64 {
@@ -627,7 +741,10 @@ impl RecordingState {
             .total_pause_duration
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = std::time::Duration::ZERO;
-        self.error_window.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        self.error_window
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
         self.error_count.store(0, Ordering::SeqCst);
         self.recoverable_error_count.store(0, Ordering::SeqCst);
 
@@ -653,6 +770,7 @@ impl super::device_follow::MicSignal for RecordingState {
 impl Default for RecordingState {
     fn default() -> Self {
         Self {
+            system_generation: Mutex::new(SystemGeneration::default()),
             is_recording: AtomicBool::new(false),
             is_paused: AtomicBool::new(false),
             active_origin_ns: AtomicU64::new(0),
@@ -694,12 +812,143 @@ mod poisoning_tests {
     use super::*;
 
     #[test]
+    fn replacement_trims_queued_audio_before_activation() {
+        use super::super::recording_writer::{spawn_writer, LogObserver};
+        use super::super::track_writer::read_wav_samples;
+        let dir = tempfile::tempdir().unwrap();
+        let state = RecordingState::default();
+        let (sender, writer) =
+            spawn_writer(dir.path().to_path_buf(), 1000, Arc::new(LogObserver)).unwrap();
+        state.set_audio_sender(sender);
+        let old = state.new_system_generation();
+        let new = state.new_system_generation();
+        let send = |id, device_type, data, end| {
+            state
+                .send_generation_chunk(
+                    id,
+                    AudioChunk {
+                        data,
+                        sample_rate: 1000,
+                        timestamp: 0.0,
+                        chunk_id: 1,
+                        device_type,
+                    },
+                    Some(end),
+                )
+                .unwrap()
+        };
+        assert!(send(Some(old), DeviceType::System, vec![0.25; 1000], 1.0));
+        assert!(send(None, DeviceType::Microphone, vec![0.5; 1000], 1.0));
+        state.activate_system_generation(new);
+        assert!(!send(Some(old), DeviceType::System, vec![0.9; 100], 1.1));
+        // This callback was captured before installation but processed afterwards.
+        assert!(!send(Some(new), DeviceType::System, vec![0.9; 100], 1.0));
+        let mut crossing = vec![0.9; 100];
+        crossing.extend_from_slice(&[0.5; 100]);
+        assert!(send(Some(new), DeviceType::System, crossing, 1.1));
+        assert!(send(Some(new), DeviceType::System, vec![0.5; 100], 1.2));
+        assert!(send(None, DeviceType::Microphone, vec![0.5; 200], 1.2));
+        state.close_audio_sender();
+        let summary = writer.join().unwrap();
+        assert_eq!(summary.tracks.len(), 2);
+        for (_, track) in &summary.tracks {
+            assert_eq!(track.offset_samples, 0);
+            assert_eq!(track.written_samples, 1200);
+            assert_eq!(track.silence_samples, 0);
+        }
+        let mut samples = Vec::new();
+        read_wav_samples(
+            &mut std::fs::File::open(dir.path().join("system_000.wav")).unwrap(),
+            0,
+            2000,
+            &mut samples,
+        )
+        .unwrap();
+        assert_eq!(samples.len(), 1200);
+        assert!(samples[..1000]
+            .iter()
+            .all(|&s| s == (0.25 * i16::MAX as f32).round() as i16));
+        assert!(samples[1000..]
+            .iter()
+            .all(|&s| s == (0.5 * i16::MAX as f32).round() as i16));
+    }
+
+    #[test]
+    fn only_active_generation_reaches_disk_on_shared_timeline() {
+        use super::super::recording_writer::{spawn_writer, LogObserver};
+        use super::super::track_writer::{read_wav_samples, WAV_HEADER_LEN};
+        let dir = tempfile::tempdir().unwrap();
+        let state = RecordingState::default();
+        let (sender, writer) =
+            spawn_writer(dir.path().to_path_buf(), 1000, Arc::new(LogObserver)).unwrap();
+        state.set_audio_sender(sender);
+        let old = state.new_system_generation();
+        let new = state.new_system_generation();
+        state.activate_system_generation(old);
+        let send = |id, device_type, value, end| {
+            state
+                .send_generation_chunk(
+                    id,
+                    AudioChunk {
+                        data: vec![value; 100],
+                        sample_rate: 1000,
+                        timestamp: 0.0,
+                        chunk_id: 1,
+                        device_type,
+                    },
+                    Some(end),
+                )
+                .unwrap()
+        };
+        // Opening a candidate must not write alongside the installed stream.
+        assert!(!send(Some(new), DeviceType::System, 0.9, 0.1));
+        assert!(send(Some(old), DeviceType::System, 0.25, 0.1));
+        assert!(send(None, DeviceType::Microphone, 0.5, 0.1));
+        state.activate_system_generation(new);
+        for end in [0.2, 0.3, 0.4] {
+            assert!(!send(Some(old), DeviceType::System, 0.9, end));
+            assert!(send(Some(new), DeviceType::System, 0.5, end));
+            assert!(send(None, DeviceType::Microphone, 0.5, end));
+        }
+        state.close_audio_sender();
+        let summary = writer.join().unwrap();
+        assert_eq!(summary.tracks.len(), 2);
+        for (_, track) in &summary.tracks {
+            assert_eq!(track.offset_samples, 0);
+            assert_eq!(track.written_samples, 400);
+            assert_eq!(track.silence_samples, 0);
+        }
+        let path = dir.path().join("system_000.wav");
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().len(),
+            WAV_HEADER_LEN + 800
+        );
+        let mut samples = Vec::new();
+        read_wav_samples(
+            &mut std::fs::File::open(path).unwrap(),
+            0,
+            400,
+            &mut samples,
+        )
+        .unwrap();
+        assert!(samples[..100]
+            .iter()
+            .all(|&s| s == (0.25 * i16::MAX as f32).round() as i16));
+        assert!(samples[100..]
+            .iter()
+            .all(|&s| s == (0.5 * i16::MAX as f32).round() as i16));
+    }
+
+    #[test]
     fn recoverable_errors_spread_over_an_hour_do_not_stop_recording() {
         let state = RecordingState::default();
         state.start_recording().unwrap();
         let start = Instant::now();
         for n in 0..20 {
-            state.report_error_at(AudioError::StreamFailed, start + Duration::from_secs(n * 180));
+            state.report_error_at(
+                AudioError::StreamFailed,
+                start + Duration::from_secs(n * 180),
+            );
             assert!(state.is_recording(), "stopped after error {}", n + 1);
         }
     }

@@ -68,6 +68,9 @@ pub enum SwitchReason {
     /// [`NO_FRAMES_FAILOVER_AFTER`]. Frames that only contain silence (mute)
     /// never count as this.
     NoFrames,
+    /// Another process plays on a different output device than the default
+    /// (see `render_follow`): the loopback follows the playback.
+    PlaybackFollowed,
 }
 
 /// How a running stream failed while its device is still listed.
@@ -97,6 +100,7 @@ impl fmt::Display for SwitchReason {
             SwitchReason::StreamMissing => "stream not running",
             SwitchReason::StreamError => "stream reported an error",
             SwitchReason::NoFrames => "stream delivered no audio frames",
+            SwitchReason::PlaybackFollowed => "meeting app plays on another device",
         };
         f.write_str(text)
     }
@@ -131,9 +135,15 @@ pub struct Evaluation {
 /// recorded twice.
 fn is_loopback_like(name: &str) -> bool {
     let lower = name.to_lowercase();
-    ["stereo mix", "stereomix", "what u hear", "cable output", "loopback"]
-        .iter()
-        .any(|p| lower.contains(p))
+    [
+        "stereo mix",
+        "stereomix",
+        "what u hear",
+        "cable output",
+        "loopback",
+    ]
+    .iter()
+    .any(|p| lower.contains(p))
 }
 
 /// Tracks one stream (microphone or system audio).
@@ -154,6 +164,10 @@ struct StreamTracker {
     /// The running stream is broken and must be reopened, even if no other
     /// device is available.
     broken: Option<StreamFailure>,
+    /// System audio only: the output device another process actually plays
+    /// to, while Windows' default is idle. Wins over the default, not over a
+    /// device the user picked.
+    playback: Option<String>,
 }
 
 impl StreamTracker {
@@ -165,6 +179,11 @@ impl StreamTracker {
         if let Some(pref) = &self.preferred {
             if snap.is_present(pref) && !self.is_failed(pref) {
                 return Some(pref.clone());
+            }
+        }
+        if let Some(playing) = &self.playback {
+            if snap.is_present(playing) && !self.is_failed(playing) {
+                return Some(playing.clone());
             }
         }
         match &snap.default_name {
@@ -216,6 +235,8 @@ impl StreamTracker {
                     failure.reason()
                 } else if self.preferred.as_deref() == Some(target.as_str()) {
                     SwitchReason::PreferredReturned
+                } else if self.playback.as_deref() == Some(target.as_str()) {
+                    SwitchReason::PlaybackFollowed
                 } else {
                     SwitchReason::DefaultChanged
                 };
@@ -277,6 +298,7 @@ impl DeviceFollower {
                 failures: 0,
                 failed: None,
                 broken: None,
+                playback: None,
             });
         }
         if track_system {
@@ -287,6 +309,7 @@ impl DeviceFollower {
                 failures: 0,
                 failed: None,
                 broken: None,
+                playback: None,
             });
         }
         Self { trackers }
@@ -357,6 +380,39 @@ impl DeviceFollower {
     /// The device of `kind` currently excluded after a stream failure, if any.
     pub fn failed(&self, kind: StreamKind) -> Option<&str> {
         self.tracker(kind).and_then(|t| t.failed.as_deref())
+    }
+
+    /// Set the output device another process plays to (`None`: follow the
+    /// default). Returns true if it changed.
+    pub fn set_playback_device(&mut self, device: Option<&str>) -> bool {
+        match self.tracker_mut(StreamKind::System) {
+            Some(t) if t.playback.as_deref() != device => {
+                t.playback = device.map(str::to_string);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// The output device being followed because a meeting app plays there.
+    pub fn playback_device(&self) -> Option<&str> {
+        self.tracker(StreamKind::System)
+            .and_then(|t| t.playback.as_deref())
+    }
+
+    /// A switch to `device` failed while the old stream was left running
+    /// (open-new-before-stop-old). The device is skipped until
+    /// [`clear_failed`](Self::clear_failed); the active stream stays.
+    /// Returns the delay before the next try.
+    pub fn target_open_failed(&mut self, kind: StreamKind, device: &str) -> Duration {
+        match self.tracker_mut(kind) {
+            Some(t) => {
+                t.failed = Some(device.to_string());
+                t.failures = t.failures.saturating_add(1);
+                retry_delay(t.failures)
+            }
+            None => retry_delay(1),
+        }
     }
 
     pub fn swap_succeeded(&mut self, kind: StreamKind, device: &str) {
@@ -1416,15 +1472,134 @@ mod tests {
             repair_double_utf8("Mikrofon pÃ¥ headset (Jabra Link 390)"),
             "Mikrofon på headset (Jabra Link 390)"
         );
-        assert_eq!(repair_double_utf8("HÃ¸jttalere (Senary Audio)"), "Højttalere (Senary Audio)");
+        assert_eq!(
+            repair_double_utf8("HÃ¸jttalere (Senary Audio)"),
+            "Højttalere (Senary Audio)"
+        );
         // Uppercase Ø is byte 0x98 in the second position: a cp1252 character.
         assert_eq!(repair_double_utf8("Ã˜ret"), "Øret");
     }
 
     #[test]
     fn leaves_correct_names_alone() {
-        for name in ["Mikrofon på headset", "Højttalere", "Speakers (Realtek(R) Audio)", "マイク"] {
+        for name in [
+            "Mikrofon på headset",
+            "Højttalere",
+            "Speakers (Realtek(R) Audio)",
+            "マイク",
+        ] {
             assert_eq!(repair_double_utf8(name), name);
         }
+    }
+
+    // ---- following the device a meeting app plays to ----
+
+    fn speakers_default_with_headset() -> (FakeDevices, DeviceFollower) {
+        let fake = FakeDevices::new(
+            &[LAPTOP_MIC, HEADSET_MIC],
+            LAPTOP_MIC,
+            &[SPEAKERS, HEADSET_OUT],
+            SPEAKERS,
+        );
+        let follower = DeviceFollower::new(
+            true,
+            None,
+            Some(LAPTOP_MIC.into()),
+            true,
+            None,
+            Some(SPEAKERS.into()),
+        );
+        (fake, follower)
+    }
+
+    #[test]
+    fn loopback_moves_to_the_playback_device_and_microphone_stays() {
+        let (fake, mut follower) = speakers_default_with_headset();
+        assert!(follower.set_playback_device(Some(HEADSET_OUT)));
+        let eval = follower.evaluate(&fake);
+        assert_eq!(
+            eval.switches,
+            vec![SwitchAction {
+                kind: StreamKind::System,
+                from: Some(SPEAKERS.into()),
+                to: HEADSET_OUT.into(),
+                reason: SwitchReason::PlaybackFollowed,
+            }]
+        );
+    }
+
+    #[test]
+    fn loopback_returns_to_default_when_playback_clears() {
+        let (fake, mut follower) = speakers_default_with_headset();
+        follower.set_playback_device(Some(HEADSET_OUT));
+        let eval = follower.evaluate(&fake);
+        apply(&mut follower, &eval);
+        assert!(follower.set_playback_device(None));
+        let eval = follower.evaluate(&fake);
+        assert_eq!(eval.switches.len(), 1);
+        assert_eq!(eval.switches[0].to, SPEAKERS);
+        assert_eq!(eval.switches[0].reason, SwitchReason::DefaultChanged);
+    }
+
+    #[test]
+    fn playback_device_that_is_gone_falls_back_to_default() {
+        let (fake, mut follower) = speakers_default_with_headset();
+        follower.set_playback_device(Some(HEADSET_OUT));
+        let eval = follower.evaluate(&fake);
+        apply(&mut follower, &eval);
+        fake.set(StreamKind::System, &[SPEAKERS], Some(SPEAKERS));
+        let eval = follower.evaluate(&fake);
+        assert_eq!(eval.switches.len(), 1);
+        assert_eq!(eval.switches[0].to, SPEAKERS);
+        assert_eq!(eval.switches[0].reason, SwitchReason::ActiveDisappeared);
+    }
+
+    #[test]
+    fn user_picked_output_wins_over_playback() {
+        let fake = FakeDevices::new(
+            &[LAPTOP_MIC],
+            LAPTOP_MIC,
+            &[SPEAKERS, HEADSET_OUT, "USB DAC"],
+            SPEAKERS,
+        );
+        let mut follower = DeviceFollower::new(
+            true,
+            None,
+            Some(LAPTOP_MIC.into()),
+            true,
+            Some("USB DAC".into()),
+            Some("USB DAC".into()),
+        );
+        follower.set_playback_device(Some(HEADSET_OUT));
+        assert_eq!(follower.evaluate(&fake), Evaluation::default());
+    }
+
+    #[test]
+    fn microphone_ignores_playback_device() {
+        let (fake, mut follower) = speakers_default_with_headset();
+        follower.set_playback_device(Some(HEADSET_OUT));
+        let eval = follower.evaluate(&fake);
+        assert!(eval.switches.iter().all(|s| s.kind == StreamKind::System));
+    }
+
+    #[test]
+    fn failed_playback_target_keeps_the_old_stream_and_is_skipped() {
+        let (fake, mut follower) = speakers_default_with_headset();
+        follower.set_playback_device(Some(HEADSET_OUT));
+        let delay = follower.target_open_failed(StreamKind::System, HEADSET_OUT);
+        assert_eq!(delay, retry_delay(1));
+        assert_eq!(follower.active(StreamKind::System), Some(SPEAKERS));
+        assert_eq!(follower.evaluate(&fake), Evaluation::default());
+        follower.clear_failed(StreamKind::System);
+        assert_eq!(follower.evaluate(&fake).switches.len(), 1);
+    }
+
+    #[test]
+    fn set_playback_device_reports_changes_only() {
+        let (_fake, mut follower) = speakers_default_with_headset();
+        assert!(!follower.set_playback_device(None));
+        assert!(follower.set_playback_device(Some(HEADSET_OUT)));
+        assert!(!follower.set_playback_device(Some(HEADSET_OUT)));
+        assert_eq!(follower.playback_device(), Some(HEADSET_OUT));
     }
 }

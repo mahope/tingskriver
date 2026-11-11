@@ -5,6 +5,79 @@ viser stadig en levende strøm. Manglende buffere i mindst 2 sekunder eller en
 strømfejl kan give failover. En fjernet enhed, Windows' ændrede standardenhed
 og en tilbagevendt valgt enhed kan også give skift. Lydindhold afgør aldrig skift.
 
+## Systemlyd følger den enhed, mødeprogrammet afspiller til
+
+Teams og Zoom kan afspille til et headset, mens Windows' standardudgang er
+højttalerne. En loopback på standardenheden er så stille, og fjernstemmerne
+går tabt. Derfor spørger følgeren hvert 2. sekund Windows, hvilke udgange der
+har en aktiv lydsession fra en anden proces end Tingskriver selv
+(`windows_render_sessions.rs`). Beslutningen ligger i `render_follow.rs` og
+er ren og testet:
+
+- Er standardenheden aktiv, sker der intet skift. Standardenheden vinder
+  også ved lighed (begge afspiller).
+- Er standardenheden inaktiv og en anden enhed aktiv i to polls i træk, flytter
+  systemlyden til den enhed. Et enkelt udsving giver intet skift.
+- Tilbage til standardenheden kræver samme to bekræftelser, så en kort
+  systemlyd på højttalerne ikke får loopbacken til at hoppe.
+- En poll, hvor intet afspiller nogen steder, ændrer ingenting: en pause i
+  mødet flytter ikke loopbacken.
+- Har brugeren valgt en anden udgang end den aktuelle Windows-standard,
+  følges afspilningen ikke. Valg af den aktuelle standard låser ikke udgangen:
+  den følger fortsat standarden og aktive sessioner.
+- Mikrofonen berøres aldrig af dette.
+
+Den nye loopback åbnes, før den gamle lukkes. Kan den nye ikke åbnes, er den
+gamle urørt, og enheden springes over, til Windows melder en ændring eller der
+er gået 2 minutter. Swappet under låsen tager normalt under 1 ms;
+stilhedsfylderen (højst 1 s) bruges
+ved de øvrige skift, fx når en enhed forsvinder.
+
+"Aktiv" betyder en åben aktiv Windows-lydsession, også når den sender
+stilhed. En browser eller WebRTC-session på standardhøjttalerne kan derfor
+få loopbacken til at vælge højttalerne frem for headsettet, selv om det kun
+er headsettet, der afspiller hørbar mødetale.
+
+Kun den installerede streamgeneration må sende lyd til systemsporet. Den nye
+loopback afvises indtil installationen; derefter afvises den gamle, også hvis
+dens stop hænger. Køet lyd fra den nye stream før aktiveringsgrænsen afvises;
+en buffer hen over grænsen trimmes, så systemsporet ikke forlænges med overlap.
+Grænsen følger optagelsesuret og ligger aldrig før den gamle streams sidst
+afsendte lyd. Loggen viser generation og `dropped_chunks` ved første
+afvisning og for hver 100 afviste chunks. Swap-tiden under låsen måler ikke
+det faktiske lydhul; dette skal stadig måles i den manuelle prøve.
+
+Hvert skift logges som `[DEVICE_FOLLOW]`:
+
+- `[DEVICE_FOLLOW] Playback: <default> -> '…' (Windows default: '…', playing: …)`
+- `[DEVICE_FOLLOW] Switching system audio: '…' -> '…' (meeting app plays on another device)`
+- `[DEVICE_FOLLOW] system audio moved '…' -> '…' (…): new loopback opened before the old one was stopped, gap … ms, took … ms`
+
+## Transporttype fra bus-enumeratoren, ikke fra navnet
+
+Bufferens timeouts afhænger af, om en enhed er trådløs. Navnet er ikke en
+pålidelig kilde: et Jabra-headset med USB-dongle (Link 390) hedder "Jabra", men
+er USB. På Windows læses derfor enhedens adapter-sti via
+`IDeviceTopology::GetConnector(0).GetDeviceIdConnectedTo()`
+(`windows_device_topology.rs`), og første segment, bus-enumeratoren, afgør
+typen (`device_transport.rs`):
+
+| Enumerator | Type | Timeouts |
+| --- | --- | --- |
+| `bth…` (BTHENUM, BTHHFENUM, BTHLEENUM) | Bluetooth | 80–200 ms |
+| `usb…` | USB | 20–50 ms |
+| `hdaudio`, `intelaudio`, `pci`, `acpi` | indbygget | 20–50 ms |
+| `swd`, `root` | virtuel | 20–50 ms |
+
+Kan topologien ikke læses (enheden er væk, COM fejler, ukendt bus), bruges
+navnet og buffer-heuristikken som før, og loggen siger det:
+`Cannot read the bus of '…' from the device topology (…); falling back to the
+device name`. `pipeline.rs` logger, hvilken bus der blev fundet, og hvilke
+timeouts der følger af den.
+
+Tingskriver bytter aldrig brugerens valgte eller Windows' standardmikrofon ud
+for at undgå Bluetooth-hands-free: reglen er at følge Windows' standardenhed.
+
 ## Automatiske beslutningstests
 
 `cargo test -p tingskriver-core --test device_decisions -- --nocapture` kører
@@ -95,3 +168,57 @@ at bruge lydindhold som fejlsignal. Issue #21 kan først lukkes, når prøven
 også er dokumenteret som bestået her.
 
 Bemærkninger og dokumentation: __________
+
+## Manuel testplan: afspilningsenhed og transporttype (#199 og #182)
+
+Kræver Windows og rigtige enheder. Syntetisk tale og testlyd uden
+personoplysninger. Notér build/commit og Windows-version.
+
+### A. Teams på headset, standard = højttalere (#199)
+
+1. Sæt Windows' standardudgang til højttalerne. Åbn Teams (eller Zoom), og vælg
+   headsettet som højttaler i mødeprogrammets egne indstillinger.
+2. Åbn loggen på info-niveau for `tingskriver_core::audio`. Start en optagelse
+   med mikrofon og systemlyd.
+3. Afspil testlyd til Teams-headsettet (fx et testopkald eller en lyd i et
+   møde). Vent mindst 6 sekunder.
+4. Bekræft i loggen `[DEVICE_FOLLOW] Playback: <default> -> 'Headset …'` og en
+   `moved … gap … ms`-linje. Gap skal være under 1000 ms.
+5. Stop optagelsen. Systemsporet skal indeholde testlyden fra headsettet,
+   også tiden før skiftet, hvis lyden allerede spillede (første ca. 4 s kan
+   mangle: to polls á 2 s).
+6. Afspil lyd til højttalerne (standard) samtidig med headsettet. Efter to
+   polls skal loggen vise skift tilbage til standard (standard vinder).
+7. Vælg en bestemt udgang til systemlyd i optagelsen, og gentag trin 3: der
+   må ikke komme `Playback:`-skift.
+
+| Kontrol | Resultat | Bestået? |
+| --- | --- | --- |
+| Fjerntale fra Teams-headsettet i systemsporet | | |
+| Loggen viser `Playback:` og `moved … gap … ms` | | |
+| Største hul i systemsporet ved skiftet ≤ 1 s | | |
+| Standard aktiv giver intet skift | | |
+| Valgt udgang følges ikke | | |
+
+### B. Transporttype (#182)
+
+For hver enhed: start en optagelse, og find linjen `bus …` fra `pipeline.rs`
+og `Bus of '…' is …` fra enhedsdetektionen.
+
+| Enhed | Forventet bus | Forventede timeouts | Fundet | Bestået? |
+| --- | --- | --- | --- | --- |
+| Bluetooth-headset (A2DP og hands-free) | Bluetooth | 80–200 ms | | |
+| USB-headset | USB | 20–50 ms | | |
+| Headset med USB-dongle, navn med "Jabra" | USB, ikke Bluetooth | 20–50 ms | | |
+| Indbygget mikrofon/højttaler | built-in | 20–50 ms | | |
+| Virtuel kabel (fx VB-Cable) | virtual | 20–50 ms | | |
+
+Fald-tilbage: afbryd en enhed lige efter optagelsens start, så topologien ikke
+kan læses; loggen skal sige `falling back to the device name`.
+Brugerens valgte eller standardmikrofon må aldrig blive byttet ud.
+
+### C. Hot-swap
+
+Gentag protokollen "Manuel Windows-protokol: 10 minutter" ovenfor med et
+Bluetooth-headset og bagefter et USB-headset. Under afbrydelsen skal systemsporets
+hul være højst 1 s, og følgeren må ikke melde `FAILED`.

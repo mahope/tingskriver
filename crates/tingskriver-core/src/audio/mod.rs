@@ -24,6 +24,7 @@ pub mod buffer_pool;
 mod callback_queue;
 pub mod device_follow; // Default-device following decisions (Windows hot-swap)
 pub mod device_monitor; // NEW: Device disconnect/reconnect monitoring
+pub mod device_transport; // Bus (USB/Bluetooth/built-in) from the adapter path
 pub(crate) mod disk_guard;
 pub mod finalize; // Raw tracks -> verified final files (after stop or a crash)
 pub mod hardware_detector;
@@ -38,6 +39,7 @@ pub mod recording_preferences;
 pub mod recording_saver;
 pub mod recording_state;
 pub mod recording_writer; // Writer thread: capture -> bounded channel -> track files
+pub mod render_follow; // Which playback device the system-audio loopback follows
 pub mod simple_level_monitor;
 pub mod stream;
 pub mod system_detector;
@@ -45,7 +47,11 @@ pub mod track_writer; // One track written continuously as WAV segments
 #[cfg(target_os = "windows")]
 pub mod windows_device_follower;
 #[cfg(target_os = "windows")]
-pub mod windows_endpoint_notifier; // NEW: Playback device detection for BT warnings
+pub mod windows_device_topology;
+#[cfg(target_os = "windows")]
+pub mod windows_endpoint_notifier;
+#[cfg(target_os = "windows")]
+pub mod windows_render_sessions; // NEW: Playback device detection for BT warnings
 
 // Transcription module (provider abstraction, engine management, worker pool)
 pub mod transcription;

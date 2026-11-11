@@ -23,9 +23,9 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::host::{HostExt, HostHandle};
 use cpal::traits::{DeviceTrait, HostTrait};
 use log::{debug, error, info, warn};
-use crate::host::{HostExt, HostHandle};
 use tokio::sync::mpsc;
 
 use super::device_follow::{
@@ -36,8 +36,10 @@ use super::device_follow::{
 use super::device_monitor::DeviceEvent;
 use super::recording_commands::{session_live, RECORDING_MANAGER};
 use super::recording_state::{AudioChunk, DeviceType as RecordingDeviceType, RecordingState};
+use super::render_follow::{RenderSelector, MAX_SWITCH_GAP, POLL_INTERVAL as RENDER_POLL_INTERVAL};
 use super::stream::AudioStream;
 use super::windows_endpoint_notifier::{EndpointEvent, EndpointNotifier};
+use super::windows_render_sessions;
 use super::{AudioDevice, DeviceType};
 
 /// Wait for the burst of notifications that one plug/unplug produces to
@@ -161,35 +163,44 @@ async fn tear_down(kind: StreamKind, session: &Arc<RecordingState>) -> Result<()
         }
     };
     if let Some(stream) = old {
-        // cpal stop/drop on a removed device can block for many seconds
-        // (Bluetooth and USB headsets). Give it a moment, then carry on
-        // without it: the blocking thread finishes the stop by itself.
-        let stopping = tokio::task::spawn_blocking(move || stream.stop());
-        match tokio::time::timeout(STREAM_STOP_TIMEOUT, stopping).await {
-            Ok(Ok(Err(e))) => warn!(
-                "[DEVICE_FOLLOW] Stopping old {} stream failed (ignored): {}",
-                kind, e
-            ),
-            Ok(Err(e)) => warn!(
-                "[DEVICE_FOLLOW] Stopping old {} stream panicked (ignored): {}",
-                kind, e
-            ),
-            Ok(Ok(Ok(()))) => {}
-            Err(_) => warn!(
-                "[DEVICE_FOLLOW] Stopping old {} stream took over {:?}; continuing without waiting",
-                kind, STREAM_STOP_TIMEOUT
-            ),
-        }
+        stop_old_stream(kind, stream).await;
     }
     Ok(())
 }
 
-/// Open `kind` on `device_name` and install it in the manager.
-async fn open_on(
+/// Stop a stream that has been taken out of the manager.
+async fn stop_old_stream(kind: StreamKind, stream: AudioStream) {
+    let dropped = stream.dropped_generation_chunks.clone();
+    // cpal stop/drop on a removed device can block for many seconds
+    // (Bluetooth and USB headsets). Give it a moment, then carry on
+    // without it: the blocking thread finishes the stop by itself.
+    let stopping = tokio::task::spawn_blocking(move || stream.stop());
+    match tokio::time::timeout(STREAM_STOP_TIMEOUT, stopping).await {
+        Ok(Ok(Err(e))) => warn!(
+            "[DEVICE_FOLLOW] Stopping old {} stream failed (ignored): {}",
+            kind, e
+        ),
+        Ok(Err(e)) => warn!(
+            "[DEVICE_FOLLOW] Stopping old {} stream panicked (ignored): {}",
+            kind, e
+        ),
+        Ok(Ok(Ok(()))) => {}
+        Err(_) => warn!(
+            "[DEVICE_FOLLOW] Stopping old {} stream took over {:?}; continuing without waiting",
+            kind, STREAM_STOP_TIMEOUT
+        ),
+    }
+    if kind == StreamKind::System {
+        info!("[DEVICE_FOLLOW] Old system stream stop wait finished: dropped_chunks={} (more may follow after a stop timeout)", dropped.load(Ordering::Relaxed));
+    }
+}
+
+/// Open a stream of `kind` on `device_name` without installing it.
+async fn create_stream(
     kind: StreamKind,
     device_name: &str,
     session: &Arc<RecordingState>,
-) -> Result<(), String> {
+) -> Result<(AudioStream, Arc<AudioDevice>), String> {
     let device = Arc::new(AudioDevice::new(
         device_name.to_string(),
         match kind {
@@ -219,6 +230,54 @@ async fn open_on(
         .map_err(|_| format!("opening stream timed out after {:?}", STREAM_OPEN_TIMEOUT))?
         .map_err(|e| format!("opening stream panicked: {}", e))?
         .map_err(|e| format!("failed to open stream: {}", e))?;
+    Ok((stream, device))
+}
+
+/// Move the system-audio loopback to `device_name` while the old loopback
+/// keeps running: the new stream is opened first, then swapped in, and only
+/// then is the old one stopped. If the new stream cannot be opened the old
+/// one is untouched. Returns the stretch during which no stream was
+/// installed (the swap under the manager lock, normally microseconds).
+async fn swap_system_open_first(
+    device_name: &str,
+    session: &Arc<RecordingState>,
+) -> Result<Duration, String> {
+    let (stream, device) = create_stream(StreamKind::System, device_name, session).await?;
+    let swapped = {
+        let mut guard = RECORDING_MANAGER
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match guard.as_mut() {
+            Some(manager) if Arc::ptr_eq(manager.get_state(), session) => {
+                let started = Instant::now();
+                let old = manager.take_system_stream_for_swap();
+                manager.set_system_stream_after_swap(stream, device);
+                Ok((old, started.elapsed()))
+            }
+            _ => Err(stream),
+        }
+    };
+    match swapped {
+        Ok((old, gap)) => {
+            if let Some(old) = old {
+                stop_old_stream(StreamKind::System, old).await;
+            }
+            Ok(gap)
+        }
+        Err(stream) => {
+            let _ = tokio::task::spawn_blocking(move || stream.stop()).await;
+            Err("Session changed while opening stream".to_string())
+        }
+    }
+}
+
+/// Open `kind` on `device_name` and install it in the manager.
+async fn open_on(
+    kind: StreamKind,
+    device_name: &str,
+    session: &Arc<RecordingState>,
+) -> Result<(), String> {
+    let (stream, device) = create_stream(kind, device_name, session).await?;
 
     let rejected = {
         let mut guard = RECORDING_MANAGER
@@ -254,9 +313,55 @@ struct Follower {
     failed_since: HashMap<StreamKind, Instant>,
     /// Fails the microphone over when it delivers no frames; ignores mute.
     mic_watchdog: MicWatchdog,
+    /// Confirms which output device another process plays to.
+    render: RenderSelector,
+    /// The user picked the system-audio device: playback is not followed.
+    system_pinned: bool,
+    /// The playback device changed and the loopback has not moved yet. The
+    /// move back to the default (reason "default device changed") then also
+    /// opens the new loopback first.
+    playback_move_pending: bool,
 }
 
 impl Follower {
+    /// Poll which output devices another process plays to (once per
+    /// `RENDER_POLL_INTERVAL`) and tell the follower. Returns true if the
+    /// loopback should be re-evaluated now.
+    async fn poll_playback(&mut self) -> bool {
+        if self.system_pinned {
+            return false;
+        }
+        let observation = match tokio::task::spawn_blocking(windows_render_sessions::poll).await {
+            Ok(Ok(obs)) => obs,
+            Ok(Err(e)) => {
+                debug!("[DEVICE_FOLLOW] Playback poll failed: {}", e);
+                return false;
+            }
+            Err(e) => {
+                warn!("[DEVICE_FOLLOW] Playback poll panicked: {}", e);
+                return false;
+            }
+        };
+        let previous = self.follower.playback_device().map(str::to_string);
+        let wanted = self.render.observe(&observation).map(str::to_string);
+        if !self.follower.set_playback_device(wanted.as_deref()) {
+            return false;
+        }
+        self.playback_move_pending = true;
+        info!(
+            "[DEVICE_FOLLOW] Playback: {} -> {} (Windows default: {}, playing: {})",
+            previous.as_deref().unwrap_or("<default>"),
+            wanted.as_deref().unwrap_or("<default>"),
+            observation.default.as_deref().unwrap_or("<none>"),
+            if observation.active.is_empty() {
+                "<nothing>".to_string()
+            } else {
+                observation.active.join(", ")
+            }
+        );
+        true
+    }
+
     async fn evaluate(&mut self) -> Option<Duration> {
         let snapshot_follower = self.follower.clone();
         let eval =
@@ -277,6 +382,11 @@ impl Follower {
         };
 
         for (kind, device) in &eval.lost {
+            if *kind == StreamKind::System {
+                self.render.reset();
+                self.follower.set_playback_device(None);
+                self.playback_move_pending = false;
+            }
             if self.follower.active(*kind).is_none() {
                 continue;
             }
@@ -310,6 +420,11 @@ impl Follower {
     /// Perform one switch. Returns a retry delay if it failed.
     async fn switch(&mut self, action: SwitchAction) -> Option<Duration> {
         let kind = action.kind;
+        if kind == StreamKind::System && action.reason == SwitchReason::ActiveDisappeared {
+            self.render.reset();
+            self.follower.set_playback_device(None);
+            self.playback_move_pending = false;
+        }
         info!(
             "[DEVICE_FOLLOW] Switching {}: '{}' -> '{}' ({})",
             kind,
@@ -332,21 +447,41 @@ impl Follower {
         if old_stream_dead {
             self.ensure_keeper(kind);
         }
-        let result = match tear_down(kind, &self.session).await {
-            Ok(()) => {
-                self.ensure_keeper(kind);
-                open_on(kind, &action.to, &self.session).await
+        // Following the playback device: the old loopback still works (it
+        // just hears nothing), so open the new one first and keep the old
+        // one until the new one is in place. Nothing is lost in between.
+        let open_first = kind == StreamKind::System
+            && (action.reason == SwitchReason::PlaybackFollowed
+                || (self.playback_move_pending && action.reason == SwitchReason::DefaultChanged))
+            && self.follower.active(kind).is_some();
+        if kind == StreamKind::System {
+            self.playback_move_pending = false;
+        }
+        let mut open_first_gap = None;
+        let result = if open_first {
+            swap_system_open_first(&action.to, &self.session)
+                .await
+                .map(|gap| open_first_gap = Some(gap))
+        } else {
+            match tear_down(kind, &self.session).await {
+                Ok(()) => {
+                    self.ensure_keeper(kind);
+                    open_on(kind, &action.to, &self.session).await
+                }
+                Err(e) => Err(e),
             }
-            Err(e) => Err(e),
         };
 
         match result {
             Ok(()) => {
-                let gap = self
-                    .keepers
-                    .remove(&kind)
-                    .map(SilenceKeeper::stop)
-                    .unwrap_or_else(|| started.elapsed());
+                let gap = match open_first_gap {
+                    Some(gap) => gap,
+                    None => self
+                        .keepers
+                        .remove(&kind)
+                        .map(SilenceKeeper::stop)
+                        .unwrap_or_else(|| started.elapsed()),
+                };
                 // A new microphone stream is judged on its own frames.
                 self.mic_watchdog.swap_succeeded(
                     &mut self.follower,
@@ -361,7 +496,27 @@ impl Follower {
                 // Errors reported by the stream that died must not add up to
                 // the "too many errors" stop over a long meeting.
                 self.session.clear_recoverable_errors();
-                info!("[DEVICE_FOLLOW] {}", describe_switch(&action, gap, Ok(())));
+                if open_first {
+                    info!(
+                        "[DEVICE_FOLLOW] {} moved '{}' -> '{}' ({}): new loopback opened before the old one was stopped, gap {} ms, took {} ms",
+                        kind,
+                        action.from.as_deref().unwrap_or("<none>"),
+                        action.to,
+                        action.reason,
+                        gap.as_millis(),
+                        started.elapsed().as_millis()
+                    );
+                    if gap > MAX_SWITCH_GAP {
+                        warn!(
+                            "[DEVICE_FOLLOW] {} gap {} ms is over the {} ms limit",
+                            kind,
+                            gap.as_millis(),
+                            MAX_SWITCH_GAP.as_millis()
+                        );
+                    }
+                } else {
+                    info!("[DEVICE_FOLLOW] {}", describe_switch(&action, gap, Ok(())));
+                }
                 let event = match kind {
                     StreamKind::Microphone => "mic-device-switched",
                     StreamKind::System => "system-device-switched",
@@ -376,6 +531,17 @@ impl Follower {
                     }),
                 );
                 None
+            }
+            Err(e) if open_first && self.follower.active(kind).is_some() => {
+                // The old loopback was never touched and keeps running.
+                let delay = self.follower.target_open_failed(kind, &action.to);
+                self.failed_since.insert(kind, Instant::now());
+                warn!(
+                    "[DEVICE_FOLLOW] {}; keeping the old loopback, retrying in {:?}",
+                    describe_switch(&action, started.elapsed(), Err(e.as_str())),
+                    delay
+                );
+                Some(delay)
             }
             Err(e) => {
                 let delay = self.follower.swap_failed(kind);
@@ -579,6 +745,7 @@ pub fn spawn(
         let system_active = session.get_system_device().map(|d| d.name.clone());
         let mic_preferred = preferred_device(requested_mic.as_deref(), defaults.0.as_deref());
         let system_preferred = preferred_device(requested_system.as_deref(), defaults.1.as_deref());
+        let system_preferred_pinned = system_preferred.is_some();
         info!(
             "[DEVICE_FOLLOW] Started: mic '{}' ({}), system audio '{}' ({})",
             mic_active.as_deref().unwrap_or("<none>"),
@@ -613,6 +780,9 @@ pub fn spawn(
             keepers: HashMap::new(),
             failed_since: HashMap::new(),
             mic_watchdog: MicWatchdog::new(Instant::now()),
+            render: RenderSelector::new(),
+            system_pinned: system_preferred_pinned,
+            playback_move_pending: false,
         };
         let mut monitor_events = monitor_events;
         let mut notifier_alive = notifier.is_some();
@@ -624,6 +794,8 @@ pub fn spawn(
         let mut seen_live = false;
         let mut health_tick = tokio::time::interval(HEALTH_CHECK);
         health_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut render_tick = tokio::time::interval(RENDER_POLL_INTERVAL);
+        render_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         // The health tick wakes the loop often, so the heartbeat deadline
         // must outlive an iteration.
         let mut next_heartbeat = tokio::time::Instant::now() + HEARTBEAT;
@@ -679,6 +851,11 @@ pub fn spawn(
                 }
                 _ = health_tick.tick() => {
                     if state.check_streams() {
+                        check_at = Some(tokio::time::Instant::now());
+                    }
+                }
+                _ = render_tick.tick() => {
+                    if state.poll_playback().await {
                         check_at = Some(tokio::time::Instant::now());
                     }
                 }

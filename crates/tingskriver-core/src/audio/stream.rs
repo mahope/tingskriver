@@ -1,14 +1,14 @@
-use std::sync::Arc;
 use anyhow::Result;
 use cpal::traits::{DeviceTrait, StreamTrait};
 use cpal::{Device, Stream, SupportedStreamConfig};
 use log::{error, info, warn};
+use std::sync::Arc;
 
-use super::devices::{AudioDevice, get_device_and_config};
+use super::capture::{get_current_backend, AudioCaptureBackend};
+use super::devices::{get_device_and_config, AudioDevice};
 use super::pipeline::AudioCapture;
+use super::recording_state::{DeviceType, RecordingState};
 use super::recording_writer::StorageSender;
-use super::recording_state::{RecordingState, DeviceType};
-use super::capture::{AudioCaptureBackend, get_current_backend};
 
 #[cfg(target_os = "macos")]
 use super::capture::CoreAudioCapture;
@@ -70,9 +70,11 @@ impl CaptureWorker {
                         if let Some((len, stamp, lost)) = output.pop_into(&mut raw) {
                             if lost > 0 {
                                 let mut gap_end = stamp;
-                                gap_end.position = stamp.position.saturating_sub(std::time::Duration::from_secs_f64(
-                                    len as f64 / channels as f64 / sample_rate as f64,
-                                ));
+                                gap_end.position = stamp.position.saturating_sub(
+                                    std::time::Duration::from_secs_f64(
+                                        len as f64 / channels as f64 / sample_rate as f64,
+                                    ),
+                                );
                                 capture.process_capture_loss(lost, gap_end);
                             }
                             last_stamp = stamp;
@@ -140,6 +142,9 @@ impl Drop for CaptureWorker {
 
 /// Simplified audio stream wrapper with multi-backend support
 pub struct AudioStream {
+    #[cfg(target_os = "windows")]
+    pub(super) dropped_generation_chunks: Arc<std::sync::atomic::AtomicU64>,
+    system_generation: Option<(Arc<RecordingState>, u64)>,
     device: Arc<AudioDevice>,
     backend: StreamBackend,
     /// Kept to flush the resampler tail after the callbacks stopped.
@@ -171,33 +176,40 @@ impl AudioStream {
         recording_sender: Option<StorageSender>,
         backend_type: AudioCaptureBackend,
     ) -> Result<Self> {
-        info!("🎵 Stream: Creating audio stream for device: {} with backend: {:?}, device_type: {:?}",
-              device.name, backend_type, device_type);
+        info!(
+            "🎵 Stream: Creating audio stream for device: {} with backend: {:?}, device_type: {:?}",
+            device.name, backend_type, device_type
+        );
 
         // For system audio devices, use the selected backend
         // For microphone devices, always use CPAL
         #[cfg(target_os = "macos")]
-        let use_core_audio = device_type == DeviceType::System
-            && backend_type == AudioCaptureBackend::CoreAudio;
+        let use_core_audio =
+            device_type == DeviceType::System && backend_type == AudioCaptureBackend::CoreAudio;
 
         #[cfg(not(target_os = "macos"))]
         let use_core_audio = false;
 
         #[cfg(target_os = "macos")]
-        info!("🎵 Stream: use_core_audio = {}, device_type == System: {}, backend == CoreAudio: {}",
-              use_core_audio,
-              device_type == DeviceType::System,
-              backend_type == AudioCaptureBackend::CoreAudio);
+        info!(
+            "🎵 Stream: use_core_audio = {}, device_type == System: {}, backend == CoreAudio: {}",
+            use_core_audio,
+            device_type == DeviceType::System,
+            backend_type == AudioCaptureBackend::CoreAudio
+        );
 
         #[cfg(not(target_os = "macos"))]
-        info!("🎵 Stream: use_core_audio = {}, device_type == System: {}",
-              use_core_audio,
-              device_type == DeviceType::System);
+        info!(
+            "🎵 Stream: use_core_audio = {}, device_type == System: {}",
+            use_core_audio,
+            device_type == DeviceType::System
+        );
 
         #[cfg(target_os = "macos")]
         if use_core_audio {
             info!("🎵 Stream: Using Core Audio backend (cidre) for system audio");
-            return Self::create_core_audio_stream(device, state, device_type, recording_sender).await;
+            return Self::create_core_audio_stream(device, state, device_type, recording_sender)
+                .await;
         }
 
         // Default path: use CPAL
@@ -211,7 +223,10 @@ impl AudioStream {
         #[cfg(not(target_os = "macos"))]
         let backend_name = "CPAL";
 
-        info!("🎵 Stream: Using CPAL backend ({}) for device: {}", backend_name, device.name);
+        info!(
+            "🎵 Stream: Using CPAL backend ({}) for device: {}",
+            backend_name, device.name
+        );
         Self::create_cpal_stream(device, state, device_type, recording_sender).await
     }
 
@@ -227,8 +242,12 @@ impl AudioStream {
         // Get the underlying cpal device and config
         let (cpal_device, config) = get_device_and_config(&device).await?;
 
-        info!("Audio config - Sample rate: {}, Channels: {}, Format: {:?}",
-              config.sample_rate().0, config.channels(), config.sample_format());
+        info!(
+            "Audio config - Sample rate: {}, Channels: {}, Format: {:?}",
+            config.sample_rate().0,
+            config.channels(),
+            config.sample_format()
+        );
 
         // Create audio capture processor
         let capture = AudioCapture::new(
@@ -248,6 +267,9 @@ impl AudioStream {
         info!("CPAL stream started for device: {}", device.name);
 
         Ok(Self {
+            #[cfg(target_os = "windows")]
+            dropped_generation_chunks: capture.dropped_generation_chunks.clone(),
+            system_generation: capture.system_generation.map(|id| (state.clone(), id)),
             device,
             backend: StreamBackend::Cpal(stream),
             capture: None,
@@ -263,25 +285,29 @@ impl AudioStream {
         device_type: DeviceType,
         recording_sender: Option<StorageSender>,
     ) -> Result<Self> {
-        info!("🔊 Stream: Creating Core Audio stream for device: {}", device.name);
+        info!(
+            "🔊 Stream: Creating Core Audio stream for device: {}",
+            device.name
+        );
 
         // Create Core Audio capture
         info!("🔊 Stream: Calling CoreAudioCapture::new()...");
-        let capture_impl = CoreAudioCapture::new()
-            .map_err(|e| {
-                error!("❌ Stream: CoreAudioCapture::new() failed: {}", e);
-                anyhow::anyhow!("Failed to create Core Audio capture: {}", e)
-            })?;
+        let capture_impl = CoreAudioCapture::new().map_err(|e| {
+            error!("❌ Stream: CoreAudioCapture::new() failed: {}", e);
+            anyhow::anyhow!("Failed to create Core Audio capture: {}", e)
+        })?;
 
         info!("✅ Stream: CoreAudioCapture created, calling stream()...");
-        let core_stream = capture_impl.stream()
-            .map_err(|e| {
-                error!("❌ Stream: capture_impl.stream() failed: {}", e);
-                anyhow::anyhow!("Failed to create Core Audio stream: {}", e)
-            })?;
+        let core_stream = capture_impl.stream().map_err(|e| {
+            error!("❌ Stream: capture_impl.stream() failed: {}", e);
+            anyhow::anyhow!("Failed to create Core Audio stream: {}", e)
+        })?;
 
         let sample_rate = core_stream.sample_rate();
-        info!("✅ Stream: Core Audio stream created with sample rate: {} Hz", sample_rate);
+        info!(
+            "✅ Stream: Core Audio stream created with sample rate: {} Hz",
+            sample_rate
+        );
 
         // Create audio capture processor for pipeline integration
         // CRITICAL: Core Audio tap is MONO (with_mono_global_tap_excluding_processes)
@@ -309,7 +335,10 @@ impl AudioStream {
                 let mut frame_count = 0;
                 let frames_per_chunk = 1024; // Process in chunks of 1024 samples
 
-                info!("✅ Stream: Core Audio processing task started for {}", device_name);
+                info!(
+                    "✅ Stream: Core Audio processing task started for {}",
+                    device_name
+                );
 
                 let mut _sample_count = 0u64;
                 while let Some(sample) = stream.next().await {
@@ -334,17 +363,24 @@ impl AudioStream {
                     capture.process_audio_data(&buffer);
                 }
 
-                info!("⚠️ Stream: Core Audio processing task ended for {}", device_name);
+                info!(
+                    "⚠️ Stream: Core Audio processing task ended for {}",
+                    device_name
+                );
             }
         });
 
-        info!("✅ Stream: Core Audio stream fully initialized for device: {}", device.name);
+        info!(
+            "✅ Stream: Core Audio stream fully initialized for device: {}",
+            device.name
+        );
 
         Ok(Self {
+            #[cfg(target_os = "windows")]
+            dropped_generation_chunks: capture.dropped_generation_chunks.clone(),
+            system_generation: capture.system_generation.map(|id| (state.clone(), id)),
             device: device.clone(),
-            backend: StreamBackend::CoreAudio {
-                task: Some(task),
-            },
+            backend: StreamBackend::CoreAudio { task: Some(task) },
             capture: Some(capture),
             worker: None,
         })
@@ -416,7 +452,15 @@ impl AudioStream {
     /// Stop the stream
     pub fn stop(self) -> Result<()> {
         info!("Stopping audio stream for device: {}", self.device.name);
-        let AudioStream { device, backend, capture, worker } = self;
+        let AudioStream {
+            device,
+            backend,
+            capture,
+            worker,
+            system_generation: _,
+            #[cfg(target_os = "windows")]
+                dropped_generation_chunks: _,
+        } = self;
 
         match backend {
             StreamBackend::Cpal(stream) => {
@@ -490,8 +534,18 @@ impl AudioStreamManager {
 
         // Start microphone stream
         if let Some(mic_device) = microphone_device {
-            info!("🎤 Creating microphone stream: {} (always uses CPAL)", mic_device.name);
-            match AudioStream::create(mic_device.clone(), self.state.clone(), DeviceType::Microphone, recording_sender.clone()).await {
+            info!(
+                "🎤 Creating microphone stream: {} (always uses CPAL)",
+                mic_device.name
+            );
+            match AudioStream::create(
+                mic_device.clone(),
+                self.state.clone(),
+                DeviceType::Microphone,
+                recording_sender.clone(),
+            )
+            .await
+            {
                 Ok(stream) => {
                     self.state.set_microphone_device(mic_device);
                     self.microphone_stream = Some(stream);
@@ -508,11 +562,21 @@ impl AudioStreamManager {
 
         // Start system audio stream
         if let Some(sys_device) = system_device {
-            info!("🔊 Creating system audio stream: {} (backend: {:?})", sys_device.name, backend);
-            match AudioStream::create(sys_device.clone(), self.state.clone(), DeviceType::System, recording_sender.clone()).await {
+            info!(
+                "🔊 Creating system audio stream: {} (backend: {:?})",
+                sys_device.name, backend
+            );
+            match AudioStream::create(
+                sys_device.clone(),
+                self.state.clone(),
+                DeviceType::System,
+                recording_sender.clone(),
+            )
+            .await
+            {
                 Ok(stream) => {
                     self.state.set_system_device(sys_device);
-                    self.system_stream = Some(stream);
+                    self.set_system_stream(stream);
                     info!("✅ System audio stream created with {:?} backend", backend);
                 }
                 Err(e) => {
@@ -577,11 +641,21 @@ impl AudioStreamManager {
     /// Take the system audio stream OUT of the manager, keeping the
     /// microphone running (Windows default-device follower).
     pub fn take_system_stream(&mut self) -> Option<AudioStream> {
+        if let Some((state, _)) = self
+            .system_stream
+            .as_ref()
+            .and_then(|s| s.system_generation.as_ref())
+        {
+            state.activate_system_generation(0);
+        }
         self.system_stream.take()
     }
 
     /// Set a new system audio stream (used after hot-swap creation).
     pub fn set_system_stream(&mut self, stream: AudioStream) {
+        if let Some((state, id)) = &stream.system_generation {
+            state.activate_system_generation(*id);
+        }
         self.system_stream = Some(stream);
     }
 
