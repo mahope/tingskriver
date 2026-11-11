@@ -21,6 +21,7 @@ use super::logic::engine::{self, Attempt, Engine, EnginePreference, Next};
 use super::logic::gesture::{Gesture, GestureAction, GestureConfig, GestureEvent};
 use super::logic::hotkey::ChordSignal;
 use super::logic::order::Order;
+use super::logic::polish_guard;
 use super::logic::spoken::{self, FieldId, LastInsertion, VoiceCommand};
 use super::logic::startup::{self, Startup};
 use super::logic::target_check::{Focus, Refusal};
@@ -1042,7 +1043,7 @@ impl Service {
         mode: Option<&Mode>,
         text: String,
     ) -> String {
-        use crate::summary::llm_client::{generate_summary, LLMProvider};
+        use crate::summary::llm_client::{generate_polish, LLMProvider};
 
         let request = async {
             let provider = match settings.polish_provider.as_str() {
@@ -1070,13 +1071,14 @@ impl Service {
                 &cleanup::english_terms(&self.rules()),
                 mode.map(|m| m.comma_style).unwrap_or_default(),
             );
-            generate_summary(
+            let transcript = polish_guard::transcript(&text);
+            generate_polish(
                 &self.http,
                 &provider,
                 &model,
                 "",
                 &prompt,
-                &text,
+                &transcript,
                 endpoint,
                 None,
                 Some(512),
@@ -1088,7 +1090,13 @@ impl Service {
             .await
             .map(|completion| completion.content)
         };
-        polish_or_fallback(&text, settings.polish_budget_ms, request).await
+        let dictionary_names = self
+            .rules()
+            .replacements
+            .iter()
+            .map(|rule| rule.to.clone())
+            .collect::<Vec<_>>();
+        polish_or_fallback(&text, settings.polish_budget_ms, &dictionary_names, request).await
     }
 
     async fn summary_builtin_model(&self) -> Option<String> {
@@ -1560,9 +1568,10 @@ fn cleanup_options<'a>(
 async fn polish_or_fallback<E: std::fmt::Display>(
     layer1: &str,
     budget_ms: u64,
+    dictionary_names: &[String],
     request: impl std::future::Future<Output = Result<String, E>>,
 ) -> String {
-    let budget_ms = budget_ms.min(2000);
+    let budget_ms = budget_ms.min(polish_guard::MAX_BUDGET_MS);
     let start = std::time::Instant::now();
     let polished =
         match tokio::time::timeout(std::time::Duration::from_millis(budget_ms), request).await {
@@ -1581,6 +1590,7 @@ async fn polish_or_fallback<E: std::fmt::Display>(
         polished.as_deref(),
         start.elapsed().as_millis() as u64,
         budget_ms,
+        dictionary_names,
     )
 }
 
@@ -1597,7 +1607,7 @@ mod tests {
             Ok::<_, String>("Hej, verden.".to_string())
         };
         assert_eq!(
-            polish_or_fallback("hej verden", 10_000, slow_provider).await,
+            polish_or_fallback("hej verden", 10_000, &[], slow_provider).await,
             "hej verden"
         );
         assert_eq!(start.elapsed(), std::time::Duration::from_secs(2));
@@ -1606,15 +1616,15 @@ mod tests {
     #[tokio::test]
     async fn polish_provider_success_error_and_shorter_budget() {
         assert_eq!(
-            polish_or_fallback("hej", 2000, async { Ok::<_, String>("Hej.".into()) }).await,
+            polish_or_fallback("hej", 2000, &[], async { Ok::<_, String>("Hej.".into()) }).await,
             "Hej."
         );
         assert_eq!(
-            polish_or_fallback("hej", 2000, async { Err::<String, _>("offline") }).await,
+            polish_or_fallback("hej", 2000, &[], async { Err::<String, _>("offline") }).await,
             "hej"
         );
         assert_eq!(
-            polish_or_fallback("hej", 10, async {
+            polish_or_fallback("hej", 10, &[], async {
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 Ok::<_, String>("Hej.".into())
             })

@@ -115,14 +115,20 @@ pub fn choose_polished(
     polished: Option<&str>,
     elapsed_ms: u64,
     budget_ms: u64,
+    dictionary_names: &[String],
 ) -> String {
-    match polished.map(str::trim) {
+    match polished.map(super::polish_guard::clean_output) {
         Some(text)
-            if elapsed_ms <= budget_ms
+            if elapsed_ms <= budget_ms.min(super::polish_guard::MAX_BUDGET_MS)
                 && !text.is_empty()
-                && text.len() <= layer1.len() * 3 + 40 =>
+                && text.len() <= layer1.len() * 3 + 40
+                && super::polish_guard::preserves_names_and_numbers(
+                    layer1,
+                    &text,
+                    dictionary_names,
+                ) =>
         {
-            text.to_string()
+            text
         }
         _ => layer1.to_string(),
     }
@@ -188,12 +194,102 @@ mod tests {
 
     #[test]
     fn polishing_respects_budget() {
-        assert_eq!(choose_polished("hej", Some("Hej."), 800, 2000), "Hej.");
-        assert_eq!(choose_polished("hej", Some("Hej."), 2500, 2000), "hej");
-        assert_eq!(choose_polished("hej", None, 100, 2000), "hej");
-        assert_eq!(choose_polished("hej", Some("  "), 100, 2000), "hej");
+        assert_eq!(choose_polished("hej", Some("Hej."), 800, 2000, &[]), "Hej.");
+        assert_eq!(choose_polished("hej", Some("Hej."), 2500, 2000, &[]), "hej");
+        assert_eq!(choose_polished("hej", None, 100, 2000, &[]), "hej");
+        assert_eq!(choose_polished("hej", Some("  "), 100, 2000, &[]), "hej");
         let rambling = "x".repeat(200);
-        assert_eq!(choose_polished("hej", Some(&rambling), 100, 2000), "hej");
+        assert_eq!(
+            choose_polished("hej", Some(&rambling), 100, 2000, &[]),
+            "hej"
+        );
+    }
+
+    #[test]
+    fn polishing_strips_reasoning_and_controls_from_supplied_output() {
+        for (input, output) in [
+            ("hvad er klokken", "Hvad er klokken?"),
+            ("skriv en mail til Peter", "Skriv en mail til Peter."),
+        ] {
+            let response =
+                format!("\u{feff}<think>Skal kun rette teksten.</think>\u{200b}{output}\u{202e}");
+            assert_eq!(
+                choose_polished(input, Some(&response), 100, 2000, &[]),
+                output
+            );
+        }
+    }
+
+    #[test]
+    fn polishing_preserves_dictionary_names_and_numbers() {
+        let rules = super::super::cleanup::Rules {
+            replacements: vec![super::super::cleanup::Replacement {
+                from: "jensen".into(),
+                to: "Jensen & Søn".into(),
+                keep_english: false,
+            }],
+            ..Default::default()
+        };
+        let layer1 = super::super::cleanup::clean(
+            "send jensen 42 pakker",
+            super::super::cleanup::Style::Normal,
+            &rules,
+        );
+        let names = ["Jensen & Søn".to_string()];
+        for output in [
+            "Send Jensen 42 pakker.",
+            "Send Jensen & Søn pakker.",
+            "Send Jensen & Søn 142 pakker.",
+        ] {
+            assert_eq!(
+                choose_polished(&layer1, Some(output), 100, 2000, &names),
+                layer1
+            );
+        }
+        let output = "Send Jensen & Søn 42 pakker.";
+        assert_eq!(
+            choose_polished(&layer1, Some(output), 100, 2000, &names),
+            output
+        );
+    }
+
+    #[test]
+    fn polishing_preserves_spoken_ampersand() {
+        let layer1 = super::super::cleanup::clean(
+            "Jensen og-tegn Søn",
+            super::super::cleanup::Style::Normal,
+            &Default::default(),
+        );
+        assert_eq!(layer1, "Jensen & Søn");
+        let transcript = super::super::polish_guard::transcript(&layer1);
+        let echoed = transcript
+            .strip_prefix("<transcript>\n")
+            .unwrap()
+            .strip_suffix("\n</transcript>")
+            .unwrap();
+        assert_eq!(
+            choose_polished(&layer1, Some(echoed), 100, 2000, &[]),
+            "Jensen & Søn"
+        );
+    }
+
+    #[test]
+    fn polishing_rejects_empty_reasoning_and_caps_budget() {
+        for output in [
+            "<think>ufærdig",
+            "<think>tanker</think>\u{200b}",
+            "\u{feff}\u{200b}",
+        ] {
+            assert_eq!(choose_polished("hej", Some(output), 100, 2000, &[]), "hej");
+        }
+        assert_eq!(
+            choose_polished("hej", Some("Hej."), 2001, 10_000, &[]),
+            "hej"
+        );
+        assert_eq!(
+            choose_polished("hej", Some("Hej."), 2000, 10_000, &[]),
+            "Hej."
+        );
     }
 
     #[test]

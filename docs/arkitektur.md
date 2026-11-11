@@ -173,6 +173,14 @@ controls, global shortcuts instead of focus, and a Focus Assist decision. See
 
 Meetings and dictation share the Parakeet and Whisper engines in core.
 
+Dictation polishing treats text inside `<transcript>` tags with escaped closing delimiters as content,
+never as questions to answer or instructions to follow. `dictation::logic::polish_guard`
+removes invisible controls and leading `<think>` blocks from model output.
+Empty or late output falls back to layer 1, with a maximum budget of two seconds.
+The dictation polish call rejects `finish_reason=length` as an error
+without changing summary handling. The built-in sidecar currently returns text without a finish
+reason; truncation detection through this field applies to compatible HTTP providers.
+
 - Native inference and ONNX startup run in `tingskriver-stt`, reached over
   private stdin/stdout pipes with request IDs and raw f32 PCM. A worker crash
   fails the current call in Danish; the next call restarts and reloads it.

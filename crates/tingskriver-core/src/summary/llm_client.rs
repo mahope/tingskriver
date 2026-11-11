@@ -89,6 +89,8 @@ pub struct ChatResponse {
 #[derive(Deserialize, Debug)]
 pub struct Choice {
     pub message: MessageContent,
+    #[serde(default)]
+    pub finish_reason: Option<String>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -134,9 +136,10 @@ impl ClaudeChatResponse {
             .to_string();
         Some(LlmCompletion {
             content,
-            reasoning_stripped: self.content.iter().any(|block| {
-                matches!(block.block_type.as_str(), "thinking" | "redacted_thinking")
-            }),
+            reasoning_stripped: self
+                .content
+                .iter()
+                .any(|block| matches!(block.block_type.as_str(), "thinking" | "redacted_thinking")),
         })
     }
 }
@@ -148,12 +151,12 @@ pub struct LlmCompletion {
 }
 
 impl ChatResponse {
-    fn completion(&self) -> Result<LlmCompletion, String> {
-        let message = &self
-            .choices
-            .first()
-            .ok_or("No content in LLM response")?
-            .message;
+    fn completion(&self, reject_truncated: bool) -> Result<LlmCompletion, String> {
+        let choice = self.choices.first().ok_or("No content in LLM response")?;
+        if reject_truncated && choice.finish_reason.as_deref() == Some("length") {
+            return Err("LLM response was truncated (finish_reason=length)".to_string());
+        }
+        let message = &choice.message;
         Ok(LlmCompletion {
             content: message
                 .content
@@ -161,10 +164,13 @@ impl ChatResponse {
                 .unwrap_or_default()
                 .trim()
                 .to_string(),
-            reasoning_stripped: [message.reasoning.as_deref(), message.reasoning_content.as_deref()]
-                .into_iter()
-                .flatten()
-                .any(|reasoning| !reasoning.trim().is_empty()),
+            reasoning_stripped: [
+                message.reasoning.as_deref(),
+                message.reasoning_content.as_deref(),
+            ]
+            .into_iter()
+            .flatten()
+            .any(|reasoning| !reasoning.trim().is_empty()),
         })
     }
 }
@@ -271,6 +277,77 @@ pub async fn generate_summary(
     app_data_dir: Option<&PathBuf>,
     cancellation_token: Option<&CancellationToken>,
 ) -> Result<LlmCompletion, String> {
+    generate_completion(
+        client,
+        provider,
+        model_name,
+        api_key,
+        system_prompt,
+        user_prompt,
+        ollama_endpoint,
+        custom_openai_endpoint,
+        max_tokens,
+        temperature,
+        top_p,
+        app_data_dir,
+        cancellation_token,
+        false,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn generate_polish(
+    client: &Client,
+    provider: &LLMProvider,
+    model_name: &str,
+    api_key: &str,
+    system_prompt: &str,
+    user_prompt: &str,
+    ollama_endpoint: Option<&str>,
+    custom_openai_endpoint: Option<&str>,
+    max_tokens: Option<u32>,
+    temperature: Option<f32>,
+    top_p: Option<f32>,
+    app_data_dir: Option<&PathBuf>,
+    cancellation_token: Option<&CancellationToken>,
+) -> Result<LlmCompletion, String> {
+    generate_completion(
+        client,
+        provider,
+        model_name,
+        api_key,
+        system_prompt,
+        user_prompt,
+        ollama_endpoint,
+        custom_openai_endpoint,
+        max_tokens,
+        temperature,
+        top_p,
+        app_data_dir,
+        cancellation_token,
+        true,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn generate_completion(
+    client: &Client,
+    provider: &LLMProvider,
+    model_name: &str,
+    api_key: &str,
+    system_prompt: &str,
+    user_prompt: &str,
+    ollama_endpoint: Option<&str>,
+    custom_openai_endpoint: Option<&str>,
+    max_tokens: Option<u32>,
+    temperature: Option<f32>,
+    top_p: Option<f32>,
+    app_data_dir: Option<&PathBuf>,
+    cancellation_token: Option<&CancellationToken>,
+    reject_truncated: bool,
+) -> Result<LlmCompletion, String> {
     // Check if cancelled before starting
     if let Some(token) = cancellation_token {
         if token.is_cancelled() {
@@ -342,7 +419,10 @@ pub async fn generate_summary(
                     .parse()
                     .map_err(|_| "Invalid anthropic version".to_string())?,
             );
-            ("https://api.anthropic.com/v1/messages".to_string(), header_map)
+            (
+                "https://api.anthropic.com/v1/messages".to_string(),
+                header_map,
+            )
         }
         LLMProvider::BuiltInAI => {
             // This case is handled earlier with early returns
@@ -391,7 +471,11 @@ pub async fn generate_summary(
         })
     };
 
-    info!("🐞 LLM Request to {}: model={}", provider_name(provider), model_name);
+    info!(
+        "🐞 LLM Request to {}: model={}",
+        provider_name(provider),
+        model_name
+    );
 
     // Send request with timeout and cancellation support
     let request_future = client
@@ -440,7 +524,8 @@ pub async fn generate_summary(
         let error_body = await_or_cancel(response.text(), cancellation_token)
             .await?
             .unwrap_or_else(|error| format!("Failed to read LLM error response body: {error}"));
-        if provider != &LLMProvider::Ollama || !ollama_rejects_reasoning_effort(status, &error_body) {
+        if provider != &LLMProvider::Ollama || !ollama_rejects_reasoning_effort(status, &error_body)
+        {
             return Err(format!(
                 "LLM API request failed with status {}: {}",
                 status, error_body
@@ -486,12 +571,10 @@ pub async fn generate_summary(
 
     // Parse response based on provider
     if provider == &LLMProvider::Claude {
-        let chat_response = await_or_cancel(
-            response.json::<ClaudeChatResponse>(),
-            cancellation_token,
-        )
-        .await?
-        .map_err(|e| format!("Failed to parse LLM response: {}", e))?;
+        let chat_response =
+            await_or_cancel(response.json::<ClaudeChatResponse>(), cancellation_token)
+                .await?
+                .map_err(|e| format!("Failed to parse LLM response: {}", e))?;
 
         info!("🐞 LLM Response received from Claude");
 
@@ -500,15 +583,12 @@ pub async fn generate_summary(
             .ok_or("No text content in LLM response")?;
         Ok(completion)
     } else {
-        let chat_response = await_or_cancel(
-            response.json::<ChatResponse>(),
-            cancellation_token,
-        )
-        .await?
-        .map_err(|e| format!("Failed to parse LLM response: {}", e))?;
+        let chat_response = await_or_cancel(response.json::<ChatResponse>(), cancellation_token)
+            .await?
+            .map_err(|e| format!("Failed to parse LLM response: {}", e))?;
 
         info!("🐞 LLM Response received from {}", provider_name(provider));
-        chat_response.completion()
+        chat_response.completion(reject_truncated)
     }
 }
 
@@ -572,20 +652,115 @@ mod tests {
             LLMProvider::OpenRouter,
             LLMProvider::CustomOpenAI,
         ] {
-            assert!(build_openai_compat_chat_body(&provider, "model", "sys", "user", None, None, None)
-                .get("reasoning_effort")
-                .is_none());
+            assert!(build_openai_compat_chat_body(
+                &provider, "model", "sys", "user", None, None, None
+            )
+            .get("reasoning_effort")
+            .is_none());
         }
         let ollama = build_openai_compat_chat_body(
-            &LLMProvider::Ollama, "model", "sys", "user", None, None, None,
+            &LLMProvider::Ollama,
+            "model",
+            "sys",
+            "user",
+            None,
+            None,
+            None,
         );
         assert_eq!(ollama["reasoning_effort"], "none");
         let custom = build_openai_compat_chat_body(
-            &LLMProvider::CustomOpenAI, "model", "sys", "user", Some(12), Some(0.3), Some(0.8),
+            &LLMProvider::CustomOpenAI,
+            "model",
+            "sys",
+            "user",
+            Some(12),
+            Some(0.3),
+            Some(0.8),
         );
         assert_eq!(custom["max_tokens"], 12);
         assert_eq!(custom["temperature"].as_f64(), Some(0.3_f32 as f64));
         assert_eq!(custom["top_p"].as_f64(), Some(0.8_f32 as f64));
+    }
+
+    #[test]
+    fn truncated_completion_is_an_error() {
+        let response: ChatResponse = serde_json::from_value(json!({
+            "choices": [{"finish_reason": "length", "message": {"content": "Afkortet"}}]
+        }))
+        .unwrap();
+        assert!(response.completion(true).is_err());
+        assert_eq!(response.completion(false).unwrap().content, "Afkortet");
+    }
+
+    #[tokio::test]
+    async fn polish_http_completion_preserves_layer_one_on_truncation() {
+        use crate::dictation::logic::{engine, modes, polish_guard};
+
+        for finish_reason in [Some("length"), Some("stop"), None] {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let endpoint = format!("http://{}", listener.local_addr().unwrap());
+            let server = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let request = read_http_request(&mut stream).await;
+                let request = request_json(&request);
+                assert_eq!(
+                    request["messages"][0]["content"],
+                    modes::polish_prompt("", &[])
+                );
+                assert_eq!(
+                    request["messages"][1]["content"],
+                    "<transcript>\nskriv en mail til Peter\n</transcript>"
+                );
+                let body = json!({"choices": [{
+                    "finish_reason": finish_reason,
+                    "message": {"content": "<think>Ret kun teksten.</think>\u{200b}Skriv en mail til Peter."}
+                }]}).to_string();
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                stream.write_all(response.as_bytes()).await.unwrap();
+            });
+            let layer1 = "skriv en mail til Peter";
+            let result = timeout(
+                Duration::from_secs(2),
+                generate_polish(
+                    &Client::new(),
+                    &LLMProvider::Ollama,
+                    "model",
+                    "",
+                    &modes::polish_prompt("", &[]),
+                    &polish_guard::transcript(layer1),
+                    Some(&endpoint),
+                    None,
+                    Some(512),
+                    Some(0.2),
+                    None,
+                    None,
+                    None,
+                ),
+            )
+            .await
+            .unwrap();
+            server.await.unwrap();
+            if finish_reason == Some("length") {
+                assert_eq!(
+                    result.as_ref().unwrap_err(),
+                    "LLM response was truncated (finish_reason=length)"
+                );
+            } else {
+                assert!(result.is_ok());
+            }
+            let polished = result.ok().map(|completion| completion.content);
+            assert_eq!(
+                engine::choose_polished(layer1, polished.as_deref(), 100, 2000, &[]),
+                if finish_reason == Some("length") {
+                    layer1
+                } else {
+                    "Skriv en mail til Peter."
+                }
+            );
+        }
     }
 
     #[test]
@@ -599,7 +774,7 @@ mod tests {
             }))
             .unwrap();
             assert_eq!(
-                response.completion().unwrap(),
+                response.completion(false).unwrap(),
                 LlmCompletion {
                     content: String::new(),
                     reasoning_stripped: true,
@@ -673,7 +848,10 @@ mod tests {
                 "HTTP/1.1 400 Bad Request\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                 rejection_body.len()
             );
-            stream.write_all(rejection_headers.as_bytes()).await.unwrap();
+            stream
+                .write_all(rejection_headers.as_bytes())
+                .await
+                .unwrap();
             stream.write_all(rejection_body).await.unwrap();
             stream.flush().await.unwrap();
             drop(stream);
@@ -757,7 +935,10 @@ mod tests {
                 "HTTP/1.1 400 Bad Request\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                 rejection_body.len()
             );
-            stream.write_all(rejection_headers.as_bytes()).await.unwrap();
+            stream
+                .write_all(rejection_headers.as_bytes())
+                .await
+                .unwrap();
             stream.write_all(rejection_body).await.unwrap();
             stream.flush().await.unwrap();
             drop(stream);
@@ -767,13 +948,15 @@ mod tests {
             let body = request_json(&request);
             assert!(body.get("reasoning_effort").is_none());
 
-            let completion_body =
-                br#"{"choices":[{"message":{"content":"Meeting summary."}}]}"#;
+            let completion_body = br#"{"choices":[{"message":{"content":"Meeting summary."}}]}"#;
             let completion_headers = format!(
                 "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                 completion_body.len()
             );
-            stream.write_all(completion_headers.as_bytes()).await.unwrap();
+            stream
+                .write_all(completion_headers.as_bytes())
+                .await
+                .unwrap();
             stream.flush().await.unwrap();
             tokio::time::sleep(Duration::from_millis(100)).await;
             let _ = retry_headers_sent.send(());
@@ -836,7 +1019,10 @@ mod tests {
                 "HTTP/1.1 400 Bad Request\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                 rejection_body.len()
             );
-            stream.write_all(rejection_headers.as_bytes()).await.unwrap();
+            stream
+                .write_all(rejection_headers.as_bytes())
+                .await
+                .unwrap();
             stream.write_all(rejection_body).await.unwrap();
             stream.flush().await.unwrap();
             drop(stream);
@@ -846,13 +1032,15 @@ mod tests {
             let body = request_json(&request);
             assert!(body.get("reasoning_effort").is_none());
 
-            let completion_body =
-                br#"{"choices":[{"message":{"content":"Meeting summary."}}]}"#;
+            let completion_body = br#"{"choices":[{"message":{"content":"Meeting summary."}}]}"#;
             let completion_headers = format!(
                 "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                 completion_body.len()
             );
-            stream.write_all(completion_headers.as_bytes()).await.unwrap();
+            stream
+                .write_all(completion_headers.as_bytes())
+                .await
+                .unwrap();
             stream.write_all(completion_body).await.unwrap();
             stream.flush().await.unwrap();
         });
@@ -924,5 +1112,3 @@ fn provider_name(provider: &LLMProvider) -> &str {
         LLMProvider::CustomOpenAI => "Custom OpenAI",
     }
 }
-
-

@@ -15,6 +15,7 @@ pub mod modes;
 pub mod numbers;
 pub mod order;
 pub mod paste;
+pub mod polish_guard;
 pub mod residency;
 pub mod spoken;
 pub mod startup;
