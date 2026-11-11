@@ -38,7 +38,8 @@ describe('subtitle import meeting list', () => {
       summaryError = error;
       refetchMeetings.mockClear();
       push.mockClear();
-      const renderer = create(<ImportDialogProvider onOpen={() => {}}><Consumer /></ImportDialogProvider>);
+      let renderer!: ReturnType<typeof create>;
+      await act(async () => { renderer = create(<ImportDialogProvider onOpen={() => {}}><Consumer /></ImportDialogProvider>); });
       try {
         await act(async () => { await importTranscript('transcript.vtt'); });
         expect(refetchMeetings).toHaveBeenCalledTimes(1);
