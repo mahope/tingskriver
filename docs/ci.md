@@ -10,6 +10,8 @@ Issues #187 (lint only what changed) and #192 (measure, scope by path, test sche
 | `branch-build.yml` | push to any branch except `main` | `scope`, Windows installer, device switching tests |
 | `wer.yml`, `search-benchmark.yml`, `ydeevne-port.yml` | own path filters | unchanged, except `wer.yml` now cancels superseded runs on branches |
 
+**Order and cancelling in `rust.yml`**: the two Windows jobs (`windows`, `windows-gpui-app`) need `lint`, so they start only after format and clippy pass and are skipped when lint fails. A lint error then costs a few Linux minutes instead of two Windows runners for 25 minutes; the price is that a green run takes the lint time longer. On branches other than `main` a newer push cancels the older `Rust` run (only the tip is merged). `main` still queues, so every commit on `main` gets a finished run for the automatic release.
+
 **Scope** (`.github/scripts/ci-scope.py`): the `scope` job decides whether the Rust and installer jobs run.
 
 - `main` and tags always run everything. The automatic release needs a successful `Rust` push run for every commit on `main`, and `main` keeps the full check.
@@ -63,3 +65,44 @@ Expected effect (estimated from the structure, not yet measured; fill in the "af
 | fmt/clippy gate | one extra Linux job in parallel with the Windows jobs; it does not extend the critical path (the Windows jobs are the longest) |
 
 Parallelism was not raised. Raising it on Windows runners needs a test on those runners first (#192).
+
+## Linux jobs on a self-hosted runner
+
+GitHub-hosted concurrency for this repository can run out (dozens of queued `Rust`, `Branch build` and `WER regression` runs). The Linux jobs of `rust.yml`, `branch-build.yml`, `wer.yml`, `ydeevne-port.yml` and `search-benchmark.yml` can therefore run on a self-hosted runner. Windows jobs, `pages.yml`, the Android workflows and the release workflows always stay on GitHub-hosted runners.
+
+Those jobs use
+
+```yaml
+runs-on: ${{ (github.event_name == 'push' && vars.LINUX_RUNNER) || 'ubuntu-latest' }}
+```
+
+(`ubuntu-24.04` where the job was already pinned to it). The repository variable `LINUX_RUNNER` holds the runner label, `boat-linux`:
+
+- **Variable set**: jobs of `push` runs wait for a runner with that label.
+- **Variable unset or empty**: every job runs on the GitHub-hosted image, exactly as before.
+- **Not a push** (`pull_request`, `workflow_dispatch`, `schedule`): always GitHub-hosted. A workflow started through `workflow_call` inherits its caller's event, so an in-repo caller started by `push` would send the called jobs to the self-hosted runner too. This repository is public, so code from a fork pull request never reaches the self-hosted runner. Only pushes to branches of this repository, which need write access, do.
+
+Switch back to GitHub-hosted runners at once (queued jobs that already picked a runner keep it, new runs use the hosted image):
+
+```bash
+gh variable delete LINUX_RUNNER -R mahope/tingskriver   # or: gh variable set LINUX_RUNNER -b ""
+```
+
+Switch to the self-hosted runner:
+
+```bash
+gh variable set LINUX_RUNNER -R mahope/tingskriver -b boat-linux
+```
+
+Check that a runner with the label is online before setting the variable, otherwise push jobs stay queued:
+
+```bash
+gh api repos/mahope/tingskriver/actions/runners --jq '.runners[]|[.name,.status,([.labels[].name]|join(","))]|@tsv'
+```
+
+The runner is an Ubuntu 24.04 machine with the GitHub Actions runner as a systemd service, passwordless `sudo` (the jobs run `sudo apt-get install`), a per-user `rustup` (so `dtolnay/rust-toolchain` can install toolchains) and the build packages of the `ubuntu-latest` image that these jobs assume (`build-essential`, `cmake`, `clang`, `libclang-dev`, `libasound2-dev`, `ffmpeg`, `ninja-build`, `python3-yaml`, `python3-jsonschema`, `jq`, `unzip`). The jobs install everything else themselves, as on the hosted image. Two runner instances share one machine, so two jobs can run at once. `apt-get` on the machine is wrapped in `flock`, because two jobs installing packages at the same time raced on the dpkg lock. `actions/checkout` cleans each workspace between jobs, and build folders outside the workspace use `$RUNNER_TEMP`, which the runner empties per job. `~/.cargo/bin` holds symlinks to the system `rustup`, because `Swatinem/rust-cache` with the default `cache-bin` deletes the binaries there on a persistent machine. The machine holds no account tokens or deploy keys; anyone with push access to this repository can run code on it, so keep it that way.
+
+Two details of the hosted image that the runner has to reproduce, in case it is rebuilt:
+
+- `Swatinem/rust-cache` deletes every regular file in `$CARGO_HOME/bin` when a job ends, which removes the `rustup` binary itself. The runner therefore keeps `~/.cargo/bin/*` as symlinks to the system `rustup`, and `RUSTUP_HOME`/`CARGO_HOME` point into the runner user's home (set in the runner's `.env`).
+- `wer.yml` sets `CARGO_TARGET_DIR: /home/runner/wer-target`, so `/home/runner` exists and belongs to the runner user.

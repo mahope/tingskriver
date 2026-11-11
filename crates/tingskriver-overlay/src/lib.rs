@@ -57,7 +57,10 @@ mod tests {
         assert_eq!(from_core(OverlayState::Processing), PillState::Processing);
         assert_eq!(from_core(OverlayState::Hidden), PillState::Idle);
         assert_eq!(
-            from_core(OverlayState::Refused("Ikke i adgangskodefelt")).look().unwrap().label,
+            from_core(OverlayState::Refused("Ikke i adgangskodefelt"))
+                .look()
+                .unwrap()
+                .label,
             "Ikke i adgangskodefelt"
         );
         let error = from_core(OverlayState::Error);

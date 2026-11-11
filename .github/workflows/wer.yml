@@ -33,16 +33,19 @@ concurrency:
   cancel-in-progress: ${{ github.ref_name != 'main' }}
 
 env:
-  CARGO_TARGET_DIR: /home/runner/wer-target
   CARGO_INCREMENTAL: 0
 
 jobs:
   fixture:
     name: WER unit tests and positive control (no speech models)
-    runs-on: ubuntu-24.04
+    runs-on: ${{ (github.event_name == 'push' && vars.LINUX_RUNNER) || 'ubuntu-24.04' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      # Per-job build folder: on a self-hosted runner a fixed path would be
+      # shared by every branch and by a second runner on the same machine.
+      - name: Build folder
+        run: echo "CARGO_TARGET_DIR=$RUNNER_TEMP/wer-target" >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@stable
       - name: System libraries
         run: |

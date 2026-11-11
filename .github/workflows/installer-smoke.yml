@@ -1,0 +1,212 @@
+name: Installer smoke test (Windows)
+
+# Installs Tingskriver-Setup.exe silently on a clean Windows runner, checks the
+# uninstall entry, runs `tingskriver-app --diagnose --json`, keeps the app alive
+# for 20 s, uninstalls silently and checks that the program folder and the Run
+# value are gone while user data and Credential Manager keys stay
+# (installer/smoke-test.ps1, installer/README.md).
+#
+# - Runs on app-v* tags and on pull requests that touch installer/.
+# - Can be called from another workflow (workflow_call). Pass `package-artifact`
+#   (an artifact of the calling run holding Tingskriver-Setup.exe) to test a
+#   package that is already built; without it this workflow builds one itself.
+# - A second job corrupts the installer on purpose and requires the smoke test
+#   to fail, so a test that can no longer find anything shows up as red.
+
+on:
+  push:
+    tags:
+      - 'app-v*'
+  pull_request:
+    paths:
+      - 'installer/**'
+      - '.github/workflows/installer-smoke.yml'
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      package-artifact:
+        description: Name of an artifact in the calling run that holds Tingskriver-Setup.exe. Empty means build the package here.
+        type: string
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  # Keep equal to the velopack crate in crates/tingskriver-app/Cargo.toml.
+  VPK_VERSION: 1.2.161
+
+jobs:
+  package:
+    name: Build Velopack package
+    if: ${{ inputs.package-artifact == '' }}
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      # sqlx checks migration checksums; CRLF checkouts break them (upstream #843).
+      - name: Disable CRLF conversion
+        run: git config --global core.autocrlf false
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Read version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(cargo metadata --no-deps --format-version 1 --locked | jq -r '.packages[] | select(.name == "tingskriver-app") | .version')"
+          if [ -z "$version" ] || [ "$version" = "null" ]; then
+            echo "::error::Could not read the version of tingskriver-app"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      # Same portable CPU baseline as app-release.yml.
+      - name: Configure portable build
+        shell: pwsh
+        run: |
+          $cmakeHook = (Join-Path $env:GITHUB_WORKSPACE ".github/force-portable-ggml.cmake").Replace('\', '/')
+          "CMAKE_PROJECT_INCLUDE=$cmakeHook" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "RUSTFLAGS=-C target-cpu=x86-64-v2" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          prefix-key: tingskriver-windows-velopack-v1
+
+      - name: Build tingskriver-app (release)
+        shell: bash
+        run: .github/scripts/annotate-errors.sh cargo build --release --locked -p tingskriver-app -p tingskriver-core --bin tingskriver-app --bin tingskriver-stt
+
+      - name: Stage ONNX Runtime for the isolated speech worker
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP "tingskriver-onnx.zip"
+          Invoke-WebRequest "https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-win-x64-1.22.0.zip" -OutFile $archive
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne "174c616efc0271194488642a72f1a514e01487da4dfe84c49296d66e40ebe0da") { throw "ONNX Runtime checksum mismatch" }
+          Expand-Archive $archive -DestinationPath (Join-Path $env:RUNNER_TEMP "tingskriver-onnx") -Force
+          $runtime = Join-Path $env:RUNNER_TEMP "tingskriver-onnx/onnxruntime-win-x64-1.22.0"
+          Copy-Item "$runtime/lib/onnxruntime.dll","$runtime/lib/onnxruntime_providers_shared.dll" target/release/
+          Copy-Item "$runtime/LICENSE" target/release/onnxruntime-LICENSE.txt
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Install vpk
+        shell: bash
+        run: dotnet tool install -g vpk --version "$VPK_VERSION"
+
+      # Full package only: nothing is published and no earlier release is needed.
+      - name: Pack
+        shell: pwsh
+        run: |
+          ./installer/pack.ps1 -Version "${{ steps.version.outputs.version }}" -Exe target/release/tingskriver-app.exe -Extra target/release/tingskriver-stt.exe,target/release/onnxruntime.dll,target/release/onnxruntime_providers_shared.dll,target/release/onnxruntime-LICENSE.txt
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-smoke-package
+          path: installer/Releases/upload/Tingskriver-Setup.exe
+          if-no-files-found: error
+          retention-days: 7
+
+  smoke:
+    name: Install, start, uninstall
+    needs: package
+    # Run when the package was built here (needs succeeded) or supplied by the caller (needs skipped).
+    if: ${{ !cancelled() && (needs.package.result == 'success' || (needs.package.result == 'skipped' && inputs.package-artifact != '')) }}
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download installer
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.package-artifact || 'installer-smoke-package' }}
+          path: setup
+
+      - name: Locate installer and write SHA-256
+        id: setup
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem -Path setup -Recurse -Filter 'Tingskriver-Setup.exe' | Select-Object -First 1
+          if (-not $setup) { throw 'Tingskriver-Setup.exe is not in the downloaded artifact' }
+          $hash = (Get-FileHash $setup.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          New-Item -ItemType Directory -Force -Path smoke-out | Out-Null
+          [IO.File]::WriteAllText((Join-Path (Resolve-Path smoke-out).Path 'Tingskriver-Setup.exe.sha256'), "$hash  Tingskriver-Setup.exe`n", (New-Object Text.UTF8Encoding $false))
+          "path=$($setup.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          Write-Host "Tingskriver-Setup.exe sha256 $hash"
+
+      - name: Smoke test
+        shell: pwsh
+        run: ./installer/smoke-test.ps1 -Setup "${{ steps.setup.outputs.path }}" -OutputDir smoke-out
+
+      # Always: the SHA-256 is wanted on success too; log and event log tail on failure.
+      - name: Upload smoke test files
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-smoke-files
+          path: smoke-out/*
+          if-no-files-found: warn
+          retention-days: 30
+
+  # The smoke test must be able to fail: a truncated installer has to turn it red.
+  broken-installer:
+    name: A broken installer is caught
+    needs: package
+    if: ${{ !cancelled() && (needs.package.result == 'success' || (needs.package.result == 'skipped' && inputs.package-artifact != '')) }}
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download installer
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.package-artifact || 'installer-smoke-package' }}
+          path: setup
+
+      - name: Corrupt the installer
+        id: broken
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem -Path setup -Recurse -Filter 'Tingskriver-Setup.exe' | Select-Object -First 1
+          if (-not $setup) { throw 'Tingskriver-Setup.exe is not in the downloaded artifact' }
+          $broken = Join-Path $env:RUNNER_TEMP 'Tingskriver-Setup.exe'
+          $bytes = [IO.File]::ReadAllBytes($setup.FullName)
+          # Keep the first third: still an .exe header, but the payload is cut off.
+          [IO.File]::WriteAllBytes($broken, $bytes[0..([int]($bytes.Length / 3))])
+          "path=$broken" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Smoke test must fail
+        shell: pwsh
+        run: |
+          # Short timeouts: a broken installer either exits at once or hangs.
+          $output = pwsh -NoProfile -File ./installer/smoke-test.ps1 -Setup "${{ steps.broken.outputs.path }}" -OutputDir broken-out -InstallTimeoutSeconds 90 2>&1 | Out-String
+          $code = $LASTEXITCODE
+          Write-Host $output
+          if ($code -eq 0) {
+            Write-Host '::error::The smoke test passed with a corrupted installer, so it cannot be trusted.'
+            exit 1
+          }
+          # Red for the right reason: the install step must be what failed, not a
+          # syntax error or a missing file in the script.
+          if ($output -notmatch 'SMOKE TEST FAILED: (Setup\.exe --silent exited|install did not finish|No uninstall entry|.* is missing after install)') {
+            Write-Host "::error::The smoke test failed (exit code $code), but not in the install step, so this check proves nothing."
+            exit 1
+          }
+          Write-Host "The smoke test failed in the install step on the corrupted installer (exit code $code), as it should."
+          exit 0
