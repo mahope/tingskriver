@@ -147,6 +147,9 @@ pub fn run() {
                     if let startup::DbState::Ready(db) = &model.read(cx).db {
                         if bridge.database().is_none() {
                             bridge.set_database(Some(db.clone()));
+                            // Voiceprints not matched for 90 days (or the
+                            // chosen 30/180) are deleted at startup and daily.
+                            tingskriver_core::voiceprint::start_maintenance(db.pool().clone());
                         }
                     }
                 })

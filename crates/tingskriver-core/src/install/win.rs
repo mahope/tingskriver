@@ -4,7 +4,7 @@
 use windows::core::{HSTRING, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_NO_MORE_ITEMS, ERROR_SUCCESS};
 use windows::Win32::Security::Credentials::{
-    CredDeleteW, CredEnumerateW, CredFree, CREDENTIALW, CRED_ENUMERATE_FLAGS,
+    CredDeleteW, CredEnumerateW, CredFree, CREDENTIALW, CRED_ENUMERATE_FLAGS, CRED_TYPE,
 };
 use windows::Win32::System::Registry::{
     RegCloseKey, RegCreateKeyExW, RegDeleteTreeW, RegDeleteValueW, RegEnumKeyExW, RegEnumValueW,
@@ -235,8 +235,8 @@ pub fn delete_uninstall_entry(name: &str) -> Result<(), String> {
     }
 }
 
-/// Delete every generic credential whose target starts with `prefix`.
-pub fn delete_credentials_with_prefix(prefix: &str) -> Result<usize, String> {
+/// Target and type of every credential whose target starts with `prefix`.
+fn enumerate_credentials(prefix: &str) -> Result<Vec<(String, CRED_TYPE)>, String> {
     let filter = HSTRING::from(format!("{prefix}*"));
     let mut count = 0u32;
     let mut list: *mut *mut CREDENTIALW = std::ptr::null_mut();
@@ -250,7 +250,7 @@ pub fn delete_credentials_with_prefix(prefix: &str) -> Result<usize, String> {
     } {
         // ERROR_NOT_FOUND: no credentials match.
         if e.code() == windows::Win32::Foundation::ERROR_NOT_FOUND.to_hresult() {
-            return Ok(0);
+            return Ok(Vec::new());
         }
         return Err(format!("CredEnumerateW: {e}"));
     }
@@ -267,13 +267,34 @@ pub fn delete_credentials_with_prefix(prefix: &str) -> Result<usize, String> {
         }
         CredFree(list as *const std::ffi::c_void);
     }
+    // The filter is a wildcard match; keep only exact prefixes.
+    targets.retain(|(target, _)| target.starts_with(prefix));
+    Ok(targets)
+}
+
+/// The target of every credential that starts with `prefix`.
+pub fn list_credentials_with_prefix(prefix: &str) -> Result<Vec<String>, String> {
+    Ok(enumerate_credentials(prefix)?
+        .into_iter()
+        .map(|(target, _)| target)
+        .collect())
+}
+
+/// Delete every generic credential whose target starts with `prefix`.
+pub fn delete_credentials_with_prefix(prefix: &str) -> Result<usize, String> {
     let mut removed = 0;
-    for (target, kind) in targets {
-        if target.starts_with(prefix)
-            && unsafe { CredDeleteW(&HSTRING::from(target.as_str()), kind, None) }.is_ok()
-        {
-            removed += 1;
+    let mut failed = 0;
+    for (target, kind) in enumerate_credentials(prefix)? {
+        match unsafe { CredDeleteW(&HSTRING::from(target.as_str()), kind, None) } {
+            Ok(()) => removed += 1,
+            // Already gone: that is what we wanted.
+            Err(e) if e.code() == windows::Win32::Foundation::ERROR_NOT_FOUND.to_hresult() => {}
+            Err(_) => failed += 1,
         }
+    }
+    if failed > 0 {
+        // Never report success while entries remain.
+        return Err(format!("{failed} credential entries could not be deleted"));
     }
     Ok(removed)
 }

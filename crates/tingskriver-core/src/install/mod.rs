@@ -15,12 +15,45 @@ mod win;
 
 use std::path::Path;
 
+/// The target of every Credential Manager entry that starts with `prefix`.
+/// Used to find voiceprints the database no longer knows. Nothing is stored
+/// off Windows, so the list is empty there.
+pub fn list_credentials_with_prefix(prefix: &str) -> Result<Vec<String>, String> {
+    #[cfg(windows)]
+    {
+        win::list_credentials_with_prefix(prefix)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = prefix;
+        Ok(Vec::new())
+    }
+}
+
+/// Delete every Credential Manager entry whose target starts with `prefix`
+/// and return how many went. Used by "forget all voiceprints". Nothing is
+/// stored off Windows, so the count is 0 there.
+pub fn delete_credentials_with_prefix(prefix: &str) -> Result<usize, String> {
+    #[cfg(windows)]
+    {
+        win::delete_credentials_with_prefix(prefix)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = prefix;
+        Ok(0)
+    }
+}
+
 /// After the first install: start with Windows and tidy up after earlier
 /// builds. `exe` is the installed app.
 pub fn after_install(exe: &Path) -> Vec<String> {
     let mut report = Vec::new();
     match autostart::enable(exe) {
-        Ok(()) => report.push(format!("start with Windows: {}", autostart::run_command(exe))),
+        Ok(()) => report.push(format!(
+            "start with Windows: {}",
+            autostart::run_command(exe)
+        )),
         Err(e) => report.push(format!("could not enable start with Windows: {e}")),
     }
     report.extend(remove_legacy_leftovers());
@@ -70,7 +103,8 @@ pub fn uninstall_entry_exists(_name: &str) -> bool {
 /// Leftover `meetily.exe`, shortcuts and registry entries ([`legacy`]).
 pub fn remove_legacy_leftovers() -> Vec<String> {
     let exists = |path: &str| Path::new(path).exists();
-    let mut report = legacy::remove_stale_files(&legacy::LegacyLocations::for_current_user(), exists);
+    let mut report =
+        legacy::remove_stale_files(&legacy::LegacyLocations::for_current_user(), exists);
     report.extend(remove_legacy_registry(exists));
     report
 }
@@ -89,7 +123,10 @@ fn remove_legacy_registry(exists: impl Fn(&str) -> bool + Copy) -> Vec<String> {
         if legacy::uninstall_entry_is_stale(&entry, exists) {
             match win::delete_uninstall_entry(&entry.key) {
                 Ok(()) => report.push(format!("removed uninstall entry {}", entry.key)),
-                Err(e) => report.push(format!("could not remove uninstall entry {}: {e}", entry.key)),
+                Err(e) => report.push(format!(
+                    "could not remove uninstall entry {}: {e}",
+                    entry.key
+                )),
             }
         }
     }
