@@ -8,7 +8,7 @@ whisper-server backend implementation from older Meetily releases.
 Meetily no longer uses this backend as the supported application path. The
 current app is a self-contained Tauri desktop application:
 
-- Next.js provides the desktop UI from `frontend/src`.
+- The desktop UI is the GPUI app in `crates/tingskriver-app` (the older React UI of the Tauri app is in `frontend/src`).
 - Rust/Tauri provides the local backend and native integration from
   `frontend/src-tauri`.
 - Local transcription, meeting storage, and summary workflows are handled by

@@ -22,6 +22,7 @@ rayon = "1.10"
 realfft = "3.4.0"
 ringbuf = "0.4.8"
 rubato = "0.15.0"
+sha2 = "0.10"  # SHA-256 of downloaded models (already in the lockfile)
 silero_rs = { git = "https://github.com/emotechlab/silero-rs", rev = "26a6460", package = "silero" }
 symphonia = { version = "0.5.4", features = ["aac", "isomp4", "mp3", "flac", "ogg", "vorbis", "pcm", "wav", "opt-simd"] }
 tempfile = "3.3.0"

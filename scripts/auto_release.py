@@ -201,15 +201,6 @@ def render_changelog(version, date, previous, entries, repo):
     return "\n".join(lines).rstrip() + "\n"
 
 
-def notes_with_changelog(existing, changelog):
-    """Release description: the standing text, then the generated changelog without its title."""
-    lines = changelog.splitlines()
-    if lines and lines[0].startswith("# "):
-        lines = lines[1:]
-    body = "\n".join("#" + line if line.startswith("## ") else line for line in lines).strip()
-    return existing.rstrip() + "\n\n## Ændringer\n\n" + body + "\n"
-
-
 # --------------------------------------------------------------------------
 # CI verdict (pure)
 # --------------------------------------------------------------------------
@@ -578,6 +569,9 @@ def cmd_verify(args):
     return 1 if problems else 0
 
 
+RELEASE_NOTES_FOOTER = "\n<!-- installation-notes -->\n"
+
+
 def cmd_release(args):
     dispatch_and_wait(args.tag, args.timeout_minutes)
     problems = verify_release(args.tag, args.version)
@@ -588,11 +582,9 @@ def cmd_release(args):
     if args.changelog:
         existing = gh_json("release", "view", args.tag, "--json", "body")["body"] or ""
         changelog = Path(args.changelog).read_text(encoding="utf-8")
-        with tempfile.TemporaryDirectory() as tmp:
-            notes = Path(tmp) / "notes.md"
-            notes.write_text(notes_with_changelog(existing, changelog), encoding="utf-8", newline="\n")
-            run("gh", "release", "edit", args.tag, "--latest=false", "--notes-file", str(notes))
-        log("Release description now includes the changelog.")
+        if existing.split(RELEASE_NOTES_FOOTER, 1)[0] != changelog:
+            log("ERROR release description differs from the committed changelog")
+            return 1
     log(f"Released {args.version}.")
     return 0
 
@@ -624,7 +616,7 @@ def main(argv=None):
     p.add_argument("--tag", required=True)
     p.add_argument("--version", required=True)
     p.add_argument("--changelog", default="")
-    p.add_argument("--timeout-minutes", type=int, default=150)
+    p.add_argument("--timeout-minutes", type=int, default=210)
     p.set_defaults(func=cmd_release)
 
     p = sub.add_parser("verify")

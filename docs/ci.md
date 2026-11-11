@@ -66,6 +66,71 @@ Expected effect (estimated from the structure, not yet measured; fill in the "af
 
 Parallelism was not raised. Raising it on Windows runners needs a test on those runners first (#192).
 
+## GPUI release gates (#243, #188)
+
+`app-release.yml` calls `velopack-package.yml`, the single definition of the
+Windows build, portable CPU check, ONNX staging and Velopack packaging. The
+artifact name includes the version and commit. Tag runs download previous
+packages for deltas; branch/PR builds produce only a full package.
+
+A tag (including a manual dispatch on a tag) first creates a **draft** with the
+exact contents of `docs/changelog/<version>.md` followed by the fixed
+installation and SmartScreen notes in `installer/release-notes.md`. The
+automation compares only the changelog portion of the description. Drafts do
+not appear in the public Velopack feed. The tag must match the workspace
+version and its peeled commit must be an ancestor of `origin/main`.
+`publish` requires successful `draft`, `performance` and `smoke` jobs and checks
+main ancestry and draft status again before promotion. A failed gate leaves
+the draft unpublished. To retry after creating a draft, delete that draft
+manually before rerunning the workflow; never move the tag or overwrite a
+published release.
+
+The performance job tests the gate and README figures for every release.
+Stable releases additionally require the approved reference measurement in
+`docs/changelog/<version>.performance.json` and run the release profile against
+`docs/ydeevne-baseline.json`. Missing input, missing baseline and regressions
+fail closed. Follow [the checklist](release-checkliste.md) for manual approval.
+Pre-releases retain their existing exemption from manual reference measurement;
+they still require the changelog, smoke test and main ancestry checks.
+
+`installer-smoke.yml` is called with the exact package artifact from this run;
+it never rebuilds that release. Both the normal installation test and the
+corrupted-installer negative control must pass. PRs touching `installer/**`,
+`crates/tingskriver-core/src/install/**`, `crates/tingskriver-app/src/update.rs`
+or the release workflows run smoke tests with a package from the same shared
+builder. Independent branch packaging runs may also run; they are not inputs
+to the release gate.
+
+`AUTO_RELEASE=false` still disables only scheduled automatic releases. Manual
+auto-release dispatch keeps its existing dry-run default and ignores that
+variable. Manual tags and app-release dispatch are unaffected. Stable releases
+are never created by the automatic version scheduler. Pre-releases keep their
+suffix and GitHub pre-release flag; all GPUI releases keep `latest=false` so
+the legacy Tauri updater is unaffected.
+
+Without a real tag, PR CI cannot exercise draft creation/promotion, GitHub
+release asset delivery, delta generation against a published predecessor, or
+installing the previous version and checking that the public feed offers the
+new one. After promotion, `update-smoke` installs the highest lower published
+version in the same channel on a clean Windows runner and runs the existing
+installer smoke script. It requires the predecessor's anonymous GitHub updater
+to log `ReadyAtRestart` for exactly the new version within ten minutes, then
+skips current-version hook, diagnose and uninstall requirements using
+`-PreviousVersion`. Failed checks retry with exponential backoff (15–120 s),
+restarting the old app to trigger another check within the ten-minute budget.
+Logs distinguish request/download failures from a feed that does not offer
+the new version. No feed override is used. Pre-releases
+use a pre-release predecessor because stable builds cannot see pre-releases;
+a missing compatible predecessor fails the job. Diagnostics are uploaded as
+`published-update-smoke-files`. A failed after-check turns the workflow red but
+does not unpublish the release; investigate before releasing again. The
+auto-release script also verifies published assets/feed through the API.
+No tag or release is created by local workflow validation.
+
+The automatic release command waits 210 minutes by default: 120 minutes for
+packaging, 30 for smoke tests and 25 for the published-update check, plus
+35 minutes of margin for orchestration and runner queues.
+
 ## Linux jobs on a self-hosted runner
 
 GitHub-hosted concurrency for this repository can run out (dozens of queued `Rust`, `Branch build` and `WER regression` runs). The Linux jobs of `rust.yml`, `branch-build.yml`, `wer.yml`, `ydeevne-port.yml` and `search-benchmark.yml` can therefore run on a self-hosted runner. Windows jobs, `pages.yml`, the Android workflows and the release workflows always stay on GitHub-hosted runners.
