@@ -412,3 +412,11 @@ $env:RUST_LOG="debug"; ./clean_run_windows.bat
 
 **Whisper Integration**:
 - [crates/tingskriver-core/src/whisper_engine/whisper_engine.rs](crates/tingskriver-core/src/whisper_engine/whisper_engine.rs) - Whisper model management and transcription
+
+## graphify
+
+Code graph (graphify, AST only, no LLM). If `~/graphify/tingskriver/` exists on this machine, use it before broad grep:
+- Overview: `~/graphify/tingskriver/BRIEF.md` (about 1.5 KB).
+- Lookups: `~/.local/bin/graphify query "<question>" --graph ~/graphify/tingskriver/graphify-out/graph.json --budget 1500`; also `explain "<symbol>"` and `affected "<symbol>"` with the same `--graph`.
+- Do not read `GRAPH_REPORT.md` in full (about 100 KB).
+- The graph reflects the default branch, rebuilt every 30 minutes by a timer. It is not your branch: check the code in your worktree before changing it. Do not run graphify inside the repo, and never commit `graphify-out/`.

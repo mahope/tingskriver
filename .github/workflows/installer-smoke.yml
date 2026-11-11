@@ -6,7 +6,7 @@ name: Installer smoke test (Windows)
 # value are gone while user data and Credential Manager keys stay
 # (installer/smoke-test.ps1, installer/README.md).
 #
-# - Runs on app-v* tags and on pull requests that touch installer/.
+# - Runs on installer and updater pull requests; releases call it with their artifact.
 # - Can be called from another workflow (workflow_call). Pass `package-artifact`
 #   (an artifact of the calling run holding Tingskriver-Setup.exe) to test a
 #   package that is already built; without it this workflow builds one itself.
@@ -14,12 +14,13 @@ name: Installer smoke test (Windows)
 #   to fail, so a test that can no longer find anything shows up as red.
 
 on:
-  push:
-    tags:
-      - 'app-v*'
   pull_request:
     paths:
       - 'installer/**'
+      - 'crates/tingskriver-core/src/install/**'
+      - 'crates/tingskriver-app/src/update.rs'
+      - '.github/workflows/velopack-package.yml'
+      - '.github/workflows/app-release.yml'
       - '.github/workflows/installer-smoke.yml'
   workflow_dispatch:
   workflow_call:
@@ -33,91 +34,10 @@ on:
 permissions:
   contents: read
 
-env:
-  CARGO_TERM_COLOR: always
-  CARGO_INCREMENTAL: 0
-  # Keep equal to the velopack crate in crates/tingskriver-app/Cargo.toml.
-  VPK_VERSION: 1.2.161
-
 jobs:
   package:
-    name: Build Velopack package
     if: ${{ inputs.package-artifact == '' }}
-    runs-on: windows-latest
-    timeout-minutes: 120
-    steps:
-      # sqlx checks migration checksums; CRLF checkouts break them (upstream #843).
-      - name: Disable CRLF conversion
-        run: git config --global core.autocrlf false
-
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Read version
-        id: version
-        shell: bash
-        run: |
-          set -euo pipefail
-          version="$(cargo metadata --no-deps --format-version 1 --locked | jq -r '.packages[] | select(.name == "tingskriver-app") | .version')"
-          if [ -z "$version" ] || [ "$version" = "null" ]; then
-            echo "::error::Could not read the version of tingskriver-app"
-            exit 1
-          fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-
-      # Same portable CPU baseline as app-release.yml.
-      - name: Configure portable build
-        shell: pwsh
-        run: |
-          $cmakeHook = (Join-Path $env:GITHUB_WORKSPACE ".github/force-portable-ggml.cmake").Replace('\', '/')
-          "CMAKE_PROJECT_INCLUDE=$cmakeHook" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "RUSTFLAGS=-C target-cpu=x86-64-v2" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
-        with:
-          prefix-key: tingskriver-windows-velopack-v1
-
-      - name: Build tingskriver-app (release)
-        shell: bash
-        run: .github/scripts/annotate-errors.sh cargo build --release --locked -p tingskriver-app -p tingskriver-core --bin tingskriver-app --bin tingskriver-stt
-
-      - name: Stage ONNX Runtime for the isolated speech worker
-        shell: pwsh
-        run: |
-          $archive = Join-Path $env:RUNNER_TEMP "tingskriver-onnx.zip"
-          Invoke-WebRequest "https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-win-x64-1.22.0.zip" -OutFile $archive
-          if ((Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne "174c616efc0271194488642a72f1a514e01487da4dfe84c49296d66e40ebe0da") { throw "ONNX Runtime checksum mismatch" }
-          Expand-Archive $archive -DestinationPath (Join-Path $env:RUNNER_TEMP "tingskriver-onnx") -Force
-          $runtime = Join-Path $env:RUNNER_TEMP "tingskriver-onnx/onnxruntime-win-x64-1.22.0"
-          Copy-Item "$runtime/lib/onnxruntime.dll","$runtime/lib/onnxruntime_providers_shared.dll" target/release/
-          Copy-Item "$runtime/LICENSE" target/release/onnxruntime-LICENSE.txt
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '8.0.x'
-
-      - name: Install vpk
-        shell: bash
-        run: dotnet tool install -g vpk --version "$VPK_VERSION"
-
-      # Full package only: nothing is published and no earlier release is needed.
-      - name: Pack
-        shell: pwsh
-        run: |
-          ./installer/pack.ps1 -Version "${{ steps.version.outputs.version }}" -Exe target/release/tingskriver-app.exe -Extra target/release/tingskriver-stt.exe,target/release/onnxruntime.dll,target/release/onnxruntime_providers_shared.dll,target/release/onnxruntime-LICENSE.txt
-
-      - name: Upload installer
-        uses: actions/upload-artifact@v4
-        with:
-          name: installer-smoke-package
-          path: installer/Releases/upload/Tingskriver-Setup.exe
-          if-no-files-found: error
-          retention-days: 7
+    uses: ./.github/workflows/velopack-package.yml
 
   smoke:
     name: Install, start, uninstall
@@ -133,7 +53,7 @@ jobs:
       - name: Download installer
         uses: actions/download-artifact@v4
         with:
-          name: ${{ inputs.package-artifact || 'installer-smoke-package' }}
+          name: ${{ inputs.package-artifact || needs.package.outputs.artifact }}
           path: setup
 
       - name: Locate installer and write SHA-256
@@ -176,7 +96,7 @@ jobs:
       - name: Download installer
         uses: actions/download-artifact@v4
         with:
-          name: ${{ inputs.package-artifact || 'installer-smoke-package' }}
+          name: ${{ inputs.package-artifact || needs.package.outputs.artifact }}
           path: setup
 
       - name: Corrupt the installer

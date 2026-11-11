@@ -135,6 +135,8 @@ async fn init_inner(app: HostHandle, overlay: Arc<dyn Overlay>) -> Result<(), St
         .map_err(|_| "dictation already initialised".to_string())?;
     service.finish_startup(spoken_error, |service| service.apply_shortcut());
     apply_capture(&service.settings());
+    // Recordings must be gone 24 h after they were made, also when no new
+    // dictation happens in between, so check every ten minutes.
     let mut interval = tokio::time::interval(Duration::from_secs(10 * 60));
     loop {
         interval.tick().await;
@@ -1404,6 +1406,9 @@ impl Service {
             app,
             style: style.as_str().to_string(),
             engine: transcript.engine.as_str().to_string(),
+            provider: Some(settings.engine.clone()),
+            syv_model: Some(settings.syv_model.clone()),
+            language: Some(settings.language.clone()),
             fallback_reason: transcript.fallback_reason,
             latency_ms,
             audio_ms: audio_ms as i64,

@@ -20,7 +20,7 @@ permissions:
 jobs:
   scope:
     name: Change scope
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' && vars.LINUX_RUNNER) || 'ubuntu-latest' }}
     timeout-minutes: 5
     outputs:
       rust: ${{ steps.scope.outputs.rust }}
@@ -54,7 +54,9 @@ jobs:
     name: Device switching unit tests
     needs: scope
     if: ${{ needs.scope.outputs.rust == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' && vars.LINUX_RUNNER) || 'ubuntu-latest' }}
+    # A hanging test binary must not hold the self-hosted runner for the 6 h default.
+    timeout-minutes: 10
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

@@ -9,7 +9,14 @@ macro_rules! catalogue {
 catalogue! {
     APP_NAME = "Tingskriver";
     MEETINGS = "Møder";
+    TRANSCRIPT_TRUNCATED = "Den nye transskription er væsentligt kortere end den forrige og er ikke gjort aktuel. Den er gemt som version, og den forrige er stadig i brug.";
     DICTATION = "Diktering";
+    RERUN_TITLE = "Kør sidste igen";
+    RERUN_CHANGED = "Teksten er ændret.";
+    RERUN_UNCHANGED = "Teksten er uændret.";
+    RERUN_BEFORE = "Før";
+    RERUN_AFTER = "Efter";
+    RERUN_CLOSE = "Luk";
     SETTINGS = "Indstillinger";
     MEASURE_TITLE = "Måling";
     MEASURE_HELP = "Sammenlign dansk nøjagtighed på din egen stemme. Importér cirka 60 sekunder som WAV (mono, 16 kHz, PCM16, højst 90 sekunder), og skriv præcis det, du siger.";
