@@ -11,6 +11,7 @@
 //! the next source in the manifest (the reserve mirror) is tried.
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
 
 use anyhow::anyhow;
@@ -479,6 +480,17 @@ async fn remove_quietly(path: &Path) {
 static HASH_COUNTS: Lazy<std::sync::Mutex<HashMap<PathBuf, usize>>> =
     Lazy::new(|| std::sync::Mutex::new(HashMap::new()));
 
+/// Test hook: holds the next hash of a path at its start so a test can act while it runs.
+#[cfg(test)]
+struct HashGate {
+    entered: tokio::sync::mpsc::UnboundedSender<()>,
+    release: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+}
+
+#[cfg(test)]
+static HASH_GATES: Lazy<std::sync::Mutex<HashMap<PathBuf, Arc<HashGate>>>> =
+    Lazy::new(|| std::sync::Mutex::new(HashMap::new()));
+
 /// SHA-256 of a file as lowercase hex, computed on a blocking worker that
 /// stops early when the token is cancelled.
 #[allow(clippy::disallowed_methods)]
@@ -490,8 +502,15 @@ pub async fn sha256_of(path: &Path, cancel: &CancellationToken) -> Result<String
     {
         *HASH_COUNTS.lock().unwrap().entry(path.clone()).or_default() += 1;
     }
+    #[cfg(test)]
+    let gate = HASH_GATES.lock().unwrap().remove(&path);
     let cancel = cancel.clone();
     tokio::task::spawn_blocking(move || {
+        #[cfg(test)]
+        if let Some(gate) = gate {
+            let _ = gate.entered.send(());
+            let _ = gate.release.lock().unwrap().recv();
+        }
         let mut file = std::fs::File::open(&path).map_err(|error| {
             TransferError::failed(format!("Failed to open {}: {error}", path.display()))
         })?;
@@ -550,8 +569,16 @@ struct InstalledStamp {
     sha256: String,
 }
 
+/// Verdict of the last SHA-256 check of an installed file, keyed by the size and modification
+/// time it had when it was checked. The lock is only held for a lookup or an insert, never
+/// while a file is hashed (a model file can be several GB).
 static INSTALLED_CACHE: Lazy<tokio::sync::Mutex<HashMap<PathBuf, (InstalledStamp, bool)>>> =
     Lazy::new(|| tokio::sync::Mutex::new(HashMap::new()));
+
+/// One hash of a file at a time, so concurrent checks of the same file hash it once. Checks of
+/// other files never wait for it. One entry per model file path ever checked.
+static INSTALLED_CHECKS: Lazy<std::sync::Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>> =
+    Lazy::new(|| std::sync::Mutex::new(HashMap::new()));
 
 async fn installed_stamp(path: &Path, file: &FileEntry) -> Option<InstalledStamp> {
     let metadata = fs::metadata(path).await.ok()?;
@@ -562,50 +589,74 @@ async fn installed_stamp(path: &Path, file: &FileEntry) -> Option<InstalledStamp
     })
 }
 
-pub(crate) async fn installed_is_corrupted(path: &Path, file: &FileEntry) -> bool {
-    let Some(stamp) = installed_stamp(path, file).await else {
-        return false;
-    };
+/// The cached verdict for a file that still has the stamp it was checked with.
+async fn cached_verdict(path: &Path, stamp: Option<&InstalledStamp>) -> Option<bool> {
+    let stamp = stamp?;
     INSTALLED_CACHE
         .lock()
         .await
         .get(path)
-        .is_some_and(|(cached, valid)| *cached == stamp && !valid)
+        .filter(|(cached, _)| cached == stamp)
+        .map(|(_, valid)| *valid)
+}
+
+async fn remember_verdict(path: &Path, stamp: InstalledStamp, valid: bool) {
+    INSTALLED_CACHE
+        .lock()
+        .await
+        .insert(path.to_path_buf(), (stamp, valid));
+}
+
+/// True when the last check of this exact file (same size and modification time) found that it
+/// does not match the manifest. Never hashes and never waits for a running hash.
+pub(crate) async fn installed_is_corrupted(path: &Path, file: &FileEntry) -> bool {
+    let stamp = installed_stamp(path, file).await;
+    cached_verdict(path, stamp.as_ref()).await == Some(false)
 }
 
 /// Check an installed file against the manifest. The SHA-256 is only
 /// recomputed when the file's size or modification time differs from the last
-/// successful check, so loading a verified model stays cheap. A mismatch
-/// leaves the file in place; the caller decides what to show.
+/// check, so loading a verified model stays cheap. A mismatch leaves the file
+/// in place; the caller decides what to show. Hashing happens without the
+/// shared cache lock, so a check of one model never delays another.
 pub async fn verify_installed(
     dir: &Path,
     file: &FileEntry,
     cancel: &CancellationToken,
 ) -> Result<(), TransferError> {
     let path = dir.join(&file.name);
+    let mismatch = || TransferError::InstalledMismatch {
+        file: file.name.clone(),
+    };
+    let verdict = |valid: bool| if valid { Ok(()) } else { Err(mismatch()) };
+
     let metadata = fs::metadata(&path).await.map_err(|error| {
         TransferError::failed(format!("Failed to read {} metadata: {error}", file.name))
     })?;
     if metadata.len() != file.size {
-        return Err(TransferError::InstalledMismatch {
-            file: file.name.clone(),
-        });
+        return Err(mismatch());
     }
     let stamp = installed_stamp(&path, file).await;
-    // Serialize checks so concurrent requests hash an unchanged file only once.
-    let mut cache = INSTALLED_CACHE.lock().await;
-    if let Some(stamp) = &stamp {
-        if let Some((cached, valid)) = cache.get(&path) {
-            if cached == stamp {
-                return if *valid {
-                    Ok(())
-                } else {
-                    Err(TransferError::InstalledMismatch {
-                        file: file.name.clone(),
-                    })
-                };
-            }
-        }
+    if let Some(valid) = cached_verdict(&path, stamp.as_ref()).await {
+        return verdict(valid);
+    }
+
+    let check_lock = {
+        let mut checks = INSTALLED_CHECKS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        Arc::clone(checks.entry(path.clone()).or_default())
+    };
+    let _checking = tokio::select! {
+        guard = check_lock.lock() => guard,
+        () = cancel.cancelled() => return Err(TransferError::Cancelled),
+    };
+
+    // A check of the same file may have finished while this one waited, and the file may have
+    // changed in the meantime: look again with a fresh stamp.
+    let stamp = installed_stamp(&path, file).await;
+    if let Some(valid) = cached_verdict(&path, stamp.as_ref()).await {
+        return verdict(valid);
     }
     if let Some(expected) = marker_for(&path, &file.sha256).await {
         if fs::read_to_string(verified_marker_path(dir, &file.name))
@@ -615,7 +666,7 @@ pub async fn verify_installed(
             == Some(expected.as_str())
         {
             if let Some(stamp) = stamp {
-                cache.insert(path.clone(), (stamp, true));
+                remember_verdict(&path, stamp, true).await;
             }
             return Ok(());
         }
@@ -623,19 +674,16 @@ pub async fn verify_installed(
     let digest = sha256_of(&path, cancel).await?;
     let valid = digest.eq_ignore_ascii_case(&file.sha256);
     if let Some(stamp) = stamp {
+        // A file that changed while it was hashed has no verdict: it is checked again next time.
         if installed_stamp(&path, file).await.as_ref() == Some(&stamp) {
-            cache.insert(path.clone(), (stamp, valid));
+            remember_verdict(&path, stamp, valid).await;
         } else {
-            return Err(TransferError::InstalledMismatch {
-                file: file.name.clone(),
-            });
+            return Err(mismatch());
         }
     }
     if !valid {
         remove_quietly(&verified_marker_path(dir, &file.name)).await;
-        return Err(TransferError::InstalledMismatch {
-            file: file.name.clone(),
-        });
+        return Err(mismatch());
     }
     write_verified_marker(dir, file, &digest).await;
     Ok(())
@@ -1308,5 +1356,203 @@ mod tests {
         assert!(installed_is_corrupted(&path, &file).await);
         std::fs::write(&path, GOOD).unwrap();
         assert!(!installed_is_corrupted(&path, &file).await);
+    }
+
+    /// Holds the next hash of `path` at its start. It continues when the returned sender
+    /// sends or is dropped. The receiver gets a message once the hash has started.
+    fn hold_next_hash(
+        path: &Path,
+    ) -> (
+        tokio::sync::mpsc::UnboundedReceiver<()>,
+        std::sync::mpsc::Sender<()>,
+    ) {
+        let (entered, entered_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (release_tx, release) = std::sync::mpsc::channel();
+        HASH_GATES.lock().unwrap().insert(
+            path.to_path_buf(),
+            Arc::new(HashGate {
+                entered,
+                release: Mutex::new(release),
+            }),
+        );
+        (entered_rx, release_tx)
+    }
+
+    async fn within<T>(future: impl std::future::Future<Output = T>, what: &str) -> T {
+        timeout(Duration::from_secs(10), future)
+            .await
+            .unwrap_or_else(|_| panic!("timed out: {what}"))
+    }
+
+    fn set_modified(path: &Path, time: std::time::SystemTime) {
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(time)
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn hashing_one_file_does_not_block_checks_of_other_files() {
+        let dir = tempdir().unwrap();
+        let slow_path = dir.path().join("slow.bin");
+        let other_path = dir.path().join("other.bin");
+        let slow = spec("slow.bin", GOOD);
+        let other = spec("other.bin", b"another model file");
+        std::fs::write(&slow_path, GOOD).unwrap();
+        std::fs::write(&other_path, b"another model file").unwrap();
+
+        let (mut hashing, release) = hold_next_hash(&slow_path);
+        let slow_task = tokio::spawn({
+            let (dir, slow) = (dir.path().to_path_buf(), slow.clone());
+            async move { verify_installed(&dir, &slow, &CancellationToken::new()).await }
+        });
+        within(hashing.recv(), "the slow hash must start")
+            .await
+            .unwrap();
+
+        // The slow file is being hashed right now. Everything below must still go through.
+        within(
+            verify_installed(dir.path(), &other, &CancellationToken::new()),
+            "verifying another file waited for a running hash",
+        )
+        .await
+        .unwrap();
+        assert!(
+            !within(
+                installed_is_corrupted(&other_path, &other),
+                "a status lookup waited for a running hash"
+            )
+            .await
+        );
+        assert!(
+            !within(
+                installed_is_corrupted(&slow_path, &slow),
+                "a status lookup of the hashed file waited for its hash"
+            )
+            .await,
+            "a file that is still being checked is not reported corrupted"
+        );
+        assert!(!slow_task.is_finished());
+
+        release.send(()).unwrap();
+        within(slow_task, "the slow verification must finish")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(HASH_COUNTS.lock().unwrap().get(&slow_path), Some(&1));
+    }
+
+    #[tokio::test]
+    async fn concurrent_checks_of_the_same_file_hash_it_once() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("model.bin");
+        let file = spec("model.bin", GOOD);
+        std::fs::write(&path, GOOD).unwrap();
+
+        let (mut hashing, release) = hold_next_hash(&path);
+        let spawn_check = || {
+            let (dir, file) = (dir.path().to_path_buf(), file.clone());
+            tokio::spawn(
+                async move { verify_installed(&dir, &file, &CancellationToken::new()).await },
+            )
+        };
+        let first = spawn_check();
+        within(hashing.recv(), "the hash must start").await.unwrap();
+        let second = spawn_check();
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            !second.is_finished(),
+            "the second check waits for the first"
+        );
+
+        release.send(()).unwrap();
+        within(first, "first check").await.unwrap().unwrap();
+        within(second, "second check").await.unwrap().unwrap();
+        assert_eq!(HASH_COUNTS.lock().unwrap().get(&path), Some(&1));
+    }
+
+    #[tokio::test]
+    async fn a_file_that_changes_while_it_is_hashed_is_not_cached_as_verified() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("model.bin");
+        let file = spec("model.bin", GOOD);
+        let mut bad = GOOD.to_vec();
+        bad[0] ^= 1;
+        std::fs::write(&path, &bad).unwrap();
+        let before = std::fs::metadata(&path).unwrap().modified().unwrap();
+
+        let (mut hashing, release) = hold_next_hash(&path);
+        let check = tokio::spawn({
+            let (dir, file) = (dir.path().to_path_buf(), file.clone());
+            async move { verify_installed(&dir, &file, &CancellationToken::new()).await }
+        });
+        within(hashing.recv(), "the hash must start").await.unwrap();
+        // The pinned content replaces the file under the running check.
+        std::fs::write(&path, GOOD).unwrap();
+        set_modified(&path, before + Duration::from_secs(5));
+        release.send(()).unwrap();
+        let error = within(check, "the check must finish")
+            .await
+            .unwrap()
+            .unwrap_err();
+        assert!(
+            matches!(error, TransferError::InstalledMismatch { .. }),
+            "{error}"
+        );
+        assert!(!verified_marker_path(dir.path(), "model.bin").exists());
+
+        // Back to the bad content with the old timestamp. A verdict cached for the changed
+        // file would now wrongly be reused for it.
+        std::fs::write(&path, &bad).unwrap();
+        set_modified(&path, before);
+        let error = verify_installed(dir.path(), &file, &CancellationToken::new())
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, TransferError::InstalledMismatch { .. }),
+            "{error}"
+        );
+        assert_eq!(HASH_COUNTS.lock().unwrap().get(&path), Some(&2));
+        assert!(
+            path.exists(),
+            "an installed file is never deleted by the check"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancelling_a_check_that_waits_for_another_check_of_the_file() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("model.bin");
+        let file = spec("model.bin", GOOD);
+        std::fs::write(&path, GOOD).unwrap();
+
+        let (mut hashing, release) = hold_next_hash(&path);
+        let first = tokio::spawn({
+            let (dir, file) = (dir.path().to_path_buf(), file.clone());
+            async move { verify_installed(&dir, &file, &CancellationToken::new()).await }
+        });
+        within(hashing.recv(), "the hash must start").await.unwrap();
+
+        let cancel = CancellationToken::new();
+        let waiting = tokio::spawn({
+            let (dir, file, cancel) = (dir.path().to_path_buf(), file.clone(), cancel.clone());
+            async move { verify_installed(&dir, &file, &cancel).await }
+        });
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+        }
+        cancel.cancel();
+        let error = within(waiting, "a cancelled check must stop waiting")
+            .await
+            .unwrap()
+            .unwrap_err();
+        assert!(matches!(error, TransferError::Cancelled), "{error}");
+
+        release.send(()).unwrap();
+        within(first, "first check").await.unwrap().unwrap();
     }
 }
