@@ -1,0 +1,188 @@
+{
+  "steps": [
+    {
+      "snapshot": {
+        "now": 100,
+        "microphone_users": [
+          {
+            "process_name": "Zoom.exe",
+            "started_at": 90
+          }
+        ],
+        "windows": [
+          {
+            "process_name": "Zoom.exe",
+            "title": "Zoom Meeting",
+            "is_browser": false,
+            "is_foreground": true
+          }
+        ],
+        "calendar": [
+          {
+            "title": "Synthetic planning",
+            "start": 0,
+            "end": 200,
+            "attendee_count": 3
+          }
+        ],
+        "dictation_active": false,
+        "recording_active": false,
+        "last_speech_at": null
+      },
+      "expected": {
+        "source": "zoom_app",
+        "confidence": "high",
+        "signals": [
+          "matching_microphone",
+          "meeting_window",
+          "foreground_window",
+          "calendar_overlap"
+        ],
+        "action": "start",
+        "reason": "meeting_detected"
+      }
+    },
+    {
+      "snapshot": {
+        "now": 150,
+        "microphone_users": [
+          {
+            "process_name": "Zoom.exe",
+            "started_at": 90
+          }
+        ],
+        "windows": [
+          {
+            "process_name": "Zoom.exe",
+            "title": "Zoom Meeting",
+            "is_browser": false,
+            "is_foreground": true
+          }
+        ],
+        "calendar": [
+          {
+            "title": "Synthetic planning",
+            "start": 0,
+            "end": 600,
+            "attendee_count": 3
+          },
+          {
+            "title": "Synthetic unrelated appointment",
+            "start": 120,
+            "end": 170,
+            "attendee_count": 2
+          }
+        ],
+        "dictation_active": false,
+        "recording_active": true,
+        "last_speech_at": null
+      },
+      "expected": {
+        "source": "zoom_app",
+        "confidence": "high",
+        "signals": [
+          "matching_microphone",
+          "meeting_window",
+          "foreground_window",
+          "calendar_overlap"
+        ],
+        "action": "none",
+        "reason": "already_recording"
+      },
+      "expected_active": {
+        "session": {
+          "source": "zoom_app",
+          "microphone_process": "zoom.exe",
+          "microphone_started_at": 90
+        },
+        "observed_at": 100,
+        "calendar_end": 600,
+        "calendar_start": 0,
+        "signals_missing_since": null
+      }
+    },
+    {
+      "snapshot": {
+        "now": 500,
+        "microphone_users": [
+          {
+            "process_name": "Zoom.exe",
+            "started_at": 90
+          }
+        ],
+        "windows": [
+          {
+            "process_name": "Zoom.exe",
+            "title": "Zoom Meeting",
+            "is_browser": false,
+            "is_foreground": true
+          }
+        ],
+        "calendar": [
+          {
+            "title": "Synthetic planning",
+            "start": 0,
+            "end": 600,
+            "attendee_count": 3
+          }
+        ],
+        "dictation_active": false,
+        "recording_active": true,
+        "last_speech_at": null
+      },
+      "expected": {
+        "source": "zoom_app",
+        "confidence": "high",
+        "signals": [
+          "matching_microphone",
+          "meeting_window",
+          "foreground_window",
+          "calendar_overlap"
+        ],
+        "action": "none",
+        "reason": "already_recording"
+      }
+    },
+    {
+      "snapshot": {
+        "now": 900,
+        "microphone_users": [
+          {
+            "process_name": "Zoom.exe",
+            "started_at": 90
+          }
+        ],
+        "windows": [
+          {
+            "process_name": "Zoom.exe",
+            "title": "Zoom Meeting",
+            "is_browser": false,
+            "is_foreground": true
+          }
+        ],
+        "calendar": [
+          {
+            "title": "Synthetic planning",
+            "start": 0,
+            "end": 600,
+            "attendee_count": 3
+          }
+        ],
+        "dictation_active": false,
+        "recording_active": true,
+        "last_speech_at": null
+      },
+      "expected": {
+        "source": "zoom_app",
+        "confidence": "high",
+        "signals": [
+          "matching_microphone",
+          "meeting_window",
+          "foreground_window"
+        ],
+        "action": "stop",
+        "reason": "calendar_ended_without_speech"
+      }
+    }
+  ]
+}

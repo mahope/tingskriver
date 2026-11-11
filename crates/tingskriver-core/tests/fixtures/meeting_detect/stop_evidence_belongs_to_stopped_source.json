@@ -1,0 +1,101 @@
+{
+  "steps": [
+    {
+      "snapshot": {
+        "now": 100,
+        "microphone_users": [
+          {
+            "process_name": "Zoom.exe",
+            "started_at": 90
+          }
+        ],
+        "windows": [
+          {
+            "process_name": "Zoom.exe",
+            "title": "Zoom Meeting",
+            "is_browser": false,
+            "is_foreground": true
+          }
+        ],
+        "calendar": [],
+        "dictation_active": false,
+        "recording_active": false,
+        "last_speech_at": null
+      },
+      "expected": {
+        "source": "zoom_app",
+        "confidence": "high",
+        "signals": [
+          "matching_microphone",
+          "meeting_window",
+          "foreground_window"
+        ],
+        "action": "start",
+        "reason": "meeting_detected"
+      }
+    },
+    {
+      "snapshot": {
+        "now": 110,
+        "microphone_users": [
+          {
+            "process_name": "Teams.exe",
+            "started_at": 109
+          }
+        ],
+        "windows": [
+          {
+            "process_name": "Teams.exe",
+            "title": "Synthetic call | Microsoft Teams",
+            "is_browser": false,
+            "is_foreground": true
+          }
+        ],
+        "calendar": [],
+        "dictation_active": false,
+        "recording_active": true,
+        "last_speech_at": null
+      },
+      "expected": {
+        "source": "teams_app",
+        "confidence": "low",
+        "signals": [
+          "meeting_window",
+          "foreground_window"
+        ],
+        "action": "none",
+        "reason": "microphone_warming_up"
+      }
+    },
+    {
+      "snapshot": {
+        "now": 141,
+        "microphone_users": [
+          {
+            "process_name": "Teams.exe",
+            "started_at": 140
+          }
+        ],
+        "windows": [
+          {
+            "process_name": "Teams.exe",
+            "title": "Synthetic call | Microsoft Teams",
+            "is_browser": false,
+            "is_foreground": true
+          }
+        ],
+        "calendar": [],
+        "dictation_active": false,
+        "recording_active": true,
+        "last_speech_at": null
+      },
+      "expected": {
+        "source": "zoom_app",
+        "confidence": "low",
+        "signals": [],
+        "action": "stop",
+        "reason": "signals_lost"
+      }
+    }
+  ]
+}

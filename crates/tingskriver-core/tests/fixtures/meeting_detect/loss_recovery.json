@@ -1,0 +1,133 @@
+{
+  "steps": [
+    {
+      "snapshot": {
+        "now": 100,
+        "microphone_users": [
+          {
+            "process_name": "Zoom.exe",
+            "started_at": 90
+          }
+        ],
+        "windows": [
+          {
+            "process_name": "Zoom.exe",
+            "title": "Zoom Meeting",
+            "is_browser": false,
+            "is_foreground": true
+          }
+        ],
+        "calendar": [],
+        "dictation_active": false,
+        "recording_active": false,
+        "last_speech_at": null
+      },
+      "expected": {
+        "source": "zoom_app",
+        "confidence": "high",
+        "signals": [
+          "matching_microphone",
+          "meeting_window",
+          "foreground_window"
+        ],
+        "action": "start",
+        "reason": "meeting_detected"
+      }
+    },
+    {
+      "snapshot": {
+        "now": 110,
+        "microphone_users": [],
+        "windows": [],
+        "calendar": [],
+        "dictation_active": false,
+        "recording_active": true,
+        "last_speech_at": null
+      },
+      "expected": {
+        "source": "unknown",
+        "confidence": "low",
+        "signals": [],
+        "action": "none",
+        "reason": "no_meeting"
+      }
+    },
+    {
+      "snapshot": {
+        "now": 139,
+        "microphone_users": [
+          {
+            "process_name": "Zoom.exe",
+            "started_at": 90
+          }
+        ],
+        "windows": [],
+        "calendar": [],
+        "dictation_active": false,
+        "recording_active": true,
+        "last_speech_at": null
+      },
+      "expected": {
+        "source": "unknown",
+        "confidence": "low",
+        "signals": [],
+        "action": "none",
+        "reason": "no_meeting"
+      }
+    },
+    {
+      "snapshot": {
+        "now": 150,
+        "microphone_users": [],
+        "windows": [],
+        "calendar": [],
+        "dictation_active": false,
+        "recording_active": true,
+        "last_speech_at": null
+      },
+      "expected": {
+        "source": "unknown",
+        "confidence": "low",
+        "signals": [],
+        "action": "none",
+        "reason": "no_meeting"
+      }
+    },
+    {
+      "snapshot": {
+        "now": 179,
+        "microphone_users": [],
+        "windows": [],
+        "calendar": [],
+        "dictation_active": false,
+        "recording_active": true,
+        "last_speech_at": null
+      },
+      "expected": {
+        "source": "unknown",
+        "confidence": "low",
+        "signals": [],
+        "action": "none",
+        "reason": "no_meeting"
+      }
+    },
+    {
+      "snapshot": {
+        "now": 181,
+        "microphone_users": [],
+        "windows": [],
+        "calendar": [],
+        "dictation_active": false,
+        "recording_active": true,
+        "last_speech_at": null
+      },
+      "expected": {
+        "source": "zoom_app",
+        "confidence": "low",
+        "signals": [],
+        "action": "stop",
+        "reason": "signals_lost"
+      }
+    }
+  ]
+}

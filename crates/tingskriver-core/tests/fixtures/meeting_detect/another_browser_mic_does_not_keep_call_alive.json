@@ -1,0 +1,84 @@
+{
+  "steps": [
+    {
+      "snapshot": {
+        "now": 100,
+        "microphone_users": [
+          {
+            "process_name": "chrome.exe",
+            "started_at": 90
+          }
+        ],
+        "windows": [
+          {
+            "process_name": "chrome.exe",
+            "title": "Meet - abc-defg-hij",
+            "is_browser": true,
+            "is_foreground": true
+          }
+        ],
+        "calendar": [],
+        "dictation_active": false,
+        "recording_active": false,
+        "last_speech_at": null
+      },
+      "expected": {
+        "source": "meet_browser",
+        "confidence": "medium",
+        "signals": [
+          "matching_microphone",
+          "meeting_window",
+          "foreground_window"
+        ],
+        "action": "suggest_start",
+        "reason": "meeting_detected"
+      }
+    },
+    {
+      "snapshot": {
+        "now": 110,
+        "microphone_users": [
+          {
+            "process_name": "firefox.exe",
+            "started_at": 90
+          }
+        ],
+        "windows": [],
+        "calendar": [],
+        "dictation_active": false,
+        "recording_active": true,
+        "last_speech_at": null
+      },
+      "expected": {
+        "source": "unknown",
+        "confidence": "low",
+        "signals": [],
+        "action": "none",
+        "reason": "no_meeting"
+      }
+    },
+    {
+      "snapshot": {
+        "now": 141,
+        "microphone_users": [
+          {
+            "process_name": "firefox.exe",
+            "started_at": 90
+          }
+        ],
+        "windows": [],
+        "calendar": [],
+        "dictation_active": false,
+        "recording_active": true,
+        "last_speech_at": null
+      },
+      "expected": {
+        "source": "meet_browser",
+        "confidence": "low",
+        "signals": [],
+        "action": "stop",
+        "reason": "signals_lost"
+      }
+    }
+  ]
+}

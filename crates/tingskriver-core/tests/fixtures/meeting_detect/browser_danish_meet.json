@@ -1,0 +1,38 @@
+{
+  "steps": [
+    {
+      "snapshot": {
+        "now": 100,
+        "microphone_users": [
+          {
+            "process_name": "brave.exe",
+            "started_at": 90
+          }
+        ],
+        "windows": [
+          {
+            "process_name": "brave.exe",
+            "title": "Møde - Syntetisk plan",
+            "is_browser": true,
+            "is_foreground": true
+          }
+        ],
+        "calendar": [],
+        "dictation_active": false,
+        "recording_active": false,
+        "last_speech_at": null
+      },
+      "expected": {
+        "source": "meet_browser",
+        "confidence": "medium",
+        "signals": [
+          "matching_microphone",
+          "meeting_window",
+          "foreground_window"
+        ],
+        "action": "suggest_start",
+        "reason": "meeting_detected"
+      }
+    }
+  ]
+}
