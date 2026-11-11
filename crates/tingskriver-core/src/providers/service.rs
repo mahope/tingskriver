@@ -293,9 +293,7 @@ impl ProviderService {
             diarization: provider.diarization,
             chat_options: provider.chat_options.clone(),
         };
-        client::test(&client::http_client(), &link)
-            .await
-            .map_err(fail)
+        client::test(&link).await.map_err(fail)
     }
 }
 

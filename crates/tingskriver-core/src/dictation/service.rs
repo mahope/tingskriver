@@ -36,6 +36,10 @@ use super::timings::{LatencyReport, LatencyWarning, NewTiming, Timings, LATENCY_
 /// Emitted to the main window when the history list changes.
 pub const HISTORY_CHANGED_EVENT: &str = "dictation-history-changed";
 
+mod flow;
+use flow::Flow;
+pub use flow::{DictationBackend, DictationRun, DictationState};
+
 static SERVICE: OnceLock<Arc<Service>> = OnceLock::new();
 static DICTATING: AtomicBool = AtomicBool::new(false);
 
@@ -54,6 +58,9 @@ pub fn get() -> Result<Arc<Service>, String> {
 
 pub struct Service {
     app: HostHandle,
+    backend: Option<Arc<dyn DictationBackend>>,
+    processing_cancel: Mutex<tokio_util::sync::CancellationToken>,
+    states: tokio::sync::broadcast::Sender<DictationState>,
     overlay: Arc<dyn Overlay>,
     pub store: Store,
     timings: Timings,
@@ -122,46 +129,12 @@ pub fn init(app: HostHandle, overlay: Arc<dyn Overlay>) {
 }
 
 async fn init_inner(app: HostHandle, overlay: Arc<dyn Overlay>) -> Result<(), String> {
-    let app_data_dir = app.app_data_dir()?;
-    let store = Store::open(&app_data_dir.join("dictation.sqlite")).await?;
-    let settings = store.settings().await?;
-    let mut rules = store.rules().await?;
-    let (spoken, spoken_error) = settings::load_spoken_table(&app_data_dir).await;
-    rules.spoken = spoken;
-    let timings = Timings::open(store.pool()).await?;
-    super::warm::set_policy(settings.residency_policy());
-    let service = Arc::new(Service {
-        app: app.clone(),
-        overlay,
-        store,
-        timings,
-        latency_warned: Mutex::new(BTreeSet::new()),
-        settings: RwLock::new(settings),
-        rules: RwLock::new(rules),
-        http: crate::http::client(),
-        audio_dir: app_data_dir.join("dictation_audio"),
-        app_data_dir,
-        shortcut_active: AtomicBool::new(false),
-        next_ticket: AtomicU64::new(0),
-        order: Mutex::new(Order::default()),
-        insert_turn: tokio::sync::watch::channel(0).0,
-        last_error: Mutex::new(None),
-        last_insertion: Mutex::new(None),
-        active_mode: Mutex::new(None),
-        #[cfg(windows)]
-        hook: Mutex::new(None),
-        #[cfg(windows)]
-        trigger: Mutex::new(None),
-    });
+    let (service, spoken_error) = Service::open(app, overlay, None).await?;
     SERVICE
         .set(service.clone())
         .map_err(|_| "dictation already initialised".to_string())?;
-
-    service.apply_shortcut();
+    service.finish_startup(spoken_error, |service| service.apply_shortcut());
     apply_capture(&service.settings());
-    if let Some(e) = spoken_error {
-        service.set_error(Some(e));
-    }
     // Recordings must be gone 24 h after they were made, also when no new
     // dictation happens in between, so check every ten minutes.
     let mut interval = tokio::time::interval(Duration::from_secs(10 * 60));
@@ -172,6 +145,64 @@ async fn init_inner(app: HostHandle, overlay: Arc<dyn Overlay>) -> Result<(), St
 }
 
 impl Service {
+    async fn open(
+        app: HostHandle,
+        overlay: Arc<dyn Overlay>,
+        backend: Option<Arc<dyn DictationBackend>>,
+    ) -> Result<(Arc<Self>, Option<String>), String> {
+        let app_data_dir = app.app_data_dir()?;
+        let store = Store::open(&app_data_dir.join("dictation.sqlite")).await?;
+        let settings = store.settings().await?;
+        let mut rules = store.rules().await?;
+        let (spoken, spoken_error) = settings::load_spoken_table(&app_data_dir).await;
+        rules.spoken = spoken;
+        let timings = Timings::open(store.pool()).await?;
+        if backend.is_none() {
+            super::warm::set_policy(settings.residency_policy());
+        }
+        let service = Arc::new(Service {
+            app: app.clone(),
+            backend,
+            processing_cancel: Mutex::new(tokio_util::sync::CancellationToken::new()),
+            states: tokio::sync::broadcast::channel(128).0,
+            overlay,
+            store,
+            timings,
+            latency_warned: Mutex::new(BTreeSet::new()),
+            settings: RwLock::new(settings),
+            rules: RwLock::new(rules),
+            http: crate::http::client(),
+            audio_dir: app_data_dir.join("dictation_audio"),
+            app_data_dir,
+            shortcut_active: AtomicBool::new(false),
+            next_ticket: AtomicU64::new(0),
+            order: Mutex::new(Order::default()),
+            insert_turn: tokio::sync::watch::channel(0).0,
+            last_error: Mutex::new(None),
+            last_insertion: Mutex::new(None),
+            active_mode: Mutex::new(None),
+            #[cfg(windows)]
+            hook: Mutex::new(None),
+            #[cfg(windows)]
+            trigger: Mutex::new(None),
+        });
+        Ok((service, spoken_error))
+    }
+}
+
+impl Service {
+    fn finish_startup(
+        self: &Arc<Self>,
+        spoken_error: Option<String>,
+        install_shortcut: impl FnOnce(&Arc<Self>),
+    ) {
+        install_shortcut(self);
+        // A successful hook installation clears last_error.
+        if let Some(e) = spoken_error {
+            self.set_error(Some(e));
+        }
+    }
+
     pub fn settings(&self) -> DictationSettings {
         self.settings.read().map(|s| s.clone()).unwrap_or_default()
     }
@@ -426,6 +457,7 @@ impl Service {
     /// logs the rest of its timing window when it unhooks.
     #[cfg(windows)]
     pub fn stop_shortcut(&self) {
+        self.cancel_processing();
         if let Ok(mut slot) = self.hook.lock() {
             slot.take();
         }
@@ -437,6 +469,7 @@ impl Service {
 
     #[cfg(not(windows))]
     pub fn stop_shortcut(&self) {
+        self.cancel_processing();
         self.shortcut_active.store(false, Ordering::Relaxed);
     }
 
@@ -453,6 +486,7 @@ impl Service {
 }
 
 struct Session {
+    flow: Flow,
     recorder: Recorder,
     target_app: Option<String>,
     target_window: usize,
@@ -493,6 +527,24 @@ fn foreground_window() -> usize {
     #[cfg(not(windows))]
     {
         0
+    }
+}
+
+fn microphone_failure(error: &str) -> &'static str {
+    if error == "Ingen mikrofon fundet" {
+        "device_not_found"
+    } else if error == "Mikrofonen svarede ikke" {
+        "timeout"
+    } else if error.starts_with("Mikrofonen kan ikke bruges:") {
+        "input_config"
+    } else if error.starts_with("Kunne ikke åbne mikrofonen:") {
+        "open_stream"
+    } else if error.starts_with("Kunne ikke starte mikrofonen:") {
+        "start_stream"
+    } else if error.starts_with("could not start capture thread:") {
+        "capture_thread"
+    } else {
+        "capture_error"
     }
 }
 
@@ -561,10 +613,13 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant, Optio
                     // Load the local model while the user speaks, so neither
                     // the local engine nor the fallback pays for a load.
                     super::warm::prewarm_parakeet();
+                    let flow = Flow::new(service.states.clone(), None);
                     match Recorder::start(&settings.capture_options()) {
                         Ok(recorder) => {
+                            flow.set(DictationState::Recording);
                             DICTATING.store(true, Ordering::Relaxed);
                             session = Some(Session {
+                                flow,
                                 recorder,
                                 target_app,
                                 target_window,
@@ -576,7 +631,8 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant, Optio
                             });
                         }
                         Err(e) => {
-                            log::warn!("Dictation microphone failed: {e}");
+                            flow.set(DictationState::Error);
+                            log::warn!("Dictation microphone failed: {}", microphone_failure(&e));
                             service.set_error(Some(e));
                             gesture.reset();
                             flash_error(&service.overlay);
@@ -585,7 +641,8 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant, Optio
                 }
                 GestureAction::Lock => {}
                 GestureAction::Cancel => {
-                    if session.take().is_some() {
+                    if let Some(s) = session.take() {
+                        s.flow.set(DictationState::Cancelled);
                         DICTATING.store(false, Ordering::Relaxed);
                         service.overlay.set(OverlayState::Hidden);
                     }
@@ -602,6 +659,7 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant, Optio
                             sound::play(Sound::Stop, s.settings.sound_volume);
                         }
                         service.overlay.set(OverlayState::Processing);
+                        let cancel = service.processing_token();
                         let service = service.clone();
                         let target_app = s.target_app;
                         let start_ms = s.start_ms;
@@ -610,17 +668,22 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant, Optio
                             let turn = Turn {
                                 service: service.clone(),
                                 ticket,
+                                flow: s.flow,
                             };
                             service
-                                .process(
-                                    samples,
-                                    target_app,
-                                    s.target_window,
-                                    s.start_focus,
-                                    (s.settings, s.mode),
-                                    at,
-                                    start_ms,
+                                .run_processing(
+                                    cancel,
                                     &turn,
+                                    service.clone().process(
+                                        samples,
+                                        target_app,
+                                        s.target_window,
+                                        s.start_focus,
+                                        (s.settings, s.mode),
+                                        at,
+                                        start_ms,
+                                        &turn,
+                                    ),
                                 )
                                 .await;
                         });
@@ -659,7 +722,9 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant, Optio
         }
         if silent {
             // No sound at all: nothing was recorded, so end it with a message.
-            session = None;
+            if let Some(s) = session.take() {
+                s.flow.set(DictationState::Error);
+            }
             DICTATING.store(false, Ordering::Relaxed);
             log::warn!(
                 "Dictation microphone delivered no audio within {} ms",
@@ -674,7 +739,8 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant, Optio
         }
     }
 
-    if session.take().is_some() {
+    if let Some(s) = session.take() {
+        s.flow.set(DictationState::Cancelled);
         DICTATING.store(false, Ordering::Relaxed);
         service.overlay.set(OverlayState::Hidden);
     }
@@ -685,6 +751,7 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant, Optio
 struct Turn {
     service: Arc<Service>,
     ticket: u64,
+    flow: Flow,
 }
 
 /// A dictation never waits longer than this for the one before it.
@@ -761,6 +828,13 @@ fjern gentagelser og selvrettelser (behold den rettede udgave), og lav punktopst
 teksten opremser flere ting. Bevar betydning, sprog og tone. Svar kun med den rettede tekst.";
 
 impl Service {
+    async fn transcribe_local(&self, samples: Vec<f32>) -> Result<String, String> {
+        match &self.backend {
+            Some(b) => b.local(samples).await,
+            None => transcribe_local(samples).await,
+        }
+    }
+
     async fn transcribe(
         &self,
         settings: &DictationSettings,
@@ -770,17 +844,23 @@ impl Service {
     ) -> Result<Transcript, String> {
         let preference = EnginePreference::parse(&settings.engine);
         let key = match preference {
-            EnginePreference::Auto => secrets::syv_key(),
+            EnginePreference::Auto => self
+                .backend
+                .as_ref()
+                .map_or_else(secrets::syv_key, |b| b.syv_key()),
             EnginePreference::LocalOnly => None,
         };
         if mode.and_then(|m| m.provider.as_deref()) == Some("syv") && key.is_none() {
             return Err("Tilstanden kræver en Syv.ai-nøgle".into());
         }
-        let plan = engine::plan(preference, key.is_some(), local_engine_available().await)
-            .ok_or_else(|| {
-                "Ingen transskription: sæt en Syv.ai-nøgle eller hent en lokal Parakeet-model"
-                    .to_string()
-            })?;
+        let available = match &self.backend {
+            Some(b) => b.local_available().await,
+            None => local_engine_available().await,
+        };
+        let plan = engine::plan(preference, key.is_some(), available).ok_or_else(|| {
+            "Ingen transskription: sæt en Syv.ai-nøgle eller hent en lokal Parakeet-model"
+                .to_string()
+        })?;
 
         let Some(key) = key.filter(|_| plan.primary == Engine::Syv) else {
             if let Some(model) = mode.and_then(|m| m.local_model(plan.primary)) {
@@ -790,7 +870,8 @@ impl Service {
                 )
                 .await?;
             }
-            return transcribe_local(samples.to_vec())
+            return self
+                .transcribe_local(samples.to_vec())
                 .await
                 .map(|text| Transcript {
                     text,
@@ -808,23 +889,31 @@ impl Service {
             .and_then(|m| m.language.clone())
             .unwrap_or_else(|| settings.language.clone());
         let mut syv_task = tokio::spawn({
+            let backend = self.backend.clone();
+            let settings = settings.clone();
             let client = self.http.clone();
             let endpoint = settings.syv_endpoint.clone();
             let model = settings.syv_model.clone();
             let wav = audio::wav_bytes(samples, audio::TARGET_RATE);
             async move {
-                syv::transcribe_language(
-                    &client,
-                    &endpoint,
-                    &key,
-                    &model,
-                    wav,
-                    Some(prompt),
-                    &language,
-                )
-                .await
+                match backend {
+                    Some(b) => b.syv(&key, &settings, wav, prompt, language).await,
+                    None => {
+                        syv::transcribe_language(
+                            &client,
+                            &endpoint,
+                            &key,
+                            &model,
+                            wav,
+                            Some(prompt),
+                            &language,
+                        )
+                        .await
+                    }
+                }
             }
         });
+        let _abort_syv = flow::AbortTask(syv_task.abort_handle());
 
         let deadline = Duration::from_millis(settings.fallback_after_ms);
         let attempt = match tokio::time::timeout(deadline, &mut syv_task).await {
@@ -854,7 +943,7 @@ impl Service {
             }),
             Next::Fail(e) => Err(e),
             Next::Fallback { keep_primary } => {
-                log::info!("Dictation falling back to local model: {reason}");
+                log::info!("Dictation falling back to local model");
                 if plan.fallback.is_none() {
                     // Slow but nothing else to try: keep waiting for Syv.ai.
                     return syv_result(syv_task.await).map(|text| Transcript {
@@ -863,7 +952,7 @@ impl Service {
                         fallback_reason: None,
                     });
                 }
-                let local = transcribe_local(samples.to_vec());
+                let local = self.transcribe_local(samples.to_vec());
                 if !keep_primary {
                     return local.await.map(|text| Transcript {
                         text,
@@ -887,8 +976,8 @@ impl Service {
                             syv_task.abort();
                             Ok(Transcript { text, engine: Engine::Local, fallback_reason: Some(reason) })
                         }
-                        Err(local_error) => {
-                            log::warn!("Dictation local fallback failed: {local_error}");
+                        Err(_local_error) => {
+                            log::warn!("Dictation local fallback failed");
                             syv_result(syv_task.await).map(|text| Transcript {
                                 text,
                                 engine: Engine::Syv,
@@ -990,6 +1079,7 @@ impl Service {
         start_ms: Option<u64>,
         turn: &Turn,
     ) {
+        turn.flow.set(DictationState::Processing);
         let (base_settings, mut mode) = selection;
         let mut settings = base_settings.clone();
         if let Some(mode) = &mode {
@@ -1013,7 +1103,8 @@ impl Service {
         {
             Ok(t) => t,
             Err(e) => {
-                log::warn!("Dictation transcription failed: {e}");
+                turn.flow.set(DictationState::Error);
+                log::warn!("Dictation transcription failed");
                 self.set_error(Some(e));
                 flash_error(&self.overlay);
                 return;
@@ -1041,6 +1132,7 @@ impl Service {
                     {
                         Ok(t) => t,
                         Err(e) => {
+                            turn.flow.set(DictationState::Error);
                             self.set_error(Some(e));
                             flash_error(&self.overlay);
                             return;
@@ -1090,6 +1182,7 @@ impl Service {
         {
             self.overlay.set(OverlayState::Hidden);
             turn.wait().await;
+            turn.flow.set(DictationState::Inserting);
             self.run_edit_command(command).await;
             return;
         }
@@ -1118,14 +1211,23 @@ impl Service {
             paste_timeout: Duration::from_millis(settings.paste_timeout_ms),
             app: target_app.clone(),
         };
-        let inserted = insert(
-            text.clone(),
-            options,
-            enter,
-            target_window,
-            start_focus.as_ref().map(|f| f.id.clone()),
-        )
-        .await;
+        turn.flow.set(DictationState::Inserting);
+        let inserted = match &self.backend {
+            Some(b) => b
+                .insert(text.clone())
+                .await
+                .map(|()| ("fake", Instant::now(), None)),
+            None => {
+                insert(
+                    text.clone(),
+                    options,
+                    enter,
+                    target_window,
+                    start_focus.as_ref().map(|f| f.id.clone()),
+                )
+                .await
+            }
+        };
         let mut refusal = None;
         let (insert_method, inserted_at) = match inserted {
             Ok((method, at, field)) => {
@@ -1138,7 +1240,8 @@ impl Service {
                 (Some(method), at)
             }
             Err(e) => {
-                log::warn!("Dictation insert failed: {e}");
+                turn.flow.set(DictationState::Error);
+                log::warn!("Dictation insert failed");
                 refusal = Refusal::from_message(&e);
                 if let Some(r) = refusal {
                     self.set_error(Some(r.message().to_string()));
@@ -1412,6 +1515,176 @@ fn cleanup_options<'a>(
 #[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dictation_microphone_logs_only_failure_classes() {
+        for (error, class) in [
+            ("Ingen mikrofon fundet", "device_not_found"),
+            ("Mikrofonen svarede ikke", "timeout"),
+            ("Mikrofonen kan ikke bruges: private device", "input_config"),
+            ("Kunne ikke åbne mikrofonen: private device", "open_stream"),
+            (
+                "Kunne ikke starte mikrofonen: private device",
+                "start_stream",
+            ),
+            (
+                "could not start capture thread: private device",
+                "capture_thread",
+            ),
+            ("private unexpected error", "capture_error"),
+        ] {
+            assert_eq!(microphone_failure(error), class);
+        }
+    }
+
+    struct TestHost(PathBuf);
+    impl crate::host::AppHost for TestHost {
+        fn emit_json(&self, _: &str, _: &str) -> Result<(), String> {
+            Ok(())
+        }
+        fn database(&self) -> Option<crate::database::manager::DatabaseManager> {
+            None
+        }
+        fn app_data_dir(&self) -> Result<PathBuf, String> {
+            Ok(self.0.clone())
+        }
+        fn listen(&self, _: &str, _: Box<dyn Fn(&str) + Send + Sync>) -> crate::host::ListenerId {
+            0
+        }
+        fn unlisten(&self, _: crate::host::ListenerId) {}
+        fn read_setting(&self, _: &str, _: &str) -> Result<Option<serde_json::Value>, String> {
+            Ok(None)
+        }
+        fn write_setting(&self, _: &str, _: &str, _: serde_json::Value) -> Result<(), String> {
+            Ok(())
+        }
+    }
+    struct TestOverlay;
+    impl Overlay for TestOverlay {
+        fn ensure(&self) -> Result<(), String> {
+            Ok(())
+        }
+        fn set(&self, _: OverlayState) {}
+    }
+
+    #[tokio::test]
+    async fn dictation_startup_preserves_spoken_error_after_shortcut_success() {
+        let dir = tempfile::tempdir().unwrap();
+        tokio::fs::write(dir.path().join(settings::SPOKEN_FILE), "{invalid")
+            .await
+            .unwrap();
+        let (service, spoken_error) = Service::open(
+            Arc::new(TestHost(dir.path().into())),
+            Arc::new(TestOverlay),
+            Some(Arc::new(PendingBackend::default())),
+        )
+        .await
+        .unwrap();
+        let expected = spoken_error
+            .clone()
+            .expect("invalid spoken table must fail");
+        service.finish_startup(spoken_error, |service| {
+            service.shortcut_active.store(true, Ordering::Relaxed);
+            service.set_error(None);
+        });
+        assert!(service.shortcut_active());
+        assert_eq!(service.last_error(), Some(expected));
+    }
+    #[derive(Default)]
+    struct PendingBackend {
+        started: tokio::sync::Notify,
+        release: tokio::sync::Notify,
+        inserted: Mutex<Vec<String>>,
+    }
+    #[async_trait::async_trait]
+    impl DictationBackend for PendingBackend {
+        fn syv_key(&self) -> Option<String> {
+            None
+        }
+        async fn local_available(&self) -> bool {
+            true
+        }
+        async fn syv(
+            &self,
+            _: &str,
+            _: &DictationSettings,
+            _: Vec<u8>,
+            _: String,
+            _: String,
+        ) -> Result<String, String> {
+            unreachable!()
+        }
+        async fn local(&self, _: Vec<f32>) -> Result<String, String> {
+            self.started.notify_one();
+            self.release.notified().await;
+            Ok("test sentence".into())
+        }
+        async fn insert(&self, text: String) -> Result<(), String> {
+            self.inserted.lock().unwrap().push(text);
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn dictation_pending_turn_survives_interruption_and_settings() {
+        for interrupted in [true, false] {
+            let dir = tempfile::tempdir().unwrap();
+            let backend = Arc::new(PendingBackend::default());
+            let service = Service::open_for_test(
+                Arc::new(TestHost(dir.path().into())),
+                Arc::new(TestOverlay),
+                backend.clone(),
+            )
+            .await
+            .unwrap();
+            let flow = Flow::new(service.states.clone(), None);
+            flow.set(DictationState::Recording);
+            let turn = Turn {
+                service: service.clone(),
+                ticket: 0,
+                flow,
+            };
+            service.next_ticket.store(1, Ordering::SeqCst);
+            let mut settings = service.settings();
+            settings.keep_audio = false;
+            let process = service.clone().process(
+                vec![0.2; 16000],
+                None,
+                0,
+                None,
+                (settings, None),
+                Instant::now(),
+                None,
+                &turn,
+            );
+            let running = service.run_processing(service.processing_token(), &turn, process);
+            let changes = async {
+                backend.started.notified().await;
+                if interrupted {
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    tx.send((ChordSignal::Interrupted, Instant::now(), None))
+                        .unwrap();
+                    drop(tx);
+                    control_loop(service.clone(), rx);
+                } else {
+                    let mut settings = service.settings();
+                    settings.enabled = !settings.enabled;
+                    service.save_settings(settings).await.unwrap();
+                }
+                backend.release.notify_one();
+            };
+            tokio::time::timeout(Duration::from_secs(5), async {
+                tokio::join!(running, changes);
+            })
+            .await
+            .unwrap();
+            assert_eq!(*backend.inserted.lock().unwrap(), vec!["Test sentence"]);
+            assert_eq!(
+                service.store.history(10).await.unwrap()[0].text,
+                "Test sentence"
+            );
+        }
+    }
 
     #[test]
     fn service_raw_cleanup_preserves_numbers_and_addresses() {

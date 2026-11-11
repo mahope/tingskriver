@@ -24,7 +24,7 @@ The workflow commits `Release <version>` to `main` (the workspace version in `Ca
 
 ## Changelog
 
-`docs/changelog/<version>.md` is generated from the merged pull requests since the previous published release (titles and links, grouped by the first word of the title into Tilføjet, Ændret, Rettet and Fjernet). The same text is appended to the GitHub release description.
+`docs/changelog/<version>.md` is generated from the merged pull requests since the previous published release (titles and links, grouped by the first word of the title into Tilføjet, Ændret, Rettet and Fjernet). The file is the entire GitHub release description; verification rejects any difference.
 
 ## How the build is started
 

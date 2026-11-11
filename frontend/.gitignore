@@ -25,7 +25,7 @@ whisper-server-package/
 /coverage
 /dist
 
-# next.js
+# frontend build output
 /.next/
 /out/
 
