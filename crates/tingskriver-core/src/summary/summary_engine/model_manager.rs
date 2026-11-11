@@ -6,12 +6,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
-use reqwest::Client;
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use tokio::fs::{self, OpenOptions};
-use tokio::io::{AsyncWriteExt, BufWriter};
+use tokio::fs;
 use tokio::sync::RwLock;
-use tokio::time::timeout;
+use tokio_util::sync::CancellationToken;
+
+use crate::model_download::{self, ProgressSink, TransferError, TransferOptions};
 
 use super::models::{get_available_models, get_model_by_name};
 
@@ -68,7 +69,10 @@ pub enum ModelStatus {
     Available,
 
     /// Model file is corrupted and needs redownload
-    Corrupted { file_size: u64, expected_min_size: u64 },
+    Corrupted {
+        file_size: u64,
+        expected_min_size: u64,
+    },
 
     /// Error occurred with the model
     Error(String),
@@ -116,8 +120,60 @@ pub struct ModelManager {
     /// Active downloads (model names)
     active_downloads: Arc<RwLock<HashSet<String>>>,
 
-    /// Cancellation flag for current download
-    cancel_download_flag: Arc<RwLock<Option<String>>>,
+    /// Cancellation tokens of the running downloads. A token is registered in the same step that
+    /// marks the download as active, so a cancel can never miss a running download.
+    cancel_tokens: Arc<RwLock<HashMap<String, CancellationToken>>>,
+}
+
+/// Turns byte counts from the shared downloader into progress callbacks and model status.
+struct SummaryProgress {
+    models: Arc<RwLock<HashMap<String, ModelInfo>>>,
+    model_name: String,
+    callback: Option<Box<dyn Fn(DownloadProgress) + Send>>,
+    total_bytes: u64,
+    last_file_bytes: u64,
+    bytes_since_report: u64,
+    last_percent: u8,
+    last_report: std::time::Instant,
+    first: bool,
+}
+
+#[async_trait]
+impl ProgressSink for SummaryProgress {
+    async fn bytes(&mut self, file_bytes: u64) {
+        self.bytes_since_report = self
+            .bytes_since_report
+            .saturating_add(file_bytes.saturating_sub(self.last_file_bytes));
+        self.last_file_bytes = file_bytes;
+        let percent = if self.total_bytes > 0 {
+            ((file_bytes as f64 / self.total_bytes as f64) * 100.0).min(99.0) as u8
+        } else {
+            0
+        };
+        let elapsed = self.last_report.elapsed();
+        if !(self.first || percent > self.last_percent || elapsed.as_millis() >= 500) {
+            return;
+        }
+        let speed_mbps = if !self.first && elapsed.as_secs_f64() > 0.0 {
+            (self.bytes_since_report as f64 / (1024.0 * 1024.0)) / elapsed.as_secs_f64()
+        } else {
+            0.0
+        };
+        if let Some(callback) = &self.callback {
+            callback(DownloadProgress::new(
+                file_bytes,
+                self.total_bytes,
+                speed_mbps,
+            ));
+        }
+        if let Some(model_info) = self.models.write().await.get_mut(&self.model_name) {
+            model_info.status = ModelStatus::Downloading { progress: percent };
+        }
+        self.first = false;
+        self.last_percent = percent;
+        self.last_report = std::time::Instant::now();
+        self.bytes_since_report = 0;
+    }
 }
 
 impl ModelManager {
@@ -159,7 +215,7 @@ impl ModelManager {
             models_dir,
             available_models: Arc::new(RwLock::new(HashMap::new())),
             active_downloads: Arc::new(RwLock::new(HashSet::new())),
-            cancel_download_flag: Arc::new(RwLock::new(None)),
+            cancel_tokens: Arc::new(RwLock::new(HashMap::new())),
         })
     }
 
@@ -255,11 +311,7 @@ impl ModelManager {
                         }
                     }
                     Err(e) => {
-                        log::error!(
-                            "Model '{}': Failed to read metadata: {}",
-                            model_def.name,
-                            e
-                        );
+                        log::error!("Model '{}': Failed to read metadata: {}", model_def.name, e);
                         ModelStatus::Error(format!("Failed to read metadata: {}", e))
                     }
                 }
@@ -308,11 +360,7 @@ impl ModelManager {
 
     /// Get info for a specific model
     pub async fn get_model_info(&self, model_name: &str) -> Option<ModelInfo> {
-        self.available_models
-            .read()
-            .await
-            .get(model_name)
-            .cloned()
+        self.available_models.read().await.get(model_name).cloned()
     }
 
     /// Check if a model is ready to use
@@ -325,11 +373,45 @@ impl ModelManager {
             }
         }
 
-        if let Some(info) = self.get_model_info(model_name).await {
-            info.status == ModelStatus::Available
-        } else {
-            false
+        let Some(info) = self.get_model_info(model_name).await else {
+            return false;
+        };
+        if info.status != ModelStatus::Available {
+            return false;
         }
+        // A file that no longer matches the pinned SHA-256 is never used.
+        if let Some(entry) = model_download::entry("summary", model_name) {
+            let Some(file) = entry.files.first() else {
+                log::error!("Model manifest has no files for {}", model_name);
+                return false;
+            };
+            let dir = info.path.parent().unwrap_or(&self.models_dir).to_path_buf();
+            if let Err(error) =
+                model_download::verify_installed(&dir, file, &CancellationToken::new()).await
+            {
+                log::error!(
+                    "Built-in model {} failed verification: {}",
+                    model_name,
+                    error
+                );
+                if matches!(error, TransferError::InstalledMismatch { .. }) {
+                    if let Some(model_info) =
+                        self.available_models.write().await.get_mut(model_name)
+                    {
+                        model_info.status = ModelStatus::Corrupted {
+                            file_size: info
+                                .path
+                                .metadata()
+                                .map(|m| m.len() / (1024 * 1024))
+                                .unwrap_or(0),
+                            expected_min_size: file.size / (1024 * 1024),
+                        };
+                    }
+                }
+                return false;
+            }
+        }
+        true
     }
 
     /// Download a model with simple percentage callback (backward compatible)
@@ -339,11 +421,13 @@ impl ModelManager {
         progress_callback: Option<Box<dyn Fn(u8) + Send>>,
     ) -> Result<()> {
         // Wrap the simple callback to use detailed progress internally
-        let detailed_callback: Option<Box<dyn Fn(DownloadProgress) + Send>> =
-            progress_callback.map(|cb| {
-                Box::new(move |p: DownloadProgress| cb(p.percent)) as Box<dyn Fn(DownloadProgress) + Send>
+        let detailed_callback: Option<Box<dyn Fn(DownloadProgress) + Send>> = progress_callback
+            .map(|cb| {
+                Box::new(move |p: DownloadProgress| cb(p.percent))
+                    as Box<dyn Fn(DownloadProgress) + Send>
             });
-        self.download_model_detailed(model_name, detailed_callback).await
+        self.download_model_detailed(model_name, detailed_callback)
+            .await
     }
 
     /// Download a model with detailed progress (MB, speed, etc.)
@@ -354,30 +438,12 @@ impl ModelManager {
     ) -> Result<()> {
         log::info!("Starting download for model: {}", model_name);
 
-        // Check if already downloading
-        {
-            let active = self.active_downloads.read().await;
-            if active.contains(model_name) {
-                log::warn!("Download already in progress for model: {}", model_name);
-                return Err(anyhow!("Download already in progress"));
-            }
-        }
-
         // Get model definition
         let model_def = get_model_by_name(model_name)
             .ok_or_else(|| anyhow!("Unknown model: {}", model_name))?;
 
-        // Add to active downloads
-        {
-            let mut active = self.active_downloads.write().await;
-            active.insert(model_name.to_string());
-        }
-
-        // Clear cancellation flag
-        {
-            let mut cancel_flag = self.cancel_download_flag.write().await;
-            *cancel_flag = None;
-        }
+        // Mark the download as active and make it cancellable in one step.
+        let cancel = self.begin_download(model_name).await?;
 
         // Update status to downloading
         {
@@ -389,383 +455,167 @@ impl ModelManager {
 
         let file_path = self.models_dir.join(&model_def.gguf_file);
 
-        // Check if model already exists and is valid (skip re-download)
-        if file_path.exists() {
-            if let Ok(metadata) = fs::metadata(&file_path).await {
-                let file_size_mb = metadata.len() / (1024 * 1024);
-                let expected_min = (model_def.size_mb as f64 * 0.9) as u64;
-                let expected_max = (model_def.size_mb as f64 * 1.1) as u64;
+        // Pinned size, SHA-256 and sources (main source first, then the reserve mirror).
+        let Some(entry) = model_download::entry("summary", model_name) else {
+            self.finish_failed_download(
+                model_name,
+                &file_path,
+                "Model is missing from the model manifest".to_string(),
+            )
+            .await;
+            return Err(anyhow!(
+                "Model {} is missing from the model manifest",
+                model_name
+            ));
+        };
+        let Some(file) = entry.files.first() else {
+            let message = format!("Model manifest has no files for {}", model_name);
+            self.finish_failed_download(model_name, &file_path, message.clone())
+                .await;
+            return Err(anyhow!(message));
+        };
 
-                if file_size_mb >= expected_min && file_size_mb <= expected_max {
-                    log::info!(
-                        "Model '{}' already exists and is valid ({} MB), skipping download",
-                        model_name,
-                        file_size_mb
-                    );
-
-                    // Update status to available
-                    {
-                        let mut models = self.available_models.write().await;
-                        if let Some(model_info) = models.get_mut(model_name) {
-                            model_info.status = ModelStatus::Available;
-                        }
-                    }
-
-                    // Remove from active downloads
-                    {
-                        let mut active = self.active_downloads.write().await;
-                        active.remove(model_name);
-                    }
-
-                    // Report 100% progress
-                    if let Some(ref callback) = progress_callback {
-                        let total = metadata.len();
-                        callback(DownloadProgress::new(total, total, 0.0));
-                    }
-
-                    return Ok(());
-                } else if file_size_mb > expected_max {
-                    // File is LARGER than expected - possibly corrupted or wrong file
-                    // Delete and re-download in this case
-                    log::warn!(
-                        "Model '{}' exists but is too large ({} MB, expected max {} MB), deleting and re-downloading",
-                        model_name,
-                        file_size_mb,
-                        expected_max
-                    );
-                    if let Err(e) = fs::remove_file(&file_path).await {
-                        log::warn!("Failed to delete oversized model file: {}", e);
-                    }
-                } else {
-                    // File is SMALLER than expected - likely partial download
-                    // DON'T DELETE - let resume logic handle it
-                    log::info!(
-                        "Model '{}' exists but is incomplete ({} MB, expected min {} MB), will resume download",
-                        model_name,
-                        file_size_mb,
-                        expected_min
-                    );
-                    // Continue to download/resume logic below
-                }
-            }
-        }
-
-        log::info!("Downloading from: {}", model_def.download_url);
+        log::info!(
+            "Downloading {} from the pinned sources ({} source(s))",
+            model_name,
+            entry.sources.len()
+        );
         log::info!("Saving to: {}", file_path.display());
 
-        // Create models directory if needed
-        if !self.models_dir.exists() {
-            fs::create_dir_all(&self.models_dir).await?;
-        }
-
-        // Check for existing partial download to resume
-        let existing_size: u64 = if file_path.exists() {
-            fs::metadata(&file_path)
-                .await
-                .map(|m| m.len())
-                .unwrap_or(0)
-        } else {
-            0
-        };
-
-        // Download the file with optimized client settings
-        let client = Client::builder()
-            .tcp_nodelay(true) // Disable Nagle's algorithm for faster streaming
-            .pool_max_idle_per_host(1) // Keep connection alive
-            .timeout(crate::http::TIMEOUT)
-            .connect_timeout(crate::http::TIMEOUT)
-            .build()
-            .map_err(|e| anyhow!("Failed to create HTTP client: {}", e))?;
-
-        // Build request with Range header if resuming
-        let mut request = client.get(&model_def.download_url);
-        if existing_size > 0 {
-            log::info!(
-                "Resuming download from byte {} ({:.1} MB)",
-                existing_size,
-                existing_size as f64 / (1024.0 * 1024.0)
-            );
-            request = request.header("Range", format!("bytes={}-", existing_size));
-        }
-
-        let response = request
-            .send()
-            .await
-            .map_err(|e| anyhow!("Failed to start download: {}", e))?;
-
-        // Check response status - 200 OK (full download) or 206 Partial Content (resume)
-        let (total_size, resuming) = if response.status() == reqwest::StatusCode::PARTIAL_CONTENT {
-            // Server supports resume - total size = existing + remaining
-            let remaining = response.content_length().unwrap_or(0);
-            log::info!("Server supports resume, {} MB remaining", remaining / (1024 * 1024));
-            (existing_size + remaining, true)
-        } else if response.status().is_success() {
-            // Server doesn't support resume or fresh download
-            if existing_size > 0 {
-                log::warn!("Server doesn't support resume, starting fresh download");
-            }
-            (response.content_length().unwrap_or(0), false)
-        } else {
-            let mut active = self.active_downloads.write().await;
-            active.remove(model_name);
-            return Err(anyhow!("Download failed with status: {}", response.status()));
-        };
-
-        log::info!("Total size: {} MB", total_size / (1024 * 1024));
-
-        // Open file for append if resuming, or create new
-        let file = if resuming {
-            OpenOptions::new()
-                .write(true)
-                .append(true)
-                .open(&file_path)
-                .await
-                .map_err(|e| anyhow!("Failed to open file for append: {}", e))?
-        } else {
-            fs::File::create(&file_path)
-                .await
-                .map_err(|e| anyhow!("Failed to create file: {}", e))?
-        };
-
-        // Use 8MB buffer to reduce disk I/O syscalls (major performance improvement)
-        let mut writer = BufWriter::with_capacity(8 * 1024 * 1024, file);
-
-        let mut downloaded: u64 = if resuming { existing_size } else { 0 };
-
-        // Emit initial progress (showing resumed position if applicable)
-        if let Some(ref callback) = progress_callback {
-            callback(DownloadProgress::new(downloaded, total_size, 0.0));
-        }
-        log::info!(
-            "Starting at {:.1} MB / {:.1} MB",
-            downloaded as f64 / (1024.0 * 1024.0),
-            total_size as f64 / (1024.0 * 1024.0)
-        );
-
-        let mut last_progress_percent = if total_size > 0 {
-            ((downloaded as f64 / total_size as f64) * 100.0) as u8
-        } else {
-            0
-        };
-        let mut last_report_time = std::time::Instant::now();
-        let mut bytes_since_last_report: u64 = 0;
-        let download_start_time = std::time::Instant::now();
-        let start_downloaded = downloaded;
-
-        use futures_util::StreamExt;
-        let mut stream = response.bytes_stream();
-
-        loop {
-            // Check for cancellation
-            {
-                let cancel_flag = self.cancel_download_flag.read().await;
-                if cancel_flag.as_ref() == Some(&model_name.to_string()) {
-                    log::info!("Download cancelled for model: {}", model_name);
-
-                    // Flush and keep partial file for resume on next attempt
-                    let _ = writer.flush().await;
-                    drop(writer);
-
-                    // Remove from active downloads
-                    let mut active = self.active_downloads.write().await;
-                    active.remove(model_name);
-
-                    // Update status
-                    {
-                        let mut models = self.available_models.write().await;
-                        if let Some(model_info) = models.get_mut(model_name) {
-                            model_info.status = ModelStatus::NotDownloaded;
-                        }
-                    }
-
-                    // Use special marker prefix to distinguish cancellation from other errors
-                    return Err(anyhow!("CANCELLED: Download cancelled by user"));
-                }
-            }
-
-            // Add per-chunk timeout (10 seconds) to detect stalled connections
-            let next_result = timeout(crate::http::TIMEOUT, stream.next()).await;
-
-            let chunk = match next_result {
-                // Timeout - no data received for 10 seconds
-                Err(_) => {
-                    log::warn!("Download timeout for {}: no data received for 10 seconds", model_name);
-                    let _ = writer.flush().await;
-
-                    // Cleanup: Remove from active downloads
-                    let mut active = self.active_downloads.write().await;
-                    active.remove(model_name);
-
-                    // Set model status to Error (NOT NotDownloaded) so UI can show retry button
-                    {
-                        let mut models = self.available_models.write().await;
-                        if let Some(model_info) = models.get_mut(model_name) {
-                            model_info.status = ModelStatus::Error("Download timeout - No data received for 10 seconds".to_string());
-                        }
-                    }
-
-                    return Err(anyhow!("Download timeout - No data received for 10 seconds"));
-                },
-                // Stream ended
-                Ok(None) => break,
-                // Got chunk result
-                Ok(Some(chunk_result)) => {
-                    match chunk_result {
-                        Ok(c) => c,
-                        // Detect error type for better user feedback
-                        Err(e) => {
-                            log::error!("Download error for {}: {:?}", model_name, e);
-                            let _ = writer.flush().await;
-
-                            // Cleanup: Remove from active downloads
-                            let mut active = self.active_downloads.write().await;
-                            active.remove(model_name);
-
-                            // Categorize error for user-friendly message
-                            let error_msg = if e.is_timeout() {
-                                "Connection timeout - Check your internet"
-                            } else if e.is_connect() {
-                                "Connection failed - Check your internet"
-                            } else if e.is_body() {
-                                "Stream interrupted - Network unstable"
-                            } else {
-                                "Download error"
-                            };
-
-                            // Set model status to Error (NOT NotDownloaded) so UI can show retry button
-                            {
-                                let mut models = self.available_models.write().await;
-                                if let Some(model_info) = models.get_mut(model_name) {
-                                    model_info.status = ModelStatus::Error(error_msg.to_string());
-                                }
-                            }
-
-                            return Err(anyhow!("{}: {}", error_msg, e));
-                        }
-                    }
-                }
+        let result = async {
+            let client =
+                model_download::client().map_err(|e| TransferError::Failed(e.to_string()))?;
+            let mut sink = SummaryProgress {
+                models: Arc::clone(&self.available_models),
+                model_name: model_name.to_string(),
+                callback: progress_callback,
+                total_bytes: file.size,
+                last_file_bytes: 0,
+                bytes_since_report: 0,
+                last_percent: 0,
+                last_report: std::time::Instant::now(),
+                first: true,
             };
-            let chunk_len = chunk.len() as u64;
-            writer
-                .write_all(&chunk)
-                .await
-                .map_err(|e| anyhow!("Error writing to file: {}", e))?;
+            let fetched = model_download::fetch_file(
+                &client,
+                &self.models_dir,
+                file,
+                &entry.sources,
+                &cancel,
+                &TransferOptions::default(),
+                &mut sink,
+            )
+            .await?;
+            if let Some(callback) = &sink.callback {
+                callback(DownloadProgress::new(file.size, file.size, 0.0));
+            }
+            Ok::<_, TransferError>(fetched)
+        }
+        .await;
 
-            downloaded += chunk_len;
-            bytes_since_last_report += chunk_len;
+        self.cancel_tokens.write().await.remove(model_name);
 
-            // Calculate progress
-            let progress_percent = if total_size > 0 {
-                let exact_percent = (downloaded as f64 / total_size as f64) * 100.0;
-                exact_percent.min(100.0) as u8
-            } else {
-                0
-            };
-
-            let elapsed_since_report = last_report_time.elapsed();
-            let is_download_complete = downloaded >= total_size;
-            let should_report = progress_percent > last_progress_percent
-                || is_download_complete  // Force report on completion
-                || elapsed_since_report.as_millis() >= 500;
-
-            if should_report {
-                // Calculate speed based on bytes downloaded since last report
-                let speed_mbps = if elapsed_since_report.as_secs_f64() > 0.0 {
-                    (bytes_since_last_report as f64 / (1024.0 * 1024.0)) / elapsed_since_report.as_secs_f64()
-                } else {
-                    // Fallback to overall average speed
-                    let total_elapsed = download_start_time.elapsed().as_secs_f64();
-                    if total_elapsed > 0.0 {
-                        ((downloaded - start_downloaded) as f64 / (1024.0 * 1024.0)) / total_elapsed
-                    } else {
-                        0.0
-                    }
-                };
-
+        match result {
+            Ok(fetched) => {
                 log::info!(
-                    "Download: {:.1} MB / {:.1} MB ({:.1} MB/s)",
-                    downloaded as f64 / (1024.0 * 1024.0),
-                    total_size as f64 / (1024.0 * 1024.0),
-                    speed_mbps
+                    "Download completed for model {} (source: {})",
+                    model_name,
+                    fetched.source
                 );
 
-                // Update status
+                if let Err(e) = self.validate_gguf_file(&file_path).await {
+                    log::error!("Downloaded file failed validation: {}", e);
+                    // Verified by SHA-256 but not a GGUF: never keep it as the active model.
+                    let _ = fs::remove_file(&file_path).await;
+                    model_download::remove_sidecars(&self.models_dir, &model_def.gguf_file).await;
+                    self.finish_failed_download(
+                        model_name,
+                        &file_path,
+                        format!("Validation failed: {}", e),
+                    )
+                    .await;
+                    return Err(anyhow!("File validation failed: {}", e));
+                }
+
                 {
                     let mut models = self.available_models.write().await;
                     if let Some(model_info) = models.get_mut(model_name) {
-                        model_info.status = ModelStatus::Downloading {
-                            progress: if is_download_complete { 100 } else { progress_percent }
-                        };
+                        model_info.status = ModelStatus::Available;
+                        model_info.path = file_path.clone();
                     }
                 }
-
-                // Call progress callback with detailed info
-                if let Some(ref callback) = progress_callback {
-                    callback(DownloadProgress::new(downloaded, total_size, speed_mbps));
+                self.active_downloads.write().await.remove(model_name);
+                Ok(())
+            }
+            Err(TransferError::Cancelled) => {
+                log::info!("Download cancelled for model: {}", model_name);
+                // The partial file is kept for resume; a model that was already installed stays usable.
+                let status = if Self::is_installed_with_pinned_size(&file_path, file.size).await {
+                    ModelStatus::Available
+                } else {
+                    ModelStatus::NotDownloaded
+                };
+                {
+                    let mut models = self.available_models.write().await;
+                    if let Some(model_info) = models.get_mut(model_name) {
+                        model_info.status = status;
+                    }
                 }
-
-                last_progress_percent = progress_percent;
-                last_report_time = std::time::Instant::now();
-                bytes_since_last_report = 0;
+                self.active_downloads.write().await.remove(model_name);
+                // Special marker prefix to distinguish cancellation from other errors
+                Err(anyhow!("CANCELLED: Download cancelled by user"))
+            }
+            Err(error) => {
+                log::error!("Download failed for {}: {}", model_name, error);
+                self.finish_failed_download(model_name, &file_path, error.to_string())
+                    .await;
+                Err(anyhow::Error::from(error))
             }
         }
+    }
 
-        writer.flush().await?;
-        drop(writer);
+    /// Mark a download as active and register its cancellation token in one step. A cancel that
+    /// arrives at any later point, even before the first byte is requested, finds the token and
+    /// stops the download. Fails when the model is already downloading.
+    async fn begin_download(&self, model_name: &str) -> Result<CancellationToken> {
+        let mut active = self.active_downloads.write().await;
+        if !active.insert(model_name.to_string()) {
+            log::warn!("Download already in progress for model: {}", model_name);
+            return Err(anyhow!("Download already in progress"));
+        }
+        let cancel = CancellationToken::new();
+        self.cancel_tokens
+            .write()
+            .await
+            .insert(model_name.to_string(), cancel.clone());
+        Ok(cancel)
+    }
 
-        log::info!("Download completed for model: {}", model_name);
+    async fn is_installed_with_pinned_size(path: &PathBuf, size: u64) -> bool {
+        matches!(fs::metadata(path).await, Ok(metadata) if metadata.len() == size)
+    }
 
+    /// A failed download never removes a model that was already installed: it stays available,
+    /// otherwise the model is marked with the error so the UI can offer a retry.
+    async fn finish_failed_download(&self, model_name: &str, file_path: &PathBuf, message: String) {
+        let pinned_size = model_download::entry("summary", model_name)
+            .and_then(|entry| entry.files.first().map(|file| file.size));
+        let usable = match pinned_size {
+            Some(size) => Self::is_installed_with_pinned_size(file_path, size).await,
+            None => false,
+        };
         {
             let mut models = self.available_models.write().await;
             if let Some(model_info) = models.get_mut(model_name) {
-                model_info.status = ModelStatus::Downloading { progress: 100 };
+                model_info.status = if usable {
+                    ModelStatus::Available
+                } else {
+                    ModelStatus::Error(message)
+                };
             }
         }
-
-        if let Some(ref callback) = progress_callback {
-            callback(DownloadProgress::new(total_size, total_size, 0.0));
-        }
-
-        // Small delay to ensure UI receives 100% event
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-        if let Err(e) = self.validate_gguf_file(&file_path).await {
-            log::error!("Downloaded file failed validation: {}", e);
-
-            // Clean up invalid file
-            let _ = fs::remove_file(&file_path).await;
-
-            // Update status
-            {
-                let mut models = self.available_models.write().await;
-                if let Some(model_info) = models.get_mut(model_name) {
-                    model_info.status = ModelStatus::Error(format!("Validation failed: {}", e));
-                }
-            }
-
-            // Remove from active downloads
-            let mut active = self.active_downloads.write().await;
-            active.remove(model_name);
-
-            return Err(anyhow!("File validation failed: {}", e));
-        }
-
-        // Update status to available
-        {
-            let mut models = self.available_models.write().await;
-            if let Some(model_info) = models.get_mut(model_name) {
-                model_info.status = ModelStatus::Available;
-                model_info.path = file_path.clone();
-            }
-        }
-
-        // Remove from active downloads
-        {
-            let mut active = self.active_downloads.write().await;
-            active.remove(model_name);
-        }
-
-        Ok(())
+        self.cancel_tokens.write().await.remove(model_name);
+        self.active_downloads.write().await.remove(model_name);
     }
 
     /// Validate that a file is a valid GGUF model
@@ -795,14 +645,11 @@ impl ModelManager {
     pub async fn cancel_download(&self, model_name: &str) -> Result<()> {
         log::info!("Cancelling download for model: {}", model_name);
 
-        // Set cancellation flag - download loop will detect this and handle cleanup
-        {
-            let mut cancel_flag = self.cancel_download_flag.write().await;
-            *cancel_flag = Some(model_name.to_string());
+        // The download stops through its token and cleans up after itself, including
+        // `active_downloads`; removing the entry here as well would race with that cleanup.
+        if let Some(token) = self.cancel_tokens.read().await.get(model_name) {
+            token.cancel();
         }
-
-        // Note: active_downloads cleanup is handled by the download loop when it detects
-        // the cancellation flag. This avoids double-removal race condition.
 
         // Update status immediately for UI responsiveness
         {
@@ -831,6 +678,7 @@ impl ModelManager {
             fs::remove_file(&file_path).await?;
             log::info!("Deleted model file: {}", file_path.display());
         }
+        model_download::remove_sidecars(&self.models_dir, &model_def.gguf_file).await;
 
         // Update status
         {
@@ -846,5 +694,50 @@ impl ModelManager {
     /// Get models directory path
     pub fn get_models_directory(&self) -> PathBuf {
         self.models_dir.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MODEL: &str = "qwen3.5:2b";
+
+    fn manager() -> (tempfile::TempDir, ModelManager) {
+        let dir = tempfile::tempdir().expect("create models directory");
+        let manager = ModelManager::new_with_models_dir(Some(dir.path().to_path_buf()))
+            .expect("create model manager");
+        (dir, manager)
+    }
+
+    #[tokio::test]
+    async fn a_cancel_before_the_first_request_stops_the_download() {
+        let (_dir, manager) = manager();
+        // The download is active and has not set anything up yet.
+        let cancel = manager.begin_download(MODEL).await.expect("begin download");
+        manager
+            .cancel_download(MODEL)
+            .await
+            .expect("cancel download");
+        assert!(
+            cancel.is_cancelled(),
+            "the token the download runs with is the one that was cancelled"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_model_downloads_once_at_a_time_and_a_failed_start_releases_it() {
+        let (dir, manager) = manager();
+        manager.begin_download(MODEL).await.expect("begin download");
+        assert!(manager.begin_download(MODEL).await.is_err());
+
+        // A download that fails before it starts (for example a missing manifest entry) must
+        // not leave a token behind that a later download would be cancelled through.
+        manager
+            .finish_failed_download(MODEL, &dir.path().join("model.gguf"), "failed".to_string())
+            .await;
+        assert!(manager.cancel_tokens.read().await.is_empty());
+        let next = manager.begin_download(MODEL).await.expect("begin again");
+        assert!(!next.is_cancelled());
     }
 }

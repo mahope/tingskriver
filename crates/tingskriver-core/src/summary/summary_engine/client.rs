@@ -1,15 +1,12 @@
 // High-level client API for built-in AI summary generation
 // Provides simple interface for generating text using the sidecar
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
-use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
-use std::sync::RwLock;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
@@ -55,11 +52,6 @@ lazy_static::lazy_static! {
     static ref SIDECAR_MANAGER: Arc<Mutex<Option<Arc<SidecarManager>>>> = Arc::new(Mutex::new(None));
 }
 
-// Model path cache to avoid repeated filesystem I/O and model lookups
-static MODEL_PATH_CACHE: Lazy<RwLock<HashMap<String, PathBuf>>> = Lazy::new(|| {
-    RwLock::new(HashMap::new())
-});
-
 /// Initialize the global sidecar manager
 pub async fn init_sidecar_manager(app_data_dir: PathBuf) -> Result<()> {
     let manager = SidecarManager::new(app_data_dir)?;
@@ -76,42 +68,19 @@ async fn get_sidecar_manager() -> Result<Arc<SidecarManager>> {
         .ok_or_else(|| anyhow!("Sidecar manager not initialized. Call init_sidecar_manager first."))
 }
 
-/// Get cached model path with read-through caching to avoid repeated filesystem I/O
-fn get_cached_model_path(app_data_dir: &PathBuf, model_name: &str) -> Result<PathBuf> {
-    // Try read lock first (fast path for cache hits)
-    {
-        let cache = MODEL_PATH_CACHE.read().unwrap();
-        if let Some(path) = cache.get(model_name) {
-            // Verify file still exists before returning cached path
-            if path.exists() {
-                return Ok(path.clone());
-            }
-        }
-    }
-
-    // Cache miss or file deleted - acquire write lock and update cache
-    let mut cache = MODEL_PATH_CACHE.write().unwrap();
-
-    // Double-check after acquiring write lock (another thread may have updated it)
-    if let Some(path) = cache.get(model_name) {
-        if path.exists() {
-            return Ok(path.clone());
-        }
-    }
-
-    // Resolve model path (involves model lookup + filesystem operations)
+/// Resolve and verify the installed model before handing it to the sidecar.
+async fn get_cached_model_path(app_data_dir: &PathBuf, model_name: &str) -> Result<PathBuf> {
     let model_path = models::get_model_path(app_data_dir, model_name)?;
-
-    if !model_path.exists() {
-        return Err(anyhow!(
-            "Model file not found: {}. Please download the model '{}' first.",
-            model_path.display(),
-            model_name
-        ));
-    }
-
-    // Cache the validated path
-    cache.insert(model_name.to_string(), model_path.clone());
+    let entry = crate::model_download::entry("summary", model_name)
+        .ok_or_else(|| anyhow!("Model {} is missing from the model manifest", model_name))?;
+    let file = entry
+        .files
+        .first()
+        .ok_or_else(|| anyhow!("Model manifest has no files"))?;
+    let dir = model_path
+        .parent()
+        .ok_or_else(|| anyhow!("Model path has no parent"))?;
+    crate::model_download::verify_installed(dir, file, &CancellationToken::new()).await?;
     Ok(model_path)
 }
 
@@ -151,12 +120,11 @@ pub async fn generate_with_builtin(
     let model_def = models::get_model_by_name(model_name)
         .ok_or_else(|| anyhow!("Unknown model: {}", model_name))?;
 
-    // Resolve model path with caching (avoids repeated filesystem I/O)
-    let model_path = get_cached_model_path(app_data_dir, model_name)?;
+    // Resolve the path and verify the installed file before every request.
+    let model_path = get_cached_model_path(app_data_dir, model_name).await?;
 
     // Apply model-specific chat template
-    let formatted_prompt =
-        models::format_prompt(&model_def.template, system_prompt, user_prompt)?;
+    let formatted_prompt = models::format_prompt(&model_def.template, system_prompt, user_prompt)?;
     // Get or initialize sidecar manager
     let manager = {
         let mut global_manager = SIDECAR_MANAGER.lock().await;
@@ -301,6 +269,29 @@ pub async fn is_sidecar_healthy() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn model_lookup_rejects_modified_file_before_sidecar_startup() {
+        let dir = tempfile::tempdir().unwrap();
+        let app_dir = dir.path().to_path_buf();
+        let entry = crate::model_download::manifest()
+            .models
+            .iter()
+            .find(|entry| entry.engine == "summary")
+            .unwrap();
+        let path = models::get_model_path(&app_dir, &entry.id).unwrap();
+        tokio::fs::create_dir_all(path.parent().unwrap())
+            .await
+            .unwrap();
+        tokio::fs::write(&path, b"changed model").await.unwrap();
+        let error = get_cached_model_path(&app_dir, &entry.id)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            crate::strings::model_installed_mismatch(&entry.files.first().unwrap().name)
+        );
+    }
 
     #[test]
     fn test_request_serialization() {

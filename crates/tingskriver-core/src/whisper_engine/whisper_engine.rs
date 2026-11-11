@@ -1,28 +1,35 @@
 // Commit name to recover the serial whisper engine processing for smaller meetings [Slower processing but dooes not fail] - "before parallel processing implementation"
 
-use std::path::{PathBuf};
+use super::acceleration::{whisper_context_acceleration_for, WhisperCompiledBackend};
+use crate::config::WHISPER_MODEL_CATALOG;
+use crate::model_download::{
+    self, FileEntry, ProgressSink, Source, TransferError, TransferOptions,
+};
+use anyhow::{anyhow, Result};
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tokio::fs;
 use tokio::sync::{watch, Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
-use whisper_rs::{WhisperContext, WhisperContextParameters, FullParams, SamplingStrategy};
-use serde::{Serialize, Deserialize};
-use anyhow::{Result, anyhow};
-use reqwest::Client;
-use tokio::fs;
-use tokio::io::AsyncWriteExt;
-use crate::config::WHISPER_MODEL_CATALOG;
-use super::acceleration::{whisper_context_acceleration_for, WhisperCompiledBackend};
+use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ModelStatus {
     Available,
     Missing,
-    Downloading { progress: u8 },
+    Downloading {
+        progress: u8,
+    },
     Error(String),
-    Corrupted { file_size: u64, expected_min_size: u64 },
+    Corrupted {
+        file_size: u64,
+        expected_min_size: u64,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -76,6 +83,38 @@ impl Drop for InFlightCall {
     fn drop(&mut self) {
         *self.last_used.lock().unwrap_or_else(|p| p.into_inner()) = Instant::now();
         self.in_flight.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// Turns byte counts from the shared downloader into Whisper's progress callbacks and status.
+struct WhisperProgress {
+    models: Arc<RwLock<HashMap<String, ModelInfo>>>,
+    model_name: String,
+    callback: Option<Box<dyn Fn(u8) + Send>>,
+    total_bytes: u64,
+    last_progress: u8,
+    last_report: Instant,
+}
+
+#[async_trait]
+impl ProgressSink for WhisperProgress {
+    async fn bytes(&mut self, file_bytes: u64) {
+        let progress = if self.total_bytes > 0 {
+            ((file_bytes as f64 / self.total_bytes as f64) * 100.0).min(99.0) as u8
+        } else {
+            0
+        };
+        if progress == self.last_progress && self.last_report.elapsed() < Duration::from_secs(2) {
+            return;
+        }
+        if let Some(model_info) = self.models.write().await.get_mut(&self.model_name) {
+            model_info.status = ModelStatus::Downloading { progress };
+        }
+        if let Some(callback) = &self.callback {
+            callback(progress);
+        }
+        self.last_progress = progress;
+        self.last_report = Instant::now();
     }
 }
 
@@ -138,7 +177,7 @@ impl WhisperEngine {
         // These C library logs bypass Rust logging and clutter output
         // Set environment variables to reduce C library verbosity
         std::env::set_var("GGML_METAL_LOG_LEVEL", "1"); // 0=off, 1=error, 2=warn, 3=info
-        std::env::set_var("WHISPER_LOG_LEVEL", "1");    // Reduce whisper.cpp verbosity
+        std::env::set_var("WHISPER_LOG_LEVEL", "1"); // Reduce whisper.cpp verbosity
 
         let models_dir = if let Some(dir) = models_dir {
             // Use provided directory (for production with app_data_dir)
@@ -156,9 +195,15 @@ impl WhisperEngine {
                     current_dir.join("models")
                 } else if current_dir.join("../models").exists() {
                     current_dir.join("../models")
-                } else if current_dir.join("backend/whisper-server-package/models").exists() {
+                } else if current_dir
+                    .join("backend/whisper-server-package/models")
+                    .exists()
+                {
                     current_dir.join("backend/whisper-server-package/models")
-                } else if current_dir.join("../backend/whisper-server-package/models").exists() {
+                } else if current_dir
+                    .join("../backend/whisper-server-package/models")
+                    .exists()
+                {
                     current_dir.join("../backend/whisper-server-package/models")
                 } else {
                     // Create models directory in current directory for development
@@ -174,13 +219,19 @@ impl WhisperEngine {
                     .join("models")
             }
         };
-        
-        log::info!("WhisperEngine using models directory: {}", models_dir.display());
+
+        log::info!(
+            "WhisperEngine using models directory: {}",
+            models_dir.display()
+        );
         log::info!("Debug mode: {}", cfg!(debug_assertions));
 
         // Log acceleration capabilities
         let gpu_support = Self::detect_gpu_acceleration();
-        log::info!("Hardware acceleration support: {}", if gpu_support { "enabled" } else { "disabled" });
+        log::info!(
+            "Hardware acceleration support: {}",
+            if gpu_support { "enabled" } else { "disabled" }
+        );
 
         #[cfg(feature = "metal")]
         log::info!("Apple Metal GPU support: enabled");
@@ -199,7 +250,7 @@ impl WhisperEngine {
 
         #[cfg(feature = "openmp")]
         log::info!("OpenMP parallel processing: enabled");
-        
+
         let engine = Self {
             models_dir,
             remote: RwLock::new(None),
@@ -217,7 +268,7 @@ impl WhisperEngine {
             #[cfg(test)]
             download_state_test_hook: std::sync::Mutex::new(None),
         };
-        
+
         Ok(engine)
     }
 
@@ -228,7 +279,72 @@ impl WhisperEngine {
             .expect("download state test hook mutex should not be poisoned")
             .clone()
     }
-    
+
+    /// Status of a model file as it is on disk. Models in the pinned manifest must have exactly
+    /// the pinned size and a GGML header here; the SHA-256 is checked when the model is
+    /// downloaded and when it is loaded.
+    async fn disk_status(&self, model_name: &str, model_path: &PathBuf) -> ModelStatus {
+        let Ok(metadata) = tokio::fs::metadata(model_path).await else {
+            return ModelStatus::Missing;
+        };
+        let file_size_bytes = metadata.len();
+        let file_size_mb = file_size_bytes / (1024 * 1024);
+        let catalog_size_mb = WHISPER_MODEL_CATALOG
+            .iter()
+            .find(|model| model.0 == model_name)
+            .map(|model| model.2)
+            .unwrap_or(0);
+        let pinned_size = Self::pinned_file(model_name).map(|file| file.size);
+        let expected_min_size =
+            pinned_size.unwrap_or(((catalog_size_mb as f64 * 0.9) as u64) * 1024 * 1024);
+        let size_ok = match pinned_size {
+            Some(exact) => file_size_bytes == exact,
+            None => file_size_mb >= expected_min_size / (1024 * 1024) && file_size_mb > 1,
+        };
+
+        if let Some(file) = Self::pinned_file(model_name) {
+            if model_download::installed_is_corrupted(model_path, file).await {
+                return ModelStatus::Corrupted {
+                    file_size: file_size_bytes,
+                    expected_min_size,
+                };
+            }
+        }
+        if size_ok {
+            match self.validate_model_file(model_path).await {
+                Ok(_) => ModelStatus::Available,
+                Err(_) => {
+                    log::warn!(
+                        "Model file {} has correct size but appears corrupted (failed validation)",
+                        model_path.display()
+                    );
+                    ModelStatus::Corrupted {
+                        file_size: file_size_bytes,
+                        expected_min_size,
+                    }
+                }
+            }
+        } else if file_size_mb > 0 {
+            log::warn!(
+                "Model file {} exists but is corrupted ({} bytes, expected {} bytes)",
+                model_path.display(),
+                file_size_bytes,
+                expected_min_size
+            );
+            ModelStatus::Corrupted {
+                file_size: file_size_bytes,
+                expected_min_size,
+            }
+        } else {
+            ModelStatus::Missing
+        }
+    }
+
+    /// The pinned manifest file of a Whisper model (each model is a single file).
+    fn pinned_file(model_name: &str) -> Option<&'static FileEntry> {
+        model_download::entry("whisper", model_name).and_then(|entry| entry.files.first())
+    }
+
     pub async fn discover_models(&self) -> Result<Vec<ModelInfo>> {
         let models_dir = &self.models_dir;
         let mut models = Vec::new();
@@ -237,44 +353,8 @@ impl WhisperEngine {
 
         for &(name, filename, size_mb, accuracy, speed, description) in model_configs {
             let model_path = models_dir.join(filename);
-            let status = if model_path.exists() {
-                // Check if file size is reasonable (at least 1MB for a valid model)
-                match tokio::fs::metadata(&model_path).await {
-                    Ok(metadata) => {
-                        let file_size_bytes = metadata.len();
-                        let file_size_mb = file_size_bytes / (1024 * 1024);
-                        let expected_min_size_mb = (size_mb as f64 * 0.9) as u64; // Allow 90% of expected size as minimum for more accurate corruption detection
+            let status = self.disk_status(name, &model_path).await;
 
-                        if file_size_mb >= expected_min_size_mb && file_size_mb > 1 {
-                            // File size looks good, but let's also check if it's a valid GGML file
-                            match self.validate_model_file(&model_path).await {
-                                Ok(_) => ModelStatus::Available,
-                                Err(_) => {
-                                    log::warn!("Model file {} has correct size but appears corrupted (failed validation)",
-                                             filename);
-                                    ModelStatus::Corrupted {
-                                        file_size: file_size_bytes,
-                                        expected_min_size: (expected_min_size_mb * 1024 * 1024) as u64
-                                    }
-                                }
-                            }
-                        } else if file_size_mb > 0 {
-                            log::warn!("Model file {} exists but is corrupted ({} MB, expected ~{} MB)",
-                                     filename, file_size_mb, size_mb);
-                            ModelStatus::Corrupted {
-                                file_size: file_size_bytes,
-                                expected_min_size: (expected_min_size_mb * 1024 * 1024) as u64
-                            }
-                        } else {
-                            ModelStatus::Missing
-                        }
-                    }
-                    Err(_) => ModelStatus::Missing
-                }
-            } else {
-                ModelStatus::Missing
-            };
-            
             let model_info = ModelInfo {
                 name: name.to_string(),
                 path: model_path,
@@ -284,10 +364,10 @@ impl WhisperEngine {
                 status,
                 description: description.to_string(),
             };
-            
+
             models.push(model_info);
         }
-        
+
         let active_downloads = self.active_downloads.lock().await;
         #[cfg(test)]
         if let Some(hook) = self.test_hook() {
@@ -311,17 +391,24 @@ impl WhisperEngine {
         for model in &models {
             available_models.insert(model.name.clone(), model.clone());
         }
-        
+
         Ok(models)
     }
-    
+
     pub async fn load_model(&self, model_name: &str) -> Result<()> {
-        let models = self.available_models.read().await;
-        let model_info = models.get(model_name)
-            .ok_or_else(|| anyhow!("Model {} not found", model_name))?;
+        let model_info = {
+            let models = self.available_models.read().await;
+            models
+                .get(model_name)
+                .cloned()
+                .ok_or_else(|| anyhow!("Model {} not found", model_name))?
+        };
 
         match model_info.status {
             ModelStatus::Available => {
+                self.verify_installed_model(model_name, &model_info.path)
+                    .await?;
+
                 // FIX 5: Check if this model is already loaded
                 if let Some(current_model) = self.current_model.read().await.as_ref() {
                     if current_model == model_name {
@@ -330,7 +417,11 @@ impl WhisperEngine {
                     }
 
                     // FIX 5: Unload current model before loading new one
-                    log::info!("Unloading current model '{}' before loading '{}'", current_model, model_name);
+                    log::info!(
+                        "Unloading current model '{}' before loading '{}'",
+                        current_model,
+                        model_name
+                    );
                     self.unload_model().await;
                 }
 
@@ -339,8 +430,11 @@ impl WhisperEngine {
                 if !crate::stt::is_worker() {
                     let directory = self.models_dir.clone();
                     let name = model_name.to_string();
-                    let remote = tokio::task::spawn_blocking(move || crate::stt::WhisperClient::load(directory, name))
-                        .await?.map_err(anyhow::Error::msg)?;
+                    let remote = tokio::task::spawn_blocking(move || {
+                        crate::stt::WhisperClient::load(directory, name)
+                    })
+                    .await?
+                    .map_err(anyhow::Error::msg)?;
                     *self.remote.write().await = Some(Arc::new(remote));
                     self.mark_used();
                     *self.current_model.write().await = Some(model_name.to_string());
@@ -379,8 +473,11 @@ impl WhisperEngine {
                     // let _suppressor = crate::whisper_engine::StderrSuppressor::new();
 
                     // Load whisper context with hardware-optimized parameters
-                    WhisperContext::new_with_params(&model_info.path.to_string_lossy(), context_param)
-                        .map_err(|e| anyhow!("Failed to load model {}: {}", model_name, e))?
+                    WhisperContext::new_with_params(
+                        &model_info.path.to_string_lossy(),
+                        context_param,
+                    )
+                    .map_err(|e| anyhow!("Failed to load model {}: {}", model_name, e))?
                     // Suppressor dropped here, stderr restored
                 };
 
@@ -396,23 +493,44 @@ impl WhisperEngine {
                           model_name, acceleration_status, hardware_profile.performance_tier,
                           adaptive_config.beam_size, adaptive_config.max_threads);
                 Ok(())
-            },
-            ModelStatus::Missing => {
-                Err(anyhow!("Model {} is not downloaded", model_name))
-            },
+            }
+            ModelStatus::Missing => Err(anyhow!("Model {} is not downloaded", model_name)),
             ModelStatus::Downloading { .. } => {
                 Err(anyhow!("Model {} is currently downloading", model_name))
-            },
-            ModelStatus::Error(ref err) => {
-                Err(anyhow!("Model {} has error: {}", model_name, err))
-            },
-            ModelStatus::Corrupted { .. } => {
-                Err(anyhow!("Model {} is corrupted and cannot be loaded", model_name))
             }
+            ModelStatus::Error(ref err) => Err(anyhow!("Model {} has error: {}", model_name, err)),
+            ModelStatus::Corrupted { .. } => Err(anyhow!(
+                "Model {} is corrupted and cannot be loaded",
+                model_name
+            )),
         }
     }
 
-    pub async fn unload_model(&self) -> bool  {
+    /// Check the SHA-256 of an installed model against the manifest before it is loaded.
+    /// A file that no longer matches is never loaded; the model is marked corrupted.
+    async fn verify_installed_model(&self, model_name: &str, model_path: &PathBuf) -> Result<()> {
+        let Some(file) = Self::pinned_file(model_name) else {
+            return Ok(());
+        };
+        let dir = model_path.parent().unwrap_or(&self.models_dir);
+        if let Err(error) =
+            model_download::verify_installed(dir, file, &CancellationToken::new()).await
+        {
+            if matches!(error, TransferError::InstalledMismatch { .. }) {
+                let file_size = fs::metadata(model_path).await.map(|m| m.len()).unwrap_or(0);
+                if let Some(model) = self.available_models.write().await.get_mut(model_name) {
+                    model.status = ModelStatus::Corrupted {
+                        file_size,
+                        expected_min_size: file.size,
+                    };
+                }
+            }
+            return Err(anyhow::Error::from(error));
+        }
+        Ok(())
+    }
+
+    pub async fn unload_model(&self) -> bool {
         let mut ctx_guard = self.current_context.write().await;
         let unloaded = ctx_guard.take().is_some() | self.remote.write().await.take().is_some();
         if unloaded {
@@ -428,7 +546,7 @@ impl WhisperEngine {
     pub async fn get_current_model(&self) -> Option<String> {
         self.current_model.read().await.clone()
     }
-    
+
     pub async fn is_model_loaded(&self) -> bool {
         self.current_context.read().await.is_some() || self.remote.read().await.is_some()
     }
@@ -436,7 +554,9 @@ impl WhisperEngine {
     /// When the loaded model last finished a call, and how many calls run now.
     /// `None` when no model is loaded.
     pub async fn usage(&self) -> Option<(Instant, usize)> {
-        if !self.is_model_loaded().await { return None; }
+        if !self.is_model_loaded().await {
+            return None;
+        }
         let last_used = *self.last_used.lock().unwrap_or_else(|p| p.into_inner());
         Some((last_used, self.in_flight.load(Ordering::SeqCst)))
     }
@@ -480,7 +600,7 @@ impl WhisperEngine {
         .await;
         result.map_err(|e| anyhow!("Whisper transcription task failed: {}", e))?
     }
-    
+
     // Enhanced function to clean repetitive text patterns and meaningless outputs
     fn clean_repetitive_text(text: &str) -> String {
         if text.is_empty() {
@@ -625,11 +745,14 @@ impl WhisperEngine {
         }
 
         let total_words = words.len() as f32;
-        let repeated_words: usize = word_counts.values().map(|&count| if count > 1 { count - 1 } else { 0 }).sum();
+        let repeated_words: usize = word_counts
+            .values()
+            .map(|&count| if count > 1 { count - 1 } else { 0 })
+            .sum();
 
         repeated_words as f32 / total_words
     }
-    
+
     pub async fn transcribe_audio_timed(
         &self,
         audio_data: Vec<f32>,
@@ -685,8 +808,11 @@ impl WhisperEngine {
                         continue;
                     }
                     let text = ctx.token_to_cstr(data.id)?.to_bytes().to_vec();
-                    tokens.push((text, (data.t0 as f64 * 10.0).min(duration_ms),
-                        (data.t1 as f64 * 10.0).min(duration_ms)));
+                    tokens.push((
+                        text,
+                        (data.t0 as f64 * 10.0).min(duration_ms),
+                        (data.t1 as f64 * 10.0).min(duration_ms),
+                    ));
                 }
             }
             crate::stt::words_from_token_bytes(tokens)
@@ -695,14 +821,20 @@ impl WhisperEngine {
     }
 
     /// Transcribe audio with streaming support for partial results and adaptive quality
-    pub async fn transcribe_audio_with_confidence(&self, audio_data: Vec<f32>, language: Option<String>) -> Result<(String, f32, bool)> {
+    pub async fn transcribe_audio_with_confidence(
+        &self,
+        audio_data: Vec<f32>,
+        language: Option<String>,
+    ) -> Result<(String, f32, bool)> {
         let remote = self.remote.read().await.clone();
         if let Some(remote) = remote {
             let call = self.start_call();
             let result = tokio::task::spawn_blocking(move || {
                 let _call = call;
                 remote.transcribe(&audio_data, language, true)
-            }).await?.map_err(anyhow::Error::msg);
+            })
+            .await?
+            .map_err(anyhow::Error::msg);
             return result;
         }
         self.run_blocking(move |ctx| {
@@ -713,7 +845,7 @@ impl WhisperEngine {
             // ADAPTIVE parameters - optimized for current hardware
             let mut params = FullParams::new(SamplingStrategy::BeamSearch {
                 beam_size: adaptive_config.beam_size as i32,
-                patience: 1.0
+                patience: 1.0,
             });
 
             // Configure with adaptive settings
@@ -731,15 +863,15 @@ impl WhisperEngine {
             // CRITICAL: Disable timestamp tokens to prevent whisper.cpp chunking heuristics
             // The "single timestamp ending - skip entire chunk" optimization incorrectly discards
             // complete, valid transcriptions. Disabling timestamps forces whisper to return ALL text.
-            params.set_no_timestamps(true);     // Prevent timestamp-based segment skipping
-            params.set_token_timestamps(true);  // Keep for any timestamp-aware features
+            params.set_no_timestamps(true); // Prevent timestamp-based segment skipping
+            params.set_token_timestamps(true); // Keep for any timestamp-aware features
 
             // PERFORMANCE: Disable ALL whisper.cpp internal printing
             // This reduces C library log spam significantly
-            params.set_print_special(false);      // Don't print special tokens
-            params.set_print_progress(false);     // Don't print progress
-            params.set_print_realtime(false);     // Don't print realtime info
-            params.set_print_timestamps(false);   // Don't print timestamps
+            params.set_print_special(false); // Don't print special tokens
+            params.set_print_progress(false); // Don't print progress
+            params.set_print_realtime(false); // Don't print realtime info
+            params.set_print_timestamps(false); // Don't print timestamps
 
             // Additional suppression to reduce C library verbosity
             params.set_suppress_blank(true);
@@ -820,14 +952,20 @@ impl WhisperEngine {
         .await
     }
 
-    pub async fn transcribe_audio(&self, audio_data: Vec<f32>, language: Option<String>) -> Result<String> {
+    pub async fn transcribe_audio(
+        &self,
+        audio_data: Vec<f32>,
+        language: Option<String>,
+    ) -> Result<String> {
         let remote = self.remote.read().await.clone();
         if let Some(remote) = remote {
             let call = self.start_call();
             let result = tokio::task::spawn_blocking(move || {
                 let _call = call;
                 remote.transcribe(&audio_data, language, false)
-            }).await?.map_err(anyhow::Error::msg);
+            })
+            .await?
+            .map_err(anyhow::Error::msg);
             return result.map(|result| result.0);
         }
         // Duration-based optimization is handled by beam search parameters
@@ -876,8 +1014,12 @@ impl WhisperEngine {
 
         // Only log every 10th transcription or significant audio (>10s) to reduce I/O overhead
         if should_log_transcription && (transcription_count % 10 == 0 || duration_seconds > 10.0) {
-            log::info!("Starting transcription #{} of {} samples ({:.1}s duration)",
-                      transcription_count, audio_data.len(), duration_seconds);
+            log::info!(
+                "Starting transcription #{} of {} samples ({:.1}s duration)",
+                transcription_count,
+                audio_data.len(),
+                duration_seconds
+            );
         }
         let result = self
             .run_blocking(move |ctx| {
@@ -888,7 +1030,7 @@ impl WhisperEngine {
                 // ADAPTIVE parameters - optimized for current hardware
                 let mut params = FullParams::new(SamplingStrategy::BeamSearch {
                     beam_size: adaptive_config.beam_size as i32,
-                    patience: 1.0
+                    patience: 1.0,
                 });
 
                 // Configure for good quality
@@ -906,8 +1048,8 @@ impl WhisperEngine {
                 // CRITICAL: Disable timestamp tokens to prevent whisper.cpp chunking heuristics
                 // The "single timestamp ending - skip entire chunk" optimization incorrectly discards
                 // complete, valid transcriptions. Disabling timestamps forces whisper to return ALL text.
-                params.set_no_timestamps(true);     // Prevent timestamp-based segment skipping
-                params.set_token_timestamps(true);  // Keep for any timestamp-aware features
+                params.set_no_timestamps(true); // Prevent timestamp-based segment skipping
+                params.set_token_timestamps(true); // Keep for any timestamp-aware features
 
                 params.set_print_special(false);
                 params.set_print_progress(false);
@@ -917,7 +1059,7 @@ impl WhisperEngine {
                 // BALANCED settings - good quality with reasonable speed
                 params.set_suppress_blank(true);
                 params.set_suppress_non_speech_tokens(true);
-                params.set_temperature(0.3);             // Lower than 0.4 for consistency, higher than 0.0 for quality
+                params.set_temperature(0.3); // Lower than 0.4 for consistency, higher than 0.0 for quality
                 params.set_max_initial_ts(1.0);
                 params.set_entropy_thold(2.4);
                 params.set_logprob_thold(-1.0);
@@ -927,8 +1069,8 @@ impl WhisperEngine {
                 params.set_no_speech_thold(0.55);
 
                 // Reasonable length limits
-                params.set_max_len(200);                 // Reasonable length
-                params.set_single_segment(false);        // Allow multiple segments for better accuracy
+                params.set_max_len(200); // Reasonable length
+                params.set_single_segment(false); // Allow multiple segments for better accuracy
 
                 // Note: compression_ratio_threshold would be ideal but not available in current whisper-rs
                 // This would help detect repetitive outputs: params.set_compression_ratio_threshold(2.4);
@@ -941,8 +1083,15 @@ impl WhisperEngine {
 
                 // Performance optimization: reduce segment completion logging
                 // Only log for significant transcriptions to avoid I/O overhead
-                if (should_log_transcription || num_segments > 0) && (num_segments > 3 || duration_seconds > 5.0) {
-                    perf_debug!("Transcription #{} completed with {} segments ({:.1}s)", transcription_count, num_segments, duration_seconds);
+                if (should_log_transcription || num_segments > 0)
+                    && (num_segments > 3 || duration_seconds > 5.0)
+                {
+                    perf_debug!(
+                        "Transcription #{} completed with {} segments ({:.1}s)",
+                        transcription_count,
+                        num_segments,
+                        duration_seconds
+                    );
                 }
                 let mut result = String::new();
 
@@ -959,8 +1108,13 @@ impl WhisperEngine {
                     // This was causing significant I/O overhead during transcription
                     // Only log segments for very long audio (>30s) or when explicitly debugging
                     if duration_seconds > 30.0 {
-                        perf_trace!("Segment {} ({:.2}s-{:.2}s): '{}'",
-                                   i, _start_time as f64 / 100.0, _end_time as f64 / 100.0, segment_text);
+                        perf_trace!(
+                            "Segment {} ({:.2}s-{:.2}s): '{}'",
+                            i,
+                            _start_time as f64 / 100.0,
+                            _end_time as f64 / 100.0,
+                            segment_text
+                        );
                     }
 
                     // Clean and append segment text
@@ -986,24 +1140,41 @@ impl WhisperEngine {
         if cleaned_result.is_empty() {
             // Only log empty results occasionally to reduce spam
             if should_log_transcription && transcription_count % 20 == 0 {
-                perf_debug!("Transcription #{} result is empty - no speech detected", transcription_count);
+                perf_debug!(
+                    "Transcription #{} result is empty - no speech detected",
+                    transcription_count
+                );
             }
         } else {
             if cleaned_result != final_result {
-                log::debug!("Cleaned repetitive transcription #{}: {} -> {} bytes", transcription_count, final_result.len(), cleaned_result.len());
+                log::debug!(
+                    "Cleaned repetitive transcription #{}: {} -> {} bytes",
+                    transcription_count,
+                    final_result.len(),
+                    cleaned_result.len()
+                );
             }
             // Reduce successful transcription logging frequency
             // Only log every 5th result or significant results (>50 chars) to reduce I/O overhead
-            if transcription_count % 5 == 0 || cleaned_result.len() > 50 || duration_seconds > 10.0 {
-                log::debug!("Transcription #{} result: {} bytes", transcription_count, cleaned_result.len());
+            if transcription_count % 5 == 0 || cleaned_result.len() > 50 || duration_seconds > 10.0
+            {
+                log::debug!(
+                    "Transcription #{} result: {} bytes",
+                    transcription_count,
+                    cleaned_result.len()
+                );
             } else {
-                perf_debug!("Transcription #{} result: {} bytes", transcription_count, cleaned_result.len());
+                perf_debug!(
+                    "Transcription #{} result: {} bytes",
+                    transcription_count,
+                    cleaned_result.len()
+                );
             }
         }
 
         Ok(cleaned_result)
     }
-    
+
     pub async fn get_models_directory(&self) -> PathBuf {
         self.models_dir.clone()
     }
@@ -1012,21 +1183,30 @@ impl WhisperEngine {
     async fn validate_model_file(&self, model_path: &PathBuf) -> Result<()> {
         use tokio::io::AsyncReadExt;
 
-        let mut file = fs::File::open(model_path).await
+        let mut file = fs::File::open(model_path)
+            .await
             .map_err(|e| anyhow!("Failed to open model file: {}", e))?;
 
         // Read the first 8 bytes to check for GGML magic number
         let mut buffer = [0u8; 8];
-        file.read_exact(&mut buffer).await
+        file.read_exact(&mut buffer)
+            .await
             .map_err(|e| anyhow!("Failed to read model file header: {}", e))?;
 
         // Check for GGML magic number (various versions and endianness)
-        if buffer.starts_with(b"ggml") || buffer.starts_with(b"GGUF") || buffer.starts_with(b"ggmf") ||
-           buffer.starts_with(b"lmgg") || buffer.starts_with(b"FUGU") || buffer.starts_with(b"fmgg") {
+        if buffer.starts_with(b"ggml")
+            || buffer.starts_with(b"GGUF")
+            || buffer.starts_with(b"ggmf")
+            || buffer.starts_with(b"lmgg")
+            || buffer.starts_with(b"FUGU")
+            || buffer.starts_with(b"fmgg")
+        {
             Ok(())
         } else {
-            Err(anyhow!("Invalid model file: missing GGML/GGUF magic number. Found: {:?}",
-                       String::from_utf8_lossy(&buffer[..4])))
+            Err(anyhow!(
+                "Invalid model file: missing GGML/GGUF magic number. Found: {:?}",
+                String::from_utf8_lossy(&buffer[..4])
+            ))
         }
     }
 
@@ -1044,17 +1224,41 @@ impl WhisperEngine {
         // Check if model is corrupted before allowing deletion
         log::info!("Model '{}' has status: {:?}", model_name, model_info.status);
         match &model_info.status {
-            ModelStatus::Corrupted { file_size, expected_min_size } => {
-                log::info!("Deleting corrupted model '{}' (file size: {} bytes, expected min: {} bytes)",
-                          model_name, file_size, expected_min_size);
+            ModelStatus::Corrupted {
+                file_size,
+                expected_min_size,
+            } => {
+                log::info!(
+                    "Deleting corrupted model '{}' (file size: {} bytes, expected min: {} bytes)",
+                    model_name,
+                    file_size,
+                    expected_min_size
+                );
 
                 // Delete the file
                 if model_info.path.exists() {
-                    fs::remove_file(&model_info.path).await
-                        .map_err(|e| anyhow!("Failed to delete file '{}': {}", model_info.path.display(), e))?;
-                    log::info!("Successfully deleted corrupted file: {}", model_info.path.display());
+                    fs::remove_file(&model_info.path).await.map_err(|e| {
+                        anyhow!(
+                            "Failed to delete file '{}': {}",
+                            model_info.path.display(),
+                            e
+                        )
+                    })?;
+                    log::info!(
+                        "Successfully deleted corrupted file: {}",
+                        model_info.path.display()
+                    );
                 } else {
-                    log::warn!("File '{}' does not exist, nothing to delete", model_info.path.display());
+                    log::warn!(
+                        "File '{}' does not exist, nothing to delete",
+                        model_info.path.display()
+                    );
+                }
+
+                if let (Some(dir), Some(name)) =
+                    (model_info.path.parent(), model_info.path.file_name())
+                {
+                    model_download::remove_sidecars(dir, &name.to_string_lossy()).await;
                 }
 
                 // Update model status to Missing
@@ -1065,18 +1269,38 @@ impl WhisperEngine {
                     }
                 }
 
-                Ok(format!("Successfully deleted corrupted model '{}'", model_name))
+                Ok(format!(
+                    "Successfully deleted corrupted model '{}'",
+                    model_name
+                ))
             }
             ModelStatus::Available => {
                 // Allow deletion of available models for testing/cleanup
                 log::info!("Deleting available model '{}' (for cleanup)", model_name);
 
                 if model_info.path.exists() {
-                    fs::remove_file(&model_info.path).await
-                        .map_err(|e| anyhow!("Failed to delete file '{}': {}", model_info.path.display(), e))?;
-                    log::info!("Successfully deleted available model file: {}", model_info.path.display());
+                    fs::remove_file(&model_info.path).await.map_err(|e| {
+                        anyhow!(
+                            "Failed to delete file '{}': {}",
+                            model_info.path.display(),
+                            e
+                        )
+                    })?;
+                    log::info!(
+                        "Successfully deleted available model file: {}",
+                        model_info.path.display()
+                    );
                 } else {
-                    log::warn!("File '{}' does not exist, nothing to delete", model_info.path.display());
+                    log::warn!(
+                        "File '{}' does not exist, nothing to delete",
+                        model_info.path.display()
+                    );
+                }
+
+                if let (Some(dir), Some(name)) =
+                    (model_info.path.parent(), model_info.path.file_name())
+                {
+                    model_download::remove_sidecars(dir, &name.to_string_lossy()).await;
                 }
 
                 // Update model status to Missing
@@ -1089,16 +1313,21 @@ impl WhisperEngine {
 
                 Ok(format!("Successfully deleted model '{}'", model_name))
             }
-            _ => {
-                Err(anyhow!("Can only delete corrupted or available models. Model '{}' has status: {:?}", model_name, model_info.status))
-            }
+            _ => Err(anyhow!(
+                "Can only delete corrupted or available models. Model '{}' has status: {:?}",
+                model_name,
+                model_info.status
+            )),
         }
     }
-    
+
     async fn reserve_active_download(&self, model_name: &str) -> Result<Arc<ActiveDownload>> {
         let mut active_downloads = self.active_downloads.lock().await;
         if active_downloads.contains_key(model_name) {
-            return Err(anyhow!("Download already in progress for model: {}", model_name));
+            return Err(anyhow!(
+                "Download already in progress for model: {}",
+                model_name
+            ));
         }
 
         let (completion, _) = watch::channel(false);
@@ -1126,27 +1355,43 @@ impl WhisperEngine {
             )
         };
         if !active_owner_matches {
-            log::warn!("Download owner for {} was no longer active during finalization", model_name);
+            log::warn!(
+                "Download owner for {} was no longer active during finalization",
+                model_name
+            );
             active_download.completion.send_replace(true);
             return result;
         }
 
+        // A transfer that succeeded has already passed the SHA-256 check, so a file that fails
+        // these checks was just activated by this download and is removed again. A failed or
+        // cancelled transfer never touches the file that was already installed.
+        let mut validation_failed = false;
         if result.is_ok() && !active_download.cancellation.is_cancelled() {
             result = self.validate_model_file(file_path).await;
 
             if result.is_ok() {
-                let expected_min_size = WHISPER_MODEL_CATALOG
-                    .iter()
-                    .find(|model| model.0 == model_name)
-                    .map(|model| ((model.2 as f64 * 0.9) as u64) * 1024 * 1024);
+                let expected_size = match Self::pinned_file(model_name) {
+                    Some(file) => Some(file.size),
+                    None => WHISPER_MODEL_CATALOG
+                        .iter()
+                        .find(|model| model.0 == model_name)
+                        .map(|model| ((model.2 as f64 * 0.9) as u64) * 1024 * 1024),
+                };
 
-                result = match expected_min_size {
-                    Some(expected_min_size) => match fs::metadata(file_path).await {
-                        Ok(metadata) if metadata.len() >= expected_min_size => Ok(()),
-                        Ok(metadata) => Err(anyhow!(
+                result = match expected_size {
+                    Some(expected_size) => match fs::metadata(file_path).await {
+                        Ok(metadata) if metadata.len() == expected_size => Ok(()),
+                        Ok(metadata) if metadata.len() > expected_size && Self::pinned_file(model_name).is_none() => Ok(()),
+                        Ok(metadata) if metadata.len() < expected_size => Err(anyhow!(
                             "Downloaded model file is too small: {} bytes (expected at least {} bytes)",
                             metadata.len(),
-                            expected_min_size
+                            expected_size
+                        )),
+                        Ok(metadata) => Err(anyhow!(
+                            "Downloaded model file has an unexpected size: {} bytes (expected {} bytes)",
+                            metadata.len(),
+                            expected_size
                         )),
                         Err(e) => Err(anyhow!(
                             "Failed to read downloaded model file metadata: {}",
@@ -1159,15 +1404,22 @@ impl WhisperEngine {
                     )),
                 };
             }
+            validation_failed = result.is_err();
         }
 
-        if result.is_err() && !active_download.cancellation.is_cancelled() && file_path.exists() {
+        if validation_failed && file_path.exists() {
             if let Err(e) = fs::remove_file(file_path).await {
-                log::warn!("Failed to clean up failed download file: {}", e);
+                log::warn!("Failed to clean up invalid model file: {}", e);
             } else {
-                log::info!("Cleaned up failed download file: {}", file_path.display());
+                log::info!("Removed invalid model file: {}", file_path.display());
+                if let (Some(dir), Some(name)) = (file_path.parent(), file_path.file_name()) {
+                    model_download::remove_sidecars(dir, &name.to_string_lossy()).await;
+                }
             }
         }
+
+        // What is on disk now: a model that was usable before this download stays available.
+        let disk_status = self.disk_status(model_name, file_path).await;
 
         let (released_active_owner, cancellation_won) = {
             let mut active_downloads = self.active_downloads.lock().await;
@@ -1181,7 +1433,10 @@ impl WhisperEngine {
                     }
                 }
                 _ => {
-                    log::warn!("Download owner for {} was no longer active during finalization", model_name);
+                    log::warn!(
+                        "Download owner for {} was no longer active during finalization",
+                        model_name
+                    );
                     (false, active_download.cancellation.is_cancelled())
                 }
             }
@@ -1189,13 +1444,6 @@ impl WhisperEngine {
 
         if cancellation_won {
             result = Err(DownloadCancelled.into());
-            if file_path.exists() {
-                if let Err(e) = fs::remove_file(file_path).await {
-                    log::warn!("Failed to clean up cancelled download file: {}", e);
-                } else {
-                    log::info!("Cleaned up cancelled download file: {}", file_path.display());
-                }
-            }
 
             let removed = {
                 let mut active_downloads = self.active_downloads.lock().await;
@@ -1209,7 +1457,7 @@ impl WhisperEngine {
                 match active_downloads.get(model_name) {
                     Some(current) if Arc::ptr_eq(current, active_download) => {
                         if let Some(model_info) = models.get_mut(model_name) {
-                            model_info.status = ModelStatus::Missing;
+                            model_info.status = disk_status.clone();
                         }
                         active_downloads.remove(model_name);
                         true
@@ -1218,7 +1466,10 @@ impl WhisperEngine {
                 }
             };
             if !removed {
-                log::warn!("Download owner for {} was no longer active during cancellation cleanup", model_name);
+                log::warn!(
+                    "Download owner for {} was no longer active during cancellation cleanup",
+                    model_name
+                );
             }
         } else if released_active_owner {
             let mut models = self.available_models.write().await;
@@ -1227,7 +1478,7 @@ impl WhisperEngine {
                     model_info.status = ModelStatus::Available;
                     model_info.path = file_path.clone();
                 } else {
-                    model_info.status = ModelStatus::Missing;
+                    model_info.status = disk_status;
                 }
             }
         }
@@ -1236,42 +1487,40 @@ impl WhisperEngine {
         result
     }
 
-    pub async fn download_model(&self, model_name: &str, progress_callback: Option<Box<dyn Fn(u8) + Send>>) -> Result<()> {
-        log::info!("Starting download for model: {}", model_name);
-
-        let model_url = match model_name {
-            "tiny" => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin",
-            "base" => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin",
-            "small" => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin",
-            "medium" => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin",
-            "large-v3-turbo" => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin",
-            "large-v3" => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin",
-            "tiny-q5_1" => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny-q5_1.bin",
-            "base-q5_1" => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base-q5_1.bin",
-            "small-q5_1" => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin",
-            "medium-q5_0" => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium-q5_0.bin",
-            "large-v3-turbo-q5_0" => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin",
-            "large-v3-q5_0" => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-q5_0.bin",
-            _ => return Err(anyhow!("Unsupported model: {}", model_name)),
-        };
-
-        self.download_model_from_url(model_name, model_url, progress_callback).await
-    }
-
-    async fn download_model_from_url(
+    pub async fn download_model(
         &self,
         model_name: &str,
-        model_url: &str,
+        progress_callback: Option<Box<dyn Fn(u8) + Send>>,
+    ) -> Result<()> {
+        log::info!("Starting download for model: {}", model_name);
+
+        // File name, size, SHA-256, pinned revision and sources come from model_manifest.json.
+        let entry = model_download::entry("whisper", model_name)
+            .ok_or_else(|| anyhow!("Unsupported model: {}", model_name))?;
+        let file = entry
+            .files
+            .first()
+            .ok_or_else(|| anyhow!("Model {} has no files in the manifest", model_name))?;
+
+        self.download_model_from_sources(model_name, file, &entry.sources, progress_callback)
+            .await
+    }
+
+    async fn download_model_from_sources(
+        &self,
+        model_name: &str,
+        file: &FileEntry,
+        sources: &[Source],
         progress_callback: Option<Box<dyn Fn(u8) + Send>>,
     ) -> Result<()> {
         let active_download = self.reserve_active_download(model_name).await?;
-        let file_path = self.models_dir.join(format!("ggml-{}.bin", model_name));
+        let file_path = self.models_dir.join(&file.name);
 
         let result = self
             .download_model_with_owner(
                 model_name,
-                model_url,
-                &file_path,
+                file,
+                sources,
                 &active_download,
                 progress_callback,
             )
@@ -1284,19 +1533,13 @@ impl WhisperEngine {
     async fn download_model_with_owner(
         &self,
         model_name: &str,
-        model_url: &str,
-        file_path: &PathBuf,
+        file: &FileEntry,
+        sources: &[Source],
         active_download: &ActiveDownload,
         progress_callback: Option<Box<dyn Fn(u8) + Send>>,
     ) -> Result<()> {
         if active_download.cancellation.is_cancelled() {
             return Err(DownloadCancelled.into());
-        }
-
-        if !self.models_dir.exists() {
-            fs::create_dir_all(&self.models_dir)
-                .await
-                .map_err(|e| anyhow!("Failed to create models directory: {}", e))?;
         }
 
         {
@@ -1305,81 +1548,38 @@ impl WhisperEngine {
                 model_info.status = ModelStatus::Downloading { progress: 0 };
             }
         }
-
-        let client = Client::builder()
-            .timeout(crate::http::TIMEOUT)
-            .connect_timeout(crate::http::TIMEOUT)
-            .user_agent(concat!("Tingskriver/", env!("CARGO_PKG_VERSION")))
-            .build()
-            .map_err(|e| anyhow!("Failed to create download client: {}", e))?;
-        let response = tokio::select! {
-            biased;
-            _ = active_download.cancellation.cancelled() => return Err(DownloadCancelled.into()),
-            response = client.get(model_url).send() => response
-                .map_err(|e| anyhow!("Failed to start download: {}", e))?,
-        };
-
-        if !response.status().is_success() {
-            return Err(anyhow!("Download failed with status: {}", response.status()));
-        }
-
-        let total_size = response.content_length().unwrap_or(0);
-        let mut file = fs::File::create(file_path)
-            .await
-            .map_err(|e| anyhow!("Failed to create file: {}", e))?;
-
-        use futures_util::StreamExt;
-        let mut stream = response.bytes_stream();
-        let mut downloaded = 0u64;
-        let mut last_progress_report = 0u8;
-        let mut last_report_time = std::time::Instant::now();
-
         if let Some(ref callback) = progress_callback {
             callback(0);
         }
 
-        loop {
-            let chunk_result = tokio::select! {
-                biased;
-                _ = active_download.cancellation.cancelled() => return Err(DownloadCancelled.into()),
-                chunk_result = stream.next() => chunk_result,
-            };
-
-            let Some(chunk_result) = chunk_result else {
-                break;
-            };
-
-            if active_download.cancellation.is_cancelled() {
-                return Err(DownloadCancelled.into());
-            }
-
-            let chunk = chunk_result.map_err(|e| anyhow!("Failed to read chunk: {}", e))?;
-            file.write_all(&chunk)
-                .await
-                .map_err(|e| anyhow!("Failed to write chunk to file: {}", e))?;
-
-            downloaded += chunk.len() as u64;
-            let progress = if total_size > 0 {
-                ((downloaded as f64 / total_size as f64) * 100.0) as u8
-            } else {
-                0
-            };
-
-            let time_since_last_report = last_report_time.elapsed().as_secs();
-            if progress >= last_progress_report + 1 || progress == 100 || time_since_last_report >= 2 {
-                let mut models = self.available_models.write().await;
-                if let Some(model_info) = models.get_mut(model_name) {
-                    model_info.status = ModelStatus::Downloading { progress };
-                }
-
-                if let Some(ref callback) = progress_callback {
-                    callback(progress);
-                }
-
-                last_progress_report = progress;
-                last_report_time = std::time::Instant::now();
-            }
-        }
+        let client = model_download::client()?;
+        let mut sink = WhisperProgress {
+            models: Arc::clone(&self.available_models),
+            model_name: model_name.to_string(),
+            callback: progress_callback,
+            total_bytes: file.size,
+            last_progress: 0,
+            last_report: Instant::now(),
+        };
+        let fetched = model_download::fetch_file(
+            &client,
+            &self.models_dir,
+            file,
+            sources,
+            &active_download.cancellation,
+            &TransferOptions::default(),
+            &mut sink,
+        )
+        .await
+        .map_err(|error| match error {
+            TransferError::Cancelled => anyhow::Error::from(DownloadCancelled),
+            other => anyhow::Error::from(other),
+        })?;
+        log::info!(
+            "Whisper model {} came from source '{}'",
+            model_name,
+            fetched.source
+        );
 
         {
             let mut models = self.available_models.write().await;
@@ -1387,19 +1587,13 @@ impl WhisperEngine {
                 model_info.status = ModelStatus::Downloading { progress: 100 };
             }
         }
-
-        if let Some(ref callback) = progress_callback {
+        if let Some(ref callback) = sink.callback {
             callback(100);
         }
-
-        file.flush()
-            .await
-            .map_err(|e| anyhow!("Failed to flush file: {}", e))?;
 
         if active_download.cancellation.is_cancelled() {
             return Err(DownloadCancelled.into());
         }
-
 
         Ok(())
     }
@@ -1416,7 +1610,8 @@ impl WhisperEngine {
     ) -> Result<CancelDownloadOutcome> {
         log::info!("Cancelling download for model: {}", model_name);
 
-        let Some(active_download) = self.active_downloads.lock().await.get(model_name).cloned() else {
+        let Some(active_download) = self.active_downloads.lock().await.get(model_name).cloned()
+        else {
             return Ok(CancelDownloadOutcome::Cancelled);
         };
 
@@ -1427,7 +1622,9 @@ impl WhisperEngine {
             match tokio::time::timeout(cleanup_timeout, completion.changed()).await {
                 Ok(Ok(())) => {}
                 Ok(Err(_)) => {
-                    return Err(anyhow!("Download worker ended before completing cancellation cleanup"));
+                    return Err(anyhow!(
+                        "Download worker ended before completing cancellation cleanup"
+                    ));
                 }
                 Err(_) => {
                     return Ok(CancelDownloadOutcome::Pending);
@@ -1447,6 +1644,25 @@ mod tests {
     use tokio::net::TcpListener;
     use tokio::sync::oneshot;
     use tokio::time::{timeout, Duration};
+
+    /// Pinned size of `ggml-tiny.bin` in the manifest (sparse files keep the tests cheap).
+    const TINY_BYTES: u64 = 77_691_713;
+
+    fn source_for(url: &str) -> Vec<Source> {
+        vec![Source {
+            name: "test".to_string(),
+            base_url: url.trim_end_matches("/model.bin").to_string(),
+        }]
+    }
+
+    fn tiny_file(content: &[u8], size: u64) -> FileEntry {
+        FileEntry {
+            name: "ggml-tiny.bin".to_string(),
+            remote_name: None,
+            size,
+            sha256: crate::model_download::sha256_hex(content),
+        }
+    }
 
     fn tiny_model(models: &[ModelInfo]) -> &ModelInfo {
         models
@@ -1472,7 +1688,9 @@ mod tests {
             })
             .await
         };
-        assert!(timeout(Duration::from_millis(20), call_future).await.is_err());
+        assert!(timeout(Duration::from_millis(20), call_future)
+            .await
+            .is_err());
         // The inference still runs and is still counted.
         assert_eq!(engine.in_flight.load(Ordering::SeqCst), 1);
 
@@ -1535,7 +1753,10 @@ mod tests {
         let model_path = dir.path().join("ggml-tiny.bin");
         std::fs::write(&model_path, b"").unwrap();
         let missing_models = engine.discover_models().await.unwrap();
-        assert!(matches!(tiny_model(&missing_models).status, ModelStatus::Missing));
+        assert!(matches!(
+            tiny_model(&missing_models).status,
+            ModelStatus::Missing
+        ));
 
         std::fs::write(&model_path, vec![0_u8; 2 * 1024 * 1024]).unwrap();
         let corrupted_models = engine.discover_models().await.unwrap();
@@ -1557,7 +1778,7 @@ mod tests {
             .write(true)
             .open(&model_path)
             .unwrap()
-            .set_len(68 * 1024 * 1024)
+            .set_len(TINY_BYTES)
             .unwrap();
 
         engine.discover_models().await.unwrap();
@@ -1629,7 +1850,11 @@ mod tests {
         let engine = WhisperEngine::new_with_models_dir(Some(dir.path().to_path_buf())).unwrap();
 
         assert!(engine.download_model("not-a-model", None).await.is_err());
-        assert!(!engine.active_downloads.lock().await.contains_key("not-a-model"));
+        assert!(!engine
+            .active_downloads
+            .lock()
+            .await
+            .contains_key("not-a-model"));
     }
 
     #[tokio::test]
@@ -1644,7 +1869,8 @@ mod tests {
     #[tokio::test]
     async fn cancelled_finalization_holds_active_ownership_before_discovery() {
         let dir = tempfile::tempdir().unwrap();
-        let engine = Arc::new(WhisperEngine::new_with_models_dir(Some(dir.path().to_path_buf())).unwrap());
+        let engine =
+            Arc::new(WhisperEngine::new_with_models_dir(Some(dir.path().to_path_buf())).unwrap());
         engine.discover_models().await.unwrap();
 
         let active_download = engine.reserve_active_download("tiny").await.unwrap();
@@ -1748,7 +1974,7 @@ mod tests {
             .write(true)
             .open(&model_path)
             .unwrap()
-            .set_len(68 * 1024 * 1024)
+            .set_len(TINY_BYTES)
             .unwrap();
 
         engine.discover_models().await.unwrap();
@@ -1771,8 +1997,7 @@ mod tests {
         ));
     }
 
-    async fn stalled_http_server(
-    ) -> (
+    async fn stalled_http_server() -> (
         String,
         oneshot::Receiver<()>,
         oneshot::Sender<()>,
@@ -1788,9 +2013,7 @@ mod tests {
             let mut request = [0_u8; 1024];
             socket.read(&mut request).await.unwrap();
             socket
-                .write_all(
-                    b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\n",
-                )
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\n")
                 .await
                 .unwrap();
             socket.flush().await.unwrap();
@@ -1799,7 +2022,12 @@ mod tests {
             let _ = socket.write_all(b"test").await;
         });
 
-        (format!("http://{address}/model.bin"), headers_ready, release_body, server)
+        (
+            format!("http://{address}/model.bin"),
+            headers_ready,
+            release_body,
+            server,
+        )
     }
 
     async fn response_http_server(
@@ -1839,7 +2067,11 @@ mod tests {
             socket.flush().await.unwrap();
         });
 
-        (format!("http://{address}/model.bin"), request_received, server)
+        (
+            format!("http://{address}/model.bin"),
+            request_received,
+            server,
+        )
     }
 
     #[tokio::test]
@@ -1849,7 +2081,15 @@ mod tests {
         engine.discover_models().await.unwrap();
         let (url, request, server) = response_http_server(8, b"ggml\0\0\0\0").await;
 
-        let error = engine.download_model_from_url("tiny", &url, None).await.unwrap_err();
+        let error = engine
+            .download_model_from_sources(
+                "tiny",
+                &tiny_file(b"ggml\0\0\0\0", 8),
+                &source_for(&url),
+                None,
+            )
+            .await
+            .unwrap_err();
         let request = String::from_utf8(request.await.unwrap()).unwrap();
         server.await.unwrap();
 
@@ -1872,17 +2112,22 @@ mod tests {
         ));
     }
 
-
     #[tokio::test]
     async fn cancelling_a_stalled_download_waits_for_cleanup_before_retry_can_start() {
         let dir = tempfile::tempdir().unwrap();
-        let engine = Arc::new(WhisperEngine::new_with_models_dir(Some(dir.path().to_path_buf())).unwrap());
+        let engine =
+            Arc::new(WhisperEngine::new_with_models_dir(Some(dir.path().to_path_buf())).unwrap());
         let (url_a, headers_a, release_a, server_a) = stalled_http_server().await;
 
         let download_a_engine = Arc::clone(&engine);
         let download_a = tokio::spawn(async move {
             download_a_engine
-                .download_model_from_url("tiny", &url_a, None)
+                .download_model_from_sources(
+                    "tiny",
+                    &tiny_file(b"test", 4),
+                    &source_for(&url_a),
+                    None,
+                )
                 .await
         });
 
@@ -1915,7 +2160,12 @@ mod tests {
         let download_b_engine = Arc::clone(&engine);
         let download_b = tokio::spawn(async move {
             download_b_engine
-                .download_model_from_url("tiny", &url_b, None)
+                .download_model_from_sources(
+                    "tiny",
+                    &tiny_file(b"test", 4),
+                    &source_for(&url_b),
+                    None,
+                )
                 .await
         });
         timeout(Duration::from_secs(1), headers_b)
@@ -1942,6 +2192,95 @@ mod tests {
         let _ = server_b.await;
     }
 
+    fn write_installed_tiny(path: &std::path::Path) {
+        std::fs::write(path, b"ggml\0\0\0\0").unwrap();
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_len(TINY_BYTES)
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn changed_byte_is_rejected_deleted_and_the_existing_model_stays_available() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine = WhisperEngine::new_with_models_dir(Some(dir.path().to_path_buf())).unwrap();
+        let model_path = dir.path().join("ggml-tiny.bin");
+        write_installed_tiny(&model_path);
+        engine.discover_models().await.unwrap();
+        // The pinned file is `ggml\0\0\0\0`; the server delivers it with one changed byte.
+        let (url, _request, server) = response_http_server(8, b"ggml\0\0\0\x01").await;
+
+        let error = engine
+            .download_model_from_sources(
+                "tiny",
+                &tiny_file(b"ggml\0\0\0\0", 8),
+                &source_for(&url),
+                None,
+            )
+            .await
+            .unwrap_err();
+        server.await.unwrap();
+
+        assert!(
+            error.to_string().contains("SHA-256") && error.to_string().contains("slettet"),
+            "{error}"
+        );
+        assert!(!dir.path().join("ggml-tiny.bin.part").exists());
+        assert_eq!(std::fs::metadata(&model_path).unwrap().len(), TINY_BYTES);
+        assert!(matches!(
+            engine
+                .available_models
+                .read()
+                .await
+                .get("tiny")
+                .unwrap()
+                .status,
+            ModelStatus::Available
+        ));
+    }
+
+    #[tokio::test]
+    async fn loading_refuses_an_installed_model_that_does_not_match_the_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine = WhisperEngine::new_with_models_dir(Some(dir.path().to_path_buf())).unwrap();
+        // Right name, size and header, but not the pinned bytes.
+        write_installed_tiny(&dir.path().join("ggml-tiny.bin"));
+        let models = engine.discover_models().await.unwrap();
+        assert!(matches!(tiny_model(&models).status, ModelStatus::Available));
+
+        let error = engine.load_model("tiny").await.unwrap_err();
+
+        assert!(error.to_string().contains("SHA-256"), "{error}");
+        assert!(engine.get_current_model().await.is_none());
+        assert!(matches!(
+            engine
+                .available_models
+                .read()
+                .await
+                .get("tiny")
+                .unwrap()
+                .status,
+            ModelStatus::Corrupted { .. }
+        ));
+        let models = engine.discover_models().await.unwrap();
+        assert!(matches!(
+            tiny_model(&models).status,
+            ModelStatus::Corrupted { .. }
+        ));
+
+        let path = dir.path().join("ggml-tiny.bin");
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() + Duration::from_secs(5))
+            .unwrap();
+        let models = engine.discover_models().await.unwrap();
+        assert!(matches!(tiny_model(&models).status, ModelStatus::Available));
+    }
+
     #[tokio::test]
     async fn incomplete_response_cleans_partial_file_and_cache() {
         let dir = tempfile::tempdir().unwrap();
@@ -1951,12 +2290,20 @@ mod tests {
         let (url, _request, server) = response_http_server(8, b"ggml").await;
 
         let error = engine
-            .download_model_from_url("tiny", &url, None)
+            .download_model_from_sources(
+                "tiny",
+                &tiny_file(b"ggmlabcd", 8),
+                &source_for(&url),
+                None,
+            )
             .await
             .unwrap_err();
         server.await.unwrap();
 
-        assert!(error.to_string().contains("Failed to read chunk"));
+        assert!(
+            error.to_string().contains("Download stream failed"),
+            "{error}"
+        );
         assert!(!engine.active_downloads.lock().await.contains_key("tiny"));
         assert!(!model_path.exists());
         assert!(matches!(
@@ -1975,7 +2322,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn terminal_download_error_releases_the_active_transfer() {
+    async fn terminal_download_error_releases_the_transfer_and_keeps_the_existing_file() {
         let dir = tempfile::tempdir().unwrap();
         let engine = WhisperEngine::new_with_models_dir(Some(dir.path().to_path_buf())).unwrap();
         let model_path = dir.path().join("ggml-tiny.bin");
@@ -1994,14 +2341,24 @@ mod tests {
         });
 
         assert!(engine
-            .download_model_from_url("tiny", &format!("http://{address}/model.bin"), None)
+            .download_model_from_sources(
+                "tiny",
+                &tiny_file(b"test", 4),
+                &source_for(&format!("http://{address}")),
+                None
+            )
             .await
             .is_err());
         server.await.unwrap();
 
         assert!(!engine.active_downloads.lock().await.contains_key("tiny"));
-        assert!(!model_path.exists());
+        // A failed download never deletes what was already there; the user can delete it
+        // from the model list when it is shown as corrupted.
+        assert!(model_path.exists());
         let models = engine.discover_models().await.unwrap();
-        assert!(matches!(tiny_model(&models).status, ModelStatus::Missing));
+        assert!(matches!(
+            tiny_model(&models).status,
+            ModelStatus::Corrupted { .. }
+        ));
     }
 }

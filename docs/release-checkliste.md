@@ -52,26 +52,12 @@ aldrig bruges i release-gaten. Ugyldig JSON og ugyldige tal fejler stadig med 2.
 
 ## Tilkobling til release-workflowet
 
-Det eksisterende release-workflow er ikke ændret af issue #61. Når release-arbejdet
-fra #22 er klar, skal et målejob uploade målingsfilen med `actions/upload-artifact@v4`.
-Et efterfølgende job kalder det genbrugelige workflow, og selve udgivelsesjobbet
-skal have `needs: [performance]` uden `always()` eller `continue-on-error`:
-
-```yaml
-performance:
-  needs: measurement
-  uses: ./.github/workflows/ydeevne-port.yml
-  with:
-    artifact: reference-performance
-    maaling: maaling.md
-    profil: release
-```
-
-Artifactet skal komme fra samme workflow-kørsel. `maaling` er stien inde i
-artifactet, ikke en fil, som forventes at overleve mellem jobs. Jobbet `gate`
-henter artifactet, gemmer rapporten som artifact og i joboversigten og viderefører
-exit 1 og 2 som fejl. En manglende fil fejler også. Upload kun tekniske målinger.
-Et manuelt godkendelsestrin for referencemaskinen skal stadig stå før udgivelsen.
+`app-release.yml` kræver nu en grøn ydeevneport før kladden publiceres.
+Commit den godkendte referencemåling som
+`docs/changelog/<version>.performance.json` før tagget oprettes. Jobbet kører
+release-profilen mod den committede baseline uden undtagelse for manglende data.
+Forudgivelser bevarer undtagelsen fra den manuelle måling.
+Se [CI-dokumentationen](ci.md#gpui-release-gates-243-188) for alle porte.
 
 CI-producenter kan kalde samme workflow med `profil: ci` og en separat,
 committet baseline via inputtet `baseline`. Baseline skal måles på samme

@@ -264,12 +264,30 @@ class ChangelogTests(unittest.TestCase):
         text = ar.render_changelog("0.5.0-dev.4", "2026-11-05", None, [], "mahope/tingskriver")
         self.assertIn("## Ændret", text)
 
-    def test_notes_keep_the_standing_text(self):
-        changelog = ar.render_changelog("0.5.0-dev.4", "2026-11-05", None, [("Add x", 1)], "o/r")
-        notes = ar.notes_with_changelog("Standard tekst.\n", changelog)
-        self.assertTrue(notes.startswith("Standard tekst.\n\n## Ændringer\n\nUdgivet 2026-11-05"))
-        self.assertIn("\n### Tilføjet\n", notes)
-        self.assertNotIn("# Tingskriver 0.5.0-dev.4", notes)
+    def test_release_preserves_exact_changelog(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "notes.md"
+            path.write_text("# Version\n\nÆndringer.\n", encoding="utf-8")
+            args = SimpleNamespace(tag="app-v0.5.3", version="0.5.3",
+                                   timeout_minutes=1, changelog=str(path))
+            with patch.object(ar, "dispatch_and_wait"), patch.object(ar, "verify_release", return_value=[]), \
+                    patch.object(ar, "gh_json", return_value={"body": path.read_text(encoding="utf-8") + (ar.ROOT / "installer/release-notes.md").read_text(encoding="utf-8")}), \
+                    patch.object(ar, "run") as run:
+                self.assertEqual(ar.cmd_release(args), 0)
+                run.assert_not_called()
+            with patch.object(ar, "dispatch_and_wait"), patch.object(ar, "verify_release", return_value=[]), \
+                    patch.object(ar, "gh_json", return_value={"body": "Extra text" + ar.RELEASE_NOTES_FOOTER}):
+                self.assertEqual(ar.cmd_release(args), 1)
+
+    def test_release_timeout_covers_all_jobs(self):
+        from unittest.mock import patch
+        with patch.object(ar, "cmd_release", return_value=0) as release:
+            ar.main(["release", "--tag", "app-v0.5.3", "--version", "0.5.3"])
+        self.assertGreater(release.call_args.args[0].timeout_minutes, 120 + 30 + 25)
 
 
 def run_(workflow, event="push", status="completed", conclusion="success"):

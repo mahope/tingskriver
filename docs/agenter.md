@@ -16,6 +16,13 @@ cargo deny --locked check licenses bans
 git push && scripts/ci-status.sh "$(git branch --show-current)"
 ```
 
+The Unix STT client tests symlink an immutable Python worker from
+`crates/tingskriver-core/tests/fixtures/stt-worker.py` into each temporary
+directory. Keep that fixture executable. Writing an executable during parallel
+tests can cause `Text file busy` when another spawned process inherits its
+writable descriptor. Fixture cleanup drops the worker (kill and wait) before
+removing the directory and reports removal errors without panicking.
+
 CI (`.github/workflows/rust.yml`) runs the same checks on every push: the Windows workspace build and tests on `windows-latest`, the core tests and the "core has no UI crates" check on Linux, `cargo xwin check`, `cargo deny` and the lint gates below. The branch build (`.github/workflows/branch-build.yml`) builds the Windows installer and uploads it as a workflow artifact.
 
 Two lint gates run on every push (details in [ci.md](ci.md)). Because the code inherited from the fork is not clean (about 1,350 rustfmt hunks in 147 files and clippy errors in `tingskriver-core`, 30/10-26) and one big reformat would conflict with every open branch, they only look at what you change:

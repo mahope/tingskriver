@@ -36,6 +36,7 @@ pub mod map_reduce;
 pub mod metadata;
 pub mod processor;
 pub mod service;
+pub mod structured;
 pub mod summary_engine;
 pub mod template_commands;
 pub mod template_rules;

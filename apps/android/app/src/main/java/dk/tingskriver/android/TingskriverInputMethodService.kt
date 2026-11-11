@@ -18,9 +18,14 @@ import android.widget.Button
 import android.widget.TextView
 import dk.tingskriver.android.audio.AndroidPcmSource
 import dk.tingskriver.android.audio.RecordingSession
+import dk.tingskriver.android.speech.StubSpeechToText
 
 class TingskriverInputMethodService : InputMethodService() {
     private val session = RecordingSession { AndroidPcmSource(this) }
+    private val insertion = InsertionSession()
+    private val speech = StubSpeechToText()
+    private val dictation = DictationController(session, insertion)
+    private var insertionStatus: Int? = null
     private val handler = Handler(Looper.getMainLooper())
     private var worker: Thread? = null
     private var inputView: View? = null
@@ -32,6 +37,8 @@ class TingskriverInputMethodService : InputMethodService() {
     private val monitor = object : Runnable {
         override fun run() {
             if (session.state != RecordingSession.State.RECORDING) {
+                if (!canRecord()) cancelRecording()
+                else dictation.onCaptureFinished { stopRecording() }
                 renderStatus()
                 return
             }
@@ -56,7 +63,18 @@ class TingskriverInputMethodService : InputMethodService() {
             if (session.state == RecordingSession.State.RECORDING) stopRecording()
             else if (canRecord()) {
                 finishWorker()
-                val token = session.start(hasPermission())
+                insertionStatus = null
+                val token = dictation.start(
+                    currentInputEditorInfo?.inputType ?: 0,
+                    currentInputConnection,
+                    { original, text -> original.commitText(text, 1) },
+                    hasPermission()
+                )
+                if (token == null && session.state != RecordingSession.State.ERROR) {
+                    insertionStatus = R.string.insertion_failed
+                    renderStatus()
+                    return@setOnClickListener
+                }
                 if (token != null) {
                     deadline = SystemClock.elapsedRealtime() + 30_000
                     worker = Thread({
@@ -121,8 +139,17 @@ class TingskriverInputMethodService : InputMethodService() {
     private fun stopRecording() {
         session.stop()
         finishWorker()
+        // Only the stub is enabled. Real STT must run on a worker and complete on main.
+        insertionStatus = when (dictation.stop { speech.transcribe(shortArrayOf(), 16_000) }) {
+            InsertionOutcome.ConnectionError -> R.string.insertion_failed
+            InsertionOutcome.SpeechError -> R.string.speech_failed
+            else -> null
+        }
+        renderStatus()
     }
     private fun cancelRecording() {
+        dictation.invalidate()
+        insertionStatus = null
         session.cancel()
         finishWorker()
     }
@@ -135,6 +162,7 @@ class TingskriverInputMethodService : InputMethodService() {
 
     private fun renderStatus() {
         val recording = session.state == RecordingSession.State.RECORDING
+        val status = insertionStatus
         inputView?.findViewById<Button>(R.id.microphone)?.apply {
             isEnabled = dictationAllowed && hasPermission()
             setText(if (recording) R.string.stop_recording else R.string.microphone)
@@ -143,6 +171,7 @@ class TingskriverInputMethodService : InputMethodService() {
         inputView?.findViewById<TextView>(R.id.status)?.setText(when {
             !dictationAllowed -> R.string.unsupported_field
             !hasPermission() -> R.string.permission_needed
+            status != null -> status
             recording -> R.string.recording_status
             session.state == RecordingSession.State.ERROR -> R.string.recording_error
             session.state == RecordingSession.State.STOPPED -> R.string.stopped_status
