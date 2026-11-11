@@ -152,7 +152,7 @@ pub fn has_raw_tracks(raw_dir: &Path) -> bool {
 }
 
 /// `(kind, index, path)` of every `microphone_NNN.wav` / `system_NNN.wav`.
-#[allow(clippy::disallowed_methods)]
+#[allow(clippy::disallowed_methods)] // Synchronous disk worker.
 fn list_segments(raw_dir: &Path) -> io::Result<Vec<(TrackKind, u32, PathBuf)>> {
     let mut found = Vec::new();
     for entry in std::fs::read_dir(raw_dir)? {
@@ -361,7 +361,7 @@ impl SourceReader {
     }
 
     /// Fill `out` with up to `max` samples; `Ok(false)` at the end.
-    #[allow(clippy::disallowed_methods)]
+    #[allow(clippy::disallowed_methods)] // Synchronous disk worker.
     pub fn read_block(&mut self, out: &mut Vec<i16>, max: usize) -> io::Result<bool> {
         out.clear();
         while out.len() < max {
@@ -602,7 +602,7 @@ fn encode_mix(ffmpeg: &Path, scanned: &ScannedTracks, output: &Path) -> anyhow::
 
 /// Length of an audio file found by decoding all of it (the container's own
 /// duration is not trusted: with `+faststart` it is written before the data).
-#[allow(clippy::disallowed_methods)]
+#[allow(clippy::disallowed_methods)] // Synchronous disk worker.
 pub fn decoded_duration_seconds(path: &Path) -> anyhow::Result<f64> {
     use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
     use symphonia::core::errors::Error as SymphoniaError;
@@ -795,7 +795,7 @@ pub fn recover_raw_tracks(meeting_folder: &Path, ffmpeg: Option<&Path>) -> Final
     finalize_tracks(meeting_folder, ffmpeg, true)
 }
 
-#[allow(clippy::disallowed_methods)]
+#[allow(clippy::disallowed_methods)] // Synchronous disk worker.
 fn finalize_tracks(
     meeting_folder: &Path,
     ffmpeg: Option<&Path>,
@@ -966,7 +966,7 @@ fn finish(raw_dir: &Path, outcome: FinalizeOutcome) -> FinalizeOutcome {
     finish_with_cleanup(raw_dir, outcome, true)
 }
 
-#[allow(clippy::disallowed_methods)]
+#[allow(clippy::disallowed_methods)] // Synchronous disk worker.
 pub(super) fn finish_with_cleanup(
     raw_dir: &Path,
     mut outcome: FinalizeOutcome,
@@ -1023,7 +1023,7 @@ pub const MAX_STARTUP_ATTEMPTS: u32 = 3;
 /// the background encode, or FFmpeg failed. Crashed recordings (manifest not
 /// complete) are left to the recovery dialog, and `partial` results are
 /// final.
-#[allow(clippy::disallowed_methods)]
+#[allow(clippy::disallowed_methods)] // Synchronous disk worker.
 pub fn pending_finalize_folders(recordings_dir: &Path) -> Vec<PathBuf> {
     let Ok(entries) = std::fs::read_dir(recordings_dir) else {
         return Vec::new();
@@ -1046,7 +1046,7 @@ pub fn pending_finalize_folders(recordings_dir: &Path) -> Vec<PathBuf> {
     folders
 }
 
-#[allow(clippy::disallowed_methods)]
+#[allow(clippy::disallowed_methods)] // Synchronous disk worker.
 fn read_attempts(raw_dir: &Path) -> u32 {
     std::fs::read_to_string(raw_dir.join(ATTEMPTS_FILE))
         .ok()
@@ -1056,7 +1056,7 @@ fn read_attempts(raw_dir: &Path) -> u32 {
 
 /// Finalize every folder from [`pending_finalize_folders`]. Blocking; run it
 /// on a blocking thread at startup, before a recording can start.
-#[allow(clippy::disallowed_methods)]
+#[allow(clippy::disallowed_methods)] // Synchronous disk worker.
 pub fn finalize_pending_recordings(
     recordings_dir: &Path,
     ffmpeg: Option<&Path>,
@@ -1109,7 +1109,7 @@ pub async fn finalize_pending_at_startup() {
 }
 
 /// Status of the last finalize, read from the marker in the raw folder.
-#[allow(clippy::disallowed_methods)]
+#[allow(clippy::disallowed_methods)] // Synchronous disk worker.
 pub fn read_verified_status(raw_dir: &Path) -> Option<AudioSaveStatus> {
     let text = std::fs::read_to_string(raw_dir.join(VERIFIED_MARKER)).ok()?;
     serde_json::from_str::<FinalizeOutcome>(&text)
@@ -1119,7 +1119,7 @@ pub fn read_verified_status(raw_dir: &Path) -> Option<AudioSaveStatus> {
 
 /// Recovery and database persistence are separate calls; check the files
 /// again before allowing the latter to delete the originals.
-#[allow(clippy::disallowed_methods)]
+#[allow(clippy::disallowed_methods)] // Synchronous disk worker.
 pub fn verify_saved_outputs(raw_dir: &Path) -> anyhow::Result<()> {
     let outcome: FinalizeOutcome =
         serde_json::from_slice(&std::fs::read(raw_dir.join(VERIFIED_MARKER))?)?;
@@ -1139,7 +1139,7 @@ pub fn verify_saved_outputs(raw_dir: &Path) -> anyhow::Result<()> {
 }
 
 /// Add the audio outcome to the meeting's metadata.json (if it exists).
-#[allow(clippy::disallowed_methods)]
+#[allow(clippy::disallowed_methods)] // Synchronous disk worker.
 fn update_metadata(folder: &Path, outcome: &FinalizeOutcome) -> io::Result<()> {
     let path = folder.join("metadata.json");
     let text = match std::fs::read_to_string(&path) {
@@ -1174,7 +1174,7 @@ fn temp_path(file: &Path) -> PathBuf {
     file.with_file_name(format!(".{name}.tmp"))
 }
 
-#[allow(clippy::disallowed_methods)]
+#[allow(clippy::disallowed_methods)] // Synchronous disk worker.
 fn remove_temps(outputs: &[(PathBuf, PathBuf)]) {
     for (_, tmp) in outputs {
         let _ = std::fs::remove_file(tmp);

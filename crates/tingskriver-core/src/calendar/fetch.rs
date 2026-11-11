@@ -1,3 +1,5 @@
+#![deny(clippy::disallowed_methods)]
+
 use super::{
     cache::{Cache, CACHE_VERSION},
     parse, CalendarConfig, CalendarError, Event, IcsAddress,

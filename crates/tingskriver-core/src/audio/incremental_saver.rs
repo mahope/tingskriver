@@ -98,7 +98,7 @@ pub async fn recover_audio_from_checkpoints(
 
 /// Folders from before the track writer: 30 s mp4 checkpoints merged with
 /// FFmpeg's concat demuxer.
-#[allow(clippy::disallowed_methods)]
+#[allow(clippy::disallowed_methods)] // Synchronous disk worker.
 fn recover_legacy_mp4_checkpoints(
     folder_path: &Path,
     checkpoints_dir: &Path,

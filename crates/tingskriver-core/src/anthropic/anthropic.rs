@@ -1,3 +1,5 @@
+#![deny(clippy::disallowed_methods)]
+
 use serde::{Deserialize, Serialize};
 use std::sync::RwLock;
 use std::time::{Duration, Instant};

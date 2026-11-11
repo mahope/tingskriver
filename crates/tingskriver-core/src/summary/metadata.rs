@@ -16,9 +16,7 @@ pub fn read_summary_language_from_metadata(folder: &Path) -> Result<Option<Strin
     read_language_field_from_metadata(folder, SUMMARY_LANGUAGE_FIELD)
 }
 
-pub fn read_detected_summary_language_from_metadata(
-    folder: &Path,
-) -> Result<Option<String>> {
+pub fn read_detected_summary_language_from_metadata(folder: &Path) -> Result<Option<String>> {
     read_language_field_from_metadata(folder, DETECTED_SUMMARY_LANGUAGE_FIELD)
 }
 
@@ -36,7 +34,7 @@ pub fn write_detected_summary_language_to_metadata(
     write_language_field_to_metadata(folder, DETECTED_SUMMARY_LANGUAGE_FIELD, summary_language)
 }
 
-#[allow(clippy::disallowed_methods)]
+#[allow(clippy::disallowed_methods)] // Synchronous disk worker.
 fn read_language_field_from_metadata(folder: &Path, field: &str) -> Result<Option<String>> {
     let metadata_path = metadata_path(folder);
     if !metadata_path.exists() {
@@ -57,13 +55,15 @@ fn read_language_field_from_metadata(folder: &Path, field: &str) -> Result<Optio
     }
 }
 
-#[allow(clippy::disallowed_methods)]
+#[allow(clippy::disallowed_methods)] // Synchronous disk worker.
 fn write_language_field_to_metadata(
     folder: &Path,
     field: &str,
     summary_language: Option<&str>,
 ) -> Result<()> {
-    let _guard = METADATA_WRITE_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _guard = METADATA_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let metadata_path = metadata_path(folder);
     let temp_path = metadata_temp_path(folder);
 
@@ -79,7 +79,9 @@ fn write_language_field_to_metadata(
         bail!("Failed to parse metadata.json: root value must be a JSON object");
     }
 
-    let object = value.as_object_mut().expect("metadata value checked as object");
+    let object = value
+        .as_object_mut()
+        .expect("metadata value checked as object");
     match summary_language {
         Some(code) => {
             let normalised = normalise_supported_summary_language(code)?;
@@ -90,8 +92,8 @@ fn write_language_field_to_metadata(
         }
     }
 
-    let json_string = serde_json::to_string_pretty(&value)
-        .context("Failed to serialize metadata.json")?;
+    let json_string =
+        serde_json::to_string_pretty(&value).context("Failed to serialize metadata.json")?;
     std::fs::write(&temp_path, json_string)
         .with_context(|| format!("Failed to write {}", temp_path.display()))?;
     std::fs::rename(&temp_path, &metadata_path).with_context(|| {
@@ -157,7 +159,10 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(read_summary_language_from_metadata(dir.path()).unwrap(), None);
+        assert_eq!(
+            read_summary_language_from_metadata(dir.path()).unwrap(),
+            None
+        );
     }
 
     #[test]
@@ -206,7 +211,10 @@ mod tests {
             read_detected_summary_language_from_metadata(dir.path()).unwrap(),
             Some("es".to_string())
         );
-        assert_eq!(read_summary_language_from_metadata(dir.path()).unwrap(), None);
+        assert_eq!(
+            read_summary_language_from_metadata(dir.path()).unwrap(),
+            None
+        );
     }
 
     #[test]

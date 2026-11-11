@@ -56,6 +56,31 @@ Async work started from audio and keyboard-hook threads uses
 `tingskriver_core::runtime::spawn`, which runs on the runtime the host
 registers at startup.
 
+## Async I/O boundary
+
+The GPUI shell calls core only through its background executor. Never poll a
+core future or run a synchronous core operation on the UI thread. Enter the
+host's Tokio runtime for async core calls; run synchronous CPU and disk work
+on `tokio::task::spawn_blocking` (or the dedicated recording/playback workers).
+A background async task alone does not make synchronous disk I/O nonblocking.
+
+Core uses asynchronous reqwest requests. Ordinary requests have a ten-second
+connection and total deadline; summary generation, provider inference and
+model downloads keep their longer budgets (see
+[Network and file I/O](#network-and-file-io)). The shared client is in
+`http.rs`.
+
+`tingskriver-core/clippy.toml` forbids blocking reqwest types. Core denies
+`clippy::disallowed_methods` at crate scope, including blocking HTTP and direct
+`std::fs` calls. Exceptions are scoped to synchronous disk workers and test
+fixtures, never entire production modules. Check the guard with
+`scripts/check-async-io-guard.sh`, which copies core's actual crate lint
+attributes and must reject both deliberately inserted violations without
+adding its own deny rules. Engine initialization constructs on a blocking
+worker outside the shared engine mutex, then briefly locks to publish the
+first completed instance. `read_audio_file` is removed; playback uses core's seekable
+playback service instead of serializing audio bytes into a JSON number array.
+
 ## What stays in the Tauri crate
 
 - `#[tauri::command]` wrappers with the original names and arguments. They

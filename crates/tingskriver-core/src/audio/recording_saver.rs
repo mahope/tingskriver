@@ -276,7 +276,7 @@ impl RecordingSaver {
     }
 
     /// Write metadata.json to disk (atomic write with temp file)
-    #[allow(clippy::disallowed_methods)]
+    #[allow(clippy::disallowed_methods)] // Synchronous disk worker.
     fn write_metadata(&self, folder: &Path, metadata: &MeetingMetadata) -> Result<()> {
         let metadata_path = folder.join("metadata.json");
         let temp_path = folder.join(".metadata.json.tmp");
@@ -289,7 +289,7 @@ impl RecordingSaver {
     }
 
     /// Write transcripts.json to disk (atomic write with temp file)
-    #[allow(clippy::disallowed_methods)]
+    #[allow(clippy::disallowed_methods)] // Synchronous disk worker.
     fn write_transcripts_json(&self, folder: &Path) -> Result<()> {
         let segments_clone = self.get_transcript_segments();
         let transcript_path = folder.join("transcripts.json");

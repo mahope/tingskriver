@@ -1,3 +1,5 @@
+#![deny(clippy::disallowed_methods)]
+
 //! OpenAI-compatible client for Syv.ai, OpenAI, OdinCore, Ollama and custom
 //! endpoints: `/audio/transcriptions`, `/chat/completions` and `/models`.
 //!

@@ -339,7 +339,7 @@ impl WavInspection {
 
 /// Read the header of a segment written by [`WavSegmentStorage`]. Errors for
 /// anything that is not a mono 16-bit PCM WAV with the 44-byte layout.
-#[allow(clippy::disallowed_methods)]
+#[allow(clippy::disallowed_methods)] // Synchronous disk worker.
 pub fn inspect_wav(path: &Path) -> io::Result<WavInspection> {
     let mut file = File::open(path)?;
     let len = file.metadata()?.len();

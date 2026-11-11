@@ -53,7 +53,7 @@ pub fn enabled_in(local_dir: &Path) -> bool {
 }
 
 /// Remember the choice in `local_dir` (marker file present means off).
-#[allow(clippy::disallowed_methods)]
+#[allow(clippy::disallowed_methods)] // Synchronous disk worker.
 pub fn remember_in(local_dir: &Path, enabled: bool) -> std::io::Result<()> {
     let marker = marker_path(local_dir);
     if enabled {
@@ -90,7 +90,7 @@ pub fn apply() -> Result<(), String> {
     apply_setting(requested)
 }
 
-#[allow(clippy::disallowed_methods)]
+#[allow(clippy::disallowed_methods)] // Synchronous disk worker.
 fn apply_setting(enabled: bool) -> Result<(), String> {
     let exe = current_exe_name().ok_or("Could not determine the exe name")?;
     if enabled {

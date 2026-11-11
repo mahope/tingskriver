@@ -282,7 +282,7 @@ pub struct ParakeetEngine {
 
 impl ParakeetEngine {
     /// Create a new Parakeet engine with optional custom models directory
-    #[allow(clippy::disallowed_methods)]
+    #[allow(clippy::disallowed_methods)] // Synchronous disk worker.
     pub fn new_with_models_dir(models_dir: Option<PathBuf>) -> Result<Self> {
         let models_dir = if let Some(dir) = models_dir {
             dir.join("parakeet") // Parakeet models in subdirectory
@@ -466,7 +466,7 @@ impl ParakeetEngine {
         false
     }
 
-    #[allow(clippy::disallowed_methods)]
+    #[allow(clippy::disallowed_methods)] // Synchronous disk worker.
     fn validate_model_directory(model_dir: &Path, artifacts: &[FileEntry]) -> Result<()> {
         for artifact in artifacts {
             let path = model_dir.join(&artifact.name);

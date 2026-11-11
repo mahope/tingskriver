@@ -808,6 +808,7 @@ impl Clone for RecordingStats {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)] // Synchronous tests read the WAV files directly.
 mod poisoning_tests {
     use super::*;
 

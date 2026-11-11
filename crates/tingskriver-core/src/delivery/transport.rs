@@ -94,7 +94,8 @@ pub(super) async fn send(
             let body = serde_json::to_vec(&webhook_payload(*format, bundle, id))
                 .map_err(|_| Error::Invalid)?;
             let mut request = reqwest::Client::builder()
-                .timeout(Duration::from_secs(30))
+                .connect_timeout(crate::http::TIMEOUT)
+                .timeout(crate::http::TIMEOUT)
                 .redirect(reqwest::redirect::Policy::none())
                 .build()
                 .map_err(|_| Error::Transport)?

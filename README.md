@@ -180,6 +180,11 @@ Tingskriver is a fork of [Meetily](https://github.com/Zackriya-Solutions/meetily
 
 - Testing device switching: `rustc --edition 2021 --test crates/tingskriver-core/src/audio/device_follow.rs -o /tmp/df && /tmp/df` (plain std, runs on Linux; CI runs it on every branch). Manual test on Windows: record, take the headset off and put it on again, and check that `audio.mp4` has no gaps and the `[DEVICE_FOLLOW]` lines in the log show the switch within about a second. Also press mute on the headset for at least 30 seconds while recording and check that no switch happens.
 
+Core I/O checks: `scripts/check-async-io-guard.sh` verifies that Clippy rejects
+blocking HTTP and direct file reads in async modules. See
+[the async I/O boundary](docs/arkitektur.md#async-io-boundary) for the executor
+contract and the HTTP deadlines.
+
 ### Langtidstest af optagelse
 
 Den separate [tre timers ydelsestest](docs/recording-soak.md) kører natligt og

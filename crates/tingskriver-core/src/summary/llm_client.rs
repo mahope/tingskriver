@@ -1065,7 +1065,7 @@ mod tests {
             let _ = stream.write_all(b"fail").await;
         });
 
-        let client = Client::new();
+        let client = crate::http::client();
         let cancellation_token = CancellationToken::new();
         let endpoint = format!("http://{address}");
         let generation = generate_summary(
@@ -1158,7 +1158,7 @@ mod tests {
             let _ = stream.write_all(completion_body).await;
         });
 
-        let client = Client::new();
+        let client = crate::http::client();
         let cancellation_token = CancellationToken::new();
         let endpoint = format!("http://{address}");
         let generation = generate_summary(
@@ -1241,7 +1241,7 @@ mod tests {
             stream.flush().await.unwrap();
         });
 
-        let client = Client::new();
+        let client = crate::http::client();
         let cancellation_token = CancellationToken::new();
         let endpoint = format!("http://{address}");
         let completion = timeout(

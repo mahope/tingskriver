@@ -40,7 +40,7 @@ if ! clippy_probe async_io_guard_probe; then
 fi
 echo "Guard permits async HTTP and file I/O"
 index=0
-for expression in 'reqwest::blocking::get("http://127.0.0.1:1")' 'reqwest::blocking::Client::new()' 'std::fs::read("unused")' 'std::fs::File::open("unused")'; do
+for expression in 'reqwest::blocking::get("http://127.0.0.1:1")' 'reqwest::blocking::Client::new()' 'std::fs::read("unused")' 'std::fs::File::open("unused")' 'std::fs::OpenOptions::new().read(true).open("unused")' 'std::fs::create_dir("unused")' 'std::fs::remove_dir("unused")' 'std::fs::remove_dir_all("unused")' 'std::fs::canonicalize("unused")'; do
     index=$((index + 1))
     name=async_io_guard_probe_$index
     write_probe "$name" <<< "$(printf 'async fn blocked() { let _ = %s; }\nfn main() { let _ = blocked; }' "$expression")"

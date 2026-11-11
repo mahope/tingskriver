@@ -1,3 +1,5 @@
+#![deny(clippy::disallowed_methods)]
+
 //! HTTP deadlines distinguish short requests from long-running operations.
 use std::time::Duration;
 

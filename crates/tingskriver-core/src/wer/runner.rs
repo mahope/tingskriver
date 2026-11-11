@@ -97,7 +97,7 @@ pub fn read_pcm16(path: &Path) -> Result<Vec<f32>> {
     read_pcm16_with_limit(path, 8)
 }
 
-#[allow(clippy::disallowed_methods)]
+#[allow(clippy::disallowed_methods)] // Synchronous WAV reader used by disk workers.
 pub(crate) fn read_pcm16_with_limit(path: &Path, seconds: u64) -> Result<Vec<f32>> {
     let max_data = seconds * 32_000;
     if std::fs::metadata(path).context("Cannot inspect WAV")?.len() > max_data + 44_000 {

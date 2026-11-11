@@ -1083,3 +1083,56 @@ async fn signing_credential_failures_keep_targets_closed_and_present() {
         .unwrap()
         .is_some());
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn stalled_webhook_obeys_core_http_deadline() {
+    use std::time::Duration;
+    use tokio::{io::AsyncReadExt, net::TcpListener};
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let service = Delivery::open(
+        &dir.path().join("queue"),
+        Arc::new(MemoryKeyStore::default()),
+    )
+    .await
+    .unwrap();
+    service
+        .set_policy(Policy {
+            local_only: false,
+            private: false,
+        })
+        .await
+        .unwrap();
+    service
+        .save_target(
+            Target {
+                id: "hook".into(),
+                name: "Webhook".into(),
+                destination: Destination::Webhook {
+                    format: WebhookFormat::Json,
+                },
+            },
+            Some(format!(
+                "http://{}/synthetic",
+                listener.local_addr().unwrap()
+            )),
+        )
+        .await
+        .unwrap();
+    service.test_target("hook").await.unwrap();
+    let receive = async {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut request = vec![0; 65536];
+        stream.read(&mut request).await.unwrap();
+        std::future::pending::<()>().await;
+    };
+    tokio::time::timeout(Duration::from_millis(10_500), async {
+        tokio::select! {
+            result = service.run_due() => result.unwrap(),
+            () = receive => unreachable!(),
+        }
+    })
+    .await
+    .expect("webhook exceeded core HTTP deadline");
+    assert_ne!(service.jobs().await.unwrap()[0].status, "completed");
+}

@@ -352,7 +352,7 @@ impl Service {
         self.reload_rules().await
     }
 
-    #[allow(clippy::disallowed_methods)]
+    #[allow(clippy::disallowed_methods)] // Synchronous disk worker.
     pub fn delete_files(&self, paths: Vec<String>) {
         for path in paths {
             let path = PathBuf::from(path);

@@ -59,7 +59,7 @@ fn find(
     }
     Ok(None)
 }
-#[allow(clippy::disallowed_methods)]
+#[allow(clippy::disallowed_methods)] // Synchronous disk worker.
 pub(super) fn media_offset(path: &Path, track: u32) -> Result<u64, PlaybackError> {
     let mut f = File::open(path).map_err(|_| PlaybackError::Open)?;
     let end = f.metadata().map_err(|_| PlaybackError::Open)?.len();

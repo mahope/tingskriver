@@ -352,7 +352,7 @@ pub async fn load_spoken_table(dir: &Path) -> (SpokenTable, Option<String>) {
 }
 
 #[cfg(test)]
-#[allow(clippy::disallowed_methods)]
+#[allow(clippy::disallowed_methods)] // Synchronous filesystem fixtures.
 mod spoken_tests {
     use super::*;
     #[test]

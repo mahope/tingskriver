@@ -39,7 +39,7 @@ pub(crate) fn get_custom_templates_dir() -> Option<PathBuf> {
 ///
 /// # Returns
 /// The template JSON content if found, None otherwise
-#[allow(clippy::disallowed_methods)]
+#[allow(clippy::disallowed_methods)] // Synchronous disk worker.
 fn load_bundled_template(template_id: &str) -> Option<String> {
     let bundled_dir = BUNDLED_TEMPLATES_DIR.read().ok()?.clone()?;
     let template_path = bundled_dir.join(format!("{}.json", template_id));
@@ -68,7 +68,7 @@ fn load_bundled_template(template_id: &str) -> Option<String> {
 ///
 /// # Returns
 /// The template JSON content if found, None otherwise
-#[allow(clippy::disallowed_methods)]
+#[allow(clippy::disallowed_methods)] // Synchronous disk worker.
 fn load_custom_template(template_id: &str) -> Option<String> {
     let custom_dir = get_custom_templates_dir()?;
     let template_path = custom_dir.join(format!("{}.json", template_id));
@@ -151,7 +151,7 @@ pub fn validate_and_parse_template(json_content: &str) -> Result<Template, Strin
 /// - Built-in template IDs
 /// - Bundled template IDs (from app resources)
 /// - Custom template IDs (from user's data directory)
-#[allow(clippy::disallowed_methods)]
+#[allow(clippy::disallowed_methods)] // Synchronous disk worker.
 pub fn list_template_ids() -> Vec<String> {
     let mut ids: Vec<String> = defaults::list_builtin_template_ids()
         .into_iter()

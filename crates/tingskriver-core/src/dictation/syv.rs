@@ -1,3 +1,5 @@
+#![deny(clippy::disallowed_methods)]
+
 //! Syv.ai client (OpenAI-compatible `/audio/transcriptions`).
 
 use std::time::Instant;
@@ -264,7 +266,7 @@ mod tests {
     #[tokio::test]
     async fn sends_openai_compatible_request() {
         let (endpoint, server) = fake_server("200 OK", r#"{"text":"Hej Mads."}"#).await;
-        let client = reqwest::Client::new();
+        let client = crate::http::client();
         let text = transcribe(
             &client,
             &endpoint,
@@ -296,11 +298,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn mode_can_override_language_and_prompt() {
+        let (endpoint, server) = fake_server("200 OK", r#"{"text":"Hello"}"#).await;
+        transcribe_language(
+            &crate::http::client(),
+            &endpoint,
+            "test",
+            "chosen-model",
+            vec![1],
+            Some("Keep English words".into()),
+            "en",
+        )
+        .await
+        .unwrap();
+        let request = server.await.unwrap();
+        for (name, value) in [
+            ("model", "chosen-model"),
+            ("language", "en"),
+            ("prompt", "Keep English words"),
+        ] {
+            assert!(request.contains(&format!("name=\"{name}\"\r\n\r\n{value}\r\n")));
+        }
+    }
+
+    #[tokio::test]
     async fn reports_http_errors_without_key() {
         let (endpoint, _server) =
             fake_server("500 Internal Server Error", r#"{"error":"boom"}"#).await;
         let error = transcribe(
-            &reqwest::Client::new(),
+            &crate::http::client(),
             &endpoint,
             "hv_secret",
             "m",
@@ -316,7 +342,7 @@ mod tests {
     #[tokio::test]
     async fn key_test_maps_rejection() {
         let (endpoint, _server) = fake_server("401 Unauthorized", "{}").await;
-        let error = test_key(&reqwest::Client::new(), &endpoint, "bad")
+        let error = test_key(&crate::http::client(), &endpoint, "bad")
             .await
             .unwrap_err();
         assert_eq!(error, "Nøglen blev afvist af Syv.ai");

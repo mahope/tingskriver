@@ -1,3 +1,5 @@
+#![deny(clippy::disallowed_methods)]
+
 use serde::{Deserialize, Serialize};
 use std::sync::RwLock;
 use std::time::{Duration, Instant};
@@ -114,7 +116,10 @@ pub async fn get_openai_models(api_key: Option<String>) -> Result<Vec<OpenAIMode
         let cache = MODELS_CACHE.read().map_err(|e| e.to_string())?;
         if let Some(entry) = cache.as_ref() {
             if entry.fetched_at.elapsed() < Duration::from_secs(CACHE_TTL_SECS) {
-                log::info!("Returning cached OpenAI models ({} models)", entry.models.len());
+                log::info!(
+                    "Returning cached OpenAI models ({} models)",
+                    entry.models.len()
+                );
                 return Ok(entry.models.clone());
             }
         }

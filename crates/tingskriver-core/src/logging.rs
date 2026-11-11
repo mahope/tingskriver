@@ -31,7 +31,7 @@ pub struct RotatingFile {
 }
 
 impl RotatingFile {
-    #[allow(clippy::disallowed_methods)]
+    #[allow(clippy::disallowed_methods)] // Synchronous disk worker.
     pub fn open(dir: &Path, name: &str, max_bytes: u64) -> std::io::Result<Self> {
         fs::create_dir_all(dir)?;
         let file = OpenOptions::new()
@@ -61,7 +61,7 @@ impl RotatingFile {
         }
     }
 
-    #[allow(clippy::disallowed_methods)]
+    #[allow(clippy::disallowed_methods)] // Synchronous disk worker.
     fn rotate(&mut self) -> std::io::Result<()> {
         // Oldest first: .2 is dropped, .1 -> .2, current -> .1.
         let _ = fs::remove_file(self.rotated_path(KEPT_FILES - 1));

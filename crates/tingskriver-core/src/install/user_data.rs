@@ -16,7 +16,7 @@ pub const REMOVE_ON_UNINSTALL_MARKER: &str = "slet-data-ved-afinstallation";
 pub const CREDENTIAL_PREFIX: &str = "Tingskriver/";
 
 /// Remember whether uninstalling should delete the user's data.
-#[allow(clippy::disallowed_methods)]
+#[allow(clippy::disallowed_methods)] // Synchronous disk worker.
 pub fn set_remove_on_uninstall(app_data_dir: &Path, remove: bool) -> std::io::Result<()> {
     let marker = app_data_dir.join(REMOVE_ON_UNINSTALL_MARKER);
     if remove {
@@ -44,7 +44,9 @@ pub fn removal_targets(app_data_dir: Option<PathBuf>, log_dir: Option<PathBuf>) 
     let local_dir = log_dir.and_then(|logs| logs.parent().map(Path::to_path_buf));
     let mut targets: Vec<PathBuf> = Vec::new();
     for dir in [app_data_dir, local_dir].into_iter().flatten() {
-        let named_after_app = dir.file_name().is_some_and(|name| name == crate::paths::APP_ID);
+        let named_after_app = dir
+            .file_name()
+            .is_some_and(|name| name == crate::paths::APP_ID);
         if named_after_app && !targets.contains(&dir) {
             targets.push(dir);
         }
@@ -116,8 +118,15 @@ mod tests {
         );
         // TINGSKRIVER_DATA_DIR style overrides or odd log paths are never
         // targets.
-        assert!(removal_targets(Some(PathBuf::from("C:/Users/x")), Some(PathBuf::from("logs"))).is_empty());
-        assert_eq!(removal_targets(Some(data.clone()), Some(data.join("logs"))), vec![data]);
+        assert!(removal_targets(
+            Some(PathBuf::from("C:/Users/x")),
+            Some(PathBuf::from("logs"))
+        )
+        .is_empty());
+        assert_eq!(
+            removal_targets(Some(data.clone()), Some(data.join("logs"))),
+            vec![data]
+        );
     }
 
     #[test]

@@ -359,7 +359,7 @@ pub fn database_files(database_path: &Path) -> [PathBuf; 4] {
 /// Whether the last session left a `-wal` or `-journal` with content behind,
 /// i.e. ended without closing the database (a crash). A clean shutdown
 /// checkpoints the WAL and SQLite removes it.
-#[allow(clippy::disallowed_methods)]
+#[allow(clippy::disallowed_methods)] // Synchronous disk worker.
 pub fn has_leftover_journal(database_path: &Path) -> bool {
     let [_, wal, _, journal] = database_files(database_path);
     [wal, journal]
@@ -375,7 +375,7 @@ pub fn backup_database(database_path: &Path, backup_root: &Path) -> io::Result<O
 }
 
 /// [`backup_database`], and whether this call made the copy.
-#[allow(clippy::disallowed_methods)]
+#[allow(clippy::disallowed_methods)] // Synchronous disk worker.
 fn copy_database(database_path: &Path, backup_root: &Path) -> io::Result<Option<(PathBuf, bool)>> {
     match fs::metadata(database_path) {
         Ok(_) => (),
@@ -414,7 +414,7 @@ fn copy_database(database_path: &Path, backup_root: &Path) -> io::Result<Option<
 }
 
 /// Total size of the database file and its journals.
-#[allow(clippy::disallowed_methods)]
+#[allow(clippy::disallowed_methods)] // Synchronous disk worker.
 fn database_size(database_path: &Path) -> u64 {
     database_files(database_path)
         .iter()

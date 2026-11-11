@@ -1,3 +1,5 @@
+#![deny(clippy::disallowed_methods)]
+
 //! Types shared between the UI and core, and the meeting and settings
 //! operations behind the Tauri commands of the same name.
 
