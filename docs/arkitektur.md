@@ -151,7 +151,8 @@ and `rerunLast` in `shortcuts.json`. The host dispatches them to the core
 Rerun switches between local Parakeet and Syv. History stores the resolved provider,
 Syv model and language. Local-only settings and local-only or unknown original
 providers prevent cloud reruns, including legacy entries with no saved provider.
-Syv reruns reuse the saved model and language.
+Syv reruns reuse the saved model and language and recheck the persisted global
+local-only switch immediately before the HTTP request.
 The local path ensures Parakeet is ready before inference, reloading an idle-unloaded model.
 Missing audio produces a Danish pill message and no insertion.
 
@@ -553,6 +554,54 @@ OpenRouter's model list is async in core and in the Tauri wrapper. Its
 single-worker fake-server test covers stalled headers, stalled bodies and
 concurrent core calls. `read_audio_file` has already been removed; playback
 uses the core playback API instead of JSON arrays of audio bytes.
+
+## Core privacy decisions
+
+`ProvidersConfig.localOnly` defaults to false for existing configuration files.
+When enabled, `ProviderService::resolve` (and therefore `chain_for`, transcription
+and chat) excludes every HTTP provider before looking up keys. This includes
+Ollama and custom endpoints even on loopback. The provider test button also
+refuses HTTP calls. `privacy_status()` returns `Kun lokal er slået til`.
+Configured chains remain intact when the flag is switched off again; an empty
+filtered chain returns the same Danish privacy message without silently adding
+a model. Skipped remote links are logged without URLs, credentials or content.
+A settings import may switch `localOnly` on but never off, in both merge and
+replace mode.
+
+`privacy::local_only` is the shared decision; `local_only_in` reads that switch
+from the app data directory for legacy paths. Dictation forces `LocalOnly`
+before choosing an engine and checks again before its direct Syv.ai request.
+Summary processing checks before metadata lookup, and the LLM client checks
+before every generation or translation call, including Ollama, and rechecks
+the persisted switch before an Ollama compatibility retry. Remote summary
+calls require the app data directory and fail closed if it is unavailable or
+the provider settings are invalid. Delivery combines the global switch with
+its existing restrictive policy before enqueueing and each send attempt.
+Turning the global switch off never relaxes a separate delivery restriction.
+Downloads and update checks are outside this AI-content gate.
+
+`privacy::flows::overview` is a pure, ordered description of the configured
+AI destinations and the data kind (audio or text). Meeting transcription and
+assistant flows use provider chains. Dictation and polishing use
+`DictationSettings`, including mode overrides; summary uses the `LLMProvider`
+parsed from the summary API's selected provider (`settings.provider` or the
+per-request selection). Their provider chains are deliberately ignored because
+those paths do not execute them. The overview applies the same local filter,
+excludes addresses and keys, and describes possible fallback destinations,
+not a record of actual calls or available credentials.
+
+`privacy::retention` plans removal from an explicit inventory of completed audio
+files. Dictation supports immediate removal or 24 hours; meetings support
+immediate removal, 7 days, 30 days or never. Age starts at `completed_at` and the
+boundary is inclusive. Future timestamps are retained. Execution uses async
+file removal, bypasses the recycle bin, reports deleted/absent/failed counts,
+and logs only counts. Duplicate paths are removed once; absent files are safe
+to retry. It never traverses folders or infers transcript paths. Unlinking is
+not secure storage-block erasure and does not remove backups or other copies.
+
+The host must supply the audio inventory, protect recordings and files still in
+use, and invoke planning/execution after completion and on later cleanup runs.
+UI controls, lifecycle wiring and private mode remain follow-up work for #63.
 
 ## Speaker identity and suggestions
 

@@ -226,6 +226,10 @@ impl ProviderService {
                     );
                     return None;
                 };
+                if !config.allows(provider) {
+                    log::info!("Providers: skipped remote link for {function:?} (local only)");
+                    return None;
+                }
                 let model = link
                     .model
                     .clone()
@@ -269,6 +273,11 @@ impl ProviderService {
             ));
         };
         let fail = |error| ProviderFailure::new(&provider.id, &provider.name, error);
+        if !config.allows(provider) {
+            return Err(fail(ProviderError::Config {
+                detail: crate::strings::LOCAL_ONLY_ENABLED.to_string(),
+            }));
+        }
         if !provider.kind.is_remote() {
             return Err(fail(ProviderError::Config {
                 detail: "den lokale model testes ved at bruge den".to_string(),

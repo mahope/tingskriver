@@ -140,6 +140,8 @@ visible with an error rather than disappearing.
 ## Core API for #44 and #105
 
 Create one shared `delivery::Delivery::open(app_data_dir, Arc<dyn KeyStore>)`.
+Use the same app data directory as `providers.json`: the global local-only
+switch overrides the delivery policy before enqueueing and every send attempt.
 Use `targets()`, `save_target()`, `delete_target()`, `policy()`, `set_policy()`.
 The default policy is local-only. `test_target()` queues synthetic data.
 `enqueue(target_id, bundle, approved, private)` requires approval, a non-private

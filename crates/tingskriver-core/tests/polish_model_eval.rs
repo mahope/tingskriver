@@ -1,7 +1,9 @@
 //! Opt-in evaluation against a real Ollama model, never a mock response.
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tingskriver_core::{
     dictation::logic::{modes::polish_prompt, polish_guard},
+    providers::{secrets::MemoryKeyStore, ProviderService, ProvidersConfig},
     summary::llm_client::{generate_polish, LLMProvider},
 };
 
@@ -12,6 +14,12 @@ async fn polish_model_acceptance() {
     let endpoint =
         std::env::var("POLISH_EVAL_ENDPOINT").unwrap_or_else(|_| "http://localhost:11434".into());
     let client = reqwest::Client::new();
+    // A data folder with default settings, so the privacy check sees local-only off.
+    let data_dir = tempfile::tempdir().unwrap();
+    let data_path = data_dir.path().to_path_buf();
+    ProviderService::new(&data_path, Arc::new(MemoryKeyStore::default()))
+        .save(&ProvidersConfig::default())
+        .unwrap();
     let prompt = polish_prompt("", &[]);
     let mut failures = 0;
     for (input, expected) in [
@@ -49,7 +57,7 @@ async fn polish_model_acceptance() {
                 Some(512),
                 Some(0.2),
                 None,
-                None,
+                Some(&data_path),
                 None,
             ),
         )

@@ -119,7 +119,11 @@ pub async fn test_provider(
 pub async fn chain_for(host: &HostHandle, function: Function) -> Result<Vec<ResolvedLink>, String> {
     let service = ProviderService::for_host(host)?;
     let config = service.load_for_host(host).await?;
-    Ok(service.resolve(&config, function))
+    let links = service.resolve(&config, function);
+    if links.is_empty() && crate::privacy::local_only(&config) {
+        return Err(crate::strings::LOCAL_ONLY_ENABLED.to_string());
+    }
+    Ok(links)
 }
 
 /// Transcribe with `function`'s chain (`Transcription` or `Dictation`).

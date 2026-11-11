@@ -293,6 +293,8 @@ impl SettingsSnapshot {
                 .functions
                 .extend(incoming.providers.functions.clone());
         }
+        // "Kun lokal" is a privacy decision: an import may switch it on, never off.
+        result.providers.local_only = self.providers.local_only || incoming.providers.local_only;
         let mut pending_endpoints = Vec::new();
         for provider in &mut result.providers.providers {
             if let Some(local) = self.providers.provider(&provider.id) {
@@ -523,6 +525,24 @@ mod tests {
             .unwrap()
             .changes
             .is_empty());
+    }
+
+    #[test]
+    fn import_never_switches_local_only_off() {
+        let store = crate::providers::secrets::MemoryKeyStore::default();
+        let mut strict = SettingsSnapshot::default();
+        strict.providers.local_only = true;
+        let open = SettingsSnapshot::default();
+        for mode in [ImportMode::Merge, ImportMode::Replace] {
+            let kept = strict.preview_with_keys(&open, mode, &store).unwrap();
+            assert!(kept.result.providers.local_only);
+            assert!(kept
+                .changes
+                .iter()
+                .all(|c| c.path != "/providers/localOnly"));
+            let tightened = open.preview_with_keys(&strict, mode, &store).unwrap();
+            assert!(tightened.result.providers.local_only);
+        }
     }
 
     #[test]
@@ -829,7 +849,7 @@ mod tests {
             &v["shortcuts"],
             "newRecording ask openWindow insertLast rerunLast",
         );
-        keys(&v["providers"], "version providers functions");
+        keys(&v["providers"], "localOnly version providers functions");
         for provider in v["providers"]["providers"].as_array().unwrap() {
             let mut fields =
                 "id name kind baseUrl transcriptionModel chatModel diarization".to_string();

@@ -10,6 +10,78 @@ struct TranscriptionResponse {
     text: String,
 }
 
+pub struct TranscriptionRequest<'a> {
+    pub endpoint: &'a str,
+    pub api_key: &'a str,
+    pub model: &'a str,
+    pub wav: Vec<u8>,
+    pub prompt: Option<String>,
+    pub language: &'a str,
+}
+
+/// Check the persisted global switch immediately before the direct HTTP path.
+pub async fn transcribe_with_privacy(
+    app_data_dir: &std::path::Path,
+    client: &reqwest::Client,
+    request: TranscriptionRequest<'_>,
+) -> Result<String, String> {
+    crate::privacy::check_network(app_data_dir).await?;
+    transcribe_language(
+        client,
+        request.endpoint,
+        request.api_key,
+        request.model,
+        request.wav,
+        request.prompt,
+        request.language,
+    )
+    .await
+}
+
+#[cfg(test)]
+mod privacy_tests {
+    use super::*;
+    use crate::providers::{
+        fake_server::{FakeServer, Reply},
+        secrets::MemoryKeyStore,
+        ProviderService, ProvidersConfig,
+    };
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn dictation_local_only_prevents_direct_syv_http() {
+        let server = FakeServer::start(vec![Reply::ok(r#"{"text":"local test"}"#)]).await;
+        let dir = tempfile::tempdir().unwrap();
+        let service = ProviderService::new(dir.path(), Arc::new(MemoryKeyStore::default()));
+        let mut config = ProvidersConfig {
+            local_only: true,
+            ..Default::default()
+        };
+        service.save(&config).unwrap();
+        let client = crate::http::client();
+        let call = || {
+            transcribe_with_privacy(
+                dir.path(),
+                &client,
+                TranscriptionRequest {
+                    endpoint: &server.base_url,
+                    api_key: "test",
+                    model: "model",
+                    wav: vec![],
+                    prompt: None,
+                    language: "da",
+                },
+            )
+        };
+        assert_eq!(call().await.unwrap_err(), "Kun lokal er slået til");
+        assert!(server.requests().is_empty());
+        config.local_only = false;
+        service.save(&config).unwrap();
+        assert_eq!(call().await.unwrap(), "local test");
+        assert_eq!(server.requests().len(), 1);
+    }
+}
+
 /// Transcribe a WAV file. `prompt` carries dictionary words as hints.
 pub async fn transcribe(
     client: &reqwest::Client,

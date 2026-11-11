@@ -432,6 +432,7 @@ pub(crate) async fn generate_meeting_summary(
     cached_english: Option<&str>,
     quality_inputs: &QualityInputs,
 ) -> Result<GeneratedMeetingSummary, String> {
+    provider.check_privacy(app_data_dir).await?;
     if cancellation_token.is_some_and(CancellationToken::is_cancelled) {
         return Err("Summary generation was cancelled".to_string());
     }
@@ -990,6 +991,9 @@ mod tests {
         // The endpoint is unreachable on purpose: a model call would fail with
         // a different error than the "too short" reason.
         let template = crate::summary::templates::get_template("daily_standup").unwrap();
+        // The privacy check needs the data directory; "Kun lokal" is off there.
+        let dir = tempfile::tempdir().unwrap();
+        let data_dir = dir.path().to_path_buf();
         let err = generate_meeting_summary(
             &Client::new(),
             &LLMProvider::Ollama,
@@ -1005,7 +1009,7 @@ mod tests {
             None,
             None,
             None,
-            None,
+            Some(&data_dir),
             None,
             Some("da"),
             Some("da"),
@@ -1062,6 +1066,58 @@ mod tests {
         let prompt = build_final_report_system_prompt_with("S", "T", &rules);
         assert!(prompt.contains("LENGTH") && prompt.contains("- Åse Ørsted"));
         assert!(build_final_report_system_prompt("S", "T").contains("<template>\nT"));
+    }
+
+    #[tokio::test]
+    async fn summary_processor_local_only_blocks_before_generation() {
+        use crate::providers::{
+            fake_server::{FakeServer, Reply},
+            secrets::MemoryKeyStore,
+            ProviderService, ProvidersConfig,
+        };
+        use std::sync::Arc;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_path_buf();
+        let service = ProviderService::new(&path, Arc::new(MemoryKeyStore::default()));
+        let config = ProvidersConfig {
+            local_only: true,
+            ..Default::default()
+        };
+        service.save(&config).unwrap();
+        let server = FakeServer::start(vec![Reply::ok(
+            r#"{"choices":[{"message":{"content":"summary"}}]}"#,
+        )])
+        .await;
+        let template = Template {
+            name: "Test".into(),
+            description: "Test".into(),
+            sections: vec![],
+        };
+        let result = generate_meeting_summary(
+            &Client::new(),
+            &LLMProvider::CustomOpenAI,
+            "model",
+            "",
+            "transcript",
+            "",
+            "test",
+            &template,
+            1000,
+            None,
+            Some(&server.base_url),
+            None,
+            None,
+            None,
+            Some(&path),
+            None,
+            Some("en"),
+            Some("en"),
+            None,
+            &QualityInputs::default(),
+        )
+        .await;
+        assert_eq!(result.unwrap_err(), "Kun lokal er slået til");
+        assert!(server.requests().is_empty());
     }
 
     #[test]

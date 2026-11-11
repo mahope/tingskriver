@@ -381,6 +381,11 @@ impl SummaryService {
             }
         };
 
+        if let Err(error) = provider.check_privacy(app_data_dir.as_ref()).await {
+            Self::fail_and_cleanup(&pool, &meeting_id, started_at, &error).await;
+            return;
+        }
+
         // Validate and setup api_key, Flexible for Ollama, BuiltInAI, and CustomOpenAI
         let api_key = if provider == LLMProvider::Ollama
             || provider == LLMProvider::BuiltInAI

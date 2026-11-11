@@ -1320,6 +1320,96 @@ async fn public_api_falls_back_to_the_local_model_without_a_syv_key() {
     assert!(!dir.path().join(super::service::CONFIG_FILE).exists());
 }
 
+#[cfg(not(windows))]
+#[tokio::test]
+async fn local_only_blocks_remote_calls_and_reports_status() {
+    capture_logs();
+    let server = FakeServer::start(vec![Reply::ok(r#"{"text":"remote"}"#)]).await;
+    let dir = tempfile::tempdir().unwrap();
+    let host: crate::host::HostHandle = Arc::new(TestHost(dir.path().to_path_buf()));
+    let mut config = ProvidersConfig::default();
+    let mut remote = custom_provider("test", "Test", &server.base_url);
+    remote.transcription_model = Some("test".into());
+    config.upsert_provider(remote);
+    config.functions.insert(
+        Function::Dictation,
+        vec![ChainLink::new("test"), ChainLink::new(LOCAL_ID)],
+    );
+    config.local_only = true;
+    super::save_config(&host, &config).await.unwrap();
+    assert_eq!(config.privacy_status(), Some("Kun lokal er slået til"));
+    let links = super::chain_for(&host, Function::Dictation).await.unwrap();
+    assert_eq!(links.len(), 1);
+    assert!(logs()
+        .iter()
+        .any(|line| line.contains("skipped remote link for Dictation (local only)")));
+    let delivered = super::transcribe(&host, Function::Dictation, wav_request(), |_, _| async {
+        Ok(Transcription {
+            text: "local".into(),
+            ..Default::default()
+        })
+    })
+    .await
+    .unwrap();
+    assert_eq!(delivered.provider_id, LOCAL_ID);
+    assert!(server.requests().is_empty());
+    config
+        .functions
+        .insert(Function::Dictation, vec![ChainLink::new("test")]);
+    super::save_config(&host, &config).await.unwrap();
+    assert_eq!(
+        super::transcribe(&host, Function::Dictation, wav_request(), |_, _| async {
+            Err(ProviderError::local("unexpected local fallback"))
+        })
+        .await
+        .unwrap_err()
+        .to_string(),
+        "Kun lokal er slået til"
+    );
+    assert!(super::test_provider(&host, "test").await.is_err());
+    assert!(server.requests().is_empty());
+    // Positive control: the same endpoint really is called when allowed again.
+    config.local_only = false;
+    super::save_config(&host, &config).await.unwrap();
+    let delivered = super::transcribe(&host, Function::Dictation, wav_request(), |_, _| async {
+        Err(ProviderError::local("unexpected fallback"))
+    })
+    .await
+    .unwrap();
+    assert_eq!(delivered.provider_id, "test");
+    assert_eq!(server.requests().len(), 1);
+}
+
+#[tokio::test]
+async fn retention_logs_only_counts() {
+    use crate::privacy::retention::*;
+    capture_logs();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("retention-private-file-marker.wav");
+    tokio::fs::write(&path, b"retention-private-content-marker")
+        .await
+        .unwrap();
+    let files = [AudioFile {
+        path,
+        completed_at: std::time::SystemTime::UNIX_EPOCH,
+        retention: AudioRetention::Dictation(DictationRetention::Immediately),
+    }];
+    assert_eq!(
+        execute(plan(&files, std::time::SystemTime::now()))
+            .await
+            .deleted,
+        1
+    );
+    let lines = logs()
+        .into_iter()
+        .filter(|line| line.contains("Audio retention:"))
+        .collect::<Vec<_>>();
+    assert!(lines
+        .iter()
+        .any(|line| line.contains("deleted=1, absent=0, failed=0")));
+    assert!(lines.iter().all(|line| !line.contains("retention-private")));
+}
+
 #[tokio::test]
 async fn verification_preserves_errors_and_retries_failures() {
     // Each verification builds its own HTTP client, which can take well over

@@ -223,6 +223,9 @@ impl ChainLink {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProvidersConfig {
+    /// Only built-in inference is allowed; HTTP providers are excluded.
+    #[serde(default)]
+    pub local_only: bool,
     pub version: u32,
     pub providers: Vec<Provider>,
     /// Ordered chain per function. A function that is missing or empty is off.
@@ -246,6 +249,7 @@ impl Default for ProvidersConfig {
         functions.insert(Function::Assistant, vec![ChainLink::new(LOCAL_ID)]);
         functions.insert(Function::DictationPolish, Vec::new());
         ProvidersConfig {
+            local_only: false,
             version: CONFIG_VERSION,
             providers: presets(),
             functions,
@@ -254,6 +258,14 @@ impl Default for ProvidersConfig {
 }
 
 impl ProvidersConfig {
+    pub fn privacy_status(&self) -> Option<&'static str> {
+        crate::privacy::local_only(self).then_some(crate::strings::LOCAL_ONLY_ENABLED)
+    }
+
+    pub fn allows(&self, provider: &Provider) -> bool {
+        !crate::privacy::local_only(self) || !provider.kind.is_remote()
+    }
+
     pub fn provider(&self, id: &str) -> Option<&Provider> {
         self.providers.iter().find(|p| p.id == id)
     }
@@ -614,5 +626,35 @@ mod tests {
             "http://gpu:11434/v1"
         );
         assert_eq!(ollama_provider(None).base_url, OLLAMA_BASE_URL);
+    }
+}
+
+#[cfg(test)]
+mod privacy_tests {
+    use super::*;
+
+    #[test]
+    fn old_configuration_defaults_to_network_allowed_and_flag_roundtrips() {
+        let mut json = serde_json::to_value(ProvidersConfig::default()).unwrap();
+        json.as_object_mut().unwrap().remove("localOnly");
+        let mut config: ProvidersConfig = serde_json::from_value(json).unwrap();
+        assert!(!config.local_only);
+        assert_eq!(config.privacy_status(), None);
+        config.local_only = true;
+        let restored: ProvidersConfig =
+            serde_json::from_str(&serde_json::to_string(&config).unwrap()).unwrap();
+        assert_eq!(restored, config);
+        for kind in [
+            ProviderKind::SyvAi,
+            ProviderKind::OpenAi,
+            ProviderKind::OdinCore,
+            ProviderKind::OpenAiCompatible,
+            ProviderKind::Ollama,
+        ] {
+            let mut provider = local_provider();
+            provider.kind = kind;
+            assert!(!config.allows(&provider));
+        }
+        assert!(config.allows(&local_provider()));
     }
 }

@@ -136,14 +136,23 @@ pub async fn shortcut(
                         super::logic::engine::Engine::Syv => {
                             let key = super::secrets::syv_key()
                                 .ok_or("En anden udbyder kræver en Syv.ai-nøgle")?;
-                            super::syv::transcribe_language(
+                            super::syv::transcribe_with_privacy(
+                                &host.app_data_dir()?,
                                 &service.http,
-                                &settings.syv_endpoint,
-                                &key,
-                                previous.syv_model.as_deref().unwrap_or(&settings.syv_model),
-                                wav,
-                                None,
-                                previous.language.as_deref().unwrap_or(&settings.language),
+                                super::syv::TranscriptionRequest {
+                                    endpoint: &settings.syv_endpoint,
+                                    api_key: &key,
+                                    model: previous
+                                        .syv_model
+                                        .as_deref()
+                                        .unwrap_or(&settings.syv_model),
+                                    wav,
+                                    prompt: None,
+                                    language: previous
+                                        .language
+                                        .as_deref()
+                                        .unwrap_or(&settings.language),
+                                },
                             )
                             .await
                         }

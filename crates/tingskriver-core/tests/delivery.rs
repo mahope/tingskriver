@@ -21,6 +21,77 @@ fn bundle() -> Bundle {
     }
 }
 
+#[tokio::test]
+async fn privacy_global_local_only_blocks_queued_delivery() {
+    use tingskriver_core::providers::{ProviderService, ProvidersConfig};
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+        time::{timeout, Duration},
+    };
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let keys = Arc::new(MemoryKeyStore::default());
+    let service = Delivery::open(dir.path(), keys.clone()).await.unwrap();
+    service
+        .set_policy(Policy {
+            local_only: false,
+            private: false,
+        })
+        .await
+        .unwrap();
+    service
+        .save_target(
+            Target {
+                id: "hook".into(),
+                name: "Webhook".into(),
+                destination: Destination::Webhook {
+                    format: WebhookFormat::Json,
+                },
+            },
+            Some(format!("http://{}/", listener.local_addr().unwrap())),
+        )
+        .await
+        .unwrap();
+    service
+        .enqueue("hook", bundle(), true, false)
+        .await
+        .unwrap();
+    let providers = ProviderService::new(dir.path(), keys);
+    let mut config = ProvidersConfig::default();
+    config.local_only = true;
+    providers.save(&config).unwrap();
+    assert!(service
+        .test_target("hook")
+        .await
+        .unwrap_err()
+        .to_string()
+        .contains("Kun lokal er slået til"));
+    service.run_due().await.unwrap();
+    assert!(timeout(Duration::from_millis(50), listener.accept())
+        .await
+        .is_err());
+    assert_eq!(service.jobs().await.unwrap()[0].attempts, 0);
+    config.local_only = false;
+    providers.save(&config).unwrap();
+    let receive = async {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut bytes = [0u8; 8192];
+        stream.read(&mut bytes).await.unwrap();
+        stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+    };
+    let (result, _) = timeout(Duration::from_secs(5), async {
+        tokio::join!(service.run_due(), receive)
+    })
+    .await
+    .unwrap();
+    result.unwrap();
+    assert_eq!(service.jobs().await.unwrap()[0].status, "completed");
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn credentials_run_off_the_async_executor() {
     use std::sync::Mutex;

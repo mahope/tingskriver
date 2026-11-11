@@ -894,7 +894,12 @@ impl Service {
         samples: &[f32],
         rules: &Rules,
     ) -> Result<Transcript, String> {
-        let preference = EnginePreference::parse(&settings.engine);
+        let local_only = crate::privacy::local_only_in(&self.app_data_dir).await?;
+        let preference = if local_only {
+            EnginePreference::LocalOnly
+        } else {
+            EnginePreference::parse(&settings.engine)
+        };
         let key = match preference {
             EnginePreference::Auto => self
                 .backend
@@ -903,6 +908,9 @@ impl Service {
             EnginePreference::LocalOnly => None,
         };
         if mode.and_then(|m| m.provider.as_deref()) == Some("syv") && key.is_none() {
+            if local_only {
+                return Err(crate::strings::LOCAL_ONLY_ENABLED.to_string());
+            }
             return Err("Tilstanden kræver en Syv.ai-nøgle".into());
         }
         let available = match &self.backend {
@@ -910,8 +918,12 @@ impl Service {
             None => local_engine_available().await,
         };
         let plan = engine::plan(preference, key.is_some(), available).ok_or_else(|| {
-            "Ingen transskription: sæt en Syv.ai-nøgle eller hent en lokal Parakeet-model"
-                .to_string()
+            if local_only {
+                crate::strings::LOCAL_ONLY_ENABLED.to_string()
+            } else {
+                "Ingen transskription: sæt en Syv.ai-nøgle eller hent en lokal Parakeet-model"
+                    .to_string()
+            }
         })?;
 
         let Some(key) = key.filter(|_| plan.primary == Engine::Syv) else {
@@ -947,18 +959,22 @@ impl Service {
             let endpoint = settings.syv_endpoint.clone();
             let model = settings.syv_model.clone();
             let wav = audio::wav_bytes(samples, audio::TARGET_RATE);
+            let app_data_dir = self.app_data_dir.clone();
             async move {
                 match backend {
                     Some(b) => b.syv(&key, &settings, wav, prompt, language).await,
                     None => {
-                        syv::transcribe_language(
+                        syv::transcribe_with_privacy(
+                            &app_data_dir,
                             &client,
-                            &endpoint,
-                            &key,
-                            &model,
-                            wav,
-                            Some(prompt),
-                            &language,
+                            syv::TranscriptionRequest {
+                                endpoint: &endpoint,
+                                api_key: &key,
+                                model: &model,
+                                wav,
+                                prompt: Some(prompt),
+                                language: &language,
+                            },
                         )
                         .await
                     }

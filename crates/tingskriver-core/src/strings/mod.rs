@@ -7,6 +7,8 @@ macro_rules! catalogue {
 }
 
 catalogue! {
+    LOCAL_ONLY_ENABLED = "Kun lokal er slået til";
+    DELIVERY_PRIVACY_BLOCKED = "Kun lokal er slået til, eller privat tilstand blokerer aflevering";
     ABOUT = "Om";
     ABOUT_BUILD = "Byggedato";
     ABOUT_CHANNEL = "Kanal";

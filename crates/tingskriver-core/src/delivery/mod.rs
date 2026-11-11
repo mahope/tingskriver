@@ -178,7 +178,7 @@ impl Policy {
 /// Fixed messages only: never expose URLs, SSH stderr, response bodies or content.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
-    #[error("Aflevering er blokeret af kun lokal eller privat tilstand")]
+    #[error("{}", crate::strings::DELIVERY_PRIVACY_BLOCKED)]
     Blocked,
     #[error("Godkend referatet før aflevering")]
     Approval,

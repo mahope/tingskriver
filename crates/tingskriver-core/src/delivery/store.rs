@@ -20,6 +20,7 @@ pub struct JobStatus {
 /// A queue may only be opened by one application process at a time.
 #[derive(Clone)]
 pub struct Delivery {
+    dir: std::path::PathBuf,
     pool: SqlitePool,
     keys: Arc<dyn KeyStore>,
     gate: Arc<Mutex<()>>,
@@ -61,6 +62,7 @@ impl Delivery {
             UPDATE delivery_jobs SET status = 'pending' WHERE status = 'running';")
             .execute(&pool).await.map_err(|_| Error::Storage)?;
         Ok(Self {
+            dir: dir.to_path_buf(),
             pool,
             keys,
             gate: Arc::new(Mutex::new(())),
@@ -73,9 +75,13 @@ impl Delivery {
                 .fetch_optional(&self.pool)
                 .await
                 .map_err(|_| Error::Storage)?;
-        value
+        let mut policy: Policy = value
             .map(|s| serde_json::from_str(&s).map_err(|_| Error::Storage))
-            .unwrap_or(Ok(Policy::default()))
+            .unwrap_or(Ok(Policy::default()))?;
+        policy.local_only |= crate::privacy::local_only_in(&self.dir)
+            .await
+            .map_err(|_| Error::Storage)?;
+        Ok(policy)
     }
 
     pub async fn set_policy(&self, policy: Policy) -> Result<(), Error> {

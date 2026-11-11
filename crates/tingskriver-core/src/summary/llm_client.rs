@@ -8,6 +8,80 @@ use tracing::{info, warn};
 
 const REQUEST_TIMEOUT_DURATION: Duration = Duration::from_secs(300);
 
+#[cfg(test)]
+mod privacy_tests {
+    use super::*;
+    use crate::providers::{
+        fake_server::{FakeServer, Reply},
+        secrets::MemoryKeyStore,
+        ProviderService, ProvidersConfig,
+    };
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn summary_local_only_prevents_http() {
+        let server = FakeServer::start(vec![Reply::ok(
+            r#"{"choices":[{"message":{"content":"ok"}}]}"#,
+        )])
+        .await;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_path_buf();
+        let service = ProviderService::new(&path, Arc::new(MemoryKeyStore::default()));
+        let mut config = ProvidersConfig {
+            local_only: true,
+            ..Default::default()
+        };
+        service.save(&config).unwrap();
+        for provider in [
+            LLMProvider::CustomOpenAI,
+            LLMProvider::Ollama,
+            LLMProvider::OpenAI,
+            LLMProvider::Claude,
+            LLMProvider::Groq,
+            LLMProvider::OpenRouter,
+        ] {
+            let result = generate_summary(
+                &Client::new(),
+                &provider,
+                "model",
+                "test",
+                "system",
+                "text",
+                Some(&server.base_url),
+                Some(&server.base_url),
+                None,
+                None,
+                None,
+                Some(&path),
+                None,
+            )
+            .await;
+            assert_eq!(result.unwrap_err(), "Kun lokal er slået til");
+        }
+        assert!(server.requests().is_empty());
+        config.local_only = false;
+        service.save(&config).unwrap();
+        generate_summary(
+            &Client::new(),
+            &LLMProvider::CustomOpenAI,
+            "model",
+            "",
+            "system",
+            "text",
+            None,
+            Some(&server.base_url),
+            None,
+            None,
+            None,
+            Some(&path),
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(server.requests().len(), 1);
+    }
+}
+
 async fn await_or_cancel<T>(
     operation: impl Future<Output = T>,
     cancellation_token: Option<&CancellationToken>,
@@ -229,6 +303,14 @@ pub enum LLMProvider {
 }
 
 impl LLMProvider {
+    pub async fn check_privacy(&self, app_data_dir: Option<&PathBuf>) -> Result<(), String> {
+        if *self != Self::BuiltInAI {
+            let dir = app_data_dir.ok_or("Appens datamappe mangler til privatlivskontrollen.")?;
+            crate::privacy::check_network(dir).await?;
+        }
+        Ok(())
+    }
+
     /// Parse provider from string (case-insensitive)
     pub fn from_str(s: &str) -> Result<Self, String> {
         match s.to_lowercase().as_str() {
@@ -348,6 +430,7 @@ async fn generate_completion(
     cancellation_token: Option<&CancellationToken>,
     reject_truncated: bool,
 ) -> Result<LlmCompletion, String> {
+    provider.check_privacy(app_data_dir).await?;
     // Check if cancelled before starting
     if let Some(token) = cancellation_token {
         if token.is_cancelled() {
@@ -538,6 +621,7 @@ async fn generate_completion(
             .as_object_mut()
             .ok_or_else(|| "Failed to prepare Ollama compatibility retry".to_string())?
             .remove("reasoning_effort");
+        provider.check_privacy(app_data_dir).await?;
         let retry_future = client
             .post(api_url)
             .headers(headers)
@@ -695,6 +779,14 @@ mod tests {
     #[tokio::test]
     async fn polish_http_completion_preserves_layer_one_on_truncation() {
         use crate::dictation::logic::{engine, modes, polish_guard};
+        use crate::providers::{secrets::MemoryKeyStore, ProviderService, ProvidersConfig};
+        use std::sync::Arc;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_path_buf();
+        ProviderService::new(&path, Arc::new(MemoryKeyStore::default()))
+            .save(&ProvidersConfig::default())
+            .unwrap();
 
         for finish_reason in [Some("length"), Some("stop"), None] {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -736,7 +828,7 @@ mod tests {
                     Some(512),
                     Some(0.2),
                     None,
-                    None,
+                    Some(&path),
                     None,
                 ),
             )
@@ -761,6 +853,48 @@ mod tests {
                 }
             );
         }
+    }
+
+    #[tokio::test]
+    async fn local_only_blocks_polish_before_any_request() {
+        use crate::providers::{secrets::MemoryKeyStore, ProviderService, ProvidersConfig};
+        use std::sync::Arc;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_path_buf();
+        ProviderService::new(&path, Arc::new(MemoryKeyStore::default()))
+            .save(&ProvidersConfig {
+                local_only: true,
+                ..ProvidersConfig::default()
+            })
+            .unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+
+        let result = generate_polish(
+            &Client::new(),
+            &LLMProvider::Ollama,
+            "model",
+            "",
+            "prompt",
+            "<transcript>\ntekst\n</transcript>",
+            Some(&endpoint),
+            None,
+            Some(512),
+            Some(0.2),
+            None,
+            Some(&path),
+            None,
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert!(
+            timeout(Duration::from_millis(200), listener.accept())
+                .await
+                .is_err(),
+            "polish must not open a connection while local-only is on"
+        );
     }
 
     #[test]
@@ -812,6 +946,62 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn local_only_enabled_during_first_request_prevents_ollama_retry() {
+        use crate::providers::{secrets::MemoryKeyStore, ProviderService, ProvidersConfig};
+        use std::sync::Arc;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_path_buf();
+        let service = ProviderService::new(&path, Arc::new(MemoryKeyStore::default()));
+        service.save(&ProvidersConfig::default()).unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let request = read_http_request(&mut stream).await;
+            assert_eq!(request_json(&request)["reasoning_effort"], "none");
+            service
+                .save(&ProvidersConfig {
+                    local_only: true,
+                    ..Default::default()
+                })
+                .unwrap();
+            let body = br#"{"error":{"param":"reasoning_effort"}}"#;
+            let headers = format!(
+                "HTTP/1.1 400 Bad Request\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            stream.write_all(headers.as_bytes()).await.unwrap();
+            stream.write_all(body).await.unwrap();
+            stream.shutdown().await.unwrap();
+            assert!(
+                timeout(Duration::from_millis(300), listener.accept())
+                    .await
+                    .is_err(),
+                "privacy switch must prevent a second request"
+            );
+        });
+        let result = generate_summary(
+            &Client::new(),
+            &LLMProvider::Ollama,
+            "model",
+            "",
+            "system",
+            "private text",
+            Some(&endpoint),
+            None,
+            None,
+            None,
+            None,
+            Some(&path),
+            None,
+        )
+        .await;
+        server.await.unwrap();
+        assert_eq!(result.unwrap_err(), "Kun lokal er slået til");
+    }
+
+    #[tokio::test]
     async fn cancellation_prevents_compatibility_io_from_being_polled() {
         let cancellation_token = CancellationToken::new();
         cancellation_token.cancel();
@@ -832,6 +1022,8 @@ mod tests {
 
     #[tokio::test]
     async fn cancellation_during_failed_legacy_ollama_retry_body_returns_promptly() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_path_buf();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let (retry_headers_sent, mut retry_headers_ready) = oneshot::channel();
@@ -888,7 +1080,7 @@ mod tests {
             None,
             None,
             None,
-            None,
+            Some(&path),
             Some(&cancellation_token),
         );
         tokio::pin!(generation);
@@ -919,6 +1111,8 @@ mod tests {
 
     #[tokio::test]
     async fn cancellation_during_successful_legacy_ollama_retry_body_returns_promptly() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_path_buf();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let (retry_headers_sent, mut retry_headers_ready) = oneshot::channel();
@@ -979,7 +1173,7 @@ mod tests {
             None,
             None,
             None,
-            None,
+            Some(&path),
             Some(&cancellation_token),
         );
         tokio::pin!(generation);
@@ -1005,6 +1199,8 @@ mod tests {
 
     #[tokio::test]
     async fn legacy_ollama_retry_without_reasoning_effort_returns_completion() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_path_buf();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
 
@@ -1062,7 +1258,7 @@ mod tests {
                 None,
                 None,
                 None,
-                None,
+                Some(&path),
                 Some(&cancellation_token),
             ),
         )
@@ -1082,6 +1278,14 @@ mod tests {
 
     #[tokio::test]
     async fn slow_summary_outlives_short_http_deadline() {
+        use crate::providers::{secrets::MemoryKeyStore, ProviderService, ProvidersConfig};
+        use std::sync::Arc;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_path_buf();
+        ProviderService::new(&path, Arc::new(MemoryKeyStore::default()))
+            .save(&ProvidersConfig::default())
+            .unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
@@ -1109,7 +1313,7 @@ mod tests {
             None,
             None,
             None,
-            None,
+            Some(&path),
             None,
         )
         .await
