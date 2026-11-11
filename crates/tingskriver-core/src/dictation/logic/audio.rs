@@ -13,6 +13,45 @@ pub fn downmix(interleaved: &[f32], channels: usize) -> Vec<f32> {
         .collect()
 }
 
+/// Which channel of the microphone dictation listens to.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Channel {
+    /// Average of all channels.
+    #[default]
+    Mix,
+    Left,
+    Right,
+}
+
+impl Channel {
+    pub fn parse(value: &str) -> Channel {
+        match value.trim().to_lowercase().as_str() {
+            "left" | "venstre" => Channel::Left,
+            "right" | "højre" => Channel::Right,
+            _ => Channel::Mix,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Channel::Mix => "mix",
+            Channel::Left => "left",
+            Channel::Right => "right",
+        }
+    }
+}
+
+/// Mono from interleaved channels: the chosen channel, or the average. A
+/// microphone with one channel is its own left, right and mix; the right
+/// channel of a mono source is therefore the same signal.
+pub fn pick_channel(interleaved: &[f32], channels: usize, channel: Channel) -> Vec<f32> {
+    if channels <= 1 || channel == Channel::Mix {
+        return downmix(interleaved, channels);
+    }
+    let index = if channel == Channel::Left { 0 } else { 1 };
+    interleaved.chunks(channels).map(|frame| frame.get(index).copied().unwrap_or(frame[0])).collect()
+}
+
 /// Linear-interpolation resampler. Good enough for speech recognition.
 pub fn resample(input: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
     if from_rate == to_rate || input.is_empty() || from_rate == 0 {
@@ -99,6 +138,18 @@ mod tests {
     fn downmix_stereo() {
         assert_eq!(downmix(&[1.0, 0.0, 0.5, 0.5], 2), vec![0.5, 0.5]);
         assert_eq!(downmix(&[0.1, 0.2], 1), vec![0.1, 0.2]);
+    }
+
+    #[test]
+    fn channel_choice() {
+        let stereo = [1.0, 0.0, 0.5, 0.25];
+        assert_eq!(pick_channel(&stereo, 2, Channel::Left), vec![1.0, 0.5]);
+        assert_eq!(pick_channel(&stereo, 2, Channel::Right), vec![0.0, 0.25]);
+        assert_eq!(pick_channel(&stereo, 2, Channel::Mix), downmix(&stereo, 2));
+        // One channel: every choice is that channel.
+        assert_eq!(pick_channel(&[0.1, 0.2], 1, Channel::Right), vec![0.1, 0.2]);
+        assert_eq!(Channel::parse(" Right "), Channel::Right);
+        assert_eq!(Channel::parse("ukendt"), Channel::Mix);
     }
 
     #[test]

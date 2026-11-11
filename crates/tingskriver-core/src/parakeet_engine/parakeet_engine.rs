@@ -18,8 +18,8 @@ use tokio_util::sync::CancellationToken;
 /// Quantization type for Parakeet models
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub enum QuantizationType {
-    FP32,   // Full precision
-    Int8,   // 8-bit integer quantization (faster)
+    FP32, // Full precision
+    Int8, // 8-bit integer quantization (faster)
 }
 
 impl Default for QuantizationType {
@@ -33,9 +33,14 @@ impl Default for QuantizationType {
 pub enum ModelStatus {
     Available,
     Missing,
-    Downloading { progress: u8 },
+    Downloading {
+        progress: u8,
+    },
     Error(String),
-    Corrupted { file_size: u64, expected_min_size: u64 },
+    Corrupted {
+        file_size: u64,
+        expected_min_size: u64,
+    },
 }
 
 /// Detailed download progress info (MB-based with speed)
@@ -80,7 +85,7 @@ pub struct ModelInfo {
     pub path: PathBuf,
     pub size_mb: u32,
     pub quantization: QuantizationType,
-    pub speed: String,     // Performance description
+    pub speed: String, // Performance description
     pub status: ModelStatus,
     pub description: String,
 }
@@ -185,7 +190,9 @@ impl std::fmt::Display for ParakeetEngineError {
         match self {
             ParakeetEngineError::ModelNotLoaded => write!(f, "No Parakeet model loaded"),
             ParakeetEngineError::ModelNotFound(name) => write!(f, "Model '{}' not found", name),
-            ParakeetEngineError::TranscriptionFailed(err) => write!(f, "Transcription failed: {}", err),
+            ParakeetEngineError::TranscriptionFailed(err) => {
+                write!(f, "Transcription failed: {}", err)
+            }
             ParakeetEngineError::DownloadFailed(err) => write!(f, "Download failed: {}", err),
             ParakeetEngineError::IoError(err) => write!(f, "IO error: {}", err),
             ParakeetEngineError::Other(err) => write!(f, "Error: {}", err),
@@ -298,7 +305,10 @@ impl ParakeetEngine {
             }
         };
 
-        log::info!("ParakeetEngine using models directory: {}", models_dir.display());
+        log::info!(
+            "ParakeetEngine using models directory: {}",
+            models_dir.display()
+        );
 
         // Create directory if it doesn't exist
         if !models_dir.exists() {
@@ -359,7 +369,8 @@ impl ParakeetEngine {
                         Ok(()) => ModelStatus::Available,
                         Err(error) => {
                             let mut file_size = 0;
-                            let expected_bytes: u64 = files_of(spec.name).iter().map(|a| a.size).sum();
+                            let expected_bytes: u64 =
+                                files_of(spec.name).iter().map(|a| a.size).sum();
                             for artifact in &files_of(spec.name) {
                                 if let Ok(metadata) =
                                     tokio::fs::metadata(model_path.join(&artifact.name)).await
@@ -400,9 +411,8 @@ impl ParakeetEngine {
                 continue;
             }
 
-            validation_errors.retain(|(model_name, _)| {
-                !active_downloads.downloads.contains_key(*model_name)
-            });
+            validation_errors
+                .retain(|(model_name, _)| !active_downloads.downloads.contains_key(*model_name));
             for model in &mut models {
                 if active_downloads.downloads.contains_key(&model.name) {
                     model.status = ModelStatus::Downloading { progress: 0 };
@@ -418,7 +428,11 @@ impl ParakeetEngine {
             drop(active_downloads);
 
             for (model_name, error) in validation_errors {
-                log::warn!("Model directory {} appears corrupted: {}", model_name, error);
+                log::warn!(
+                    "Model directory {} appears corrupted: {}",
+                    model_name,
+                    error
+                );
             }
             return Ok(models);
         }
@@ -455,11 +469,15 @@ impl ParakeetEngine {
 
         match &model_info.status {
             ModelStatus::Available => {
-                self.verify_installed_model(model_name, &model_info.path).await?;
+                self.verify_installed_model(model_name, &model_info.path)
+                    .await?;
                 let _lifecycle_guard = self.model_lifecycle_lock.lock().await;
                 let current_model = self.current_model_name.read().await.clone();
                 if current_model.as_deref() == Some(model_name) {
-                    log::info!("Parakeet model {} is already loaded, skipping reload", model_name);
+                    log::info!(
+                        "Parakeet model {} is already loaded, skipping reload",
+                        model_name
+                    );
                     return Ok(());
                 }
 
@@ -519,18 +537,18 @@ impl ParakeetEngine {
                 );
                 Ok(())
             }
-            ModelStatus::Missing => {
-                Err(anyhow!("Parakeet model {} is not downloaded", model_name))
-            }
-            ModelStatus::Downloading { .. } => {
-                Err(anyhow!("Parakeet model {} is currently downloading", model_name))
-            }
+            ModelStatus::Missing => Err(anyhow!("Parakeet model {} is not downloaded", model_name)),
+            ModelStatus::Downloading { .. } => Err(anyhow!(
+                "Parakeet model {} is currently downloading",
+                model_name
+            )),
             ModelStatus::Error(err) => {
                 Err(anyhow!("Parakeet model {} has error: {}", model_name, err))
             }
-            ModelStatus::Corrupted { .. } => {
-                Err(anyhow!("Parakeet model {} is corrupted and cannot be loaded", model_name))
-            }
+            ModelStatus::Corrupted { .. } => Err(anyhow!(
+                "Parakeet model {} is corrupted and cannot be loaded",
+                model_name
+            )),
         }
     }
 
@@ -668,9 +686,14 @@ impl ParakeetEngine {
             models.get(model_name).cloned()
         };
 
-        let model_info = model_info.ok_or_else(|| anyhow!("Parakeet model '{}' not found", model_name))?;
+        let model_info =
+            model_info.ok_or_else(|| anyhow!("Parakeet model '{}' not found", model_name))?;
 
-        log::info!("Parakeet model '{}' has status: {:?}", model_name, model_info.status);
+        log::info!(
+            "Parakeet model '{}' has status: {:?}",
+            model_name,
+            model_info.status
+        );
 
         // Allow deletion of corrupted or available models
         match &model_info.status {
@@ -714,7 +737,8 @@ impl ParakeetEngine {
             Box::new(move |progress: DownloadProgress| callback(progress.percent))
                 as Box<dyn Fn(DownloadProgress) + Send>
         });
-        self.download_model_detailed(model_name, detailed_callback).await
+        self.download_model_detailed(model_name, detailed_callback)
+            .await
     }
 
     /// Download a catalogued Parakeet model with detailed progress.
@@ -752,7 +776,10 @@ impl ParakeetEngine {
     async fn reserve_active_download(&self, model_name: &str) -> Result<Arc<ActiveDownload>> {
         let mut active_downloads = self.active_downloads.lock().await;
         if active_downloads.downloads.contains_key(model_name) {
-            return Err(anyhow!("Download already in progress for model: {}", model_name));
+            return Err(anyhow!(
+                "Download already in progress for model: {}",
+                model_name
+            ));
         }
 
         let (completion, _) = watch::channel(false);
@@ -784,7 +811,6 @@ impl ParakeetEngine {
         progress.percent = progress.percent.min(99);
         progress
     }
-
 
     async fn download_model_detailed_from_source(
         &self,
@@ -952,10 +978,7 @@ impl ParakeetEngine {
         }
 
         let cancellation_won = active_download.cancellation.is_cancelled()
-            || result
-                .as_ref()
-                .err()
-                .is_some_and(is_download_cancelled);
+            || result.as_ref().err().is_some_and(is_download_cancelled);
         let existing_model_is_complete = active_download.had_complete_model.load(Ordering::SeqCst);
         let mut models = self.available_models.write().await;
         active_downloads.downloads.remove(model_name);
@@ -1255,12 +1278,10 @@ mod tests {
             .expect("model load must reach its blocking task");
 
         {
-            let mut models = tokio::time::timeout(
-                Duration::from_secs(1),
-                engine.available_models.write(),
-            )
-            .await
-            .expect("model cache must remain writable during native loading");
+            let mut models =
+                tokio::time::timeout(Duration::from_secs(1), engine.available_models.write())
+                    .await
+                    .expect("model cache must remain writable during native loading");
             models
                 .get_mut(TEST_MODEL_NAME)
                 .expect("test model remains registered")
@@ -1289,12 +1310,10 @@ mod tests {
             .expect("model load must finish after release")
             .expect("join model load task")
             .expect_err("empty model directory must fail loading");
-        assert!(
-            !tokio::time::timeout(Duration::from_secs(1), unloaded_rx)
-                .await
-                .expect("unload must finish after model load")
-                .expect("unload sender remains connected")
-        );
+        assert!(!tokio::time::timeout(Duration::from_secs(1), unloaded_rx)
+            .await
+            .expect("unload must finish after model load")
+            .expect("unload sender remains connected"));
         tokio::time::timeout(Duration::from_secs(1), unload)
             .await
             .expect("unload task must join")
@@ -1318,7 +1337,9 @@ mod tests {
     #[tokio::test]
     async fn completed_sibling_survives_403_then_retry_resumes_partial() {
         let (_temp_dir, engine, model_dir) = test_engine().await;
-        fs::create_dir_all(&model_dir).await.expect("create model directory");
+        fs::create_dir_all(&model_dir)
+            .await
+            .expect("create model directory");
         fs::write(model_dir.join("encoder.bin"), b"ABCD")
             .await
             .expect("seed completed sibling");
@@ -1346,13 +1367,21 @@ mod tests {
             .expect_err("403 must fail without destructive cleanup");
         server.await.expect("join 403 server");
         assert!(error.to_string().contains("403"));
-        assert_eq!(fs::read(model_dir.join("encoder.bin")).await.unwrap(), b"ABCD");
+        assert_eq!(
+            fs::read(model_dir.join("encoder.bin")).await.unwrap(),
+            b"ABCD"
+        );
         assert_eq!(
             fs::read(model_dir.join("decoder.bin.part")).await.unwrap(),
             b"X"
         );
         assert!(!model_dir.join("decoder.bin").exists());
-        assert!(!engine.active_downloads.lock().await.downloads.contains_key(TEST_MODEL_NAME));
+        assert!(!engine
+            .active_downloads
+            .lock()
+            .await
+            .downloads
+            .contains_key(TEST_MODEL_NAME));
 
         let (base_url, server) = serve_requests(vec![
             response(
@@ -1378,10 +1407,24 @@ mod tests {
             .expect("retry resumes only the partial artifact");
         server.await.expect("join retry server");
 
-        assert_eq!(fs::read(model_dir.join("encoder.bin")).await.unwrap(), b"ABCD");
-        assert_eq!(fs::read(model_dir.join("decoder.bin")).await.unwrap(), b"XYZ");
-        assert!(matches!(test_model_status(&engine).await, ModelStatus::Available));
-        assert!(!engine.active_downloads.lock().await.downloads.contains_key(TEST_MODEL_NAME));
+        assert_eq!(
+            fs::read(model_dir.join("encoder.bin")).await.unwrap(),
+            b"ABCD"
+        );
+        assert_eq!(
+            fs::read(model_dir.join("decoder.bin")).await.unwrap(),
+            b"XYZ"
+        );
+        assert!(matches!(
+            test_model_status(&engine).await,
+            ModelStatus::Available
+        ));
+        assert!(!engine
+            .active_downloads
+            .lock()
+            .await
+            .downloads
+            .contains_key(TEST_MODEL_NAME));
     }
 
     #[tokio::test]
@@ -1416,10 +1459,8 @@ mod tests {
                     &download_artifacts,
                     Some(Box::new(move |progress| {
                         if progress.downloaded_bytes == 99 {
-                            if let Some(sender) = progress_tx
-                                .lock()
-                                .expect("lock progress sender")
-                                .take()
+                            if let Some(sender) =
+                                progress_tx.lock().expect("lock progress sender").take()
                             {
                                 let _ = sender.send(());
                             }
@@ -1459,7 +1500,10 @@ mod tests {
             !model_dir.join("near.bin").exists(),
             "a cancelled download is never activated"
         );
-        assert!(matches!(test_model_status(&engine).await, ModelStatus::Missing));
+        assert!(matches!(
+            test_model_status(&engine).await,
+            ModelStatus::Missing
+        ));
 
         let (base_url, server) = serve_requests(vec![response(
             "near.bin",
@@ -1481,16 +1525,27 @@ mod tests {
             .expect("retry resumes the cancelled near-complete artifact");
         server.await.expect("join retry server");
 
-        assert_eq!(fs::metadata(model_dir.join("near.bin")).await.unwrap().len(), 100);
+        assert_eq!(
+            fs::metadata(model_dir.join("near.bin"))
+                .await
+                .unwrap()
+                .len(),
+            100
+        );
         assert!(!model_dir.join("near.bin.part").exists());
-        assert!(matches!(test_model_status(&engine).await, ModelStatus::Available));
+        assert!(matches!(
+            test_model_status(&engine).await,
+            ModelStatus::Available
+        ));
     }
 
     #[tokio::test]
     async fn range_ignored_replaces_partial_with_honest_progress() {
         let artifacts = vec![file("model.bin", b"ABCD")];
         let (_temp_dir, engine, model_dir) = test_engine().await;
-        fs::create_dir_all(&model_dir).await.expect("create model directory");
+        fs::create_dir_all(&model_dir)
+            .await
+            .expect("create model directory");
         fs::write(model_dir.join("model.bin.part"), b"zz")
             .await
             .expect("seed partial artifact");
@@ -1520,17 +1575,26 @@ mod tests {
         server.await.expect("join range-ignored server");
 
         let events: Vec<_> = std::iter::from_fn(|| events.pop()).collect();
-        assert_eq!(fs::read(model_dir.join("model.bin")).await.unwrap(), b"ABCD");
-        assert!(events.iter().all(|progress| progress.downloaded_bytes <= progress.total_bytes));
+        assert_eq!(
+            fs::read(model_dir.join("model.bin")).await.unwrap(),
+            b"ABCD"
+        );
+        assert!(events
+            .iter()
+            .all(|progress| progress.downloaded_bytes <= progress.total_bytes));
         assert_eq!(events.last().expect("final event").percent, 100);
-        assert!(events[..events.len() - 1].iter().all(|progress| progress.percent < 100));
+        assert!(events[..events.len() - 1]
+            .iter()
+            .all(|progress| progress.percent < 100));
     }
 
     #[tokio::test]
     async fn range_416_retries_fresh_with_honest_progress() {
         let artifacts = vec![file("model.bin", b"ABCD")];
         let (_temp_dir, engine, model_dir) = test_engine().await;
-        fs::create_dir_all(&model_dir).await.expect("create model directory");
+        fs::create_dir_all(&model_dir)
+            .await
+            .expect("create model directory");
         fs::write(model_dir.join("model.bin.part"), b"zz")
             .await
             .expect("seed partial artifact");
@@ -1562,7 +1626,10 @@ mod tests {
             .expect("416 should retry without Range");
         server.await.expect("join 416 server");
 
-        assert_eq!(fs::read(model_dir.join("model.bin")).await.unwrap(), b"ABCD");
+        assert_eq!(
+            fs::read(model_dir.join("model.bin")).await.unwrap(),
+            b"ABCD"
+        );
         assert!(std::iter::from_fn(|| events.pop())
             .all(|progress| progress.downloaded_bytes <= progress.total_bytes));
     }
@@ -1635,7 +1702,9 @@ mod tests {
 
         for (case_name, invalid_response) in cases {
             let (_temp_dir, engine, model_dir) = test_engine().await;
-            fs::create_dir_all(&model_dir).await.expect("create model directory");
+            fs::create_dir_all(&model_dir)
+                .await
+                .expect("create model directory");
             fs::write(model_dir.join("complete.bin"), b"C")
                 .await
                 .expect("seed completed sibling");
@@ -1658,16 +1727,29 @@ mod tests {
                 "{case_name} response must fail"
             );
             server.await.expect("join invalid-response server");
-            assert_eq!(fs::read(model_dir.join("complete.bin")).await.unwrap(), b"C");
-            assert!(!matches!(test_model_status(&engine).await, ModelStatus::Available));
-            assert!(!engine.active_downloads.lock().await.downloads.contains_key(TEST_MODEL_NAME));
+            assert_eq!(
+                fs::read(model_dir.join("complete.bin")).await.unwrap(),
+                b"C"
+            );
+            assert!(!matches!(
+                test_model_status(&engine).await,
+                ModelStatus::Available
+            ));
+            assert!(!engine
+                .active_downloads
+                .lock()
+                .await
+                .downloads
+                .contains_key(TEST_MODEL_NAME));
         }
     }
 
     #[tokio::test]
     async fn pending_cancellation_keeps_owner_and_blocks_retry() {
         let (_temp_dir, engine, model_dir) = test_engine().await;
-        fs::create_dir_all(&model_dir).await.expect("create model directory");
+        fs::create_dir_all(&model_dir)
+            .await
+            .expect("create model directory");
         fs::write(model_dir.join("encoder.bin"), b"AB")
             .await
             .expect("seed resumable prefix");
@@ -1683,7 +1765,10 @@ mod tests {
                 .expect("request cancellation"),
             CancelDownloadOutcome::Pending
         );
-        assert!(engine.reserve_active_download(TEST_MODEL_NAME).await.is_err());
+        assert!(engine
+            .reserve_active_download(TEST_MODEL_NAME)
+            .await
+            .is_err());
 
         let error = engine
             .finish_download(
@@ -1697,9 +1782,20 @@ mod tests {
             .await
             .expect_err("cancelled owner must finish as cancellation");
         assert!(is_download_cancelled(&error));
-        assert_eq!(fs::read(model_dir.join("encoder.bin")).await.unwrap(), b"AB");
-        assert!(!engine.active_downloads.lock().await.downloads.contains_key(TEST_MODEL_NAME));
-        assert!(engine.reserve_active_download(TEST_MODEL_NAME).await.is_ok());
+        assert_eq!(
+            fs::read(model_dir.join("encoder.bin")).await.unwrap(),
+            b"AB"
+        );
+        assert!(!engine
+            .active_downloads
+            .lock()
+            .await
+            .downloads
+            .contains_key(TEST_MODEL_NAME));
+        assert!(engine
+            .reserve_active_download(TEST_MODEL_NAME)
+            .await
+            .is_ok());
     }
 
     #[tokio::test]
@@ -1752,8 +1848,16 @@ mod tests {
         server.await.expect("join cancellation server");
         assert!(is_download_cancelled(&error));
         assert!(std::iter::from_fn(|| events.pop()).all(|progress| progress.percent < 100));
-        assert!(matches!(test_model_status(&engine).await, ModelStatus::Missing));
-        assert!(!engine.active_downloads.lock().await.downloads.contains_key(TEST_MODEL_NAME));
+        assert!(matches!(
+            test_model_status(&engine).await,
+            ModelStatus::Missing
+        ));
+        assert!(!engine
+            .active_downloads
+            .lock()
+            .await
+            .downloads
+            .contains_key(TEST_MODEL_NAME));
     }
 
     #[tokio::test]
@@ -1869,7 +1973,9 @@ mod tests {
             .await
             .expect("discovery must finish its first disk scan");
 
-        fs::create_dir_all(&model_dir).await.expect("create model directory");
+        fs::create_dir_all(&model_dir)
+            .await
+            .expect("create model directory");
         for artifact in &small_artifacts() {
             fs::write(
                 model_dir.join(&artifact.name),
@@ -1921,8 +2027,16 @@ mod tests {
             .find(|model| model.name == TEST_MODEL_NAME)
             .expect("test model must be discovered");
         assert!(matches!(discovered_model.status, ModelStatus::Available));
-        assert!(matches!(test_model_status(&engine).await, ModelStatus::Available));
-        assert!(!engine.active_downloads.lock().await.downloads.contains_key(TEST_MODEL_NAME));
+        assert!(matches!(
+            test_model_status(&engine).await,
+            ModelStatus::Available
+        ));
+        assert!(!engine
+            .active_downloads
+            .lock()
+            .await
+            .downloads
+            .contains_key(TEST_MODEL_NAME));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1948,15 +2062,23 @@ mod tests {
                 .await
                 .expect("status check must not wait for inference")
         );
-        let short = tokio::time::timeout(Duration::from_millis(400), engine.transcribe_audio(vec![10.0]))
-            .await
-            .expect("short call must not wait for the long call")
-            .expect("short call succeeds");
+        let short = tokio::time::timeout(
+            Duration::from_millis(400),
+            engine.transcribe_audio(vec![10.0]),
+        )
+        .await
+        .expect("short call must not wait for the long call")
+        .expect("short call succeeds");
         assert_eq!(short, "10 ms");
         assert!(started.elapsed() < Duration::from_millis(400));
         assert!(!long.is_finished());
 
-        assert_eq!(long.await.expect("join long call").expect("long call succeeds"), "800 ms");
+        assert_eq!(
+            long.await
+                .expect("join long call")
+                .expect("long call succeeds"),
+            "800 ms"
+        );
         let (_, busy) = engine.usage().await.expect("model loaded");
         assert_eq!(busy, 0);
     }

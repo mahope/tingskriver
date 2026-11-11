@@ -21,11 +21,14 @@ use super::logic::gesture::{Gesture, GestureAction, GestureConfig, GestureEvent}
 use super::logic::hotkey::ChordSignal;
 use super::logic::order::Order;
 use super::logic::spoken::{self, FieldId, LastInsertion, VoiceCommand};
+use super::logic::startup::{self, Startup};
+use super::logic::target_check::{Focus, Refusal};
 use super::logic::timing::{self, Steps};
-use super::overlay::{Overlay, OverlayState};
 use super::modes::{Context, Mode};
+use super::overlay::{Overlay, OverlayState};
 use super::secrets;
 use super::settings::{self, DictationSettings};
+use super::sound::{self, Sound};
 use super::store::{NewHistoryEntry, Store};
 use super::syv;
 use super::timings::{LatencyReport, LatencyWarning, NewTiming, Timings, LATENCY_WARNING_EVENT};
@@ -76,6 +79,30 @@ pub struct Service {
     /// Feeds the control loop like the hook does (tray menu "Diktér").
     #[cfg(windows)]
     trigger: Mutex<Option<std::sync::mpsc::Sender<(ChordSignal, Instant, Option<String>)>>>,
+}
+
+/// Open or close the kept-open microphone to match the settings. Opening the
+/// device can take a while, so it happens on its own thread.
+fn apply_capture(settings: &DictationSettings) {
+    #[cfg(windows)]
+    {
+        let options = settings.capture_options();
+        let keep = settings.enabled && options.keep_open;
+        let spawned = std::thread::Builder::new()
+            .name("dictation-capture-setup".into())
+            .spawn(move || {
+                if keep {
+                    super::capture::warm_up(&options);
+                } else {
+                    super::capture::release();
+                }
+            });
+        if let Err(e) = spawned {
+            log::warn!("Dictation microphone setup thread not started: {e}");
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = settings;
 }
 
 fn now_ms() -> i64 {
@@ -131,7 +158,10 @@ async fn init_inner(app: HostHandle, overlay: Arc<dyn Overlay>) -> Result<(), St
         .map_err(|_| "dictation already initialised".to_string())?;
 
     service.apply_shortcut();
-    if let Some(e) = spoken_error { service.set_error(Some(e)); }
+    apply_capture(&service.settings());
+    if let Some(e) = spoken_error {
+        service.set_error(Some(e));
+    }
     // Recordings must be gone 24 h after they were made, also when no new
     // dictation happens in between, so check every ten minutes.
     let mut interval = tokio::time::interval(Duration::from_secs(10 * 60));
@@ -161,6 +191,16 @@ impl Service {
         self.rules.read().map(|r| r.clone()).unwrap_or_default()
     }
 
+    /// The folder for text hook scripts (created if missing) and the scripts in it.
+    pub async fn hook_scripts(&self) -> (String, Vec<String>) {
+        let dir = super::text_hook::hook_dir(&self.app_data_dir);
+        if let Err(e) = tokio::fs::create_dir_all(&dir).await {
+            log::warn!("Dictation: could not create the hook folder: {e}");
+        }
+        let scripts = super::text_hook::list_scripts(&dir).await;
+        (dir.to_string_lossy().into_owned(), scripts)
+    }
+
     pub fn shortcut_active(&self) -> bool {
         self.shortcut_active.load(Ordering::Relaxed)
     }
@@ -175,7 +215,10 @@ impl Service {
         }
     }
 
-    pub async fn save_settings(self: &Arc<Self>, settings: DictationSettings) -> Result<DictationSettings, String> {
+    pub async fn save_settings(
+        self: &Arc<Self>,
+        settings: DictationSettings,
+    ) -> Result<DictationSettings, String> {
         let settings = settings.normalized()?;
         self.store.save_settings(&settings).await?;
         let previous = self.settings();
@@ -185,8 +228,16 @@ impl Service {
         if previous.residency_policy() != settings.residency_policy() {
             super::warm::set_policy(settings.residency_policy());
         }
-        if previous.enabled != settings.enabled || previous.shortcut != settings.shortcut || previous.modes != settings.modes {
+        if previous.enabled != settings.enabled
+            || previous.shortcut != settings.shortcut
+            || previous.modes != settings.modes
+        {
             self.apply_shortcut();
+        }
+        if previous.capture_options() != settings.capture_options()
+            || previous.enabled != settings.enabled
+        {
+            apply_capture(&settings);
         }
         Ok(settings)
     }
@@ -225,7 +276,10 @@ impl Service {
             }
         };
         let warnings: Vec<LatencyWarning> = match self.latency_warned.lock() {
-            Ok(mut warned) => timing::new_warnings(&stats, &mut warned).into_iter().map(Into::into).collect(),
+            Ok(mut warned) => timing::new_warnings(&stats, &mut warned)
+                .into_iter()
+                .map(Into::into)
+                .collect(),
             Err(_) => Vec::new(),
         };
         for warning in warnings {
@@ -308,9 +362,19 @@ impl Service {
 
         let (tx, rx) = std::sync::mpsc::channel();
         let trigger = tx.clone();
-        let shortcuts = settings.modes.modes.iter().flat_map(|m| &m.rules).filter_map(|r| {
-            if let super::modes::Rule::Shortcut(s) = r { super::logic::hotkey::Chord::parse(s).ok() } else { None }
-        }).collect();
+        let shortcuts = settings
+            .modes
+            .modes
+            .iter()
+            .flat_map(|m| &m.rules)
+            .filter_map(|r| {
+                if let super::modes::Rule::Shortcut(s) = r {
+                    super::logic::hotkey::Chord::parse(s).ok()
+                } else {
+                    None
+                }
+            })
+            .collect();
         match super::win::KeyboardHook::start(chord, shortcuts, tx) {
             Ok(hook) => {
                 *slot = Some(hook);
@@ -392,10 +456,15 @@ struct Session {
     recorder: Recorder,
     target_app: Option<String>,
     target_window: usize,
+    /// The focused field when the shortcut was pressed.
+    start_focus: Option<Focus>,
     settings: DictationSettings,
     mode: Option<Mode>,
-    /// Shortcut pressed until the microphone was open.
-    start_ms: u64,
+    /// When the shortcut was pressed.
+    pressed: Instant,
+    /// Shortcut pressed until the first audio arrived; `None` until the
+    /// recording is ready.
+    start_ms: Option<u64>,
 }
 
 fn gesture_event(signal: ChordSignal) -> GestureEvent {
@@ -418,13 +487,21 @@ fn foreground_context() -> (Option<String>, Option<String>, Option<String>) {
 
 fn foreground_window() -> usize {
     #[cfg(windows)]
-    { super::win::foreground_window() }
+    {
+        super::win::foreground_window()
+    }
     #[cfg(not(windows))]
-    { 0 }
+    {
+        0
+    }
 }
 
 fn flash_error(overlay: &Arc<dyn Overlay>) {
-    overlay.set(OverlayState::Error);
+    flash(overlay, OverlayState::Error);
+}
+
+fn flash(overlay: &Arc<dyn Overlay>, state: OverlayState) {
+    overlay.set(state);
     let overlay = overlay.clone();
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(1500));
@@ -464,31 +541,38 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant, Optio
                         continue;
                     }
                     let target_window = foreground_window();
+                    let start_focus = focus_now();
                     let (target_app, window_class, title) = foreground_context();
                     let settings = service.settings();
-                    let mode = settings.modes.select(&Context {
-                        process: target_app.as_deref(),
-                        window_class: window_class.as_deref(),
-                        title: title.as_deref(),
-                        shortcut: selected_shortcut.as_deref().or(Some(settings.shortcut.as_str())),
-                        ..Context::default()
-                    }).cloned();
+                    let mode = settings
+                        .modes
+                        .select(&Context {
+                            process: target_app.as_deref(),
+                            window_class: window_class.as_deref(),
+                            title: title.as_deref(),
+                            shortcut: selected_shortcut
+                                .as_deref()
+                                .or(Some(settings.shortcut.as_str())),
+                            ..Context::default()
+                        })
+                        .cloned();
                     service.overlay.set_mode(mode.as_ref());
                     let _ = service.app.emit("dictation-mode-changed", &mode);
                     // Load the local model while the user speaks, so neither
                     // the local engine nor the fallback pays for a load.
                     super::warm::prewarm_parakeet();
-                    match Recorder::start() {
+                    match Recorder::start(&settings.capture_options()) {
                         Ok(recorder) => {
                             DICTATING.store(true, Ordering::Relaxed);
-                            let start_ms = at.elapsed().as_millis() as u64;
                             session = Some(Session {
                                 recorder,
                                 target_app,
                                 target_window,
+                                start_focus,
                                 settings,
                                 mode,
-                                start_ms,
+                                pressed: at,
+                                start_ms: None,
                             });
                         }
                         Err(e) => {
@@ -510,6 +594,13 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant, Optio
                     if let Some(s) = session.take() {
                         let samples = s.recorder.stop();
                         DICTATING.store(false, Ordering::Relaxed);
+                        if startup::should_play_sound(
+                            s.settings.sound_enabled,
+                            s.settings.sound_volume,
+                            s.start_ms.is_some(),
+                        ) {
+                            sound::play(Sound::Stop, s.settings.sound_volume);
+                        }
                         service.overlay.set(OverlayState::Processing);
                         let service = service.clone();
                         let target_app = s.target_app;
@@ -520,18 +611,66 @@ fn control_loop(service: Arc<Service>, rx: Receiver<(ChordSignal, Instant, Optio
                                 service: service.clone(),
                                 ticket,
                             };
-                            service.process(samples, target_app, s.target_window, (s.settings, s.mode), at, start_ms, &turn).await;
+                            service
+                                .process(
+                                    samples,
+                                    target_app,
+                                    s.target_window,
+                                    s.start_focus,
+                                    (s.settings, s.mode),
+                                    at,
+                                    start_ms,
+                                    &turn,
+                                )
+                                .await;
                         });
                     }
                 }
             }
         }
 
-        if let Some(s) = &session {
-            service.overlay.set(OverlayState::Recording {
-                level: s.recorder.level(),
-                locked: gesture.is_locked(),
-            });
+        let mut silent = false;
+        if let Some(s) = session.as_mut() {
+            if s.start_ms.is_none() {
+                match startup::startup(s.recorder.age(), s.recorder.first_audio_at().is_some()) {
+                    Startup::Ready => {
+                        let first = s.recorder.first_audio_at().unwrap_or_else(Instant::now);
+                        s.start_ms =
+                            Some(first.saturating_duration_since(s.pressed).as_millis() as u64);
+                        if startup::should_play_sound(
+                            s.settings.sound_enabled,
+                            s.settings.sound_volume,
+                            true,
+                        ) {
+                            sound::play(Sound::Start, s.settings.sound_volume);
+                        }
+                    }
+                    Startup::NoSound => silent = true,
+                    Startup::Waiting => {}
+                }
+            }
+            // The pill only shows "recording" once audio arrives.
+            if s.start_ms.is_some() {
+                service.overlay.set(OverlayState::Recording {
+                    level: s.recorder.level(),
+                    locked: gesture.is_locked(),
+                });
+            }
+        }
+        if silent {
+            // No sound at all: nothing was recorded, so end it with a message.
+            session = None;
+            DICTATING.store(false, Ordering::Relaxed);
+            log::warn!(
+                "Dictation microphone delivered no audio within {} ms",
+                startup::NO_SOUND_AFTER.as_millis()
+            );
+            service.set_error(Some(startup::NO_SOUND_MESSAGE.to_string()));
+            gesture.reset();
+            flash(
+                &service.overlay,
+                OverlayState::Refused(startup::NO_SOUND_PILL),
+            );
         }
     }
 
@@ -559,7 +698,10 @@ impl Turn {
             .await
             .is_err()
         {
-            log::warn!("Dictation: previous dictation still busy after {} s; inserting anyway", TURN_TIMEOUT.as_secs());
+            log::warn!(
+                "Dictation: previous dictation still busy after {} s; inserting anyway",
+                TURN_TIMEOUT.as_secs()
+            );
         }
     }
 }
@@ -619,7 +761,13 @@ fjern gentagelser og selvrettelser (behold den rettede udgave), og lav punktopst
 teksten opremser flere ting. Bevar betydning, sprog og tone. Svar kun med den rettede tekst.";
 
 impl Service {
-    async fn transcribe(&self, settings: &DictationSettings, mode: Option<&Mode>, samples: &[f32], rules: &Rules) -> Result<Transcript, String> {
+    async fn transcribe(
+        &self,
+        settings: &DictationSettings,
+        mode: Option<&Mode>,
+        samples: &[f32],
+        rules: &Rules,
+    ) -> Result<Transcript, String> {
         let preference = EnginePreference::parse(&settings.engine);
         let key = match preference {
             EnginePreference::Auto => secrets::syv_key(),
@@ -629,27 +777,53 @@ impl Service {
             return Err("Tilstanden kræver en Syv.ai-nøgle".into());
         }
         let plan = engine::plan(preference, key.is_some(), local_engine_available().await)
-            .ok_or_else(|| "Ingen transskription: sæt en Syv.ai-nøgle eller hent en lokal Parakeet-model".to_string())?;
+            .ok_or_else(|| {
+                "Ingen transskription: sæt en Syv.ai-nøgle eller hent en lokal Parakeet-model"
+                    .to_string()
+            })?;
 
         let Some(key) = key.filter(|_| plan.primary == Engine::Syv) else {
             if let Some(model) = mode.and_then(|m| m.local_model(plan.primary)) {
-                crate::parakeet_engine::commands::parakeet_load_model(self.app.clone(), model.to_string()).await?;
+                crate::parakeet_engine::commands::parakeet_load_model(
+                    self.app.clone(),
+                    model.to_string(),
+                )
+                .await?;
             }
-            return transcribe_local(samples.to_vec()).await.map(|text| Transcript {
-                text,
-                engine: Engine::Local,
-                fallback_reason: None,
-            });
+            return transcribe_local(samples.to_vec())
+                .await
+                .map(|text| Transcript {
+                    text,
+                    engine: Engine::Local,
+                    fallback_reason: None,
+                });
         };
 
-        let prompt = format!("{} {}", mode.map(Mode::prompt).unwrap_or_default(), cleanup::prompt_words(rules).join(", "));
-        let language = mode.and_then(|m| m.language.clone()).unwrap_or_else(|| settings.language.clone());
+        let prompt = format!(
+            "{} {}",
+            mode.map(Mode::prompt).unwrap_or_default(),
+            cleanup::prompt_words(rules).join(", ")
+        );
+        let language = mode
+            .and_then(|m| m.language.clone())
+            .unwrap_or_else(|| settings.language.clone());
         let mut syv_task = tokio::spawn({
             let client = self.http.clone();
             let endpoint = settings.syv_endpoint.clone();
             let model = settings.syv_model.clone();
             let wav = audio::wav_bytes(samples, audio::TARGET_RATE);
-            async move { syv::transcribe_language(&client, &endpoint, &key, &model, wav, Some(prompt), &language).await }
+            async move {
+                syv::transcribe_language(
+                    &client,
+                    &endpoint,
+                    &key,
+                    &model,
+                    wav,
+                    Some(prompt),
+                    &language,
+                )
+                .await
+            }
         });
 
         let deadline = Duration::from_millis(settings.fallback_after_ms);
@@ -661,7 +835,10 @@ impl Service {
         };
         let reason = match &attempt {
             Attempt::Failed(e) => e.clone(),
-            _ => format!("Syv.ai svarede ikke inden for {} ms", settings.fallback_after_ms),
+            _ => format!(
+                "Syv.ai svarede ikke inden for {} ms",
+                settings.fallback_after_ms
+            ),
         };
 
         let syv_result = |r: Result<Result<String, String>, tokio::task::JoinError>| match r {
@@ -724,7 +901,12 @@ impl Service {
         }
     }
 
-    async fn polish(&self, settings: &DictationSettings, mode: Option<&Mode>, text: String) -> String {
+    async fn polish(
+        &self,
+        settings: &DictationSettings,
+        mode: Option<&Mode>,
+        text: String,
+    ) -> String {
         use crate::summary::llm_client::{generate_summary, LLMProvider};
 
         let provider = match settings.polish_provider.as_str() {
@@ -743,11 +925,17 @@ impl Service {
             log::info!("Dictation polishing skipped: no model chosen");
             return text;
         }
-        let prompt = format!("{POLISH_PROMPT} {}", mode.map(Mode::prompt).unwrap_or_default());
+        let prompt = format!(
+            "{POLISH_PROMPT} {}",
+            mode.map(Mode::prompt).unwrap_or_default()
+        );
         let prompt = if let Some(language) = mode.and_then(|m| m.language.as_deref()) {
             format!("{prompt} Tekstens sprog er {language}; bevar dette sprog.")
-        } else { prompt };
-        let prompt = super::logic::modes::polish_prompt(&prompt, &cleanup::english_terms(&self.rules()));
+        } else {
+            prompt
+        };
+        let prompt =
+            super::logic::modes::polish_prompt(&prompt, &cleanup::english_terms(&self.rules()));
         let request = generate_summary(
             &self.http,
             &provider,
@@ -774,13 +962,20 @@ impl Service {
                 None
             }
         };
-        engine::choose_polished(&text, polished.as_deref(), start.elapsed().as_millis() as u64, budget)
+        engine::choose_polished(
+            &text,
+            polished.as_deref(),
+            start.elapsed().as_millis() as u64,
+            budget,
+        )
     }
 
     async fn summary_builtin_model(&self) -> Option<String> {
         use crate::database::repositories::setting::SettingsRepository;
         let db = self.app.database()?;
-        let config = SettingsRepository::get_model_config(db.pool()).await.ok()??;
+        let config = SettingsRepository::get_model_config(db.pool())
+            .await
+            .ok()??;
         (config.provider == "builtin-ai").then_some(config.model)
     }
 
@@ -789,14 +984,17 @@ impl Service {
         samples: Vec<f32>,
         target_app: Option<String>,
         target_window: usize,
+        start_focus: Option<Focus>,
         selection: (DictationSettings, Option<Mode>),
         released_at: Instant,
-        start_ms: u64,
+        start_ms: Option<u64>,
         turn: &Turn,
     ) {
         let (base_settings, mut mode) = selection;
         let mut settings = base_settings.clone();
-        if let Some(mode) = &mode { settings.apply_mode(mode); }
+        if let Some(mode) = &mode {
+            settings.apply_mode(mode);
+        }
         let capture_ms = released_at.elapsed().as_millis() as u64;
         let audio_ms = audio::duration_ms(samples.len(), audio::TARGET_RATE);
         if audio_ms < 300 || !audio::has_signal(&samples) {
@@ -809,7 +1007,10 @@ impl Service {
         let code_editor = app_style::is_code_editor(target_app.as_deref());
         let rules = self.rules();
         let transcribe_started = Instant::now();
-        let mut transcript = match self.transcribe(&settings, mode.as_ref(), &samples, &rules).await {
+        let mut transcript = match self
+            .transcribe(&settings, mode.as_ref(), &samples, &rules)
+            .await
+        {
             Ok(t) => t,
             Err(e) => {
                 log::warn!("Dictation transcription failed: {e}");
@@ -820,7 +1021,10 @@ impl Service {
         };
 
         if legacy_style != Style::Raw {
-            if let Some((spoken, rest)) = settings.modes.spoken(&transcript.text, target_app.as_deref()) {
+            if let Some((spoken, rest)) = settings
+                .modes
+                .spoken(&transcript.text, target_app.as_deref())
+            {
                 let spoken = spoken.clone();
                 let rest = rest.to_string();
                 let previous = settings.clone();
@@ -831,7 +1035,10 @@ impl Service {
                     || spoken.transcription_changed(mode.as_ref());
                 mode = Some(spoken);
                 if needs_transcription {
-                    transcript = match self.transcribe(&settings, mode.as_ref(), &samples, &rules).await {
+                    transcript = match self
+                        .transcribe(&settings, mode.as_ref(), &samples, &rules)
+                        .await
+                    {
                         Ok(t) => t,
                         Err(e) => {
                             self.set_error(Some(e));
@@ -839,7 +1046,10 @@ impl Service {
                             return;
                         }
                     };
-                    if let Some((spoken, rest)) = settings.modes.spoken(&transcript.text, target_app.as_deref()) {
+                    if let Some((spoken, rest)) = settings
+                        .modes
+                        .spoken(&transcript.text, target_app.as_deref())
+                    {
                         if mode.as_ref().is_some_and(|m| m.id == spoken.id) {
                             transcript.text = rest.to_string();
                         }
@@ -854,18 +1064,30 @@ impl Service {
         let style = if code_editor || legacy_style == Style::Raw {
             Style::Raw
         } else {
-            mode.as_ref().map(|m| m.style.cleanup()).unwrap_or(legacy_style)
+            mode.as_ref()
+                .map(|m| m.style.cleanup())
+                .unwrap_or(legacy_style)
         };
 
         let transcribe_ms = transcribe_started.elapsed().as_millis() as u64;
 
-        let (input, enter) = mode.as_ref().map(|m| m.output.prepare(&transcript.text, code_editor || style == Style::Raw))
+        let (input, enter) = mode
+            .as_ref()
+            .map(|m| {
+                m.output
+                    .prepare(&transcript.text, code_editor || style == Style::Raw)
+            })
             .unwrap_or_else(|| (transcript.text.clone(), false));
         if let Ok(mut slot) = self.active_mode.lock() {
             *slot = mode.as_ref().map(|m| m.name.clone());
         }
-        let cleaned = cleanup::clean_with(&input, &cleanup_options(style, &rules, &settings, mode.as_ref()));
-        if let Some(command @ (VoiceCommand::DeleteThat | VoiceCommand::SelectThat)) = cleaned.command {
+        let cleaned = cleanup::clean_with(
+            &input,
+            &cleanup_options(style, &rules, &settings, mode.as_ref()),
+        );
+        if let Some(command @ (VoiceCommand::DeleteThat | VoiceCommand::SelectThat)) =
+            cleaned.command
+        {
             self.overlay.set(OverlayState::Hidden);
             turn.wait().await;
             self.run_edit_command(command).await;
@@ -877,6 +1099,11 @@ impl Service {
             let polish_started = Instant::now();
             text = self.polish(&settings, mode.as_ref(), text).await;
             polish_ms = Some(polish_started.elapsed().as_millis() as u64);
+        }
+        if settings.text_hook_enabled && !text.trim().is_empty() {
+            // Fail-open: on any failure `text` comes back unchanged.
+            let dir = super::text_hook::hook_dir(&self.app_data_dir);
+            text = super::text_hook::apply(&dir, &settings.text_hook_script, text).await;
         }
         self.overlay.set(OverlayState::Hidden);
         if text.trim().is_empty() {
@@ -891,31 +1118,54 @@ impl Service {
             paste_timeout: Duration::from_millis(settings.paste_timeout_ms),
             app: target_app.clone(),
         };
-        let inserted = insert(text.clone(), options, enter, target_window).await;
+        let inserted = insert(
+            text.clone(),
+            options,
+            enter,
+            target_window,
+            start_focus.as_ref().map(|f| f.id.clone()),
+        )
+        .await;
+        let mut refusal = None;
         let (insert_method, inserted_at) = match inserted {
             Ok((method, at, field)) => {
                 self.set_error(None);
-                if enter { self.forget_insertion(); } else { self.remember_insertion(&text, field, at); }
+                if enter {
+                    self.forget_insertion();
+                } else {
+                    self.remember_insertion(&text, field, at);
+                }
                 (Some(method), at)
             }
             Err(e) => {
                 log::warn!("Dictation insert failed: {e}");
-                self.set_error(Some(format!("Teksten kunne ikke indsættes: {e}")));
+                refusal = Refusal::from_message(&e);
+                if let Some(r) = refusal {
+                    self.set_error(Some(r.message().to_string()));
+                    flash(&self.overlay, OverlayState::Refused(r.pill_text()));
+                } else {
+                    self.set_error(Some(format!("Teksten kunne ikke indsættes: {e}")));
+                }
                 (None, Instant::now())
             }
         };
-        let latency_ms = inserted_at.saturating_duration_since(released_at).as_millis() as i64;
+        let latency_ms = inserted_at
+            .saturating_duration_since(released_at)
+            .as_millis() as i64;
         let steps = Steps {
-            start_ms: Some(start_ms),
+            start_ms,
             audio_ms,
             capture_ms,
             transcribe_ms,
             polish_ms,
-            insert_ms: inserted_at.saturating_duration_since(insert_started).as_millis() as u64,
+            insert_ms: inserted_at
+                .saturating_duration_since(insert_started)
+                .as_millis() as u64,
             total_ms: latency_ms as u64,
         };
         log::info!(
-            "Dictation steps: start {start_ms} ms, capture {capture_ms} ms, transcribe {transcribe_ms} ms, polish {} ms, insert {} ms",
+            "Dictation steps: start {} ms, capture {capture_ms} ms, transcribe {transcribe_ms} ms, polish {} ms, insert {} ms",
+            start_ms.map(|ms| ms.to_string()).unwrap_or_else(|| "-".to_string()),
             polish_ms.map(|ms| ms.to_string()).unwrap_or_else(|| "-".to_string()),
             steps.insert_ms,
         );
@@ -935,9 +1185,28 @@ impl Service {
             insert_method.unwrap_or("none"),
         );
 
-        if settings.history_enabled {
-            self.save_history(&settings, &samples, text, target_app, style, transcript, latency_ms, audio_ms, insert_method)
-                .await;
+        // Text dictated into a password field is never kept, not even in the
+        // history, whatever made the insertion fail: the field is judged from
+        // when dictation started as well as from the insertion.
+        let from_password = start_focus
+            .as_ref()
+            .is_some_and(|f| f.probe.password == Some(true));
+        if settings.history_enabled
+            && !from_password
+            && !refusal.is_some_and(Refusal::keeps_text_out_of_history)
+        {
+            self.save_history(
+                &settings,
+                &samples,
+                text,
+                target_app,
+                style,
+                transcript,
+                latency_ms,
+                audio_ms,
+                insert_method,
+            )
+            .await;
         }
     }
 
@@ -966,7 +1235,9 @@ impl Service {
             .ok()
             .flatten();
         let last = self.last_insertion.lock().ok().and_then(|l| l.clone());
-        let Some(plan) = spoken::plan_edit(command, last.as_ref(), current.as_ref(), Instant::now()) else {
+        let Some(plan) =
+            spoken::plan_edit(command, last.as_ref(), current.as_ref(), Instant::now())
+        else {
             log::info!("Dictation: {command:?} ignored, the field changed, too old or nothing was inserted");
             return;
         };
@@ -1032,6 +1303,9 @@ impl Service {
             app,
             style: style.as_str().to_string(),
             engine: transcript.engine.as_str().to_string(),
+            provider: Some(settings.engine.clone()),
+            syv_model: Some(settings.syv_model.clone()),
+            language: Some(settings.language.clone()),
             fallback_reason: transcript.fallback_reason,
             latency_ms,
             audio_ms: audio_ms as i64,
@@ -1059,15 +1333,29 @@ struct InsertOptions {
 }
 
 #[cfg(windows)]
-async fn insert(text: String, options: InsertOptions, enter: bool, target_window: usize) -> Result<(&'static str, Instant, Option<FieldId>), String> {
-    tokio::task::spawn_blocking(move || super::win::insert_output_at(&text, &options, enter, target_window))
-        .await
-        .map_err(|e| e.to_string())?
-        .map(|(method, at, field)| (method.as_str(), at, field))
+async fn insert(
+    text: String,
+    options: InsertOptions,
+    enter: bool,
+    target_window: usize,
+    expected: Option<FieldId>,
+) -> Result<(&'static str, Instant, Option<FieldId>), String> {
+    tokio::task::spawn_blocking(move || {
+        super::win::insert_output_at(&text, &options, enter, target_window, expected.as_ref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map(|(method, at, field)| (method.as_str(), at, field))
 }
 
 #[cfg(not(windows))]
-async fn insert(_text: String, options: InsertOptions, _enter: bool, _target_window: usize) -> Result<(&'static str, Instant, Option<FieldId>), String> {
+async fn insert(
+    _text: String,
+    options: InsertOptions,
+    _enter: bool,
+    _target_window: usize,
+    _expected: Option<FieldId>,
+) -> Result<(&'static str, Instant, Option<FieldId>), String> {
     let _ = (options.restore_after, options.paste_timeout, options.app);
     Err("Indsættelse understøttes kun på Windows".to_string())
 }
@@ -1084,11 +1372,23 @@ async fn apply_edit(_plan: spoken::EditPlan) -> Result<(), String> {
     Err("Stemmekommandoer understøttes kun på Windows".to_string())
 }
 
+#[cfg(windows)]
+fn focus_now() -> Option<Focus> {
+    super::target_win::focus()
+}
+#[cfg(not(windows))]
+fn focus_now() -> Option<Focus> {
+    None
+}
 
 #[cfg(windows)]
-fn focused_field() -> Option<FieldId> { super::target_win::focused_field() }
+fn focused_field() -> Option<FieldId> {
+    super::target_win::focused_field()
+}
 #[cfg(not(windows))]
-fn focused_field() -> Option<FieldId> { None }
+fn focused_field() -> Option<FieldId> {
+    None
+}
 
 fn cleanup_options<'a>(
     style: Style,
@@ -1099,9 +1399,11 @@ fn cleanup_options<'a>(
     Options {
         style,
         rules,
-        format_numbers: style == Style::Normal && settings.format_numbers
+        format_numbers: style == Style::Normal
+            && settings.format_numbers
             && mode.and_then(|m| m.formatting.number_format.as_deref()) != Some("ordret"),
         format_addresses: style == Style::Normal && settings.format_addresses,
+        collapse_stutters: style == Style::Normal && settings.collapse_stutters,
         enter_triggers: &[],
     }
 }
@@ -1118,9 +1420,18 @@ mod tests {
         let options = cleanup_options(Style::Raw, &rules, &settings, None);
         assert!(!options.format_numbers);
         assert!(!options.format_addresses);
-        assert_eq!(cleanup::clean_with("git checkout tretten", &options).text, "git checkout tretten");
-        assert_eq!(cleanup::clean_with("anna snabel-a eksempel punktum dk", &options).text,
-            cleanup::clean_with("anna snabel-a eksempel punktum dk", &Options::new(Style::Raw, &rules)).text);
+        assert_eq!(
+            cleanup::clean_with("git checkout tretten", &options).text,
+            "git checkout tretten"
+        );
+        assert_eq!(
+            cleanup::clean_with("anna snabel-a eksempel punktum dk", &options).text,
+            cleanup::clean_with(
+                "anna snabel-a eksempel punktum dk",
+                &Options::new(Style::Raw, &rules)
+            )
+            .text
+        );
     }
 
     #[test]

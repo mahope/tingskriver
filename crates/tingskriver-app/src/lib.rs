@@ -107,6 +107,7 @@ pub fn run() {
         }
     };
     let bridge = host.as_ref().map(|h| h.bridge().clone());
+    let events = bridge.as_ref().map(|bridge| bridge.subscribe());
     // With a tray icon, closing the window hides the app to the tray.
     let keep_running = host.as_ref().is_some_and(Host::has_tray);
 
@@ -152,6 +153,22 @@ pub fn run() {
                 .detach();
             }
             ui::init(model, cx);
+
+            if let Some(mut events) = events {
+                cx.spawn(async move |cx| {
+                    while let Some(event) = events.recv().await {
+                        if event.name == tingskriver_core::dictation::rerun::COMPARISON_EVENT {
+                            match serde_json::from_str(&event.payload_json) {
+                                Ok(comparison) => {
+                                    cx.update(|cx| ui::show_rerun_comparison(comparison, cx))
+                                }
+                                Err(error) => log::warn!("Invalid dictation comparison: {error}"),
+                            }
+                        }
+                    }
+                })
+                .detach();
+            }
 
             if let Some(mut messages) = messages {
                 cx.spawn(async move |cx| {

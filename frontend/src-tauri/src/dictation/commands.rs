@@ -40,6 +40,28 @@ pub async fn dictation_save_settings(settings: DictationSettings) -> Result<Dict
     service::get()?.save_settings(settings).await
 }
 
+/// Input devices dictation can use, for the microphone choice.
+#[tauri::command]
+pub async fn dictation_list_microphones() -> Result<Vec<String>, String> {
+    tokio::task::spawn_blocking(super::capture::input_device_names)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HookScripts {
+    pub folder: String,
+    pub scripts: Vec<String>,
+}
+
+/// The hook folder and the `.cmd`/`.ps1` scripts in it.
+#[tauri::command]
+pub async fn dictation_list_hook_scripts() -> Result<HookScripts, String> {
+    let (folder, scripts) = service::get()?.hook_scripts().await;
+    Ok(HookScripts { folder, scripts })
+}
+
 #[tauri::command]
 pub async fn dictation_get_status() -> Result<DictationStatus, String> {
     let service = service::get()?;

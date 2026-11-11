@@ -1,5 +1,6 @@
 //! Durable post-meeting jobs. See `docs/transcription-queue.md` for host wiring.
 
+mod carry;
 mod store;
 mod worker;
 
@@ -17,6 +18,10 @@ pub struct QueueEvent {
     /// Unix seconds. Only meaningful for pending jobs.
     pub next_attempt: Option<i64>,
     pub track: Option<String>,
+    /// Danish explanation when a completed rerun was stored but not made the
+    /// current version (truncated). The host shows it next to the new version.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rejected: Option<String>,
 }
 
 #[cfg(test)]

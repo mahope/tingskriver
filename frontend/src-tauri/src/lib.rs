@@ -8,19 +8,19 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub mod api;
 pub mod audio;
 pub use tingskriver_core::config;
-pub mod core_bridge;
+pub mod anthropic;
 pub mod console_utils;
+pub mod core_bridge;
 pub mod database;
 pub mod delivery;
 pub mod dictation;
 pub mod file_logger;
+pub mod groq;
 pub mod move_to_gpui;
 pub mod notifications;
 pub mod ollama;
 pub mod onboarding;
 pub mod openai;
-pub mod anthropic;
-pub mod groq;
 pub mod openrouter;
 pub mod parakeet_engine;
 pub use tingskriver_core::state;
@@ -29,7 +29,7 @@ pub mod tray;
 pub mod utils;
 pub mod whisper_engine;
 
-use audio::{list_audio_devices, AudioDevice, trigger_audio_permission};
+use audio::{list_audio_devices, trigger_audio_permission, AudioDevice};
 use log::{error as log_error, info as log_info};
 use notifications::commands::NotificationManagerState;
 use std::sync::Arc;
@@ -94,10 +94,7 @@ async fn start_recording<R: Runtime>(
             )
             .await
             {
-                log_error!(
-                    "Failed to show recording started notification: {}",
-                    e
-                );
+                log_error!("Failed to show recording started notification: {}", e);
             } else {
                 log_info!("Successfully showed recording started notification");
             }
@@ -112,7 +109,10 @@ async fn start_recording<R: Runtime>(
 }
 
 #[tauri::command]
-async fn stop_recording<R: Runtime>(app: AppHandle<R>, args: RecordingArgs) -> Result<Option<audio::recording_saver::SaveResult>, String> {
+async fn stop_recording<R: Runtime>(
+    app: AppHandle<R>,
+    args: RecordingArgs,
+) -> Result<Option<audio::recording_saver::SaveResult>, String> {
     log_info!("Attempting to stop recording...");
 
     // Check the actual audio recording system state instead of the flag
@@ -155,10 +155,7 @@ async fn stop_recording<R: Runtime>(app: AppHandle<R>, args: RecordingArgs) -> R
             )
             .await
             {
-                log_error!(
-                    "Failed to show recording stopped notification: {}",
-                    e
-                );
+                log_error!("Failed to show recording stopped notification: {}", e);
             } else {
                 log_info!("Successfully showed recording stopped notification");
             }
@@ -239,7 +236,6 @@ async fn is_audio_level_monitoring() -> bool {
     audio::simple_level_monitor::is_monitoring()
 }
 
-
 // Whisper commands are now handled by whisper_engine::commands module
 
 #[tauri::command]
@@ -284,8 +280,11 @@ async fn start_recording_with_devices_and_meeting<R: Runtime>(
                 "No devices specified, starting with defaults and meeting: {:?}",
                 meeting_name
             );
-            audio::recording_commands::start_recording_with_meeting_name(crate::core_bridge::host(&app), meeting_name)
-                .await
+            audio::recording_commands::start_recording_with_meeting_name(
+                crate::core_bridge::host(&app),
+                meeting_name,
+            )
+            .await
         }
         _ => {
             log_info!(
@@ -318,10 +317,7 @@ async fn start_recording_with_devices_and_meeting<R: Runtime>(
             )
             .await
             {
-                log_error!(
-                    "Failed to show recording started notification: {}",
-                    e
-                );
+                log_error!("Failed to show recording started notification: {}", e);
             }
 
             Ok(())
@@ -367,9 +363,11 @@ fn get_crash_dumps_enabled() -> bool {
 /// Turn crash dumps on or off (the per-user WER LocalDumps key).
 #[tauri::command]
 async fn set_crash_dumps_enabled(enabled: bool) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || tingskriver_core::crash_dumps::set_enabled(enabled))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        tingskriver_core::crash_dumps::set_enabled(enabled)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 pub fn run() {
@@ -722,6 +720,8 @@ pub fn run() {
             dictation::commands::dictation_get_settings,
             dictation::commands::dictation_save_settings,
             dictation::commands::dictation_get_status,
+            dictation::commands::dictation_list_microphones,
+            dictation::commands::dictation_list_hook_scripts,
             dictation::commands::dictation_set_syv_key,
             dictation::commands::dictation_delete_syv_key,
             dictation::commands::dictation_test_syv,

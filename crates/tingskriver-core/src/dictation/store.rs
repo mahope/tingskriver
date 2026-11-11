@@ -79,6 +79,9 @@ pub struct HistoryEntry {
     pub app: Option<String>,
     pub style: String,
     pub engine: String,
+    pub provider: Option<String>,
+    pub syv_model: Option<String>,
+    pub language: Option<String>,
     pub fallback_reason: Option<String>,
     pub latency_ms: i64,
     pub audio_ms: i64,
@@ -93,6 +96,9 @@ pub struct NewHistoryEntry {
     pub app: Option<String>,
     pub style: String,
     pub engine: String,
+    pub provider: Option<String>,
+    pub syv_model: Option<String>,
+    pub language: Option<String>,
     pub fallback_reason: Option<String>,
     pub latency_ms: i64,
     pub audio_ms: i64,
@@ -189,7 +195,13 @@ impl Store {
             .collect())
     }
 
-    pub async fn upsert_word(&self, id: Option<i64>, word: &str, aliases: &str, now: i64) -> Result<i64, String> {
+    pub async fn upsert_word(
+        &self,
+        id: Option<i64>,
+        word: &str,
+        aliases: &str,
+        now: i64,
+    ) -> Result<i64, String> {
         let word = word.trim();
         if word.is_empty() {
             return Err("Ordet må ikke være tomt".to_string());
@@ -197,13 +209,15 @@ impl Store {
         let aliases = normalize_aliases(aliases);
         match id {
             Some(id) => {
-                sqlx::query("UPDATE dictation_dictionary SET word = ?1, aliases = ?2 WHERE id = ?3")
-                    .bind(word)
-                    .bind(aliases)
-                    .bind(id)
-                    .execute(&self.pool)
-                    .await
-                    .map_err(db_err)?;
+                sqlx::query(
+                    "UPDATE dictation_dictionary SET word = ?1, aliases = ?2 WHERE id = ?3",
+                )
+                .bind(word)
+                .bind(aliases)
+                .bind(id)
+                .execute(&self.pool)
+                .await
+                .map_err(db_err)?;
                 Ok(id)
             }
             None => {
@@ -242,10 +256,12 @@ impl Store {
     // -- snippets ----------------------------------------------------------
 
     pub async fn snippets(&self) -> Result<Vec<SnippetRow>, String> {
-        let rows = sqlx::query("SELECT id, phrase, text FROM dictation_snippets ORDER BY phrase COLLATE NOCASE")
-            .fetch_all(&self.pool)
-            .await
-            .map_err(db_err)?;
+        let rows = sqlx::query(
+            "SELECT id, phrase, text FROM dictation_snippets ORDER BY phrase COLLATE NOCASE",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_err)?;
         Ok(rows
             .into_iter()
             .map(|r| SnippetRow {
@@ -256,7 +272,13 @@ impl Store {
             .collect())
     }
 
-    pub async fn upsert_snippet(&self, id: Option<i64>, phrase: &str, text: &str, now: i64) -> Result<i64, String> {
+    pub async fn upsert_snippet(
+        &self,
+        id: Option<i64>,
+        phrase: &str,
+        text: &str,
+        now: i64,
+    ) -> Result<i64, String> {
         let phrase = phrase.trim();
         if phrase.is_empty() || text.trim().is_empty() {
             return Err("Både udløser og tekst skal udfyldes".to_string());
@@ -273,13 +295,15 @@ impl Store {
                 Ok(id)
             }
             None => {
-                let result = sqlx::query("INSERT INTO dictation_snippets (phrase, text, created_at) VALUES (?1, ?2, ?3)")
-                    .bind(phrase)
-                    .bind(text)
-                    .bind(now)
-                    .execute(&self.pool)
-                    .await
-                    .map_err(db_err)?;
+                let result = sqlx::query(
+                    "INSERT INTO dictation_snippets (phrase, text, created_at) VALUES (?1, ?2, ?3)",
+                )
+                .bind(phrase)
+                .bind(text)
+                .bind(now)
+                .execute(&self.pool)
+                .await
+                .map_err(db_err)?;
                 Ok(result.last_insert_rowid())
             }
         }
@@ -303,7 +327,12 @@ impl Store {
                 to: word.word.clone(),
                 keep_english: word.english,
             });
-            for alias in word.aliases.split(',').map(str::trim).filter(|a| !a.is_empty()) {
+            for alias in word
+                .aliases
+                .split(',')
+                .map(str::trim)
+                .filter(|a| !a.is_empty())
+            {
                 replacements.push(Replacement {
                     from: alias.to_string(),
                     to: word.word.clone(),
@@ -334,8 +363,8 @@ impl Store {
     pub async fn add_history(&self, entry: NewHistoryEntry) -> Result<Vec<String>, String> {
         sqlx::query(
             "INSERT INTO dictation_history
-             (created_at, text, app, style, engine, fallback_reason, latency_ms, audio_ms, insert_method, audio_path)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+             (created_at, text, app, style, engine, fallback_reason, latency_ms, audio_ms, insert_method, audio_path, provider, syv_model, language)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
         )
         .bind(entry.created_at)
         .bind(entry.text)
@@ -347,11 +376,15 @@ impl Store {
         .bind(entry.audio_ms)
         .bind(entry.insert_method)
         .bind(entry.audio_path)
+        .bind(entry.provider)
+        .bind(entry.syv_model)
+        .bind(entry.language)
         .execute(&self.pool)
         .await
         .map_err(db_err)?;
 
-        let cutoff = "SELECT id FROM dictation_history ORDER BY created_at DESC, id DESC LIMIT -1 OFFSET ?1";
+        let cutoff =
+            "SELECT id FROM dictation_history ORDER BY created_at DESC, id DESC LIMIT -1 OFFSET ?1";
         let paths = sqlx::query(&format!(
             "SELECT audio_path FROM dictation_history WHERE audio_path IS NOT NULL AND id IN ({cutoff})"
         ))
@@ -362,18 +395,20 @@ impl Store {
         .into_iter()
         .map(|r| r.get::<String, _>("audio_path"))
         .collect();
-        sqlx::query(&format!("DELETE FROM dictation_history WHERE id IN ({cutoff})"))
-            .bind(HISTORY_LIMIT)
-            .execute(&self.pool)
-            .await
-            .map_err(db_err)?;
+        sqlx::query(&format!(
+            "DELETE FROM dictation_history WHERE id IN ({cutoff})"
+        ))
+        .bind(HISTORY_LIMIT)
+        .execute(&self.pool)
+        .await
+        .map_err(db_err)?;
         Ok(paths)
     }
 
     pub async fn history(&self, limit: i64) -> Result<Vec<HistoryEntry>, String> {
         let rows = sqlx::query(
             "SELECT id, created_at, text, app, style, engine, fallback_reason, latency_ms, audio_ms,
-                    insert_method, audio_path IS NOT NULL AS has_audio
+                    insert_method, provider, syv_model, language, audio_path IS NOT NULL AS has_audio
              FROM dictation_history ORDER BY created_at DESC, id DESC LIMIT ?1",
         )
         .bind(limit.clamp(1, HISTORY_LIMIT))
@@ -389,6 +424,9 @@ impl Store {
                 app: r.get("app"),
                 style: r.get("style"),
                 engine: r.get("engine"),
+                provider: r.get("provider"),
+                syv_model: r.get("syv_model"),
+                language: r.get("language"),
                 fallback_reason: r.get("fallback_reason"),
                 latency_ms: r.get("latency_ms"),
                 audio_ms: r.get("audio_ms"),
@@ -400,12 +438,13 @@ impl Store {
 
     /// Delete one entry; returns its audio file if any.
     pub async fn delete_history(&self, id: i64) -> Result<Option<String>, String> {
-        let path: Option<String> = sqlx::query("SELECT audio_path FROM dictation_history WHERE id = ?1")
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(db_err)?
-            .and_then(|r| r.get("audio_path"));
+        let path: Option<String> =
+            sqlx::query("SELECT audio_path FROM dictation_history WHERE id = ?1")
+                .bind(id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(db_err)?
+                .and_then(|r| r.get("audio_path"));
         sqlx::query("DELETE FROM dictation_history WHERE id = ?1")
             .bind(id)
             .execute(&self.pool)
@@ -416,13 +455,14 @@ impl Store {
 
     /// Delete all entries; returns their audio files.
     pub async fn clear_history(&self) -> Result<Vec<String>, String> {
-        let paths = sqlx::query("SELECT audio_path FROM dictation_history WHERE audio_path IS NOT NULL")
-            .fetch_all(&self.pool)
-            .await
-            .map_err(db_err)?
-            .into_iter()
-            .map(|r| r.get::<String, _>("audio_path"))
-            .collect();
+        let paths =
+            sqlx::query("SELECT audio_path FROM dictation_history WHERE audio_path IS NOT NULL")
+                .fetch_all(&self.pool)
+                .await
+                .map_err(db_err)?
+                .into_iter()
+                .map(|r| r.get::<String, _>("audio_path"))
+                .collect();
         sqlx::query("DELETE FROM dictation_history")
             .execute(&self.pool)
             .await
@@ -452,16 +492,36 @@ impl Store {
 
 /// Columns added after the first release.
 async fn migrate(pool: &SqlitePool) -> Result<(), String> {
+    let history_columns = sqlx::query("SELECT name FROM pragma_table_info('dictation_history')")
+        .fetch_all(pool)
+        .await
+        .map_err(db_err)?;
+    for name in ["provider", "syv_model", "language"] {
+        if !history_columns
+            .iter()
+            .any(|r| r.get::<String, _>("name") == name)
+        {
+            sqlx::query(&format!(
+                "ALTER TABLE dictation_history ADD COLUMN {name} TEXT"
+            ))
+            .execute(pool)
+            .await
+            .map_err(db_err)?;
+        }
+    }
+
     let columns = sqlx::query("SELECT name FROM pragma_table_info('dictation_dictionary')")
         .fetch_all(pool)
         .await
         .map_err(db_err)?;
     let has = |name: &str| columns.iter().any(|r| r.get::<String, _>("name") == name);
     if !has("english") {
-        sqlx::query("ALTER TABLE dictation_dictionary ADD COLUMN english INTEGER NOT NULL DEFAULT 0")
-            .execute(pool)
-            .await
-            .map_err(db_err)?;
+        sqlx::query(
+            "ALTER TABLE dictation_dictionary ADD COLUMN english INTEGER NOT NULL DEFAULT 0",
+        )
+        .execute(pool)
+        .await
+        .map_err(db_err)?;
     }
     Ok(())
 }
@@ -496,12 +556,38 @@ mod tests {
             app: Some("Code.exe".into()),
             style: "raw".into(),
             engine: "syv".into(),
+            provider: None,
+            syv_model: None,
+            language: None,
             fallback_reason: None,
             latency_ms: 900,
             audio_ms: 4000,
             insert_method: Some("paste".into()),
             audio_path: audio.map(str::to_string),
         }
+    }
+
+    #[tokio::test]
+    async fn history_migration_preserves_legacy_rows_with_unknown_provider() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::raw_sql(SCHEMA).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO dictation_history (created_at, text, style, engine, latency_ms, audio_ms) VALUES (42, 'Original', 'raw', 'local', 7, 8)")
+            .execute(&pool).await.unwrap();
+        let store = Store::with_pool(pool.clone()).await.unwrap();
+        let entry = store.history(1).await.unwrap().remove(0);
+        assert_eq!(entry.text, "Original");
+        assert_eq!(entry.created_at, 42);
+        assert_eq!(entry.engine, "local");
+        assert_eq!(entry.latency_ms, 7);
+        assert_eq!(entry.audio_ms, 8);
+        assert!(entry.provider.is_none());
+        assert!(entry.syv_model.is_none());
+        assert!(entry.language.is_none());
+        Store::with_pool(pool).await.unwrap();
     }
 
     #[tokio::test]
@@ -518,8 +604,13 @@ mod tests {
     #[tokio::test]
     async fn dictionary_and_snippets_become_rules() {
         let s = store().await;
-        let id = s.upsert_word(None, " Mahoje ", "maho je,  mahoye ,", 1).await.unwrap();
-        s.upsert_snippet(None, "mit cvr", "39413892", 1).await.unwrap();
+        let id = s
+            .upsert_word(None, " Mahoje ", "maho je,  mahoye ,", 1)
+            .await
+            .unwrap();
+        s.upsert_snippet(None, "mit cvr", "39413892", 1)
+            .await
+            .unwrap();
         assert!(s.upsert_word(None, "  ", "", 1).await.is_err());
         assert!(s.upsert_snippet(None, "x", " ", 1).await.is_err());
 
@@ -535,7 +626,13 @@ mod tests {
         assert!(!rules.replacements[0].keep_english);
         s.set_word_english(id, true).await.unwrap();
         assert!(s.dictionary().await.unwrap()[0].english);
-        assert!(s.rules().await.unwrap().replacements.iter().all(|r| r.keep_english));
+        assert!(s
+            .rules()
+            .await
+            .unwrap()
+            .replacements
+            .iter()
+            .all(|r| r.keep_english));
 
         s.upsert_word(Some(id), "Syv.ai", "", 2).await.unwrap();
         assert_eq!(s.dictionary().await.unwrap()[0].word, "Syv.ai");
@@ -560,7 +657,10 @@ mod tests {
         .unwrap();
         let s = Store::with_pool(pool).await.unwrap();
         let words = s.dictionary().await.unwrap();
-        assert_eq!((words[0].word.as_str(), words[0].english), ("Mahoje", false));
+        assert_eq!(
+            (words[0].word.as_str(), words[0].english),
+            ("Mahoje", false)
+        );
         // Opening again does not add the column twice.
         Store::with_pool(s.pool.clone()).await.unwrap();
     }
@@ -569,8 +669,16 @@ mod tests {
     async fn history_is_trimmed_to_limit() {
         let s = store().await;
         for i in 0..HISTORY_LIMIT {
-            let audio = if i < 3 { Some(format!("/a/{i}.wav")) } else { None };
-            assert!(s.add_history(entry(i, audio.as_deref())).await.unwrap().is_empty());
+            let audio = if i < 3 {
+                Some(format!("/a/{i}.wav"))
+            } else {
+                None
+            };
+            assert!(s
+                .add_history(entry(i, audio.as_deref()))
+                .await
+                .unwrap()
+                .is_empty());
         }
         let trimmed = s.add_history(entry(HISTORY_LIMIT, None)).await.unwrap();
         assert_eq!(trimmed, vec!["/a/0.wav".to_string()]);
@@ -584,9 +692,16 @@ mod tests {
     async fn audio_expires_after_retention() {
         let s = store().await;
         let now = 10 * AUDIO_RETENTION_MS;
-        s.add_history(entry(now - AUDIO_RETENTION_MS - 1, Some("/a/old.wav"))).await.unwrap();
-        s.add_history(entry(now - 1000, Some("/a/new.wav"))).await.unwrap();
-        assert_eq!(s.expire_audio(now).await.unwrap(), vec!["/a/old.wav".to_string()]);
+        s.add_history(entry(now - AUDIO_RETENTION_MS - 1, Some("/a/old.wav")))
+            .await
+            .unwrap();
+        s.add_history(entry(now - 1000, Some("/a/new.wav")))
+            .await
+            .unwrap();
+        assert_eq!(
+            s.expire_audio(now).await.unwrap(),
+            vec!["/a/old.wav".to_string()]
+        );
         let history = s.history(10).await.unwrap();
         assert_eq!(history.len(), 2, "text is kept");
         assert!(history[0].has_audio);
@@ -599,7 +714,10 @@ mod tests {
         s.add_history(entry(1, Some("/a/1.wav"))).await.unwrap();
         s.add_history(entry(2, None)).await.unwrap();
         let id = s.history(10).await.unwrap()[1].id;
-        assert_eq!(s.delete_history(id).await.unwrap(), Some("/a/1.wav".to_string()));
+        assert_eq!(
+            s.delete_history(id).await.unwrap(),
+            Some("/a/1.wav".to_string())
+        );
         assert_eq!(s.history(10).await.unwrap().len(), 1);
         assert!(s.clear_history().await.unwrap().is_empty());
         assert!(s.history(10).await.unwrap().is_empty());

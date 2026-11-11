@@ -33,14 +33,20 @@ pub enum ShortcutAction {
     Ask,
     /// Show the main window.
     OpenWindow,
+    /// Insert the newest saved dictation again.
+    InsertLast,
+    /// Transcribe the newest saved recording with another provider.
+    RerunLast,
 }
 
 impl ShortcutAction {
     /// The actions registered with `RegisterHotKey`.
-    pub const REGISTERED: [ShortcutAction; 3] = [
+    pub const REGISTERED: [ShortcutAction; 5] = [
         ShortcutAction::NewRecording,
         ShortcutAction::Ask,
         ShortcutAction::OpenWindow,
+        ShortcutAction::InsertLast,
+        ShortcutAction::RerunLast,
     ];
 
     /// Name in the UI.
@@ -50,6 +56,8 @@ impl ShortcutAction {
             ShortcutAction::NewRecording => "Ny optagelse",
             ShortcutAction::Ask => "Spørg",
             ShortcutAction::OpenWindow => "Åbn Tingskriver",
+            ShortcutAction::InsertLast => "Indsæt sidste igen",
+            ShortcutAction::RerunLast => "Kør sidste igen",
         }
     }
 
@@ -60,6 +68,8 @@ impl ShortcutAction {
             ShortcutAction::NewRecording => 2,
             ShortcutAction::Ask => 3,
             ShortcutAction::OpenWindow => 4,
+            ShortcutAction::InsertLast => 5,
+            ShortcutAction::RerunLast => 6,
         }
     }
 
@@ -69,6 +79,8 @@ impl ShortcutAction {
             ShortcutAction::NewRecording,
             ShortcutAction::Ask,
             ShortcutAction::OpenWindow,
+            ShortcutAction::InsertLast,
+            ShortcutAction::RerunLast,
         ]
         .into_iter()
         .find(|a| a.id() == id)
@@ -82,6 +94,8 @@ pub struct ShortcutSettings {
     pub new_recording: Option<String>,
     pub ask: Option<String>,
     pub open_window: Option<String>,
+    pub insert_last: Option<String>,
+    pub rerun_last: Option<String>,
 }
 
 impl ShortcutSettings {
@@ -91,6 +105,8 @@ impl ShortcutSettings {
             ShortcutAction::NewRecording => &self.new_recording,
             ShortcutAction::Ask => &self.ask,
             ShortcutAction::OpenWindow => &self.open_window,
+            ShortcutAction::InsertLast => &self.insert_last,
+            ShortcutAction::RerunLast => &self.rerun_last,
         };
         slot.as_deref().map(str::trim).filter(|s| !s.is_empty())
     }
@@ -101,6 +117,8 @@ impl ShortcutSettings {
             ShortcutAction::NewRecording => &mut self.new_recording,
             ShortcutAction::Ask => &mut self.ask,
             ShortcutAction::OpenWindow => &mut self.open_window,
+            ShortcutAction::InsertLast => &mut self.insert_last,
+            ShortcutAction::RerunLast => &mut self.rerun_last,
         };
         *slot = shortcut;
     }
@@ -427,7 +445,24 @@ mod tests {
             new_recording: new_recording.map(String::from),
             ask: ask.map(String::from),
             open_window: open_window.map(String::from),
+            ..Default::default()
         }
+    }
+
+    #[test]
+    fn repeat_shortcuts_round_trip_and_conflict() {
+        let mut settings: ShortcutSettings = serde_json::from_str("{}").unwrap();
+        assert_eq!(settings.get(ShortcutAction::InsertLast), None);
+        for action in [ShortcutAction::InsertLast, ShortcutAction::RerunLast] {
+            assert_eq!(ShortcutAction::from_id(action.id()), Some(action));
+            settings.set(action, Some("Ctrl+Alt+F10".into()));
+        }
+        let saved = serde_json::to_value(&settings).unwrap();
+        let loaded: ShortcutSettings = serde_json::from_value(saved).unwrap();
+        assert_eq!(loaded, settings);
+        assert!(check(None, &loaded)
+            .iter()
+            .any(|c| matches!(c.kind, ConflictKind::SameAs(_))));
     }
 
     #[test]
@@ -437,6 +472,8 @@ mod tests {
             ShortcutAction::NewRecording,
             ShortcutAction::Ask,
             ShortcutAction::OpenWindow,
+            ShortcutAction::InsertLast,
+            ShortcutAction::RerunLast,
         ] {
             assert_eq!(ShortcutAction::from_id(action.id()), Some(action));
         }

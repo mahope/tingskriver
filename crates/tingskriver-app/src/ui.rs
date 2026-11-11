@@ -36,6 +36,7 @@ pub struct AppModel {
     /// Whether the first-frame time is still to be reported. Off for
     /// `--hidden`, where the window opens long after process start.
     pub report_first_frame: bool,
+    pub rerun_comparison: Option<tingskriver_core::dictation::rerun::Comparison>,
 }
 
 impl AppModel {
@@ -56,6 +57,7 @@ impl AppModel {
             clock,
             start_page: Page::Meetings,
             report_first_frame: true,
+            rerun_comparison: None,
         }
     }
 
@@ -79,6 +81,17 @@ pub fn init(model: Entity<AppModel>, cx: &mut App) {
         model,
         main_window: None,
     });
+}
+
+pub fn show_rerun_comparison(
+    comparison: tingskriver_core::dictation::rerun::Comparison,
+    cx: &mut App,
+) {
+    model(cx).update(cx, |model, cx| {
+        model.rerun_comparison = Some(comparison);
+        cx.notify();
+    });
+    show_main_window(cx);
 }
 
 fn model(cx: &App) -> Entity<AppModel> {
@@ -566,12 +579,40 @@ impl Render for Shell {
             DbState::Failed(failure) => Some(failure.clone()),
             _ => None,
         };
-        let content = match (&failure, self.page) {
-            (Some(failure), _) => self.database_error_page(failure, cx),
-            (None, Page::Meetings) => self.meetings_page(cx),
-            (None, Page::Dictation) => self.dictation_page(cx),
-            (None, Page::Settings) => self.settings_page(cx),
-            (None, Page::Measurement) => self.measurement.clone().into_any_element(),
+        let content = if let Some(comparison) = &self.model.read(cx).rerun_comparison {
+            let body = v_flex()
+                .gap(space::LG)
+                .child(paragraph(
+                    if comparison.changed {
+                        strings::RERUN_CHANGED
+                    } else {
+                        strings::RERUN_UNCHANGED
+                    },
+                    cx,
+                ))
+                .child(section_title(strings::RERUN_BEFORE))
+                .child(paragraph(&comparison.before, cx))
+                .child(section_title(strings::RERUN_AFTER))
+                .child(paragraph(&comparison.after, cx))
+                .child(
+                    Button::new("close-rerun-comparison")
+                        .label(strings::RERUN_CLOSE)
+                        .on_click(|_, _, cx| {
+                            model(cx).update(cx, |model, cx| {
+                                model.rerun_comparison = None;
+                                cx.notify();
+                            });
+                        }),
+                );
+            page(strings::RERUN_TITLE, None, body.into_any_element(), cx)
+        } else {
+            match (&failure, self.page) {
+                (Some(failure), _) => self.database_error_page(failure, cx),
+                (None, Page::Meetings) => self.meetings_page(cx),
+                (None, Page::Dictation) => self.dictation_page(cx),
+                (None, Page::Settings) => self.settings_page(cx),
+                (None, Page::Measurement) => self.measurement.clone().into_any_element(),
+            }
         };
         h_flex()
             .size_full()

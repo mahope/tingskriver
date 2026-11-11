@@ -8,9 +8,11 @@
 //! 4. e-mail and web addresses ([`super::address`]);
 //! 5. numbers, dates, times and amounts ([`super::numbers`]);
 //! 6. spoken punctuation and symbols ([`super::spoken`]);
-//! 7. Danish filler words;
-//! 8. the "press Enter" trigger word at the end (chat modes);
-//! 9. capital letters at sentence starts, spacing around punctuation.
+//! 7. stutters: three or more equal words in a row become one (not numbers,
+//!    and not words the dictionary has handled);
+//! 8. Danish filler words;
+//! 9. the "press Enter" trigger word at the end (chat modes);
+//! 10. capital letters at sentence starts, spacing around punctuation.
 //!
 //! Runs in well under a millisecond for normal dictation lengths. Nothing is
 //! ever translated: words the passes don't recognise are kept as spoken,
@@ -86,6 +88,8 @@ pub struct Options<'a> {
     pub rules: &'a Rules,
     pub format_numbers: bool,
     pub format_addresses: bool,
+    /// Three or more equal words in a row become one ("nej nej nej" → "nej").
+    pub collapse_stutters: bool,
     /// Words that press Enter when they end the dictation (chat modes).
     pub enter_triggers: &'a [String],
 }
@@ -98,6 +102,7 @@ impl<'a> Options<'a> {
             rules,
             format_numbers: style == Style::Normal,
             format_addresses: style == Style::Normal,
+            collapse_stutters: style == Style::Normal,
             enter_triggers: &[],
         }
     }
@@ -183,7 +188,18 @@ pub fn clean_with(input: &str, options: &Options) -> Cleaned {
     } else {
         tokens
     };
+    let tokens = if options.style == Style::Raw {
+        remove_fillers(tokens, options.style)
+    } else {
+        tokens
+    };
+    let tokens = super::identifiers::format(tokens, options.style, &options.rules.spoken);
     let tokens = apply_matchers(tokens, &spoken_matchers(&options.rules.spoken));
+    let tokens = if options.collapse_stutters {
+        collapse_stutters(tokens)
+    } else {
+        tokens
+    };
     let tokens = remove_fillers(tokens, options.style);
     let (tokens, press_enter) = take_enter_trigger(tokens, options.enter_triggers);
     let tokens = if options.style == Style::Normal {
@@ -634,6 +650,45 @@ fn ends_with_abbreviation(out: &[Tok]) -> bool {
         Tok::Word { text, .. } => ABBREVIATIONS.contains(&normalize(text).as_str()),
         _ => false,
     }
+}
+
+/// Collapse a run of three or more equal plain words ("nej nej nej") into the
+/// first of them. Two stay ("meget meget"). A comma between the words belongs
+/// to the run; punctuation after the last word is kept. Numbers are left
+/// alone, and so is everything the dictionary, snippets and spoken signs have
+/// already turned into fixed text (only plain words are compared).
+fn collapse_stutters(tokens: Vec<Tok>) -> Vec<Tok> {
+    let word_at = |i: usize| -> Option<String> {
+        let word = tokens.get(i)?.plain_word()?;
+        (!numbers::is_number_word(&word)).then_some(word)
+    };
+    let mut out: Vec<Tok> = Vec::with_capacity(tokens.len());
+    let mut i = 0;
+    while i < tokens.len() {
+        let Some(word) = word_at(i) else {
+            out.push(tokens[i].clone());
+            i += 1;
+            continue;
+        };
+        let mut end = i + 1;
+        let mut count = 1;
+        loop {
+            let next = if matches!(tokens.get(end), Some(Tok::Punct(','))) {
+                end + 1
+            } else {
+                end
+            };
+            if word_at(next).as_deref() == Some(word.as_str()) {
+                count += 1;
+                end = next + 1;
+            } else {
+                break;
+            }
+        }
+        out.push(tokens[i].clone());
+        i = if count >= 3 { end } else { i + 1 };
+    }
+    out
 }
 
 fn remove_fillers(tokens: Vec<Tok>, style: Style) -> Vec<Tok> {

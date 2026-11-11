@@ -5,8 +5,13 @@ name: Rust
 # of the GPUI app as an artifact; Linux runs the platform independent tests
 # in tingskriver-core and checks the crate boundaries and the GPUI version
 # lock. Agents read the result with scripts/ci-status.sh.
-# clippy -D warnings and fmt --check are deferred until the fork code is
-# cleaned up (docs/agenter.md).
+#
+# Scope: a push to main always runs everything (the automatic release needs a
+# successful Rust run for every commit on main). On other branches the "scope"
+# job skips the builds when only site/, docs/ and the like changed
+# (.github/scripts/ci-scope.py). A skipped job counts as passed.
+# Lint: rustfmt on changed files only and clippy -D warnings on the crates in
+# .github/clippy-crates.txt (docs/agenter.md).
 
 on:
   push:
@@ -14,8 +19,10 @@ on:
 
 concurrency:
   group: rust-${{ github.ref }}
-  # Queue instead of cancel: every push gets a finished result for agents.
-  cancel-in-progress: false
+  # main queues, so every merge gets a finished result. On other branches only
+  # the tip matters, so a newer push cancels the older run instead of waiting
+  # behind it for scarce Windows runners.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
@@ -25,8 +32,109 @@ env:
   CARGO_INCREMENTAL: 0
 
 jobs:
+  scope:
+    name: Change scope
+    runs-on: ${{ (github.event_name == 'push' && vars.LINUX_RUNNER) || 'ubuntu-latest' }}
+    timeout-minutes: 5
+    outputs:
+      rust: ${{ steps.scope.outputs.rust }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Does this change need the Rust builds?
+        id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+        run: >-
+          python3 .github/scripts/ci-scope.py
+          --event-name "$EVENT_NAME" --ref-name "$REF_NAME" --ref-type "$REF_TYPE"
+
+  # Scheduled and reusable workflows are not exercised by pull request CI; a
+  # missing token permission only shows up at the next cron run (#192). Runs on
+  # every push, also when only .github/ changed.
+  workflows:
+    name: Workflow permissions and schedules
+    runs-on: ${{ (github.event_name == 'push' && vars.LINUX_RUNNER) || 'ubuntu-latest' }}
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Ensure PyYAML
+        run: python3 -c "import yaml" 2>/dev/null || sudo apt-get install -y --no-install-recommends python3-yaml
+
+      - name: Check workflows
+        run: |
+          python3 scripts/check-workflows.py
+          python3 scripts/tests/test_check_workflows.py
+          python3 scripts/tests/test_previous_release.py
+
+  # Fast Linux gate on the changed files only. Files nobody touched may stay
+  # unformatted; main compares with the previous tip of main.
+  lint:
+    name: Format (changed files) and clippy (listed crates)
+    needs: scope
+    if: ${{ needs.scope.outputs.rust == 'true' }}
+    runs-on: ${{ (github.event_name == 'push' && vars.LINUX_RUNNER) || 'ubuntu-latest' }}
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Install system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libasound2-dev cmake clang
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          prefix-key: tingskriver-linux-lint-v1
+
+      - name: rustfmt on changed files
+        shell: bash
+        env:
+          BEFORE: ${{ github.event.before }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ "$REF_NAME" = "main" ]; then
+            base="$BEFORE"
+            if [ -z "$base" ] || [ "${base//0/}" = "" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+              base="HEAD~1"
+            fi
+          else
+            git fetch --no-tags --quiet origin main
+            base="origin/main"
+          fi
+          .github/scripts/check-fmt-changed.sh "$base"
+
+      - name: clippy -D warnings on the listed crates
+        run: .github/scripts/annotate-errors.sh .github/scripts/clippy-ratchet.sh
+
+      - name: Test the CI scope and format gate scripts
+        run: |
+          python3 scripts/tests/test_ci_scope.py
+          bash scripts/tests/test_fmt_changed.sh
+
   windows:
     name: Windows workspace build and tests
+    # Wait for format and clippy (a few minutes on Linux), so a lint error does
+    # not hold two Windows runners for 25 minutes. Skipped when lint fails.
+    needs: [scope, lint]
+    if: ${{ needs.scope.outputs.rust == 'true' }}
     runs-on: windows-latest
     timeout-minutes: 90
     steps:
@@ -104,7 +212,9 @@ jobs:
 
   linux-core:
     name: Core tests and crate boundaries (Linux)
-    runs-on: ubuntu-latest
+    needs: scope
+    if: ${{ needs.scope.outputs.rust == 'true' }}
+    runs-on: ${{ (github.event_name == 'push' && vars.LINUX_RUNNER) || 'ubuntu-latest' }}
     timeout-minutes: 60
     steps:
       - name: Checkout repository
@@ -140,6 +250,9 @@ jobs:
       - name: GPUI version lock
         run: python3 scripts/check-gpui-lock.py
 
+      - name: GPUI design document
+        run: python3 scripts/check-design-doc.py
+
       - name: Test tingskriver-core
         run: .github/scripts/annotate-errors.sh cargo test --locked -p tingskriver-core
 
@@ -164,6 +277,10 @@ jobs:
   # docs/gpui.md (text input, IME, UI Automation, DPI, start time, no GPU).
   windows-gpui-app:
     name: GPUI app artifact (Windows release)
+    # Wait for format and clippy (a few minutes on Linux), so a lint error does
+    # not hold two Windows runners for 25 minutes. Skipped when lint fails.
+    needs: [scope, lint]
+    if: ${{ needs.scope.outputs.rust == 'true' }}
     runs-on: windows-latest
     timeout-minutes: 90
     steps:
@@ -214,7 +331,9 @@ jobs:
   # LGPL crate anywhere in the tree fails this job.
   cargo-deny:
     name: Dependency licences (cargo deny)
-    runs-on: ubuntu-latest
+    needs: scope
+    if: ${{ needs.scope.outputs.rust == 'true' }}
+    runs-on: ${{ (github.event_name == 'push' && vars.LINUX_RUNNER) || 'ubuntu-latest' }}
     timeout-minutes: 15
     steps:
       - name: Checkout repository
@@ -233,7 +352,9 @@ jobs:
   xwin-check:
     name: Windows check from Linux (cargo xwin)
     # Pinned so the LLVM 19 packages below exist.
-    runs-on: ubuntu-24.04
+    needs: scope
+    if: ${{ needs.scope.outputs.rust == 'true' }}
+    runs-on: ${{ (github.event_name == 'push' && vars.LINUX_RUNNER) || 'ubuntu-24.04' }}
     timeout-minutes: 60
     steps:
       - name: Checkout repository

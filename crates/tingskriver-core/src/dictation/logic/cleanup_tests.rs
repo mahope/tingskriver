@@ -238,7 +238,10 @@ fn long_text_is_fast() {
     };
     let short = measure(200);
     let long = measure(3200);
-    assert!(short < Duration::from_secs(1), "200 sentences took {short:?}");
+    assert!(
+        short < Duration::from_secs(1),
+        "200 sentences took {short:?}"
+    );
     // 16x input should scale near 16x, not the 256x of quadratic work.
     // Allow 4x scaling headroom plus a fixed scheduling allowance.
     assert!(
@@ -453,8 +456,14 @@ fn enter_trigger_in_the_middle_is_text() {
 #[test]
 fn addresses_table() {
     let cases: &[(&str, &str)] = &[
-        ("se mahoje punktum dk skråstreg kontakt i morgen", "Se mahoje.dk/kontakt i morgen"),
-        ("se mahoje punktum dk skråstreg min bindestreg side skråstreg kontakt i morgen", "Se mahoje.dk/min-side/kontakt i morgen"),
+        (
+            "se mahoje punktum dk skråstreg kontakt i morgen",
+            "Se mahoje.dk/kontakt i morgen",
+        ),
+        (
+            "se mahoje punktum dk skråstreg min bindestreg side skråstreg kontakt i morgen",
+            "Se mahoje.dk/min-side/kontakt i morgen",
+        ),
         ("anna snabel-a eksempel punktum d k", "anna@eksempel.dk"),
         (
             "skriv til anna snabel-a eksempel punktum dk",
@@ -722,15 +731,12 @@ fn code_urls_and_file_names_are_unchanged() {
         let expected = upper_first(input);
         assert_eq!(out, expected, "{input}");
     }
-    // Code mode: nothing is formatted.
+    // Code mode keeps number words but joins spoken code punctuation.
     assert_eq!(
         raw("klokken fjorten tredive tolv procent"),
         "klokken fjorten tredive tolv procent"
     );
-    assert_eq!(
-        raw("anna snabel-a eksempel punktum dk"),
-        "anna@eksempel. dk"
-    );
+    assert_eq!(raw("anna snabel-a eksempel punktum dk"), "anna@eksempel.dk");
 }
 
 // ---------------------------------------------------------------------------
@@ -849,4 +855,276 @@ fn english_terms_survive_mixed_sentences() {
     }
     assert!(sentences >= 30, "only {sentences} sentences");
     assert!(kept * 100 >= total * 90, "kept {kept} of {total}: {lost:?}");
+}
+
+// ---------------------------------------------------------------------------
+// Stutters (#213): three or more equal words become one
+// ---------------------------------------------------------------------------
+
+#[test]
+fn three_or_more_equal_words_are_collapsed() {
+    assert_eq!(normal("nej nej nej nej"), "Nej");
+    assert_eq!(normal("jeg jeg jeg vil gerne"), "Jeg vil gerne");
+    assert_eq!(
+        normal("Nej, nej, nej, det gør jeg ikke"),
+        "Nej, det gør jeg ikke"
+    );
+    assert_eq!(normal("det er NEJ nej Nej"), "Det er NEJ");
+}
+
+#[test]
+fn two_equal_words_are_kept() {
+    assert_eq!(normal("meget meget god"), "Meget meget god");
+    assert_eq!(normal("nej nej"), "Nej nej");
+}
+
+#[test]
+fn numbers_are_never_collapsed() {
+    let rules = Rules::default();
+    let off = Options {
+        format_numbers: false,
+        ..Options::new(Style::Normal, &rules)
+    };
+    assert_eq!(clean_with("nul nul nul", &off).text, "Nul nul nul");
+    assert_eq!(clean_with("tre tre tre", &off).text, "Tre tre tre");
+    assert_eq!(clean_with("2 2 2", &off).text, "2 2 2");
+}
+
+#[test]
+fn dictionary_words_are_never_collapsed() {
+    let mut r = Rules::default();
+    r.replacements.push(Replacement {
+        from: "bla".into(),
+        to: "bla".into(),
+        keep_english: false,
+    });
+    r.replacements.push(Replacement {
+        from: "yes".into(),
+        to: "yes".into(),
+        keep_english: true,
+    });
+    assert_eq!(clean("bla bla bla", Style::Normal, &r), "Bla bla bla");
+    assert_eq!(clean("yes yes yes", Style::Normal, &r), "yes yes yes");
+}
+
+#[test]
+fn stutter_collapsing_can_be_switched_off() {
+    let rules = Rules::default();
+    let off = Options {
+        collapse_stutters: false,
+        ..Options::new(Style::Normal, &rules)
+    };
+    assert_eq!(clean_with("nej nej nej nej", &off).text, "Nej nej nej nej");
+}
+
+#[test]
+fn raw_style_keeps_repeated_words() {
+    assert_eq!(raw("ls ls ls"), "ls ls ls");
+}
+
+#[test]
+fn code_identifiers() {
+    let cases = [
+        ("get user id camel case", "getUserId"),
+        ("get user id snake case", "get_user_id"),
+        ("get user id kebab case", "get-user-id"),
+        ("get user id pascal case", "GetUserId"),
+        ("get user id camelCase", "getUserId"),
+        ("get user id snake_case", "get_user_id"),
+        ("get user id kebab-case", "get-user-id"),
+        ("get user id PascalCase", "GetUserId"),
+        ("index punktum ts", "index.ts"),
+        ("main punktum rs", "main.rs"),
+        ("app punktum test punktum ts", "app.test.ts"),
+        ("git commit bindestreg m", "git commit -m"),
+        ("git status", "git status"),
+        ("user understreg id", "user_id"),
+        ("src skråstreg main punktum rs", "src/main.rs"),
+        ("hej verden", "hej verden"),
+        ("hent bruger navn camel case", "hentBrugerNavn"),
+        ("æble antal snake case", "æble_antal"),
+        (
+            "user id camel case komma next id snake case",
+            "userId, next_id",
+        ),
+        ("camel case", "camel case"),
+    ];
+    let mismatches: Vec<_> = cases
+        .iter()
+        .filter_map(|(input, expected)| {
+            let actual = raw(input);
+            (actual != *expected).then(|| format!("{input}: {actual:?} != {expected:?}"))
+        })
+        .collect();
+    assert!(
+        mismatches.is_empty(),
+        "{} of {} cases failed:\n{}",
+        mismatches.len(),
+        cases.len(),
+        mismatches.join("\n")
+    );
+}
+
+#[test]
+fn code_identifier_review_regressions() {
+    for (input, expected) in [
+        (
+            "lav en variabel get user id camel case",
+            "lav en variabel getUserId",
+        ),
+        ("ny linje user id camel case", "\nuserId"),
+        (
+            "git checkout bindestreg b feature login snake case",
+            "git checkout -b feature_login",
+        ),
+        ("get øh user id camel case", "getUserId"),
+        ("fix login punktum tilføj test", "fix login. tilføj test"),
+        ("index punktum ts", "index.ts"),
+        ("config punktum yaml", "config.yaml"),
+        ("get øhm, user id camel case", "getUserId"),
+        ("prefix understreg user id camel case", "prefix_userId"),
+        ("src skråstreg user id camel case", "src/userId"),
+        ("get + user id camel case", "get + userId"),
+        ("GET USER ID camel case", "getUserId"),
+        ("ls bindestreg la", "ls -la"),
+        ("ls bindestreg R", "ls -R"),
+        (
+            "cargo build bindestreg bindestreg release",
+            "cargo build --release",
+        ),
+    ] {
+        assert_eq!(raw(input), expected, "{input}");
+    }
+}
+
+#[test]
+fn code_flags_preserve_argument_and_path_hyphens() {
+    for (input, expected) in [
+        (
+            "git checkout bindestreg b feature bindestreg login",
+            "git checkout -b feature-login",
+        ),
+        (
+            "src skråstreg my bindestreg module punktum rs",
+            "src/my-module.rs",
+        ),
+        ("ls bindestreg la bindestreg R", "ls -la -R"),
+    ] {
+        assert_eq!(raw(input), expected, "{input}");
+    }
+}
+
+#[test]
+fn identifier_boundaries_follow_the_active_spoken_table() {
+    let table = SpokenTable::with_user(
+        r#"{"version":1,"entries":[{"phrases":["custom boundary"],"action":{"type":"break","lines":1}}]}"#,
+    )
+    .unwrap();
+    for entry in &table.entries {
+        for phrase in &entry.phrases {
+            for word in spoken::phrase_words(phrase) {
+                let tokens = vec![
+                    Tok::plain("prefix"),
+                    Tok::plain(&word),
+                    Tok::plain("user"),
+                    Tok::plain("id"),
+                    Tok::plain("camel"),
+                    Tok::plain("case"),
+                ];
+                let expected = match word.as_str() {
+                    "punktum" => vec![
+                        Tok::plain("prefix"),
+                        Tok::sym(".", false, false),
+                        Tok::exact("userId"),
+                    ],
+                    "bindestreg" => vec![
+                        Tok::plain("prefix"),
+                        Tok::sym("-", true, false),
+                        Tok::exact("user"),
+                        Tok::exact("id"),
+                    ],
+                    _ => vec![
+                        Tok::plain("prefix"),
+                        Tok::plain(&word),
+                        Tok::exact("userId"),
+                    ],
+                };
+                assert_eq!(
+                    super::super::identifiers::format(tokens, Style::Raw, &table),
+                    expected,
+                    "{word} in {phrase}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn identifiers_leave_normal_danish_alone() {
+    for (input, expected) in [
+        ("get user id camel case", "Get user id camel case"),
+        ("vi taler om snake case", "Vi taler om snake case"),
+        ("index punktum ts", "Index. Ts"),
+        ("git commit bindestreg m", "Git commit-m"),
+        ("ls bindestreg la", "Ls-la"),
+        (
+            "cargo build bindestreg bindestreg release",
+            "Cargo build--release",
+        ),
+        ("hej verden", "Hej verden"),
+    ] {
+        assert_eq!(normal(input), expected, "{input}");
+    }
+    assert_eq!(raw("skriv ordet camel case"), "camel case");
+}
+
+#[test]
+fn identifier_style_comes_from_existing_app_rules() {
+    use super::super::app_style::{default_rules, style_for, AppStyleRule};
+    let rules = default_rules();
+    for process in ["Code.exe", "WindowsTerminal.exe"] {
+        assert_eq!(
+            clean(
+                "get user id camel case",
+                style_for(Some(process), &rules),
+                &Rules::default()
+            ),
+            "getUserId"
+        );
+    }
+    let rules = [AppStyleRule {
+        process: "Code.exe".into(),
+        style: Style::Normal,
+    }];
+    assert_eq!(
+        clean(
+            "get user id camel case",
+            style_for(Some("Code.exe"), &rules),
+            &Rules::default()
+        ),
+        "Get user id camel case"
+    );
+}
+
+#[test]
+fn identifiers_preserve_protected_text() {
+    let rules = Rules {
+        replacements: vec![Replacement {
+            from: "filnavnet".into(),
+            to: "index punktum ts".into(),
+            keep_english: true,
+        }],
+        snippets: vec![Snippet {
+            trigger: "kodeblok".into(),
+            text: "get user id camel case".into(),
+        }],
+        ..Rules::default()
+    };
+    for (input, expected) in [
+        ("filnavnet", "index punktum ts"),
+        ("kodeblok", "get user id camel case"),
+        ("skriv ordet punktum", "punktum"),
+    ] {
+        assert_eq!(clean(input, Style::Raw, &rules), expected, "{input}");
+    }
 }

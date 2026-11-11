@@ -1,0 +1,132 @@
+name: Installer smoke test (Windows)
+
+# Installs Tingskriver-Setup.exe silently on a clean Windows runner, checks the
+# uninstall entry, runs `tingskriver-app --diagnose --json`, keeps the app alive
+# for 20 s, uninstalls silently and checks that the program folder and the Run
+# value are gone while user data and Credential Manager keys stay
+# (installer/smoke-test.ps1, installer/README.md).
+#
+# - Runs on installer and updater pull requests; releases call it with their artifact.
+# - Can be called from another workflow (workflow_call). Pass `package-artifact`
+#   (an artifact of the calling run holding Tingskriver-Setup.exe) to test a
+#   package that is already built; without it this workflow builds one itself.
+# - A second job corrupts the installer on purpose and requires the smoke test
+#   to fail, so a test that can no longer find anything shows up as red.
+
+on:
+  pull_request:
+    paths:
+      - 'installer/**'
+      - 'crates/tingskriver-core/src/install/**'
+      - 'crates/tingskriver-app/src/update.rs'
+      - '.github/workflows/velopack-package.yml'
+      - '.github/workflows/app-release.yml'
+      - '.github/workflows/installer-smoke.yml'
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      package-artifact:
+        description: Name of an artifact in the calling run that holds Tingskriver-Setup.exe. Empty means build the package here.
+        type: string
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    if: ${{ inputs.package-artifact == '' }}
+    uses: ./.github/workflows/velopack-package.yml
+
+  smoke:
+    name: Install, start, uninstall
+    needs: package
+    # Run when the package was built here (needs succeeded) or supplied by the caller (needs skipped).
+    if: ${{ !cancelled() && (needs.package.result == 'success' || (needs.package.result == 'skipped' && inputs.package-artifact != '')) }}
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download installer
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.package-artifact || needs.package.outputs.artifact }}
+          path: setup
+
+      - name: Locate installer and write SHA-256
+        id: setup
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem -Path setup -Recurse -Filter 'Tingskriver-Setup.exe' | Select-Object -First 1
+          if (-not $setup) { throw 'Tingskriver-Setup.exe is not in the downloaded artifact' }
+          $hash = (Get-FileHash $setup.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          New-Item -ItemType Directory -Force -Path smoke-out | Out-Null
+          [IO.File]::WriteAllText((Join-Path (Resolve-Path smoke-out).Path 'Tingskriver-Setup.exe.sha256'), "$hash  Tingskriver-Setup.exe`n", (New-Object Text.UTF8Encoding $false))
+          "path=$($setup.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          Write-Host "Tingskriver-Setup.exe sha256 $hash"
+
+      - name: Smoke test
+        shell: pwsh
+        run: ./installer/smoke-test.ps1 -Setup "${{ steps.setup.outputs.path }}" -OutputDir smoke-out
+
+      # Always: the SHA-256 is wanted on success too; log and event log tail on failure.
+      - name: Upload smoke test files
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-smoke-files
+          path: smoke-out/*
+          if-no-files-found: warn
+          retention-days: 30
+
+  # The smoke test must be able to fail: a truncated installer has to turn it red.
+  broken-installer:
+    name: A broken installer is caught
+    needs: package
+    if: ${{ !cancelled() && (needs.package.result == 'success' || (needs.package.result == 'skipped' && inputs.package-artifact != '')) }}
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download installer
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.package-artifact || needs.package.outputs.artifact }}
+          path: setup
+
+      - name: Corrupt the installer
+        id: broken
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem -Path setup -Recurse -Filter 'Tingskriver-Setup.exe' | Select-Object -First 1
+          if (-not $setup) { throw 'Tingskriver-Setup.exe is not in the downloaded artifact' }
+          $broken = Join-Path $env:RUNNER_TEMP 'Tingskriver-Setup.exe'
+          $bytes = [IO.File]::ReadAllBytes($setup.FullName)
+          # Keep the first third: still an .exe header, but the payload is cut off.
+          [IO.File]::WriteAllBytes($broken, $bytes[0..([int]($bytes.Length / 3))])
+          "path=$broken" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Smoke test must fail
+        shell: pwsh
+        run: |
+          # Short timeouts: a broken installer either exits at once or hangs.
+          $output = pwsh -NoProfile -File ./installer/smoke-test.ps1 -Setup "${{ steps.broken.outputs.path }}" -OutputDir broken-out -InstallTimeoutSeconds 90 2>&1 | Out-String
+          $code = $LASTEXITCODE
+          Write-Host $output
+          if ($code -eq 0) {
+            Write-Host '::error::The smoke test passed with a corrupted installer, so it cannot be trusted.'
+            exit 1
+          }
+          # Red for the right reason: the install step must be what failed, not a
+          # syntax error or a missing file in the script.
+          if ($output -notmatch 'SMOKE TEST FAILED: (Setup\.exe --silent exited|install did not finish|No uninstall entry|.* is missing after install)') {
+            Write-Host "::error::The smoke test failed (exit code $code), but not in the install step, so this check proves nothing."
+            exit 1
+          }
+          Write-Host "The smoke test failed in the install step on the corrupted installer (exit code $code), as it should."
+          exit 0

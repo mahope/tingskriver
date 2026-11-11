@@ -37,6 +37,15 @@ Thank you for your interest in contributing to Tingskriver! This document provid
 5. Ensure all tests pass
 6. Update documentation if necessary
 
+### GPUI components
+
+Before you build or change a screen in `crates/tingskriver-app`, read
+[docs/design.md](docs/design.md): reuse an existing component, extend it if a
+state is missing, create a new one only if nothing covers the need, and
+check its consumers before changing a shared one. Update the document when a
+responsibility or an experience changes (`python3 scripts/check-design-doc.py`
+checks the component list).
+
 ### Issue Creation
 
 Before starting work on a new feature or bug fix:
@@ -59,6 +68,14 @@ Before starting work on a new feature or bug fix:
 5. Request review from at least one maintainer
 6. Address any review comments
 7. Once approved, the PR will be merged into `devtest`
+
+### Formatting and lint gates
+
+CI checks only what you change (see [docs/ci.md](docs/ci.md)):
+
+- Every `.rs` file your branch changes must pass `rustfmt --edition 2021 --check`. Run `.github/scripts/check-fmt-changed.sh origin/main` before pushing. Do not reformat files you do not otherwise touch.
+- `cargo clippy --all-targets -- -D warnings` must pass for every crate listed in `.github/clippy-crates.txt`. Add your crate to the list (one line) once it is clean.
+- Changes that only touch `site/`, `docs/` and similar skip the Rust builds on branches; `main` always runs the full CI.
 
 ### PR Template
 
