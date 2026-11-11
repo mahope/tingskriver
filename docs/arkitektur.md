@@ -400,3 +400,42 @@ OpenRouter's model list is async in core and in the Tauri wrapper. Its
 single-worker fake-server test covers stalled headers, stalled bodies and
 concurrent core calls. `read_audio_file` has already been removed; playback
 uses the core playback API instead of JSON arrays of audio bytes.
+
+## Code dictation identifiers
+
+The pure `dictation::logic::identifiers` token pass runs only for `Style::Raw`,
+using the style already selected by `app_style` and dictation modes. It runs
+before spoken punctuation, after hesitation removal, and leaves literal words,
+snippets and dictionary replacements protected. A trailing `camel case`,
+`snake case`, `kebab case` or `pascal case` formats at most the three preceding
+plain words (also accepted as `camelCase`, `snake_case`, `kebab-case`,
+`PascalCase`). The scan stops at symbols, protected tokens and any word in the
+active spoken-command table, including words in multiword commands. Parts are
+lowercased before the requested casing is applied. This is a bounded heuristic:
+earlier words remain unchanged, even when they belong to a longer identifier.
+
+For example, `lav en variabel get user id camel case` becomes
+`lav en variabel getUserId`. `punktum` joins a filename only when the next word
+has at most four ASCII letters or digits and is not a spoken-command word:
+`index punktum ts` becomes `index.ts`, while `fix login punktum tilføj test`
+becomes `fix login. tilføj test`. Short prose words can still look like file
+extensions under this heuristic. `bindestreg` before an alphanumeric flag
+produces `-`, and two consecutive occurrences produce `--`, with a space
+before the flag: `ls bindestreg la` becomes `ls -la` and
+`cargo build bindestreg bindestreg release` becomes `cargo build --release`.
+Flag recognition is limited to a command with at most one subcommand, followed
+by zero or more flags. After a positional argument or path starts, hyphens
+retain their normal joining: `git checkout bindestreg b feature bindestreg login`
+becomes `git checkout -b feature-login`, and
+`src skråstreg my bindestreg module punktum rs` becomes `src/my-module.rs`.
+This conservative heuristic does not recognize flags after positional arguments
+or command prefixes longer than two words. Flag words are protected from
+subsequent casing commands.
+No application detection or I/O lives in this pass, so it can move to a text
+crate independently of desktop hosts.
+
+The `cleanup::tests::code_identifiers` and regression tests cover the four
+casing styles, bounded phrases, spoken-command boundaries, hesitations,
+filenames, prose punctuation, command flags, paths and Danish words. Separate
+tests cover normal-style isolation, application style overrides and protected
+literal, dictionary and snippet text.
