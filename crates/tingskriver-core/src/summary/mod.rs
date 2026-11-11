@@ -39,6 +39,7 @@ pub mod service;
 pub mod structured;
 pub mod summary_engine;
 pub mod template_commands;
+pub mod template_rules;
 pub mod templates;
 
 // Re-export commonly used items

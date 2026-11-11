@@ -1,0 +1,31 @@
+{
+  "name": "1:1",
+  "description": "Dansk referat af trivsel, udvikling og gensidige aftaler.",
+  "sections": [
+    {
+      "title": "Trivsel",
+      "instruction": "Gengiv kun det, deltagerne selv fortalte om trivsel. Skriv på dansk.",
+      "format": "list"
+    },
+    {
+      "title": "Udvikling og feedback",
+      "instruction": "Opsummér drøftede mål, udvikling og feedback uden at udlede personlige egenskaber. Skriv på dansk.",
+      "format": "list"
+    },
+    {
+      "title": "Beslutninger",
+      "instruction": "Angiv kun beslutninger, der faktisk blev truffet. Skriv på dansk.",
+      "format": "list"
+    },
+    {
+      "title": "Aftaler og opgaver",
+      "instruction": "Angiv opgave, ansvarlig og frist. Markér det som uafklaret, hvis ansvarlig eller frist mangler. Opfind ikke aftaler. Skriv på dansk.",
+      "format": "list"
+    },
+    {
+      "title": "Åbne spørgsmål",
+      "instruction": "Angiv uafklarede spørgsmål og næste skridt. Skriv på dansk.",
+      "format": "list"
+    }
+  ]
+}

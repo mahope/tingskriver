@@ -1,0 +1,5 @@
+[
+  {"when": "title_contains", "text": "1:1", "template": "one_to_one"},
+  {"when": "external_attendee", "template": "kunde"},
+  {"when": "default", "template": "standard"}
+]

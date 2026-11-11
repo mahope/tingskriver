@@ -1,0 +1,31 @@
+{
+  "name": "Intern status",
+  "description": "Dansk statusreferat med fremdrift, blokeringer og næste skridt.",
+  "sections": [
+    {
+      "title": "Fremdrift",
+      "instruction": "Opsummér afsluttet og igangværende arbejde. Skriv på dansk.",
+      "format": "list"
+    },
+    {
+      "title": "Blokeringer",
+      "instruction": "Angiv nævnte blokeringer, afhængigheder og risici. Skriv på dansk.",
+      "format": "list"
+    },
+    {
+      "title": "Beslutninger",
+      "instruction": "Angiv kun beslutninger, der faktisk blev truffet. Skriv på dansk.",
+      "format": "list"
+    },
+    {
+      "title": "Aftaler og opgaver",
+      "instruction": "Angiv opgave, ansvarlig og frist. Markér det som uafklaret, hvis ansvarlig eller frist mangler. Opfind ikke aftaler. Skriv på dansk.",
+      "format": "list"
+    },
+    {
+      "title": "Åbne spørgsmål",
+      "instruction": "Angiv uafklarede spørgsmål og næste skridt. Skriv på dansk.",
+      "format": "list"
+    }
+  ]
+}

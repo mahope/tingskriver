@@ -9,12 +9,21 @@ pub const DAILY_STANDUP: &str = include_str!("../../../templates/daily_standup.j
 /// Standard meeting notes template
 pub const STANDARD_MEETING: &str = include_str!("../../../templates/standard_meeting.json");
 
+pub const STANDARD: &str = include_str!("../../../templates/standard.json");
+pub const KUNDE: &str = include_str!("../../../templates/kunde.json");
+pub const ONE_TO_ONE: &str = include_str!("../../../templates/one_to_one.json");
+pub const INTERN_STATUS: &str = include_str!("../../../templates/intern_status.json");
+
 /// Registry of all built-in templates
 ///
 /// Maps template identifiers to their embedded JSON content
 pub fn get_builtin_templates() -> Vec<(&'static str, &'static str)> {
     vec![
         ("daily_standup", DAILY_STANDUP),
+        ("standard", STANDARD),
+        ("kunde", KUNDE),
+        ("one_to_one", ONE_TO_ONE),
+        ("intern_status", INTERN_STATUS),
         ("standard_meeting", STANDARD_MEETING),
     ]
 }
@@ -27,16 +36,17 @@ pub fn get_builtin_templates() -> Vec<(&'static str, &'static str)> {
 /// # Returns
 /// The template JSON content if found, None otherwise
 pub fn get_builtin_template(id: &str) -> Option<&'static str> {
-    match id {
-        "daily_standup" => Some(DAILY_STANDUP),
-        "standard_meeting" => Some(STANDARD_MEETING),
-        _ => None,
-    }
+    get_builtin_templates()
+        .into_iter()
+        .find_map(|(key, json)| (key == id).then_some(json))
 }
 
 /// List all built-in template identifiers
 pub fn list_builtin_template_ids() -> Vec<&'static str> {
-    vec!["daily_standup", "standard_meeting"]
+    get_builtin_templates()
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect()
 }
 
 #[cfg(test)]

@@ -8,6 +8,7 @@ mod timezone;
 
 use chrono::{DateTime, Utc};
 pub use fetch::{Calendar, RefreshOutcome};
+pub(crate) use ics::email;
 pub use ics::parse;
 pub use matching::match_meeting;
 use serde::{Deserialize, Serialize};

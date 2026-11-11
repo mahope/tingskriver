@@ -28,3 +28,12 @@ pub async fn api_validate_template<R: Runtime>(
     tingskriver_core::summary::template_commands::api_validate_template(template_json).await
 }
 
+#[tauri::command]
+pub async fn save_template(id: String, json: String) -> Result<(), String> {
+    tingskriver_core::summary::templates::save_template(&id, &json).await
+}
+
+#[tauri::command]
+pub async fn export_template(id: String) -> Result<String, String> {
+    tingskriver_core::summary::templates::export_template(&id).await
+}
