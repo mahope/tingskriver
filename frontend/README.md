@@ -142,7 +142,7 @@ For build and acceleration details, see:
 ## Development
 
 ### Frontend (Next.js, Tauri app, being phased out)
-- The frontend is built with Next.js 14 (React 18) and Tailwind CSS
+- The frontend is built with Next.js 15 (React 19) and Tailwind CSS
 - Source code is in the `src/` directory
 - To run only the frontend: `pnpm run dev`
 
