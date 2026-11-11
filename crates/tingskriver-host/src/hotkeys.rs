@@ -187,12 +187,29 @@ mod tests {
             new_recording: new_recording.map(String::from),
             ask: ask.map(String::from),
             open_window: open_window.map(String::from),
+            ..Default::default()
         }
     }
 
     fn key(text: &str) -> (u32, u32) {
         let r = shortcuts::registration(Chord::parse(text).unwrap()).unwrap();
         (r.modifiers & !flags::MOD_NOREPEAT, r.vk)
+    }
+
+    #[test]
+    fn registers_both_repeat_actions() {
+        let system = FakeSystem::default();
+        let mut hotkeys = Hotkeys::new(system.clone());
+        let settings = ShortcutSettings {
+            insert_last: Some("Ctrl+Alt+F9".into()),
+            rerun_last: Some("Ctrl+Alt+F10".into()),
+            ..Default::default()
+        };
+        assert!(hotkeys.apply(None, &settings).is_empty());
+        for action in [ShortcutAction::InsertLast, ShortcutAction::RerunLast] {
+            assert_eq!(hotkeys.action(action.id()), Some(action));
+            assert!(system.ours.borrow().contains_key(&action.id()));
+        }
     }
 
     #[test]

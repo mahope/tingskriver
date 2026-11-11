@@ -651,16 +651,36 @@ fn finalize_tracks(
     let mixed = meeting_folder.join(MIXED_FILE);
     outputs.push((mixed.clone(), temp_path(&mixed)));
 
+    // The outputs do not depend on each other and FFmpeg's AAC encoder uses one
+    // core, so a long recording is encoded in about a third of the time when
+    // they run side by side. Each one still writes its own temporary file,
+    // and nothing is moved into place before every output has been verified.
+    let results: Vec<anyhow::Result<()>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = outputs
+            .iter()
+            .enumerate()
+            .map(|(i, (_, tmp))| {
+                let scanned = &scanned;
+                scope.spawn(move || match scanned.tracks.get(i) {
+                    Some(track) => encode_track(ffmpeg, scanned.sample_rate, track, tmp),
+                    None => encode_mix(ffmpeg, scanned, tmp),
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| {
+                handle
+                    .join()
+                    .unwrap_or_else(|_| Err(anyhow::anyhow!("The encoder thread panicked")))
+            })
+            .collect()
+    });
     let mut encode_error = None;
-    for (i, (_, tmp)) in outputs.iter().enumerate() {
-        let result = match scanned.tracks.get(i) {
-            Some(track) => encode_track(ffmpeg, scanned.sample_rate, track, tmp),
-            None => encode_mix(ffmpeg, &scanned, tmp),
-        };
+    for ((_, tmp), result) in outputs.iter().zip(results) {
         if let Err(e) = result {
             log::error!("Encoding {} failed: {e:#}", tmp.display());
-            encode_error = Some(format!("{e:#}"));
-            break;
+            encode_error.get_or_insert(format!("{e:#}"));
         }
     }
     if let Some(error) = encode_error {
@@ -1142,6 +1162,76 @@ mod tests {
             );
             assert!(has_raw_tracks(&dir.path().join(RAW_DIR)));
             assert!(!dir.path().join(MIXED_FILE).exists());
+        }
+    }
+
+    /// The three outputs are independent, so they are encoded at the same
+    /// time (a three-hour finish took about twelve minutes one after another).
+    /// A fake ffmpeg that waits until all three have started, and fails if
+    /// they do not, proves it without depending on timing.
+    #[cfg(unix)]
+    #[test]
+    fn outputs_are_encoded_concurrently() {
+        let Some(real) = ffmpeg() else {
+            eprintln!("ffmpeg not available, skipping");
+            return;
+        };
+        let dir = tempfile::tempdir().unwrap();
+        record(dir.path(), 2);
+        let started = tempfile::tempdir().unwrap();
+        let fake = dir.path().join("barrier-ffmpeg.sh");
+        let script = format!(
+            "#!/bin/bash\nargs=(\"$@\")\ntouch \"{started}/$$\"\nfor i in $(seq 1 300); do\n[ \"$(ls \"{started}\" | wc -l)\" -ge 3 ] && exec \"{real}\" \"${{args[@]}}\"\nsleep 0.1\ndone\necho 'encodes did not overlap' >&2\nexit 1\n",
+            started = started.path().display(),
+            real = real.display()
+        );
+        std::fs::write(&fake, script).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let outcome = finalize_raw_tracks(dir.path(), Some(&fake));
+        assert_eq!(outcome.status, AudioSaveStatus::Ok, "{}", outcome.message);
+        assert!(!dir.path().join(RAW_DIR).exists());
+        for name in ["audio.mp4", "microphone.m4a", "system.m4a"] {
+            assert!(dir.path().join(name).exists(), "{name} missing");
+        }
+    }
+
+    /// One failing encode among concurrent ones keeps the raw tracks and
+    /// leaves no half-written output behind.
+    #[cfg(unix)]
+    #[test]
+    fn one_failing_encode_keeps_raw_tracks_and_removes_temps() {
+        let Some(real) = ffmpeg() else {
+            eprintln!("ffmpeg not available, skipping");
+            return;
+        };
+        let dir = tempfile::tempdir().unwrap();
+        record(dir.path(), 2);
+        let fake = dir.path().join("failing-ffmpeg.sh");
+        let script = format!(
+            "#!/bin/bash\nargs=(\"$@\")\nout=\"${{args[-1]}}\"\nif [[ \"$out\" == *system* ]]; then\nexit 3\nfi\nexec \"{real}\" \"${{args[@]}}\"\n",
+            real = real.display()
+        );
+        std::fs::write(&fake, script).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let outcome = finalize_raw_tracks(dir.path(), Some(&fake));
+        assert_eq!(
+            outcome.status,
+            AudioSaveStatus::Failed,
+            "{}",
+            outcome.message
+        );
+        assert!(outcome.raw_kept);
+        assert!(has_raw_tracks(&dir.path().join(RAW_DIR)));
+        for entry in std::fs::read_dir(dir.path()).unwrap() {
+            let name = entry.unwrap().file_name().to_string_lossy().into_owned();
+            assert!(
+                !name.ends_with(".tmp") && !name.ends_with(".m4a") && !name.ends_with(".mp4"),
+                "{name} left behind"
+            );
         }
     }
 
