@@ -59,6 +59,7 @@ fn meeting() -> MeetingDetails {
             audio_start_time: Some(1.0),
             audio_end_time: Some(2.0),
             duration: Some(1.0),
+            speaker: None,
         }],
     }
 }
@@ -178,6 +179,7 @@ fn transcript_uses_recording_order_in_both_formats() {
         audio_start_time: Some(3.0),
         audio_end_time: Some(4.0),
         duration: Some(1.0),
+        speaker: None,
     };
     std::mem::swap(&mut later, &mut meeting.transcripts[0]);
     meeting.transcripts.push(later);
