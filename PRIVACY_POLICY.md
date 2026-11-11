@@ -86,6 +86,12 @@ Tingskriver keeps a log file and, after a crash, a crash dump on your own comput
 ## Third-Party Services
 
 ### LLM Providers (Optional)
+Structured meeting reports send the transcript and your own notes, including
+notes written before and during the meeting, to the selected model provider.
+Processing is local by default. Choosing an external provider sends both the
+transcript and notes to that provider. Original notes are also retained unchanged
+in the report, marked as your own.
+
 If you choose to use external LLM providers:
 - **Anthropic Claude**: Subject to Anthropic's privacy policy
 - **Groq**: Subject to Groq's privacy policy

@@ -1,40 +1,42 @@
 ## Description
-[Provide a detailed description of your changes]
+What changed and why.
 
-## Related Issue
-[Link to the issue this PR addresses (e.g., "Fixes #123")]
+## Related issue
+`Fixes #123` (or `Refs #123` if a criterion is not met).
 
-## Type of Change
+## Type of change
 - [ ] Bug fix
 - [ ] New feature
-- [ ] Documentation update
-- [ ] Performance improvement
-- [ ] Code refactoring
-- [ ] Other (please describe)
+- [ ] Documentation
+- [ ] Performance
+- [ ] Refactoring
+- [ ] Other:
 
 ## Testing
-- [ ] Unit tests added/updated
-- [ ] Manual testing performed
-- [ ] All tests pass
+Follow the [test policy](../docs/testing.md).
+- [ ] A test for each fixed bug, data loss or recording/transcription race, and I saw it fail on the old code
+- [ ] New tests name the regression they cover
+- [ ] The checks for the changed components in the [AGENTS.md](../AGENTS.md) table are green
+- [ ] Skipped checks are listed below with command and reason
+- [ ] Manual test plan included for what needs Windows or a real device
+
+Skipped checks (command and reason):
 
 ## Components (GPUI app)
 Reused or new component, and why (see docs/design.md; "No UI change" if none):
 
-## Documentation
-- [ ] Documentation updated
-- [ ] No documentation needed
+## Documentation and licences
+- [ ] Docs updated, or none needed
 - [ ] docs/design.md updated if a component's responsibility or an experience changed
+- [ ] Copied code is recorded under "Porteret fra" in [NOTICE.md](../NOTICE.md), or none was copied
+- [ ] No secrets, personal data or private paths
 
 ## Checklist
-- [ ] Code follows project style
-- [ ] Self-reviewed the code
-- [ ] Added comments for complex code
-- [ ] Updated README if needed
-- [ ] Branch is up to date with devtest
+- [ ] Reviewed against [REVIEW.md](../REVIEW.md)
+- [ ] Branch is up to date with `main`
 - [ ] No merge conflicts
+- [ ] New user text is Danish and comes from `strings`
 
-## Screenshots (if applicable)
-[Add screenshots here if your changes affect the UI]
+## Screenshots (if the UI changed)
 
-## Additional Notes
-[Add any additional information that might be helpful for reviewers] 
+## Additional notes

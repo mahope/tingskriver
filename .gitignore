@@ -18,7 +18,7 @@
 /coverage
 /dist
 
-# next.js
+# frontend build output
 /.next/
 /out/
 
@@ -78,3 +78,4 @@ target/
 
 frontend/src-tauri/binaries/
 __pycache__/
+graphify-out/
