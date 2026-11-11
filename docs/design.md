@@ -71,6 +71,7 @@ The first column is the exact identifier in the code; the script checks it.
 | `args` | Command line (`StartupArgs`): `--hidden`, `--page`. | Start options. |
 | `crash` | Panic hook that turns graphics failures into a log entry and a native error dialog. | Never a place for UI. |
 | `update` | Velopack installer hooks, background update check and download, applying an update at next start. | Update behaviour. The update screen is not built yet. |
+| `proposals` | Review of AI proposals for a meeting's notes and summary: the band "N ventende ændringer", a diff per proposal and Anvend / Afvis / Fortryd. Changes go only through `ProposalStore::apply/undo` on a click. Not mounted in `ui.rs` until the meeting document exists. | AI proposals. Never write notes or summary directly. |
 
 ### Page building blocks (in `ui.rs`)
 
@@ -93,6 +94,8 @@ The first column is the exact identifier in the code; the script checks it.
 | `settings_page` | Indstillinger: read-only groups (appearance, data folder and database, log) and the buttons "Åbn logmappen" and "Afslut". | |
 | `database_error_page` | Full-window error: icon, summary, advice, technical error, paths, "Åbn logmappen" and "Prøv igen". | The model for any blocking error: say what happened, what to do, where the log is. |
 | `MeasurementView` | The view behind the Måling page (inputs, model choices, result). | |
+| `ProposalReview` | The view behind `proposals`: pending proposals for one meeting with their diffs and buttons. | |
+| `card` | One proposal in `ProposalReview`: title, diff and the buttons for its state. | Only inside `ProposalReview`. |
 
 ### From gpui-component (use as they are)
 
