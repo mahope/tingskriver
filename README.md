@@ -8,6 +8,8 @@ Tingskriver optager og transskriberer møder på din Windows-computer, og alt k�
 
 Projektside: <https://tingskriver.mahoje.dk>
 
+I Tauri-appen kan du importere `.vtt`- og `.srt`-filer fra sidemenuen eller ved at trække dem ind. Mødet gemmes uden lyd, med talernavne i transskriptet. "Lav referat igen" bruger det gemte transskript med talernavne og den valgte udbyder.
+
 Godkendte referater kan afleveres til en mappe, webhook eller et SSH-mål.
 Opsætning, privatliv, kø og API er beskrevet i [afleveringsvejledningen](docs/delivery.md).
 

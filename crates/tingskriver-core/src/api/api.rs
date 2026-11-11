@@ -107,6 +107,7 @@ pub struct MeetingDetails {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MeetingTranscript {
+    pub speaker: Option<String>,
     pub id: String,
     pub text: String,
     pub timestamp: String,
@@ -122,6 +123,7 @@ pub struct MeetingTranscript {
 /// Meeting metadata without transcripts (for pagination)
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MeetingMetadata {
+    pub is_imported: bool,
     pub id: String,
     pub title: String,
     pub created_at: String,
@@ -219,7 +221,9 @@ pub async fn get_model_config(db: &DatabaseManager) -> Result<Option<ModelConfig
 
 /// The configured transcription provider and model, defaulting to local
 /// Parakeet (`api_get_transcript_config`).
-pub async fn get_transcript_config(db: &DatabaseManager) -> Result<Option<TranscriptConfig>, String> {
+pub async fn get_transcript_config(
+    db: &DatabaseManager,
+) -> Result<Option<TranscriptConfig>, String> {
     log_info!("api_get_transcript_config called (native)");
     let pool = db.pool();
 
@@ -561,7 +565,10 @@ pub async fn api_get_meeting_metadata(
     meeting_id: String,
     state: &AppState,
 ) -> Result<MeetingMetadata, String> {
-    log_info!("api_get_meeting_metadata called for meeting_id: {}", meeting_id);
+    log_info!(
+        "api_get_meeting_metadata called for meeting_id: {}",
+        meeting_id
+    );
 
     let pool = state.db_manager.pool();
 
@@ -574,6 +581,7 @@ pub async fn api_get_meeting_metadata(
                 created_at: meeting.created_at.0.to_rfc3339(),
                 updated_at: meeting.updated_at.0.to_rfc3339(),
                 folder_path: meeting.folder_path,
+                is_imported: meeting.import_key.is_some(),
             })
         }
         Ok(None) => {
@@ -647,6 +655,7 @@ pub async fn api_get_meeting_transcripts(
                 .map(|t| MeetingTranscript {
                     id: t.id,
                     text: t.transcript,
+                    speaker: t.speaker,
                     timestamp: t.timestamp,
                     audio_start_time: t.audio_start_time,
                     audio_end_time: t.audio_end_time,
@@ -730,7 +739,10 @@ pub async fn api_save_transcript(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| {
             log_error!("Failed to parse transcript segments: {}", e);
-            format!("Invalid transcript data format: {}. Please check the data structure.", e)
+            format!(
+                "Invalid transcript data format: {}. Please check the data structure.",
+                e
+            )
         })?;
 
     // Log parsed segments count and first segment details
@@ -776,17 +788,14 @@ pub async fn api_save_transcript(
 }
 
 /// Opens the meeting's recording folder in the system file explorer
-pub async fn open_meeting_folder(
-    state: &AppState,
-    meeting_id: String,
-) -> Result<(), String> {
+pub async fn open_meeting_folder(state: &AppState, meeting_id: String) -> Result<(), String> {
     log_info!("open_meeting_folder called for meeting_id: {}", meeting_id);
 
     let pool = state.db_manager.pool();
 
     // Get meeting with folder_path
     let meeting: Option<MeetingModel> = sqlx::query_as(
-        "SELECT id, title, created_at, updated_at, folder_path FROM meetings WHERE id = ?",
+        "SELECT id, title, created_at, updated_at, folder_path, import_key FROM meetings WHERE id = ?",
     )
     .bind(&meeting_id)
     .fetch_optional(pool)
@@ -904,7 +913,10 @@ pub async fn api_save_custom_openai_config(
 
     match SettingsRepository::save_custom_openai_config(pool, &config).await {
         Ok(()) => {
-            log_info!("✅ Successfully saved custom OpenAI config for endpoint: {}", config.endpoint);
+            log_info!(
+                "✅ Successfully saved custom OpenAI config for endpoint: {}",
+                config.endpoint
+            );
             Ok(serde_json::json!({
                 "status": "success",
                 "message": "Custom OpenAI configuration saved successfully"
@@ -928,8 +940,11 @@ pub async fn api_get_custom_openai_config(
     match SettingsRepository::get_custom_openai_config(pool).await {
         Ok(config) => {
             if let Some(ref c) = config {
-                log_info!("✅ Found custom OpenAI config: endpoint='{}', model='{}'",
-                    c.endpoint, c.model);
+                log_info!(
+                    "✅ Found custom OpenAI config: endpoint='{}', model='{}'",
+                    c.endpoint,
+                    c.model
+                );
             } else {
                 log_info!("No custom OpenAI config found");
             }
@@ -1010,7 +1025,7 @@ pub async fn api_test_custom_openai_connection(
                                             .get("message")
                                             .and_then(|m| {
                                                 m.get("content")
-                                                .or_else(|| m.get("reasoning_content"))
+                                                    .or_else(|| m.get("reasoning_content"))
                                             })
                                             .is_some();
 
@@ -1028,17 +1043,33 @@ pub async fn api_test_custom_openai_connection(
                         }
 
                         // Response was 200 but doesn't match OpenAI format
-                        log_warn!("⚠️ Endpoint returned 200 but response doesn't match OpenAI format: {}", response_text);
+                        log_warn!(
+                            "⚠️ Endpoint returned 200 but response doesn't match OpenAI format: {}",
+                            response_text
+                        );
                         Err("Endpoint is reachable but doesn't appear to be OpenAI-compatible. Response is missing 'choices' array or 'message.content' / 'message.reasoning_content' field.".to_string())
                     }
                     Err(e) => {
-                        log_warn!("⚠️ Endpoint returned 200 but response is not valid JSON: {}", e);
-                        Err(format!("Endpoint is reachable but returned invalid JSON: {}. Response: {}", e, response_text))
+                        log_warn!(
+                            "⚠️ Endpoint returned 200 but response is not valid JSON: {}",
+                            e
+                        );
+                        Err(format!(
+                            "Endpoint is reachable but returned invalid JSON: {}. Response: {}",
+                            e, response_text
+                        ))
                     }
                 }
             } else {
-                log_warn!("⚠️ Custom OpenAI connection test failed with status {}: {}", status, response_text);
-                Err(format!("Connection failed with status {}: {}", status, response_text))
+                log_warn!(
+                    "⚠️ Custom OpenAI connection test failed with status {}: {}",
+                    status,
+                    response_text
+                );
+                Err(format!(
+                    "Connection failed with status {}: {}",
+                    status, response_text
+                ))
             }
         }
         Err(e) => {

@@ -11,6 +11,7 @@ import { usePaginatedTranscripts } from "@/hooks/usePaginatedTranscripts";
 import { parseSummaryContent } from "@/lib/summary-content";
 
 interface MeetingDetailsResponse {
+  is_imported?: boolean;
   id: string;
   title: string;
   created_at: string;
@@ -134,6 +135,7 @@ function MeetingDetailsContent() {
         created_at: metadata.created_at,
         updated_at: metadata.updated_at,
         transcripts: transcripts, // Paginated transcripts from hook
+        is_imported: metadata.is_imported,
         folder_path: metadata.folder_path, // For retranscription feature
       });
 

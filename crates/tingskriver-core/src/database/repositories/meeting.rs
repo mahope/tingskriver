@@ -89,7 +89,7 @@ impl MeetingsRepository {
 
         // Get meeting details
         let meeting: Option<MeetingModel> =
-            sqlx::query_as("SELECT id, title, created_at, updated_at, folder_path FROM meetings WHERE id = ?")
+            sqlx::query_as("SELECT id, title, created_at, updated_at, folder_path, import_key FROM meetings WHERE id = ?")
                 .bind(meeting_id)
                 .fetch_optional(&mut *transaction)
                 .await?;
@@ -115,6 +115,7 @@ impl MeetingsRepository {
                 .map(|t| MeetingTranscript {
                     id: t.id,
                     text: t.transcript,
+                    speaker: t.speaker,
                     timestamp: t.timestamp,
                     audio_start_time: t.audio_start_time,
                     audio_end_time: t.audio_end_time,
@@ -147,7 +148,7 @@ impl MeetingsRepository {
         }
 
         let meeting: Option<MeetingModel> =
-            sqlx::query_as("SELECT id, title, created_at, updated_at, folder_path FROM meetings WHERE id = ?")
+            sqlx::query_as("SELECT id, title, created_at, updated_at, folder_path, import_key FROM meetings WHERE id = ?")
                 .bind(meeting_id)
                 .fetch_optional(pool)
                 .await?;
@@ -169,19 +170,17 @@ impl MeetingsRepository {
         }
 
         // Get total count of transcripts for this meeting
-        let total: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM transcripts WHERE meeting_id = ?"
-        )
-        .bind(meeting_id)
-        .fetch_one(pool)
-        .await?;
+        let total: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM transcripts WHERE meeting_id = ?")
+            .bind(meeting_id)
+            .fetch_one(pool)
+            .await?;
 
         // Get paginated transcripts ordered by audio_start_time
         let transcripts = sqlx::query_as::<_, Transcript>(
             "SELECT * FROM transcripts
              WHERE meeting_id = ?
              ORDER BY audio_start_time ASC, rowid ASC
-             LIMIT ? OFFSET ?"
+             LIMIT ? OFFSET ?",
         )
         .bind(meeting_id)
         .bind(limit)

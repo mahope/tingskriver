@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
-import { ChevronLeft, ChevronRight, Settings, Trash2, Mic, Square, Pencil, NotebookPen, SearchIcon, X, Upload, AudioLines } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Settings, Trash2, Mic, Square, Pencil, NotebookPen, SearchIcon, X, Upload, AudioLines, FileText } from 'lucide-react';
 import { formatDayLong, formatTime } from '@/lib/format';
 import { useRouter, usePathname } from 'next/navigation';
 import { useSidebar } from './SidebarProvider';
@@ -52,7 +52,7 @@ const Sidebar: React.FC = () => {
 
   // Get recording state from RecordingStateContext (single source of truth)
   const { isRecording } = useRecordingState();
-  const { openImportDialog } = useImportDialog();
+  const { openImportDialog, importTranscript } = useImportDialog();
   const { betaFeatures } = useConfig();
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set(['meetings']));
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -553,6 +553,19 @@ const Sidebar: React.FC = () => {
             </TooltipTrigger>
             <TooltipContent side="right"><p>Møder</p></TooltipContent>
           </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={() => void importTranscript()}
+                aria-label="Importér transskript"
+                className="h-11 w-11 inline-flex items-center justify-center rounded-lg hover:bg-accent"
+              >
+                <FileText className="w-5 h-5 text-muted-foreground" aria-hidden="true" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="right"><p>Importér transskript (.vtt, .srt)</p></TooltipContent>
+          </Tooltip>
           {betaFeatures.importAndRetranscribe && (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -701,6 +714,15 @@ const Sidebar: React.FC = () => {
               >
                 <AudioLines className="w-4 h-4" aria-hidden="true" />
                 Diktering
+              </button>
+              <button
+                type="button"
+                onClick={() => void importTranscript()}
+                title="Vælg en .vtt- eller .srt-fil fra Teams, Zoom eller Meet, eller træk den hertil"
+                className="flex items-center gap-2 min-h-[44px] px-3 rounded-lg text-sm text-foreground hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <FileText className="w-4 h-4" aria-hidden="true" />
+                Importér transskript
               </button>
               {betaFeatures.importAndRetranscribe && (
                 <button

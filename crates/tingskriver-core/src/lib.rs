@@ -73,6 +73,7 @@ pub mod shortcuts;
 pub mod state;
 pub mod strings;
 pub mod stt;
+pub mod subtitle;
 pub mod summary;
 pub mod transcript_merge;
 pub mod transcription_queue;

@@ -23,6 +23,7 @@ const invoke = mock(async (command: string, args?: Record<string, unknown>): Pro
   if (command === 'api_get_summary') return getSummary(args!.meetingId as string);
   if (command === 'api_get_meeting_transcripts') return { transcripts: [{ text: 'Meeting transcript', timestamp: '00:00' }], total_count: 1 };
   if (command === 'get_ollama_models') return [{ name: 'test' }];
+  if (command === 'regenerate_summary_command') return startProcess();
   if (command === 'api_process_transcript') return startProcess();
   if (command === 'api_cancel_summary') return { cancelled: true };
   throw new Error(`Unexpected command: ${command}`);
@@ -41,6 +42,7 @@ const response = (overrides: Partial<SummaryProcessResponse> = {}): SummaryProce
   data: null, error: null, meetingName: 'Meeting A', ...overrides,
 });
 let configuredModel = 'test';
+let importedMeeting = false;
 let state: ReturnType<typeof useSummaryGeneration>;
 function Status({ initialSummary, meetingId = 'meeting-a' }: {
   initialSummary: SummaryProcessResponse; meetingId?: string;
@@ -48,7 +50,7 @@ function Status({ initialSummary, meetingId = 'meeting-a' }: {
   const [summary, setAiSummary] = useState<MeetingSummary | null>(() => parseSummaryContent(initialSummary.data));
   const [title, updateMeetingTitle] = useState('Original title');
   state = useSummaryGeneration({
-    meeting: { id: meetingId, created_at: '2026-09-01T00:00:00Z' },
+    meeting: { id: meetingId, created_at: '2026-09-01T00:00:00Z', is_imported: importedMeeting },
     transcripts: [], modelConfig: { provider: 'ollama', model: configuredModel, whisperModel: 'base' },
     isModelConfigLoading: false, selectedTemplate: 'daily_standup',
     setAiSummary, updateMeetingTitle, initialSummary,
@@ -64,6 +66,7 @@ const realClearInterval = globalThis.clearInterval;
 beforeEach(() => {
   renderer = undefined as unknown as ReactTestRenderer;
   configuredModel = 'test';
+  importedMeeting = false;
   timers.clear(); notify.mockClear(); invoke.mockClear();
   getSummary = async () => response();
   startProcess = async () => ({ process_id: 'attempt-a' });
@@ -263,4 +266,27 @@ describe('summary state restored when returning to a meeting', () => {
     expect(state.summaryStatus).toBe('completed');
     expect(text()).toContain('Finished summary');
   });
+});
+
+test('imported meetings retry through the speaker-aware command and poll the result', async () => {
+  importedMeeting = true;
+  await show(response({ status: 'failed', error: 'Previous failure' }));
+  await act(async () => state.handleGenerateSummary('Focus on blockers'));
+  expect(invoke.mock.calls).toContainEqual(['regenerate_summary_command', {
+    meetingId: 'meeting-a', customPrompt: 'Focus on blockers',
+    templateId: 'daily_standup', summaryLanguage: 'en',
+  }]);
+  expect(invoke.mock.calls.some(([command]) => command === 'api_process_transcript')).toBe(false);
+  expect(state.summaryStatus).toBe('processing');
+  getSummary = async () => response({ status: 'completed', data: { markdown: 'Imported summary' } });
+  await tick();
+  expect(state.summaryStatus).toBe('completed');
+  expect(text()).toContain('Imported summary');
+});
+
+test('recorded meetings keep the existing summary command', async () => {
+  await show(response({ status: 'failed' }));
+  await act(async () => state.handleGenerateSummary());
+  expect(invoke.mock.calls.some(([command]) => command === 'api_process_transcript')).toBe(true);
+  expect(invoke.mock.calls.some(([command]) => command === 'regenerate_summary_command')).toBe(false);
 });

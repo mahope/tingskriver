@@ -117,19 +117,31 @@ async fn danish_letters_prefix_snippets_and_safe_input() {
     );
 }
 
-async fn source_snapshot(pool: &SqlitePool) -> Vec<Vec<String>> {
-    let mut snapshot = Vec::new();
-    for table in [
-        "meetings",
-        "transcripts",
-        "meeting_notes",
-        "summary_processes",
-    ] {
-        let columns: Vec<String> =
+const SOURCE_TABLES: [&str; 4] = [
+    "meetings",
+    "transcripts",
+    "meeting_notes",
+    "summary_processes",
+];
+
+async fn source_columns(pool: &SqlitePool) -> Vec<Vec<String>> {
+    let mut all = Vec::new();
+    for table in SOURCE_TABLES {
+        let names: Vec<String> =
             sqlx::query_scalar(&format!("SELECT name FROM pragma_table_info('{table}')"))
                 .fetch_all(pool)
                 .await
                 .unwrap();
+        all.push(names);
+    }
+    all
+}
+
+/// Rows of the source tables, limited to `columns` (one list per table), so a
+/// later migration that adds a column does not count as changed data.
+async fn source_snapshot(pool: &SqlitePool, columns: &[Vec<String>]) -> Vec<Vec<String>> {
+    let mut snapshot = Vec::new();
+    for (table, columns) in SOURCE_TABLES.iter().zip(columns) {
         let fields = columns
             .iter()
             .map(|column| format!("'{column}', \"{column}\""))
@@ -152,7 +164,8 @@ async fn migration_backfills_without_changing_data_and_rebuild_is_idempotent() {
     let pool = database(true).await;
     seed(&pool, "old", "bevaring").await;
     seed(&pool, "older", "bevaring").await;
-    let before = source_snapshot(&pool).await;
+    let columns = source_columns(&pool).await;
+    let before = source_snapshot(&pool, &columns).await;
     Migrator::new(std::path::Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/migrations"
@@ -191,7 +204,7 @@ async fn migration_backfills_without_changing_data_and_rebuild_is_idempotent() {
             .await
             .unwrap();
     }
-    assert_eq!(before, source_snapshot(&pool).await);
+    assert_eq!(before, source_snapshot(&pool, &columns).await);
 }
 
 #[tokio::test]

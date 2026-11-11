@@ -22,7 +22,10 @@ pub async fn select_and_validate_audio_command<R: Runtime>(
         app_clone
             .dialog()
             .file()
-            .add_filter("Audio Files", &AUDIO_EXTENSIONS.iter().map(|s| *s).collect::<Vec<_>>())
+            .add_filter(
+                "Audio Files",
+                &AUDIO_EXTENSIONS.iter().map(|s| *s).collect::<Vec<_>>(),
+            )
             .blocking_pick_file()
     })
     .await
@@ -62,7 +65,15 @@ pub async fn start_import_audio_command<R: Runtime>(
     model: Option<String>,
     provider: Option<String>,
 ) -> Result<ImportStarted, String> {
-    tingskriver_core::audio::import::start_import_audio_command(crate::core_bridge::host(&app), source_path, title, language, model, provider).await
+    tingskriver_core::audio::import::start_import_audio_command(
+        crate::core_bridge::host(&app),
+        source_path,
+        title,
+        language,
+        model,
+        provider,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -75,3 +86,54 @@ pub async fn is_import_in_progress_command() -> bool {
     tingskriver_core::audio::import::is_import_in_progress_command().await
 }
 
+/// Import a `.vtt`/`.srt` transcript as a meeting without audio and start the summary.
+#[tauri::command]
+pub async fn import_subtitle_file_command<R: Runtime>(
+    app: AppHandle<R>,
+    state: tauri::State<'_, crate::state::AppState>,
+    path: String,
+) -> Result<tingskriver_core::subtitle::import::SubtitleImportOutcome, String> {
+    tingskriver_core::subtitle::import::import_subtitle_file(
+        crate::core_bridge::host(&app),
+        &state,
+        &path,
+    )
+    .await
+}
+
+/// "Lav referat igen": start the summary again for an existing meeting.
+#[tauri::command]
+pub async fn regenerate_summary_command<R: Runtime>(
+    app: AppHandle<R>,
+    state: tauri::State<'_, crate::state::AppState>,
+    meeting_id: String,
+    custom_prompt: Option<String>,
+    template_id: Option<String>,
+    summary_language: Option<String>,
+) -> Result<tingskriver_core::summary::commands::ProcessTranscriptResponse, String> {
+    tingskriver_core::subtitle::import::start_summary_for_meeting(
+        crate::core_bridge::host(&app),
+        &state,
+        &meeting_id,
+        custom_prompt,
+        template_id,
+        summary_language,
+    )
+    .await
+}
+
+/// Native file dialog for `.vtt`/`.srt` files. Returns `None` when cancelled.
+#[tauri::command]
+pub async fn select_subtitle_file_command<R: Runtime>(
+    app: AppHandle<R>,
+) -> Result<Option<String>, String> {
+    let picked = tokio::task::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .add_filter("Undertekster", &["vtt", "srt"])
+            .blocking_pick_file()
+    })
+    .await
+    .map_err(|e| format!("File dialog task failed: {}", e))?;
+    Ok(picked.map(|p| p.to_string()))
+}
