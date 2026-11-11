@@ -179,9 +179,28 @@ while True:
     }
     impl Drop for Fixture {
         fn drop(&mut self) {
-            self.client.process.take();
-            std::fs::remove_dir_all(&self.directory).unwrap();
+            // Process::drop kills and waits before we remove the worker's files.
+            drop(self.client.process.take());
+            if let Err(error) = std::fs::remove_dir_all(&self.directory) {
+                use std::io::Write;
+                let _ = writeln!(
+                    io::stderr().lock(),
+                    "Failed to remove STT fixture directory {}: {error}",
+                    self.directory.display()
+                );
+            }
         }
+    }
+
+    #[test]
+    fn fixture_cleanup_error_does_not_panic() {
+        let mut f = Fixture::new();
+        let directory = f.directory.clone();
+        // A file in place of the directory forces remove_dir_all to fail.
+        f.directory = directory.join("worker");
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(f)));
+        std::fs::remove_dir_all(directory).unwrap();
+        assert!(result.is_ok());
     }
 
     #[test]
