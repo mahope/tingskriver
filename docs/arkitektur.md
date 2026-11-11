@@ -162,6 +162,11 @@ webview window, so it can stay on top, be click-through and never take focus.
 - `cargo run -p tingskriver-overlay --example demo` shows every state on
   Windows; `-- --png <folder>` writes them as PNG files on any OS.
 
+The same crate has the prompt window for questions with buttons (meeting
+question, reminder, "Er mødet slut?"): a non-activating native popup with real
+controls, global shortcuts instead of focus, and a Focus Assist decision. See
+[promptvindue.md](promptvindue.md).
+
 ## Speech models: loaded once, shared, unloaded when idle
 
 Meetings and dictation share the Parakeet and Whisper engines in core.
