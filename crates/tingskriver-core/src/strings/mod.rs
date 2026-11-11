@@ -60,6 +60,59 @@ catalogue! {
     RERUN_AFTER = "Efter";
     RERUN_CLOSE = "Luk";
     SETTINGS = "Indstillinger";
+    SETTINGS_MCP_HELP = "Her kan du styre MCP-adgang og se appens udseende, datamappe og log.";
+    MCP_TITLE = "AI-værktøjer (MCP)";
+    MCP_PRIVACY = "MCP er slået fra som standard. Når du aktiverer det, kan en klient læse de møder og datadele, du tillader. Data kan derefter forlade computeren via AI-værktøjets udbyder. Alt giver også adgang til dikteringer og optagelseshandlinger. Handlinger kan ændre noter, danne referater og aflevere data via appens valgte mål. Aflevering kræver alle datadele. Slukning afbryder nye kald, men tilbagekalder ikke allerede delte data eller igangværende handlinger.";
+    MCP_ENABLE = "Aktivér MCP-serveren";
+    MCP_DISABLED = "Stoppet: MCP-adgang er slået fra.";
+    MCP_AVAILABLE = "Stoppet og klar: klienten starter serveren via stdio. Ingen netværksport.";
+    MCP_ACTIVE = "Kører: en klient har startet MCP-serveren via stdio. Ingen netværksport.";
+    MCP_RUNNING = "Kørende klientprocesser ved seneste statusopdatering: {value}. Ingen netværksport. Slukning blokerer nye datakald; klienten ejer processen.";
+    MCP_MISSING = "Fejl: MCP-programmet mangler. Geninstallér Tingskriver.";
+    MCP_LOADING = "Indlæser MCP-indstillinger …";
+    MCP_LOAD_FAILED = "MCP-indstillingerne kunne ikke læses. Åbn appen igen og prøv igen.";
+    MCP_PATH = "Programsti: {value}";
+    MCP_DATA_HELP = "Tilladte datadele. Valgene gælder også søgning og opgavelisten. Deltagere styrer talerfelter i transskripter; navne skrevet i noter eller transskripttekst fjernes ikke automatisk.";
+    MCP_NOTES = "Noter";
+    MCP_SUMMARY = "Referat og opgaver";
+    MCP_TRANSCRIPT = "Transskript";
+    MCP_PARTICIPANTS = "Deltagere og talere";
+    MCP_SHARED_COUNT = "Delte møder: {value}";
+    MCP_OPEN_MEETINGS = "Vælg delte møder på mødesiden";
+    MCP_TEST = "Test forbindelsen";
+    MCP_TESTING = "Tester forbindelsen …";
+    MCP_TEST_OK = "Forbindelsen virker. Serveren svarede med værktøjslisten. Intet mødeindhold blev læst. Testprocessen er stoppet igen.";
+    MCP_TOOLS = "Serverens værktøjer";
+    MCP_LOG = "Seneste 100 kald. Kun værktøj, tid, møde-id og resultat gemmes lokalt.";
+    MCP_LOG_EMPTY = "Ingen registrerede kald. Opdatér listen, efter en klient har brugt serveren.";
+    MCP_LOG_REFRESH = "Opdatér status og kaldslog";
+    MCP_LOG_CLEAR = "Ryd kaldslog";
+    MCP_LOG_CLEARED = "Kaldsloggen er ryddet.";
+    MCP_LOG_ENTRY = "{time} · {tool} · møde-id: {id} · {result}";
+    MCP_OK = "lykkedes";
+    MCP_FAILED = "fejlede";
+    MCP_NO_ID = "intet";
+    MCP_SHARE = "Del med AI-værktøjer";
+    MCP_UNSHARE = "Stop deling med AI-værktøjer";
+    MCP_REFRESH = "Opdatér mødelisten";
+    MCP_MARKED = "Kun markerede møder";
+    MCP_METADATA = "Kun metadata";
+    MCP_ALL = "Alt";
+    MCP_OFF = "Fra";
+    MCP_SAVED = "MCP-adgang er gemt.";
+    MCP_SAVE_FAILED = "MCP-adgang kunne ikke gemmes. Prøv igen.";
+    MCP_COPY_CLAUDE = "Kopiér opsætning til Claude Code";
+    MCP_COPY_CODEX = "Kopiér opsætning til Codex";
+    MCP_COPIED = "MCP-opsætningen er kopieret.";
+    MCP_ACTION = "AI-værktøj: {value}";
+    MCP_ACTION_UNKNOWN = "handling";
+    MCP_START_RECORDING = "Start optagelse";
+    MCP_STOP_RECORDING = "Stop optagelse";
+    MCP_REGENERATE = "Dan referat igen";
+    MCP_HANDOFF = "Aflever referat";
+    MCP_ADD_NOTE = "Tilføj note";
+    MCP_CLAUDE_COMMAND = "claude mcp add tingskriver -- \"{value}\"";
+    MCP_CODEX_CONFIG = "[mcp_servers.tingskriver]\ncommand = {value}\n";
     MEASURE_TITLE = "Måling";
     MEASURE_HELP = "Sammenlign dansk nøjagtighed på din egen stemme. Importér cirka 60 sekunder som WAV (mono, 16 kHz, PCM16, højst 90 sekunder), og skriv præcis det, du siger.";
     MEASURE_PATH = "Sti til lydprøve";
@@ -231,6 +284,8 @@ macro_rules! parameterized {
     };
 }
 parameterized! {
+    mcp_claude_command => MCP_CLAUDE_COMMAND;
+    mcp_codex_config => MCP_CODEX_CONFIG;
     meeting_restore => MEETING_RESTORE;
     measure_errors => MEASURE_ERRORS;
     measure_wer => MEASURE_WER;
@@ -275,6 +330,18 @@ pub fn proposal_title(field: &str, status: &str) -> String {
     PROPOSAL_TITLE
         .replace("{field}", field)
         .replace("{status}", status)
+}
+
+pub fn mcp_action(action: &str) -> String {
+    let label = match action {
+        "start_recording" => MCP_START_RECORDING,
+        "stop_recording" => MCP_STOP_RECORDING,
+        "regenerate_summary" => MCP_REGENERATE,
+        "handoff" => MCP_HANDOFF,
+        "add_note" => MCP_ADD_NOTE,
+        _ => MCP_ACTION_UNKNOWN,
+    };
+    MCP_ACTION.replace("{value}", label)
 }
 
 pub fn measure_model_label(provider: &str, model: &str, location: &str) -> String {

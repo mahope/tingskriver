@@ -504,6 +504,78 @@ async fn interrupted_jobs_recover_and_exhausted_jobs_stay_visible_until_manual_r
 }
 
 #[tokio::test]
+async fn unapproved_request_allows_target_edits_but_approval_rechecks_target() {
+    use tingskriver_core::providers::secrets::KeyStore;
+    let dir = tempfile::tempdir().unwrap();
+    let keys = Arc::new(MemoryKeyStore::default());
+    let service = Delivery::open(dir.path(), keys.clone()).await.unwrap();
+    service
+        .set_policy(Policy {
+            local_only: false,
+            private: false,
+        })
+        .await
+        .unwrap();
+    let mut target = Target {
+        id: "hook".into(),
+        name: "Webhook".into(),
+        destination: Destination::Webhook {
+            format: WebhookFormat::Json,
+        },
+    };
+    service
+        .save_target(
+            target.clone(),
+            Some("https://example.invalid/original".into()),
+        )
+        .await
+        .unwrap();
+    let id = service
+        .request_approval("meeting", "hook", bundle())
+        .await
+        .unwrap();
+    service
+        .save_target(
+            target.clone(),
+            Some("https://example.invalid/replacement".into()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        keys.get("Tingskriver/delivery/hook")
+            .unwrap()
+            .unwrap()
+            .expose(),
+        "https://example.invalid/replacement"
+    );
+    let out = dir.path().join("export");
+    target.destination = Destination::Folder { path: out.clone() };
+    service.save_target(target.clone(), None).await.unwrap();
+    service.run_due().await.unwrap();
+    assert!(!out.exists());
+    assert_eq!(service.jobs().await.unwrap()[0].status, "awaiting_approval");
+    service.delete_target("hook").await.unwrap();
+    assert!(matches!(
+        service
+            .approve_request(&id, "meeting", "hook", bundle(), false)
+            .await,
+        Err(Error::Missing)
+    ));
+    service.save_target(target.clone(), None).await.unwrap();
+    service
+        .approve_request(&id, "meeting", "hook", bundle(), false)
+        .await
+        .unwrap();
+    assert!(matches!(
+        service.save_target(target, None).await,
+        Err(Error::Invalid)
+    ));
+    service.run_due().await.unwrap();
+    assert!(out.exists());
+    assert_eq!(service.jobs().await.unwrap()[0].status, "completed");
+}
+
+#[tokio::test]
 async fn pending_approval_cannot_be_redirected_by_editing_the_target_or_its_secret() {
     use tingskriver_core::providers::secrets::KeyStore;
     let dir = tempfile::tempdir().unwrap();

@@ -8,7 +8,7 @@ use tokio::sync::OnceCell;
 
 static SERVICE: OnceCell<Delivery> = OnceCell::const_new();
 
-async fn service(app: &AppHandle) -> Result<&'static Delivery, String> {
+pub(crate) async fn service(app: &AppHandle) -> Result<&'static Delivery, String> {
     SERVICE
         .get_or_try_init(|| async {
             let dir = app
@@ -110,6 +110,7 @@ pub async fn delivery_approve(
     meeting_id: String,
     summary: String,
     private: bool,
+    job_id: Option<String>,
 ) -> Result<String, String> {
     let s = service(&app).await?;
     let host = crate::core_bridge::host(&app);
@@ -118,9 +119,15 @@ pub async fn delivery_approve(
         tingskriver_core::delivery::meeting::snapshot(database.pool(), &meeting_id, summary)
             .await
             .map_err(|e| e.to_string())?;
-    s.enqueue(&target_id, bundle, true, private)
-        .await
-        .map_err(|e| e.to_string())
+    if let Some(id) = job_id {
+        s.approve_request(&id, &meeting_id, &target_id, bundle, private)
+            .await
+            .map_err(|e| e.to_string())
+    } else {
+        s.enqueue(&target_id, bundle, true, private)
+            .await
+            .map_err(|e| e.to_string())
+    }
 }
 
 #[tauri::command]

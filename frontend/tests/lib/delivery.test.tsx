@@ -25,13 +25,14 @@ test('delivery starts closed, tests use the selected target, and failures stay v
   await act(async () => { renderer!.unmount(); });
 });
 
-test('only an explicit approval queues the visible summary to the selected target', async () => {
+test.each([null, 'mcp-request'])('only explicit approval queues the visible summary (%s)', async (jobId) => {
   const calls: { command: string; args?: Record<string, unknown> }[] = [];
   const request = async <T,>(command: string, args?: Record<string, unknown>): Promise<T> => {
     calls.push({ command, args });
     if (command === 'delivery_status') return {
       policy: { local_only: false, private: false },
-      targets: [{ id: 'one', name: 'Arkiv', destination: { kind: 'folder', path: '/archive' } }], jobs: [],
+      targets: [{ id: 'one', name: 'Arkiv', destination: { kind: 'folder', path: '/archive' } }],
+      jobs: jobId ? [{ id: jobId, target_id: 'one', meeting_id: 'meeting-a', status: 'awaiting_approval' }] : [],
     } as T;
     return 'queued-id' as T;
   };
@@ -42,7 +43,8 @@ test('only an explicit approval queues the visible summary to the selected targe
   expect(renderer!.root.findByType('button').props.disabled).toBe(false);
   expect(calls).toHaveLength(1);
   await act(async () => { renderer!.root.findByType('button').props.onClick(); });
-  expect(calls[1]).toEqual({ command: 'delivery_approve', args: { targetId: 'one', meetingId: 'meeting-a', summary: 'Godkendt referat', private: false } });
+  expect(calls[1].command).toBe('delivery_status');
+  expect(calls[2]).toEqual({ command: 'delivery_approve', args: { targetId: 'one', meetingId: 'meeting-a', summary: 'Godkendt referat', private: false, jobId } });
   expect(JSON.stringify(renderer!.toJSON())).toContain('lagt i afleveringskøen');
   await act(async () => { renderer!.unmount(); });
 });

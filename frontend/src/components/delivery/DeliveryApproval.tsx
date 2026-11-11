@@ -40,7 +40,9 @@ export function DeliveryApproval({ meetingId, getSummary, disabled, request = in
     setBusy(true); setMessage(''); setError('');
     try {
       const summary = await getSummary();
-      await request('delivery_approve', { targetId: target, meetingId, summary, private: !consent });
+      const current = await request<Status>('delivery_status');
+      const pending = current.jobs.find(job => job.status === 'awaiting_approval' && job.meeting_id === meetingId && job.target_id === target);
+      await request('delivery_approve', { targetId: target, meetingId, summary, private: !consent, jobId: pending?.id ?? null });
       setMessage('Referatet er godkendt og lagt i afleveringskøen. Se resultatet i Indstillinger.');
     } catch { setError('Referatet kunne ikke afleveres. Kontrollér mål og privatindstillinger, og prøv igen.'); }
     finally { setBusy(false); }

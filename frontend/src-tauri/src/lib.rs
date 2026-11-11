@@ -16,6 +16,7 @@ pub mod delivery;
 pub mod dictation;
 pub mod file_logger;
 pub mod groq;
+pub mod mcp;
 pub mod move_to_gpui;
 pub mod notifications;
 pub mod ollama;
@@ -459,6 +460,7 @@ pub fn run() {
             // Finish the audio of meetings whose background encode never completed.
             tauri::async_runtime::spawn(tingskriver_core::audio::finalize::finalize_pending_at_startup());
             tauri::async_runtime::spawn(delivery::worker(_app.handle().clone()));
+            tauri::async_runtime::spawn(mcp::start(_app.handle().clone()));
 
             // Set models directory to use app_data_dir (unified storage location)
             whisper_engine::commands::set_models_directory(&_app.handle());
@@ -545,6 +547,10 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             delivery::delivery_status,
+            mcp::mcp_status,
+            mcp::mcp_set_access,
+            mcp::mcp_meeting_shared,
+            mcp::mcp_set_meeting_shared,
             delivery::delivery_save_target,
             delivery::delivery_delete_target,
             delivery::delivery_has_signing_secret,

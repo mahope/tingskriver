@@ -148,6 +148,41 @@ impl Host {
         }
 
         ensure_shortcut_file(&bridge);
+        if !host.dictation_blocked {
+            let mcp_host: HostHandle = bridge.clone();
+            host.tasks.push(runtime.spawn(async move {
+                let Ok(dir) = mcp_host.app_data_dir() else {
+                    return;
+                };
+                let delivery = match tingskriver_core::delivery::Delivery::open(
+                    &dir,
+                    Arc::new(tingskriver_core::providers::secrets::CredentialManager),
+                )
+                .await
+                {
+                    Ok(delivery) => delivery,
+                    Err(_) => {
+                        log::warn!("MCP could not open delivery storage");
+                        return;
+                    }
+                };
+                let worker = async {
+                    let mut interval = tokio::time::interval(std::time::Duration::from_secs(15));
+                    loop {
+                        interval.tick().await;
+                        if delivery.run_due().await.is_err() {
+                            log::warn!("MCP delivery queue failed");
+                        }
+                    }
+                };
+                tokio::select! {
+                    result = tingskriver_core::mcp_ipc::serve(mcp_host, delivery.clone()) => {
+                        if result.is_err() { log::warn!("MCP action channel stopped"); }
+                    }
+                    _ = worker => {}
+                }
+            }));
+        }
         host.start_watchers();
         (host, receiver)
     }

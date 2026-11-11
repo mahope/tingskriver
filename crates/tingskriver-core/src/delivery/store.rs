@@ -14,6 +14,7 @@ pub struct JobStatus {
     pub attempts: i64,
     pub next_attempt: i64,
     pub error: Option<String>,
+    pub meeting_id: Option<String>,
 }
 
 /// Share this service per host. The lock serializes policy changes and sends.
@@ -59,6 +60,8 @@ impl Delivery {
                 id TEXT PRIMARY KEY, target_id TEXT NOT NULL, bundle TEXT NOT NULL,
                 status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
                 next_attempt INTEGER NOT NULL, error TEXT);
+            CREATE TABLE IF NOT EXISTS delivery_approval_requests (
+                job_id TEXT PRIMARY KEY, meeting_id TEXT NOT NULL);
             UPDATE delivery_jobs SET status = 'pending' WHERE status = 'running';")
             .execute(&pool).await.map_err(|_| Error::Storage)?;
         Ok(Self {
@@ -120,7 +123,7 @@ impl Delivery {
         target.validate()?;
         let _guard = self.gate.lock().await;
         let pending: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM delivery_jobs WHERE target_id = ? AND status != 'completed'",
+            "SELECT COUNT(*) FROM delivery_jobs WHERE target_id = ? AND status NOT IN ('completed', 'awaiting_approval')",
         )
         .bind(&target.id)
         .fetch_one(&self.pool)
@@ -315,8 +318,60 @@ impl Delivery {
         self.enqueue(id, Bundle::test_sample(), true, false).await
     }
 
+    /// MCP can request consent, but only the app's approval flow can release it.
+    pub async fn request_approval(
+        &self,
+        meeting_id: &str,
+        target_id: &str,
+        bundle: Bundle,
+    ) -> Result<String, Error> {
+        let _guard = self.gate.lock().await;
+        self.policy().await?.check()?;
+        bundle.validate()?;
+        self.target(target_id).await?;
+        let id = uuid::Uuid::new_v4().to_string();
+        let mut tx = self.pool.begin().await.map_err(|_| Error::Storage)?;
+        sqlx::query("INSERT INTO delivery_jobs (id,target_id,bundle,status,next_attempt) VALUES (?,?,?,'awaiting_approval',?)")
+            .bind(&id).bind(target_id).bind(serde_json::to_string(&bundle).map_err(|_| Error::Invalid)?)
+            .bind(Utc::now().timestamp()).execute(&mut *tx).await.map_err(|_| Error::Storage)?;
+        sqlx::query("INSERT INTO delivery_approval_requests VALUES (?,?)")
+            .bind(&id)
+            .bind(meeting_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| Error::Storage)?;
+        tx.commit().await.map_err(|_| Error::Storage)?;
+        Ok(id)
+    }
+
+    /// Replace the requested snapshot with the exact summary the user reviewed.
+    pub async fn approve_request(
+        &self,
+        id: &str,
+        meeting_id: &str,
+        target_id: &str,
+        bundle: Bundle,
+        private: bool,
+    ) -> Result<String, Error> {
+        let _guard = self.gate.lock().await;
+        self.policy().await?.check()?;
+        if private {
+            return Err(Error::Blocked);
+        }
+        bundle.validate()?;
+        self.target(target_id).await?.validate()?;
+        let result = sqlx::query("UPDATE delivery_jobs SET bundle=?,status='pending',next_attempt=? WHERE id=? AND target_id=? AND status='awaiting_approval' AND EXISTS (SELECT 1 FROM delivery_approval_requests WHERE job_id=? AND meeting_id=?)")
+            .bind(serde_json::to_string(&bundle).map_err(|_| Error::Invalid)?)
+            .bind(Utc::now().timestamp()).bind(id).bind(target_id).bind(id).bind(meeting_id)
+            .execute(&self.pool).await.map_err(|_| Error::Storage)?;
+        if result.rows_affected() != 1 {
+            return Err(Error::Missing);
+        }
+        Ok(id.into())
+    }
+
     pub async fn jobs(&self) -> Result<Vec<JobStatus>, Error> {
-        let rows = sqlx::query("SELECT id, target_id, status, attempts, next_attempt, error FROM delivery_jobs ORDER BY rowid DESC")
+        let rows = sqlx::query("SELECT j.id, j.target_id, j.status, j.attempts, j.next_attempt, j.error, r.meeting_id FROM delivery_jobs j LEFT JOIN delivery_approval_requests r ON r.job_id=j.id ORDER BY j.rowid DESC")
             .fetch_all(&self.pool).await.map_err(|_| Error::Storage)?;
         Ok(rows
             .into_iter()
@@ -327,6 +382,7 @@ impl Delivery {
                 attempts: r.get(3),
                 next_attempt: r.get(4),
                 error: r.get(5),
+                meeting_id: r.get(6),
             })
             .collect())
     }

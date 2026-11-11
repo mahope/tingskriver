@@ -208,7 +208,19 @@ pub fn run() {
                 let event_model = model.clone();
                 cx.spawn(async move |cx| {
                     while let Some(event) = events.recv().await {
-                        if event.name == "transcription-queue-status" {
+                        if event.name == "mcp-action" {
+                            if let Ok(value) =
+                                serde_json::from_str::<serde_json::Value>(&event.payload_json)
+                            {
+                                if value["status"] == "started" {
+                                    let action = value["action"]
+                                        .as_str()
+                                        .unwrap_or(tingskriver_core::strings::MCP_ACTION_UNKNOWN)
+                                        .to_string();
+                                    cx.update(|cx| ui::show_mcp_action(action, cx));
+                                }
+                            }
+                        } else if event.name == "transcription-queue-status" {
                             if let Ok(status) = serde_json::from_str::<
                                 tingskriver_core::transcription_queue::QueueEvent,
                             >(&event.payload_json)

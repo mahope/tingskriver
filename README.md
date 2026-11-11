@@ -112,11 +112,87 @@ modelnedbrud ikke lukker optagelse, genvej eller tray. Det berørte kald fejler;
 næste kald genstarter processen. Kan ONNX Runtime ikke starte, bruger automatisk
 VAD energidetektion. Se [bygning og test af sidecaren](docs/BUILDING.md#isolated-local-speech-inference).
 
+### MCP til Claude Code og Codex
+
+Installeren indeholder `tingskriver-mcp.exe`, en lokal stdio-server uden netværksport.
+Åbn **Indstillinger → AI-værktøjer (MCP)**, og kopiér opsætningen til din klient.
+For en Tauri-installation i standardmappen kan du køre dette i `cmd.exe`:
+
+```bat
+claude mcp add tingskriver -- "%LOCALAPPDATA%\Tingskriver\tingskriver-mcp.exe"
+```
+
+Codex bruger samme program i `config.toml`. Brug den faktiske absolutte sti,
+som knappen i appen kopierer; TOML udvider ikke `%LOCALAPPDATA%`:
+
+```toml
+[mcp_servers.tingskriver]
+command = 'C:\Users\<brugernavn>\AppData\Local\Tingskriver\tingskriver-mcp.exe'
+```
+
+MCP er som standard **slået fra**, også efter opdatering fra en ældre MCP-version.
+Det afviger bevidst fra specifikationens standard **Kun markerede møder**:
+ingen mødedata bliver tilgængelige, før brugeren aktivt vælger det.
+Aktivér serveren i GPUI-appens indstillinger. Mødevalget starter på
+**Kun markerede møder**, og alle fire datadele er fravalgt.
+Brug **Del med AI-værktøjer** på GPUI-appens mødeside til at dele et møde,
+og **Stop deling med AI-værktøjer** til at ophæve delingen.
+**Kun metadata** viser titler, datoer, varighed og opgaver, men udelader transskript, referat,
+noter og dikteringer; **Fra** giver kun en forklaring. **Alt** omfatter alle møder og dikteringer; de valgte datadele begrænser stadig mødeindholdet. Vælg selv Alt på din egen installation,
+hvis det er den ønskede adgang. Ingen installation opgraderes automatisk til Alt.
+Læseværktøjer virker uden appen. Handlinger går gennem den åbne app og viser
+en notifikation og en logpost. Aflevering bruger de eksisterende mål og
+respekterer Kun lokal og Privat tilstand. MCP kan kun anmode om aflevering;
+åbn mødet i appen, vælg målet og giv samtykke i **Godkend og aflever referat**,
+før køen må sende noget. Se [detaljer og begrænsninger](docs/mcp.md).
+
+**Privatliv:** Data sendt til et AI-værktøj forlader computeren via det
+værktøjs udbyder. Lokal MCP-transport gør ikke en ekstern AI-klient lokal.
+Læs udbyderens datavilkår, før du giver adgang.
+
 ## English
 
 Tingskriver is a privacy-first meeting recorder and transcriber for Windows that runs locally. Meeting content only leaves your machine if you choose an external AI service or approve delivery to a target you configured. It is made for Danish users, is free and open source, and has no Pro version or paywall.
 
 Project page: <https://tingskriver.mahoje.dk>
+
+### MCP for Claude Code and Codex
+
+The installer includes `tingskriver-mcp.exe`, a local stdio server with no
+network listener. Open **Settings → AI-værktøjer (MCP)** and copy the exact
+Claude Code command or Codex TOML configuration. For a standard Tauri install,
+run this in `cmd.exe`:
+
+```bat
+claude mcp add tingskriver -- "%LOCALAPPDATA%\Tingskriver\tingskriver-mcp.exe"
+```
+
+Codex uses the same executable. Paste the actual absolute path from the app;
+TOML does not expand `%LOCALAPPDATA%`:
+
+```toml
+[mcp_servers.tingskriver]
+command = 'C:\Users\<username>\AppData\Local\Tingskriver\tingskriver-mcp.exe'
+```
+
+MCP is **disabled by default**, including upgrades from the earlier MCP version.
+This deliberately differs from the specification’s **Marked meetings only**
+default: no meeting data is exposed until the user explicitly opts in.
+Enable it in the GPUI settings. Meeting selection defaults to **Marked meetings
+only**, each meeting starts unshared, and all four content switches start off. Use **Del med AI-værktøjer** on the installed GPUI app's Meetings
+page to share a meeting, or **Stop deling med AI-værktøjer** to revoke it.
+**Metadata only** exposes titles, dates, duration and tasks, excluding transcripts, summaries, notes and
+dictation. **Off** returns an explanation without meeting content. **All**
+includes dictation and all meetings; the content switches still apply to meetings; choose it explicitly if wanted on your own installation.
+Reads work while the app is closed. Actions require the running app and
+produce notifications and log entries. Delivery reuses configured targets
+and respects local-only/private settings. MCP only requests delivery; open the
+meeting in the app, select the target and explicitly consent through
+**Godkend og aflever referat** before the queue can send anything. See [MCP details](docs/mcp.md).
+
+**Privacy:** Content sent to an AI tool leaves your computer through that
+tool's provider. Local MCP transport does not make an external AI client local.
+Review the provider's data terms before granting access.
 
 ![Meeting page, light theme](docs/screenshots/moedeside-lys.png)
 

@@ -80,6 +80,8 @@ The first column is the exact identifier in the code; the script checks it.
 
 | Name | Responsibility | Use it for / do not use it for |
 |---|---|---|
+| `mcp_settings` | MCP access, consent, data controls and audit status. | MCP controls on the Indstillinger page; reuse the shared settings and text blocks. |
+| `meeting_sharing` | Per-meeting MCP sharing controls and loading/error states. | Choosing which meetings MCP may read. |
 | `Shell` | The window content: sidebar plus the current page, or the database error page instead of both. Owns page selection, appearance observer and the debounced window-position save. | The one root view. Do not add a second root. |
 | `Page` | The pages in the sidebar (Møder, Diktering, Måling, Indstillinger, Om), their Danish labels, icons and `--page` names. | Adding a page: add a variant, `label`, `icon`, `from_arg` and the arm in `Shell::render`. |
 | `AppModel` | Shared state: database state (`DbState`: loading, not created, ready, failed), data folder, log path, runtime handle. | Reading state in a page. Core is only called on its runtime, never on the UI thread. |
