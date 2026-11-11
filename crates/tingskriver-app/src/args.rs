@@ -7,6 +7,7 @@ pub struct StartupArgs {
     /// later launch shows the window through the single-instance signal.
     pub hidden: bool,
     pub diagnose: bool,
+    pub validate_delivery: Option<String>,
     pub json: bool,
     /// `--page meetings|dictation|settings`: the page the window opens on
     /// (manual tests and screenshots).
@@ -26,6 +27,13 @@ impl StartupArgs {
         let mut args = args.into_iter().map(Into::into);
         while let Some(arg) = args.next() {
             match arg.as_str() {
+                "--valider-aflevering" | "--validate-delivery" => {
+                    parsed.validate_delivery = Some(
+                        args.next()
+                            .filter(|folder| !folder.starts_with('-'))
+                            .unwrap_or_default(),
+                    );
+                }
                 "--diagnose" => parsed.diagnose = true,
                 "--json" => parsed.json = true,
                 "--hidden" | "--minimized" => parsed.hidden = true,
@@ -73,6 +81,30 @@ mod tests {
     fn hidden_starts_without_a_window() {
         assert!(StartupArgs::parse(["--hidden"]).hidden);
         assert!(StartupArgs::parse(["--minimized"]).hidden);
+    }
+
+    #[test]
+    fn delivery_validation_flags() {
+        for flag in ["--valider-aflevering", "--validate-delivery"] {
+            assert_eq!(
+                StartupArgs::parse([flag, "mappe"])
+                    .validate_delivery
+                    .as_deref(),
+                Some("mappe")
+            );
+            assert_eq!(
+                StartupArgs::parse([flag]).validate_delivery.as_deref(),
+                Some("")
+            );
+            for invalid in ["--json", "--hidden", "-x", ""] {
+                assert_eq!(
+                    StartupArgs::parse([flag, invalid])
+                        .validate_delivery
+                        .as_deref(),
+                    Some("")
+                );
+            }
+        }
     }
 
     #[test]

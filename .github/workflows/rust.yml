@@ -219,6 +219,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -258,6 +260,11 @@ jobs:
 
       - name: Verify core I/O lint rejects blocking calls
         run: bash scripts/check-async-io-guard.sh
+
+      - name: Check delivery schema version
+        run: |
+          python3 scripts/tests/test_delivery_schema_version.py
+          python3 scripts/check-delivery-schema-version.py --base origin/main
 
       - name: Validate published delivery schema
         run: /usr/bin/python3 scripts/tests/test_delivery_schema.py

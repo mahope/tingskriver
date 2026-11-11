@@ -19,6 +19,14 @@ def date_time(value):
 
 
 class DeliverySchemaTest(unittest.TestCase):
+    def test_documented_delivery_examples(self):
+        schema = json.loads((ROOT / "docs/schemas/delivery-v1.schema.json").read_text())
+        validator = Draft202012Validator(schema, format_checker=FORMATS)
+        examples = ROOT / "docs/examples/aflevering"
+        validator.validate(json.loads((examples / "gyldig/sidecar.json").read_text()))
+        with self.assertRaises(ValidationError):
+            validator.validate(json.loads((examples / "ugyldig/sidecar.json").read_text()))
+
     def test_schema_accepts_rust_fixture_and_rejects_bad_versions_and_types(self):
         schema = json.loads((ROOT / "docs/schemas/delivery-v1.schema.json").read_text())
         fixture = json.loads((ROOT / "testsaet/delivery/sidecar-v1.json").read_text())

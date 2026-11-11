@@ -45,6 +45,7 @@ pub mod config;
 pub mod crash_dumps;
 pub mod database;
 pub mod delivery;
+pub mod delivery_validate;
 pub mod diagnose;
 pub mod dictation;
 pub mod export;

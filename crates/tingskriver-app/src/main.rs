@@ -5,7 +5,7 @@ mod args;
 
 fn main() {
     let args = args::StartupArgs::from_env();
-    if args.diagnose {
+    if args.diagnose || args.validate_delivery.is_some() {
         #[cfg(windows)]
         unsafe {
             #[link(name = "kernel32")]
@@ -17,6 +17,23 @@ fn main() {
             let stdout = GetStdHandle(-11i32 as u32);
             if stdout.is_null() || stdout as isize == -1 {
                 AttachConsole(u32::MAX);
+            }
+        }
+        if let Some(folder) = args.validate_delivery {
+            if folder.is_empty() {
+                eprintln!("--valider-aflevering kræver en mappe.");
+                std::process::exit(1);
+            }
+            match tingskriver_core::delivery_validate::validate_delivery(std::path::Path::new(
+                &folder,
+            )) {
+                Ok(()) => std::process::exit(0),
+                Err(errors) => {
+                    for error in errors {
+                        eprintln!("{error}");
+                    }
+                    std::process::exit(1);
+                }
             }
         }
         let report = tingskriver_core::diagnose::Report::collect(

@@ -1,0 +1,1 @@
+Kun syntetiske eksempeldata.
