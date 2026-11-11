@@ -153,8 +153,21 @@ impl<M: Model> Model for Meter<M> {
 pub struct Fake;
 #[async_trait::async_trait]
 impl Model for Fake {
-    async fn generate(&mut self, _: Phase, _: &str, _: &str) -> Result<String, String> {
-        Ok("# Referat\nBeslutning: blå mapper, 2400 kroner.\nBeslutning: prøveværksted i sal 7.\nBirk Måneskov bestiller 12 mapper senest 2026-12-04.\nAlma Vinterdal sender invitation senest 2026-12-08.".into())
+    async fn generate(&mut self, phase: Phase, system: &str, _: &str) -> Result<String, String> {
+        // The final report follows the template: title, then its first section.
+        let first_section = (phase == Phase::Final)
+            .then(|| {
+                system
+                    .split("<template>")
+                    .nth(1)?
+                    .lines()
+                    .find(|line| line.starts_with("**"))
+                    .map(str::to_string)
+            })
+            .flatten()
+            .map(|heading| format!("\n\n{heading}\n\n"))
+            .unwrap_or_else(|| "\n".to_string());
+        Ok(format!("# Referat{first_section}Beslutning: blå mapper, 2400 kroner.\nBeslutning: prøveværksted i sal 7.\nBirk Måneskov bestiller 12 mapper senest 2026-12-04.\nAlma Vinterdal sender invitation senest 2026-12-08."))
     }
 }
 pub async fn danish_report<M: Model>(

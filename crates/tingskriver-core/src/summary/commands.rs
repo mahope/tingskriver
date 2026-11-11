@@ -1,24 +1,21 @@
 use crate::database::repositories::{
-    meeting::MeetingsRepository,
-    summary::SummaryProcessesRepository, transcript_chunk::TranscriptChunksRepository,
+    meeting::MeetingsRepository, summary::SummaryProcessesRepository,
+    transcript_chunk::TranscriptChunksRepository,
 };
+use crate::host::HostHandle;
 use crate::state::AppState;
+use crate::summary::language_detection::{detect_summary_language, SummaryLanguageDetection};
 use crate::summary::metadata::{
     read_detected_summary_language_from_metadata, read_summary_language_from_metadata,
     write_detected_summary_language_to_metadata, write_summary_language_to_metadata,
 };
-use crate::summary::language_detection::{
-    detect_summary_language, SummaryLanguageDetection,
-};
 use crate::summary::processor::{clean_llm_markdown_detailed, contains_reasoning_marker};
 use crate::summary::service::SummaryService;
-use log::{error as log_error, info as log_info, warn as log_warn};
 use chrono::{DateTime, Duration, SecondsFormat, Utc};
+use log::{error as log_error, info as log_info, warn as log_warn};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::{LazyLock, Mutex};
-use crate::host::HostHandle;
-
 
 static SUMMARY_START_LOCK: LazyLock<tokio::sync::Mutex<()>> =
     LazyLock::new(|| tokio::sync::Mutex::new(()));
@@ -45,6 +42,10 @@ pub struct SummaryResponse {
     pub end: Option<String>,
     pub data: Option<serde_json::Value>,
     pub error: Option<String>,
+    /// Machine-readable reason for a failed run that is not an error the user
+    /// can retry away, e.g. `"too_short"` (the meeting has too little speech).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -102,10 +103,12 @@ pub async fn api_save_meeting_summary(
         meeting_id
     );
     if !summary_is_renderable(&summary) {
-        return Err("Summary contains no visible content or model reasoning markers and was not saved.".into());
+        return Err(
+            "Summary contains no visible content or model reasoning markers and was not saved."
+                .into(),
+        );
     }
     let pool = state.db_manager.pool();
-
 
     match SummaryProcessesRepository::update_meeting_summary(pool, &meeting_id, &summary).await {
         Ok(true) => {
@@ -212,8 +215,11 @@ pub async fn api_save_meeting_detected_summary_language(
 
     match resolve_meeting_folder(state.db_manager.pool(), &meeting_id).await? {
         MeetingFolderResolution::Folder(folder) => tokio::task::spawn_blocking(move || {
-            write_detected_summary_language_to_metadata(&folder, detected_summary_language.as_deref())
-                .map_err(|e| e.to_string())?;
+            write_detected_summary_language_to_metadata(
+                &folder,
+                detected_summary_language.as_deref(),
+            )
+            .map_err(|e| e.to_string())?;
             read_detected_summary_language_from_metadata(&folder)
                 .map(MeetingSummaryLanguagePreference::metadata)
                 .map_err(|e| e.to_string())
@@ -284,10 +290,10 @@ fn summary_contains_reasoning_marker(value: &serde_json::Value) -> bool {
     match value {
         serde_json::Value::Array(items) => items.iter().any(summary_contains_reasoning_marker),
         serde_json::Value::Object(object) => object.iter().any(|(key, value)| match key.as_str() {
-            "markdown" | "text" | "content" => value
-                .as_str()
-                .is_some_and(contains_reasoning_marker)
-                || value.is_array() && summary_contains_reasoning_marker(value),
+            "markdown" | "text" | "content" => {
+                value.as_str().is_some_and(contains_reasoning_marker)
+                    || value.is_array() && summary_contains_reasoning_marker(value)
+            }
             "summary_json" | "children" => summary_contains_reasoning_marker(value),
             _ => false,
         }),
@@ -345,7 +351,10 @@ fn redact_flagged_reasoning(mut result: serde_json::Value) -> serde_json::Value 
         reasoning_stripped |= sanitize_markdown_value(cache.get_mut("markdown"));
     }
     if reasoning_stripped {
-        object.insert("reasoning_stripped".to_string(), serde_json::Value::Bool(true));
+        object.insert(
+            "reasoning_stripped".to_string(),
+            serde_json::Value::Bool(true),
+        );
     }
     result
 }
@@ -407,6 +416,10 @@ pub async fn api_get_summary(
                 }
             };
 
+            let reason = error
+                .as_deref()
+                .filter(|e| crate::summary::quality::is_too_short_message(e))
+                .map(|_| "too_short".to_string());
             let response = SummaryResponse {
                 status: status.clone(),
                 meeting_name,
@@ -417,6 +430,7 @@ pub async fn api_get_summary(
                 end: process.end_time.map(|time| time.to_rfc3339()),
                 data,
                 error,
+                reason,
             };
 
             log_info!(
@@ -445,11 +459,102 @@ pub async fn api_get_summary(
                 end: None,
                 data: None,
                 error: None,
+                reason: None,
             })
         }
         Err(e) => {
             log_error!("Error retrieving summary for {}: {}", meeting_id, e);
             Err(format!("Failed to retrieve summary: {}", e))
+        }
+    }
+}
+
+/// Names of the attendees of the calendar event the meeting took place in,
+/// read from the local calendar cache only (no network). Missing calendar,
+/// credential or event only means no extra names.
+/// No application caller currently refreshes calendar/events.json.
+async fn calendar_attendee_names(pool: &sqlx::SqlitePool, meeting_id: &str) -> Vec<String> {
+    use crate::calendar::{Calendar, CalendarConfig, IcsAddress};
+    let Ok(Some(meeting)) = MeetingsRepository::get_meeting_metadata(pool, meeting_id).await else {
+        return Vec::new();
+    };
+    let Some(folder) = meeting.folder_path else {
+        return Vec::new();
+    };
+    let Ok(raw) = tokio::fs::read(std::path::Path::new(&folder).join("metadata.json")).await else {
+        return Vec::new();
+    };
+    let Ok(metadata) = serde_json::from_slice::<serde_json::Value>(&raw) else {
+        return Vec::new();
+    };
+    let Some((at, end)) = recording_interval(&metadata) else {
+        return Vec::new();
+    };
+    let Ok(Some(address)) = IcsAddress::load() else {
+        return Vec::new();
+    };
+    let Ok(calendar) = Calendar::open(address, CalendarConfig::default()).await else {
+        return Vec::new();
+    };
+    attendees_for_recording(at, end, &calendar.events_around(at))
+}
+
+fn recording_interval(metadata: &serde_json::Value) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
+    // Imports have processing timestamps, not the original recording time.
+    if metadata
+        .get("source")
+        .is_some_and(|source| source != "recording")
+        || metadata.get("devices").is_none()
+    {
+        return None;
+    }
+    if metadata.get("audio_file")?.as_str()?.is_empty() {
+        return None;
+    }
+    let start = DateTime::parse_from_rfc3339(metadata.get("created_at")?.as_str()?)
+        .ok()?
+        .with_timezone(&Utc);
+    let seconds = metadata.get("duration_seconds")?.as_f64()?;
+    if !seconds.is_finite() || seconds <= 0.0 {
+        return None;
+    }
+    Some((
+        start,
+        start.checked_add_signed(Duration::milliseconds((seconds * 1000.0) as i64))?,
+    ))
+}
+
+fn attendees_for_recording(
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+    events: &[crate::calendar::Event],
+) -> Vec<String> {
+    events
+        .iter()
+        .filter(|e| !e.all_day && e.start < end && e.end > start)
+        .min_by_key(|e| ((e.start - start).num_seconds().abs(), e.uid.clone()))
+        .map(crate::summary::names::attendee_names)
+        .unwrap_or_default()
+}
+
+/// The dictation dictionary's words, if dictation has a database. A missing or
+/// unreadable dictionary only means no preferred names.
+async fn dictionary_words(app_data_dir: &std::path::Path) -> Vec<String> {
+    let path = app_data_dir.join("dictation.sqlite");
+    if !path.exists() {
+        return Vec::new();
+    }
+    match crate::dictation::store::Store::open(&path).await {
+        Ok(store) => match store.dictionary().await {
+            Ok(words) => crate::summary::names::clean_names(words.into_iter().map(|w| w.word)),
+            Err(error) => {
+                log_info!("Dictionary unavailable for the summary: {}", error);
+                Vec::new()
+            }
+        },
+        Err(error) => {
+            log_info!("Dictionary unavailable for the summary: {}", error);
+            Vec::new()
         }
     }
 }
@@ -487,7 +592,11 @@ pub async fn api_process_transcript(
     // Normalise empty / whitespace-only to None so "" and null behave identically
     let summary_language = summary_language.and_then(|s| {
         let t = s.trim();
-        if t.is_empty() { None } else { Some(t.to_string()) }
+        if t.is_empty() {
+            None
+        } else {
+            Some(t.to_string())
+        }
     });
 
     // ponytail: summary starts are rare; use per-meeting locks only if start contention is measured.
@@ -511,21 +620,24 @@ pub async fn api_process_transcript(
     .await
     {
         let message = format!("Failed to save transcript data: {}", error);
-        let _ = SummaryProcessesRepository::update_process_failed(
-            &pool,
-            &m_id,
-            started_at,
-            &message,
-        )
-        .await;
+        let _ =
+            SummaryProcessesRepository::update_process_failed(&pool, &m_id, started_at, &message)
+                .await;
         return Err(message);
     }
 
-    let cancellation_token =
-        SummaryService::register_cancellation_token(&m_id, started_at);
+    let cancellation_token = SummaryService::register_cancellation_token(&m_id, started_at);
     let meeting_id_clone = m_id.clone();
     // App data directory for the BuiltInAI provider
     let app_data_dir = app.app_data_dir().ok();
+    // Dictionary words are spelled exactly in the report and the title.
+    let mut preferred_names = match &app_data_dir {
+        Some(dir) => dictionary_words(dir).await,
+        None => Vec::new(),
+    };
+    // ...and so are the attendee names from the calendar event of the meeting.
+    preferred_names.extend(calendar_attendee_names(&pool, &m_id).await);
+    let preferred_names = crate::summary::names::clean_names(preferred_names);
     crate::runtime::spawn(async move {
         SummaryService::process_transcript_background(
             app_data_dir,
@@ -539,6 +651,7 @@ pub async fn api_process_transcript(
             final_prompt,
             final_template_id,
             summary_language,
+            preferred_names,
         )
         .await;
     });
@@ -571,15 +684,25 @@ pub async fn api_cancel_summary(
             .await
         {
             Ok(true) => {
-                log_info!("Successfully cancelled summary generation for meeting_id: {}", meeting_id);
+                log_info!(
+                    "Successfully cancelled summary generation for meeting_id: {}",
+                    meeting_id
+                );
                 true
             }
             Ok(false) => {
-                log_info!("Summary generation was already terminal for meeting_id: {}", meeting_id);
+                log_info!(
+                    "Summary generation was already terminal for meeting_id: {}",
+                    meeting_id
+                );
                 false
             }
             Err(error) => {
-                log_error!("Failed to update cancellation status for {}: {}", meeting_id, error);
+                log_error!(
+                    "Failed to update cancellation status for {}: {}",
+                    meeting_id,
+                    error
+                );
                 return Err(format!("Failed to update cancellation status: {}", error));
             }
         }
@@ -625,10 +748,7 @@ mod tests {
     #[test]
     fn summary_start_tokens_are_monotonic_with_identical_clock_inputs() {
         let first = next_summary_start(Utc::now());
-        assert_eq!(
-            next_summary_start(first),
-            first + Duration::nanoseconds(1)
-        );
+        assert_eq!(next_summary_start(first), first + Duration::nanoseconds(1));
     }
 
     #[test]
@@ -650,5 +770,69 @@ mod tests {
         }));
         assert_eq!(redacted["markdown"], "Visible\n\nTail");
         assert_eq!(redacted["reasoning_stripped"], true);
+    }
+}
+
+#[cfg(test)]
+mod recording_attendee_tests {
+    use super::*;
+    use crate::calendar::{Attendee, Event};
+
+    fn at(hour: u32) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(&format!("2026-11-01T{hour:02}:00:00Z"))
+            .unwrap()
+            .with_timezone(&Utc)
+    }
+
+    #[test]
+    fn attendees_require_recording_overlap_not_save_time() {
+        let events = vec![event("recorded", 9, 10), event("saving", 12, 13)];
+        assert_eq!(
+            attendees_for_recording(at(9), at(10), &events),
+            vec!["recorded"]
+        );
+        assert!(attendees_for_recording(at(10), at(12), &events).is_empty());
+        assert!(attendees_for_recording(at(7), at(8), &events).is_empty());
+        let mut all_day = event("all day", 8, 11);
+        all_day.all_day = true;
+        assert!(attendees_for_recording(at(9), at(10), &[all_day]).is_empty());
+    }
+
+    fn event(name: &str, start: u32, end: u32) -> Event {
+        Event {
+            uid: name.into(),
+            title: name.into(),
+            start: at(start),
+            end: at(end),
+            all_day: false,
+            attendees: vec![Attendee {
+                name: Some(name.into()),
+                email: "example@example.invalid".into(),
+                declined: false,
+            }],
+        }
+    }
+
+    #[test]
+    fn imports_and_missing_timing_never_use_current_attendees() {
+        let mut metadata = serde_json::json!({"created_at": at(9).to_rfc3339(), "duration_seconds": 3600, "audio_file": "audio.mp4", "devices": {}});
+        assert_eq!(recording_interval(&metadata), Some((at(9), at(10))));
+        let (start, end) = recording_interval(&metadata).unwrap();
+        assert_eq!(
+            attendees_for_recording(
+                start,
+                end,
+                &[event("recorded", 9, 10), event("saving", 12, 13)]
+            ),
+            vec!["recorded"]
+        );
+        metadata["source"] = "import".into();
+        assert_eq!(recording_interval(&metadata), None);
+        metadata.as_object_mut().unwrap().remove("source");
+        metadata["audio_file"] = "".into();
+        assert_eq!(recording_interval(&metadata), None);
+        metadata["audio_file"] = "audio.mp4".into();
+        metadata["duration_seconds"] = serde_json::Value::Null;
+        assert_eq!(recording_interval(&metadata), None);
     }
 }
