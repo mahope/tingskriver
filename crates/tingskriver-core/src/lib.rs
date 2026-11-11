@@ -72,6 +72,7 @@ pub mod proposals;
 pub mod providers;
 pub mod recover;
 pub mod runtime;
+pub mod settings_transfer;
 pub mod shortcuts;
 pub mod state;
 pub mod strings;

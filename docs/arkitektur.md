@@ -425,6 +425,47 @@ crash_dumps::tests::native_crash_produces_a_minidump -- --ignored --exact`.
 The test registers only its uniquely named child executable, checks the dump
 signature and removes its HKLM key afterward. It is excluded from ordinary
 unit tests because it requires administrator access and the WER service.
+# Settings transfer (core API, Refs #85)
+
+`settings_transfer::SettingsSnapshot` is a versioned JSON document containing
+meeting preferences, dictation settings (including modes and their shortcuts),
+dictionary words, snippets, global shortcuts and the shared provider config.
+`MeetingSettings::from_legacy` explicitly selects the portable columns from
+legacy database rows; legacy endpoints and custom options must first be migrated
+to the shared provider config. No credential store, ICS address, meeting data,
+dictation history or machine-local row ids are part of the snapshot.
+Endpoint URLs with login credentials, a query or a fragment are rejected.
+
+`export_json` and `import_json` validate the document and reject unsupported
+transfer/provider/mode versions. Dictation settings must already be normalized
+as by `DictationSettings::normalized`; values that would change on save are
+rejected by export, import and preview so the diff matches persisted values.
+`preview` reads Credential Manager but does not write live settings. It returns
+a keyed diff (object arrays by id and dictionary entries by word) with before/after
+values and the resulting snapshot. Keyed arrays also report their ordered keys
+when membership or order changes, including dictation mode priority changes.
+Replace uses the complete incoming portable snapshot. Merge uses
+incoming meeting/dictation preferences, merges dictionary words and snippet
+phrases case-insensitively, and merges providers by id and shortcuts by action.
+Merge also retains the local microphone and channel, merges dictation modes by id
+and app styles by process. Incoming function chains replace the complete ordered
+chain for that function.
+An unset incoming global shortcut retains the current shortcut in merge mode;
+replace mode can clear it. Duplicate words, phrases and provider ids are rejected.
+
+The caller gathers snapshots from the existing stores and, after user
+confirmation, persists the returned result while retaining local credentials
+and the ICS address. When a provider or Syv dictation endpoint changes origin
+(scheme, host or port) and has a saved key, the preview retains the local URL.
+Its proposed change is marked `kræver ny nøgle`. Explicitly accepting it through
+`ImportPreview::accept_endpoint_changes` deletes the corresponding credentials
+before exposing the new URLs; a deletion error keeps the safe result unchanged.
+If an imported provider id has a saved key but no local provider configuration,
+preview rejects the import until that key is removed: there is no known local
+origin to preserve, so even a built-in provider id cannot inherit the key.
+`preview_with_keys` supports injected credential stores for tests and hosts.
+This store wiring, file dialogs and the import preview UI
+are not implemented yet. No Tauri or GPUI dependency is needed by this API.
 
 # Meeting export
 
