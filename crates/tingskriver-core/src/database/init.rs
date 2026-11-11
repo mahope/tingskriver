@@ -355,7 +355,7 @@ fn room_for_copy(needed: u64, available: Option<u64>) -> bool {
 /// Free bytes on the disk that holds `path`: the disk with the longest
 /// mount point that `path` lies under.
 #[allow(clippy::disallowed_methods)] // Synchronous disk worker.
-fn available_space(path: &Path) -> Option<u64> {
+pub(crate) fn available_space(path: &Path) -> Option<u64> {
     let path = path.ancestors().find_map(|p| fs::canonicalize(p).ok())?;
     let disks = sysinfo::Disks::new_with_refreshed_list();
     disks

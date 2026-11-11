@@ -229,6 +229,20 @@ transcription leaves the saved meeting available and reports the error.
   than a second gets silence for the missing time, and at stop both tracks
   are padded to the same end. Audio received while confirming a gap stays
   buffered so silence can be inserted before it, at the start of the outage.
+- A separate `audio::disk_guard` polls the recording drive every 5 s on a
+  blocking worker, starting immediately. Below 256 MiB it emits
+  `recording-disk-low` (`kind: DiskLow`); at 320 MiB it emits
+  `recording-disk-ok` (`kind: DiskOk`).
+  Each transition is emitted once. Unknown space leaves the warning unchanged.
+  When a low-space guard stops, it also emits `DiskOk` to clear its warning.
+  The recording context replaces the warning on recovery and dismisses it
+  immediately on recording stop, independently of write errors. A low-space
+  event arriving before `recording-started` is held until that event; recovery,
+  stop and the next startup clear any pending warning. The dictation
+  overlay has no meeting-recording status connection yet; its disk warning is
+  deferred to #169.
+  Testing on an almost-full Windows VHD remains a manual validation step.
+  The guard only advises through `AppHost`; it never stops or blocks capture.
 - Storage errors are a state, not a log line: the first failure emits
   `recording-storage-error` (`{ message, kind }`, e.g. "Lyden gemmes ikke:
   disken er fuld"), recovery emits `recording-storage-recovered`, and more
