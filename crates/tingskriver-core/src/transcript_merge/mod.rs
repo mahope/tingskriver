@@ -2,6 +2,8 @@
 
 use std::{borrow::Cow, collections::HashMap};
 
+pub mod reconcile;
+
 pub const DEFAULT_MICROPHONE_LABEL: &str = "Mig";
 pub const DEFAULT_UNKNOWN_LABEL: &str = "Ukendt taler";
 pub const NUMBERED_SPEAKER_PREFIX: &str = "Taler";
