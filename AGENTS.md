@@ -76,3 +76,11 @@ Kan en kontrol ikke køre (fx fordi du er på Linux og ændringen kun kan prøve
 - Ingen telemetri og ingen netværkskald, som brugeren ikke har bedt om eller slået til.
 - Brugertekst er dansk med æøå og står i `tingskriver_core::strings`.
 - Versionsnummeret i `Cargo.toml` ejes af udgivelsesprocessen. Bump det ikke i en almindelig PR.
+
+## graphify
+
+Code graph (graphify, AST only, no LLM). If `~/graphify/tingskriver/` exists on this machine, use it before broad grep:
+- Overview: `~/graphify/tingskriver/BRIEF.md` (about 1.5 KB).
+- Lookups: `~/.local/bin/graphify query "<question>" --graph ~/graphify/tingskriver/graphify-out/graph.json --budget 1500`; also `explain "<symbol>"` and `affected "<symbol>"` with the same `--graph`.
+- Do not read `GRAPH_REPORT.md` in full (about 100 KB).
+- The graph reflects the default branch, rebuilt every 30 minutes by a timer. It is not your branch: check the code in your worktree before changing it. Do not run graphify inside the repo, and never commit `graphify-out/`.

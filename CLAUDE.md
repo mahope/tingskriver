@@ -70,3 +70,11 @@ Put the logic in `crates/tingskriver-core` as a plain function (take a `HostHand
 - Use Tauri/GPUI path APIs, never hard-coded paths. Models live in `%APPDATA%\dk.mahoje.tingskriver\models` in production (`app_data_dir().join("models")`, see `tingskriver_core::paths`) and `frontend/models/` in development.
 - Branches: `main` is stable; work on `fix/*`, `enhance/*` or `issue/<n>-*` and open a PR to `main` ([CONTRIBUTING.md](CONTRIBUTING.md)).
 - The repository is public: no secrets, personal data or private paths. Test with synthetic fixtures ([docs/testing.md](docs/testing.md)).
+
+## graphify
+
+Code graph (graphify, AST only, no LLM). If `~/graphify/tingskriver/` exists on this machine, use it before broad grep:
+- Overview: `~/graphify/tingskriver/BRIEF.md` (about 1.5 KB).
+- Lookups: `~/.local/bin/graphify query "<question>" --graph ~/graphify/tingskriver/graphify-out/graph.json --budget 1500`; also `explain "<symbol>"` and `affected "<symbol>"` with the same `--graph`.
+- Do not read `GRAPH_REPORT.md` in full (about 100 KB).
+- The graph reflects the default branch, rebuilt every 30 minutes by a timer. It is not your branch: check the code in your worktree before changing it. Do not run graphify inside the repo, and never commit `graphify-out/`.

@@ -8,6 +8,8 @@
   Refuses to run on a machine that already has the app installed, so it
   never touches a developer's installation. Seeds synthetic user data and a
   Credential Manager key, which must still be there after the uninstall.
+  -PreviousVersion checks installation and public update delivery only; it skips
+  hooks, diagnose and uninstall expectations introduced after the predecessor.
   Everything useful for a failure (installer output, diagnose JSON, the app
   log, the newest Application event log errors) is copied to OutputDir.
 
@@ -22,11 +24,18 @@ param(
   [string] $OutputDir = "smoke-out",
   [int] $InstallTimeoutSeconds = 180,
   [int] $UninstallTimeoutSeconds = 180,
-  [int] $KeepAliveSeconds = 20
+  [int] $KeepAliveSeconds = 20,
+  [string] $ExpectedInstalledVersion = '',
+  [string] $ExpectedUpdateVersion = '',
+  [switch] $PreviousVersion,
+  [int] $UpdateTimeoutSeconds = 600
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+if ($PreviousVersion -and (-not $ExpectedInstalledVersion -or -not $ExpectedUpdateVersion)) {
+  throw '-PreviousVersion requires ExpectedInstalledVersion and ExpectedUpdateVersion'
+}
 
 $packId = 'TingskriverApp'
 $installDir = Join-Path $env:LOCALAPPDATA $packId
@@ -137,36 +146,42 @@ try {
   if (-not (Test-Path $update)) { Fail "$update is missing after install" }
   $entry = Get-ItemProperty $uninstallKey
   Write-Host "Uninstall entry: $($entry.DisplayName) $($entry.DisplayVersion)"
-  EndStep
-
-  # 4. The after-install hook: start with Windows, and its log lines.
-  Step 'After-install hook'
-  $expectedRun = "`"$exe`" --hidden"
-  $run = (Get-ItemProperty $runKey -ErrorAction SilentlyContinue).PSObject.Properties['Tingskriver']
-  if (-not $run) { Fail 'HKCU Run value Tingskriver is missing after install' }
-  if ($run.Value -ne $expectedRun) { Fail "Run value is '$($run.Value)', expected '$expectedRun'" }
-  if (-not (Wait-Until { (Read-LogText) -match 'installer: installed' } 30)) {
-    Fail "The app log has no 'installer: installed' line ($logFile)"
-  }
-  if ((Read-LogText) -notmatch 'installer install:') {
-    Write-Host "::warning::The app log has no 'installer install:' line"
+  if ($ExpectedInstalledVersion -and $entry.DisplayVersion -ne $ExpectedInstalledVersion) {
+    Fail "Installed version $($entry.DisplayVersion), expected $ExpectedInstalledVersion"
   }
   EndStep
 
-  # 5. Diagnose. Findings of kind error (no Vulkan on a runner, say) give
-  #    exit code 1 and are not a failed installation; any other exit code,
-  #    or output that is not JSON, is.
-  Step 'tingskriver-app --diagnose --json'
-  $code = Invoke-Timed $exe @('--diagnose', '--json') 'diagnose' 60
-  Write-Host "Diagnose exit code $code"
-  if ($code -ne 0 -and $code -ne 1) { Fail "--diagnose exited with $code" }
-  $diagnosePath = Join-Path $OutputDir 'diagnose.stdout.txt'
-  $diagnoseText = Get-Content -Raw -Path $diagnosePath
-  try { $diagnose = $diagnoseText | ConvertFrom-Json } catch { Fail "--diagnose did not print JSON: $($_.Exception.Message)" }
-  Copy-Item $diagnosePath -Destination (Join-Path $OutputDir 'diagnose.json') -Force
-  Write-Host $diagnoseText
-  if ($code -eq 1) { Write-Host '::warning::--diagnose reported errors (expected on a runner without a GPU or audio); see diagnose.json' }
-  EndStep
+  if (-not $PreviousVersion) {
+    # 4. The after-install hook: start with Windows, and its log lines.
+    Step 'After-install hook'
+    $expectedRun = "`"$exe`" --hidden"
+    $run = (Get-ItemProperty $runKey -ErrorAction SilentlyContinue).PSObject.Properties['Tingskriver']
+    if (-not $run) { Fail 'HKCU Run value Tingskriver is missing after install' }
+    if ($run.Value -ne $expectedRun) { Fail "Run value is '$($run.Value)', expected '$expectedRun'" }
+    if (-not (Wait-Until { (Read-LogText) -match 'installer: installed' } 30)) {
+      Fail "The app log has no 'installer: installed' line ($logFile)"
+    }
+    if ((Read-LogText) -notmatch 'installer install:') {
+      Write-Host "::warning::The app log has no 'installer install:' line"
+    }
+    EndStep
+
+    # 5. Diagnose. Findings of kind error (no Vulkan on a runner, say) give
+    #    exit code 1 and are not a failed installation; any other exit code,
+    #    or output that is not JSON, is.
+    Step 'tingskriver-app --diagnose --json'
+    $code = Invoke-Timed $exe @('--diagnose', '--json') 'diagnose' 60
+    Write-Host "Diagnose exit code $code"
+    if ($code -ne 0 -and $code -ne 1) { Fail "--diagnose exited with $code" }
+    $diagnosePath = Join-Path $OutputDir 'diagnose.stdout.txt'
+    $diagnoseText = Get-Content -Raw -Path $diagnosePath
+    try { $diagnose = $diagnoseText | ConvertFrom-Json } catch { Fail "--diagnose did not print JSON: $($_.Exception.Message)" }
+    Copy-Item $diagnosePath -Destination (Join-Path $OutputDir 'diagnose.json') -Force
+    Write-Host $diagnoseText
+    if ($code -eq 1) { Write-Host '::warning::--diagnose reported errors (expected on a runner without a GPU or audio); see diagnose.json' }
+    EndStep
+
+  }
 
   # 6. Start hidden and stay alive.
   Step "Start the app hidden and keep it alive for $KeepAliveSeconds s"
@@ -186,49 +201,89 @@ try {
   $newLog = (Read-LogText).Substring([Math]::Min($logBefore, (Read-LogText).Length))
   if ($newLog -notmatch '\(GPUI\) starting hidden') { Fail "The app log has no '(GPUI) starting hidden' line" }
   Write-Host "The app is still running (pid $($app.Id))."
+  if ($ExpectedUpdateVersion) {
+    Step "Installed predecessor downloads $ExpectedUpdateVersion from the public feed"
+    $ready = 'update: ReadyAtRestart { version: "' + $ExpectedUpdateVersion + '" }'
+    $updateDeadline = (Get-Date).AddSeconds($UpdateTimeoutSeconds)
+    $backoff = 15
+    $offered = $false
+    $lastResult = 'no update result'
+    while ((Get-Date) -lt $updateDeadline) {
+      if ($app.HasExited) { Fail 'The predecessor exited while waiting for its update' }
+      $text = Read-LogText
+      $fresh = $text.Substring([Math]::Min($logBefore, $text.Length))
+      if ($fresh.Contains($ready)) { $offered = $true; break }
+      if ($fresh -match 'update: Failed|update: NoReleaseFound|update: UpToDate|update: ReadyAtRestart') {
+        $lastResult = if ($fresh -match 'update: Failed') {
+          'rate limited/network or download failure (see app log)'
+        } else {
+          'public feed does not offer the expected version'
+        }
+        Write-Host "Update attempt: $lastResult; retrying after backoff ($backoff s)"
+        Stop-Process -Id $app.Id -Force
+        if (-not $app.WaitForExit(15000)) { Fail 'The predecessor did not stop for retry' }
+        $remaining = [Math]::Max(0, ($updateDeadline - (Get-Date)).TotalSeconds)
+        Start-Sleep -Seconds ([Math]::Min($backoff, $remaining))
+        if ((Get-Date) -ge $updateDeadline) { break }
+        $backoff = [Math]::Min($backoff * 2, 120)
+        # Each launch triggers the old app's initial check after 60 s;
+        # its normal six-hour interval cannot fit this runner's timeout.
+        $logBefore = (Read-LogText).Length
+        $app = Start-Process -FilePath $exe -ArgumentList '--hidden' -PassThru
+      }
+      Start-Sleep -Seconds 1
+    }
+    if (-not $offered) { Fail "The predecessor did not download $ExpectedUpdateVersion within $UpdateTimeoutSeconds s: $lastResult" }
+    Copy-Item $logFile -Destination (Join-Path $OutputDir 'update-ready.log') -Force
+    Write-Host "Public update ready: $ExpectedUpdateVersion"
+    EndStep
+  }
   Stop-Process -Id $app.Id -Force
   if (-not $app.WaitForExit(15000)) { Fail 'The app process did not stop' }
   $app = $null
   EndStep
 
-  # Synthetic user data and a key that must survive the uninstall. Seeded after
-  # the install, so the app and its hooks start against a clean machine.
-  Step 'Seed synthetic user data and a Credential Manager key'
-  New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
-  Set-Content -Path $dataMarker -Value 'synthetic smoke-test data' -Encoding ascii
-  $secret = [guid]::NewGuid().ToString('N')
-  & cmdkey.exe "/generic:$credentialTarget" '/user:smoke-test' "/pass:$secret" | Out-Null
-  if ($LASTEXITCODE -ne 0) { Fail "cmdkey could not add $credentialTarget" }
-  $secret = $null
-  EndStep
+  if (-not $PreviousVersion) {
+    # Synthetic user data and a key that must survive the uninstall. Seeded after
+    # the install, so the app and its hooks start against a clean machine.
+    Step 'Seed synthetic user data and a Credential Manager key'
+    New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
+    Set-Content -Path $dataMarker -Value 'synthetic smoke-test data' -Encoding ascii
+    $secret = [guid]::NewGuid().ToString('N')
+    & cmdkey.exe "/generic:$credentialTarget" '/user:smoke-test' "/pass:$secret" | Out-Null
+    if ($LASTEXITCODE -ne 0) { Fail "cmdkey could not add $credentialTarget" }
+    $secret = $null
+    EndStep
 
-  # 7. Silent uninstall, with the command Windows itself would run.
-  Step 'Silent uninstall'
-  $entry = Get-ItemProperty $uninstallKey
-  $quiet = $entry.PSObject.Properties['QuietUninstallString']
-  $command = if ($quiet -and $quiet.Value) { $quiet.Value } else { "$($entry.UninstallString) --silent" }
-  Write-Host "Uninstall command: $command"
-  # The command is `"path" args`; run it through cmd so the quoting is kept.
-  $code = Invoke-Timed 'cmd.exe' @('/c', "`"$command`"") 'uninstall' $UninstallTimeoutSeconds
-  Write-Host "Uninstall exit code $code"
-  if ($code -ne 0) { Fail "The uninstaller exited with $code" }
-  if (-not (Wait-Until { -not (Test-Path $uninstallKey) } 60)) { Fail "$uninstallKey is still there after uninstall" }
-  # Velopack removes the folder after the uninstaller process has exited.
-  if (-not (Wait-Until { -not (Test-Path $installDir) } 60)) {
-    Get-ChildItem -Recurse -Force $installDir -ErrorAction SilentlyContinue | Select-Object -First 40 FullName | Format-Table | Out-String | Write-Host
-    Fail "$installDir is still there after uninstall"
+    # 7. Silent uninstall, with the command Windows itself would run.
+    Step 'Silent uninstall'
+    $entry = Get-ItemProperty $uninstallKey
+    $quiet = $entry.PSObject.Properties['QuietUninstallString']
+    $command = if ($quiet -and $quiet.Value) { $quiet.Value } else { "$($entry.UninstallString) --silent" }
+    Write-Host "Uninstall command: $command"
+    # The command is `"path" args`; run it through cmd so the quoting is kept.
+    $code = Invoke-Timed 'cmd.exe' @('/c', "`"$command`"") 'uninstall' $UninstallTimeoutSeconds
+    Write-Host "Uninstall exit code $code"
+    if ($code -ne 0) { Fail "The uninstaller exited with $code" }
+    if (-not (Wait-Until { -not (Test-Path $uninstallKey) } 60)) { Fail "$uninstallKey is still there after uninstall" }
+    # Velopack removes the folder after the uninstaller process has exited.
+    if (-not (Wait-Until { -not (Test-Path $installDir) } 60)) {
+      Get-ChildItem -Recurse -Force $installDir -ErrorAction SilentlyContinue | Select-Object -First 40 FullName | Format-Table | Out-String | Write-Host
+      Fail "$installDir is still there after uninstall"
+    }
+    $run = (Get-ItemProperty $runKey -ErrorAction SilentlyContinue).PSObject.Properties['Tingskriver']
+    if ($run) { Fail "HKCU Run value Tingskriver is still there after uninstall: $($run.Value)" }
+    EndStep
+
+    # 8. User data and keys stay (installer/README.md, "Hooks").
+    Step 'User data and Credential Manager keys stay'
+    if (-not (Test-Path $dataMarker)) { Fail "User data was deleted: $dataMarker is gone" }
+    $keys = & cmdkey.exe /list 2>&1 | Out-String
+    if ($keys -notmatch [regex]::Escape($credentialTarget)) { Fail "Credential Manager key $credentialTarget was deleted" }
+    Write-Host 'User data and the Credential Manager key are still there.'
+    EndStep
+
   }
-  $run = (Get-ItemProperty $runKey -ErrorAction SilentlyContinue).PSObject.Properties['Tingskriver']
-  if ($run) { Fail "HKCU Run value Tingskriver is still there after uninstall: $($run.Value)" }
-  EndStep
-
-  # 8. User data and keys stay (installer/README.md, "Hooks").
-  Step 'User data and Credential Manager keys stay'
-  if (-not (Test-Path $dataMarker)) { Fail "User data was deleted: $dataMarker is gone" }
-  $keys = & cmdkey.exe /list 2>&1 | Out-String
-  if ($keys -notmatch [regex]::Escape($credentialTarget)) { Fail "Credential Manager key $credentialTarget was deleted" }
-  Write-Host 'User data and the Credential Manager key are still there.'
-  EndStep
 
   Write-Host "SMOKE TEST PASSED (installer sha256 $hash)"
   exit 0

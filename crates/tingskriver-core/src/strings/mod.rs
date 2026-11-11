@@ -9,6 +9,7 @@ macro_rules! catalogue {
 catalogue! {
     APP_NAME = "Tingskriver";
     MEETINGS = "Møder";
+    TRANSCRIPT_TRUNCATED = "Den nye transskription er væsentligt kortere end den forrige og er ikke gjort aktuel. Den er gemt som version, og den forrige er stadig i brug.";
     DICTATION = "Diktering";
     RERUN_TITLE = "Kør sidste igen";
     RERUN_CHANGED = "Teksten er ændret.";
