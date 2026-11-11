@@ -124,7 +124,6 @@ impl Client {
 #[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
-    use std::os::unix::fs::PermissionsExt;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Instant;
 
@@ -142,31 +141,13 @@ mod tests {
             ));
             std::fs::create_dir(&directory).unwrap();
             let program = directory.join("worker");
-            std::fs::write(
+            // Execute an immutable script: concurrently spawning tests must not
+            // inherit a writable descriptor to another test's executable.
+            std::os::unix::fs::symlink(
+                concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/stt-worker.py"),
                 &program,
-                r#"#!/usr/bin/python3
-import os, signal, struct, sys
-r, w = sys.stdin.buffer, sys.stdout.buffer
-def exact(n):
-    result = bytearray()
-    while len(result) < n:
-        part = r.read(n - len(result))
-        if not part: raise EOFError()
-        result.extend(part)
-    return result
-while True:
-    try:
-        i, c, n = struct.unpack('<QII', exact(16))
-        control, pcm = exact(c), exact(n * 4)
-    except EOFError: break
-    if control == b'crash': os.kill(os.getpid(), signal.SIGKILL)
-    if control == b'wrong-id': i += 1
-    w.write(struct.pack('<QII', i, 4, n) + b'null' + pcm)
-    w.flush()
-"#,
             )
             .unwrap();
-            std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).unwrap();
             let mut client = Client {
                 program,
                 init: b"init".to_vec(),
@@ -197,10 +178,22 @@ while True:
         let mut f = Fixture::new();
         let directory = f.directory.clone();
         // A file in place of the directory forces remove_dir_all to fail.
-        f.directory = directory.join("worker");
+        f.directory = directory.join("not-a-directory");
+        std::fs::write(&f.directory, b"not a directory").unwrap();
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(f)));
         std::fs::remove_dir_all(directory).unwrap();
         assert!(result.is_ok());
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn fixture_drop_reaps_worker_and_removes_directory() {
+        let f = Fixture::new();
+        let pid = f.client.process.as_ref().unwrap().child.id();
+        let directory = f.directory.clone();
+        drop(f);
+        assert!(!PathBuf::from(format!("/proc/{pid}")).exists());
+        assert!(!directory.exists());
     }
 
     #[test]
