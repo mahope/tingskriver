@@ -1322,6 +1322,10 @@ async fn public_api_falls_back_to_the_local_model_without_a_syv_key() {
 
 #[tokio::test]
 async fn verification_preserves_errors_and_retries_failures() {
+    // Each verification builds its own HTTP client, which can take well over
+    // 100 ms on a busy CI runner. Only the call that must time out gets a short
+    // limit; every other call gets verify's full 8 s.
+    let generous = Some(Duration::from_secs(8));
     for (status, expected, message) in [
         (
             "401 Unauthorized",
@@ -1346,7 +1350,8 @@ async fn verification_preserves_errors_and_retries_failures() {
             Reply::ok(r#"{"data":[]}"#),
         ])
         .await;
-        let target = link("errors", &server.base_url, None);
+        let mut target = link("errors", &server.base_url, None);
+        target.timeout = generous;
         let error = client::test(&target).await.unwrap_err();
         assert_eq!(error, expected);
         assert!(error.message("Test").contains(message));
@@ -1359,6 +1364,7 @@ async fn verification_preserves_errors_and_retries_failures() {
     let error = client::test(&target).await.unwrap_err();
     assert!(matches!(error, ProviderError::Timeout { .. }));
     assert!(error.message("Test").contains("tidsgrænsen"));
+    target.timeout = generous;
     client::test(&target).await.unwrap();
 }
 
