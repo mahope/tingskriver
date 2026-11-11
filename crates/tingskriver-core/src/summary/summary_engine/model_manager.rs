@@ -480,7 +480,7 @@ impl ModelManager {
             model_name,
             entry.sources.len()
         );
-        log::info!("Saving to: {}", file_path.display());
+        log::info!("Saving model file");
 
         let result = async {
             let client =
@@ -676,7 +676,7 @@ impl ModelManager {
 
         if file_path.exists() {
             fs::remove_file(&file_path).await?;
-            log::info!("Deleted model file: {}", file_path.display());
+            log::info!("Deleted model file");
         }
         model_download::remove_sidecars(&self.models_dir, &model_def.gguf_file).await;
 

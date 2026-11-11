@@ -132,7 +132,9 @@ async fn corrupt_database_gives_corrupt_error_backup_and_log_line() {
     let logged = std::fs::read_to_string(log).unwrap();
     assert!(
         logged.contains("Database failed to open (Corrupt)")
-            && logged.contains(&db.display().to_string()),
+            && logged.contains(&tingskriver_core::logging::redact(
+                &db.display().to_string()
+            )),
         "log:\n{logged}"
     );
 }

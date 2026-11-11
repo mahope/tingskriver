@@ -717,10 +717,9 @@ pub async fn api_save_transcript(
     auth_token: Option<String>,
 ) -> Result<serde_json::Value, String> {
     log_info!(
-        "api_save_transcript called for meeting: {}, transcripts: {}, folder_path: {:?}, auth_token: {}",
-        meeting_title,
+        "api_save_transcript called: transcripts: {}, has_folder_path: {}, auth_token: {}",
         transcripts.len(),
-        folder_path,
+        folder_path.is_some(),
         auth_token.is_some()
     );
 
@@ -777,11 +776,7 @@ pub async fn api_save_transcript(
             }))
         }
         Err(e) => {
-            log_error!(
-                "Error saving transcript for meeting '{}': {}",
-                meeting_title,
-                e
-            );
+            log_error!("Error saving transcript: {}", e);
             Err(format!("Failed to save transcript: {}", e))
         }
     }
@@ -805,12 +800,12 @@ pub async fn open_meeting_folder(state: &AppState, meeting_id: String) -> Result
     match meeting {
         Some(m) => {
             if let Some(folder_path) = m.folder_path {
-                log_info!("Opening meeting folder: {}", folder_path);
+                log_info!("Opening meeting folder");
 
                 // Verify folder exists
                 let path = std::path::Path::new(&folder_path);
                 if !path.exists() {
-                    log_warn!("Folder path does not exist: {}", folder_path);
+                    log_warn!("Meeting folder does not exist");
                     return Err(format!("Recording folder not found: {}", folder_path));
                 }
 
@@ -839,7 +834,7 @@ pub async fn open_meeting_folder(state: &AppState, meeting_id: String) -> Result
                         .map_err(|e| format!("Failed to open folder: {}", e))?;
                 }
 
-                log_info!("Successfully opened folder: {}", folder_path);
+                log_info!("Successfully opened meeting folder");
                 Ok(())
             } else {
                 log_warn!("Meeting {} has no folder_path set", meeting_id);
@@ -864,11 +859,7 @@ pub async fn api_save_custom_openai_config(
     temperature: Option<f32>,
     top_p: Option<f32>,
 ) -> Result<serde_json::Value, String> {
-    log_info!(
-        "api_save_custom_openai_config called: endpoint='{}', model='{}'",
-        &endpoint,
-        &model
-    );
+    log_info!("api_save_custom_openai_config called: model='{}'", &model);
 
     // Validate required fields
     if endpoint.trim().is_empty() {
@@ -913,10 +904,7 @@ pub async fn api_save_custom_openai_config(
 
     match SettingsRepository::save_custom_openai_config(pool, &config).await {
         Ok(()) => {
-            log_info!(
-                "✅ Successfully saved custom OpenAI config for endpoint: {}",
-                config.endpoint
-            );
+            log_info!("✅ Successfully saved custom OpenAI config");
             Ok(serde_json::json!({
                 "status": "success",
                 "message": "Custom OpenAI configuration saved successfully"
@@ -940,11 +928,7 @@ pub async fn api_get_custom_openai_config(
     match SettingsRepository::get_custom_openai_config(pool).await {
         Ok(config) => {
             if let Some(ref c) = config {
-                log_info!(
-                    "✅ Found custom OpenAI config: endpoint='{}', model='{}'",
-                    c.endpoint,
-                    c.model
-                );
+                log_info!("✅ Found custom OpenAI config: model='{}'", c.model);
             } else {
                 log_info!("No custom OpenAI config found");
             }
@@ -965,8 +949,7 @@ pub async fn api_test_custom_openai_connection(
     model: String,
 ) -> Result<serde_json::Value, String> {
     log_info!(
-        "api_test_custom_openai_connection called: endpoint='{}', model='{}'",
-        &endpoint,
+        "api_test_custom_openai_connection called: model='{}'",
         &model
     );
 
@@ -1044,8 +1027,7 @@ pub async fn api_test_custom_openai_connection(
 
                         // Response was 200 but doesn't match OpenAI format
                         log_warn!(
-                            "⚠️ Endpoint returned 200 but response doesn't match OpenAI format: {}",
-                            response_text
+                            "⚠️ Endpoint returned 200 but response doesn't match OpenAI format"
                         );
                         Err("Endpoint is reachable but doesn't appear to be OpenAI-compatible. Response is missing 'choices' array or 'message.content' / 'message.reasoning_content' field.".to_string())
                     }
@@ -1062,9 +1044,8 @@ pub async fn api_test_custom_openai_connection(
                 }
             } else {
                 log_warn!(
-                    "⚠️ Custom OpenAI connection test failed with status {}: {}",
-                    status,
-                    response_text
+                    "⚠️ Custom OpenAI connection test failed with status {}",
+                    status
                 );
                 Err(format!(
                     "Connection failed with status {}: {}",

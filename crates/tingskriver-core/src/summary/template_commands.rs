@@ -38,8 +38,7 @@ pub struct TemplateDetails {
 ///
 /// # Returns
 /// Vector of TemplateInfo with id, name, and description for each template
-pub async fn api_list_templates(
-) -> Result<Vec<TemplateInfo>, String> {
+pub async fn api_list_templates() -> Result<Vec<TemplateInfo>, String> {
     info!("api_list_templates called");
 
     let templates = templates::list_templates();
@@ -65,10 +64,11 @@ pub async fn api_list_templates(
 ///
 /// # Returns
 /// TemplateDetails with full template structure
-pub async fn api_get_template_details(
-    template_id: String,
-) -> Result<TemplateDetails, String> {
-    info!("api_get_template_details called for template_id: {}", template_id);
+pub async fn api_get_template_details(template_id: String) -> Result<TemplateDetails, String> {
+    info!(
+        "api_get_template_details called for template_id: {}",
+        template_id
+    );
 
     let template = templates::get_template(&template_id)?;
 
@@ -85,7 +85,7 @@ pub async fn api_get_template_details(
         sections: section_titles,
     };
 
-    info!("Retrieved template details for '{}'", details.name);
+    info!("Retrieved details for template '{}'", details.id);
 
     Ok(details)
 }
@@ -99,14 +99,12 @@ pub async fn api_get_template_details(
 ///
 /// # Returns
 /// Ok(template_name) if valid, Err(error_message) if invalid
-pub async fn api_validate_template(
-    template_json: String,
-) -> Result<String, String> {
+pub async fn api_validate_template(template_json: String) -> Result<String, String> {
     info!("api_validate_template called");
 
     match templates::validate_and_parse_template(&template_json) {
         Ok(template) => {
-            info!("Template '{}' validated successfully", template.name);
+            info!("Custom template validated successfully");
             Ok(template.name)
         }
         Err(e) => {

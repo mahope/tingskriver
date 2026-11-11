@@ -1,7 +1,7 @@
+use crate::host::HostHandle;
 use log::{info, warn};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use crate::host::HostHandle;
 
 use anyhow::Result;
 #[cfg(target_os = "macos")]
@@ -93,9 +93,7 @@ pub fn generate_recording_filename(format: &str) -> String {
 }
 
 /// Load recording preferences from store
-pub async fn load_recording_preferences(
-    app: &HostHandle,
-) -> Result<RecordingPreferences> {
+pub async fn load_recording_preferences(app: &HostHandle) -> Result<RecordingPreferences> {
     // Try to load from the host's settings store
     let stored = match app.read_setting("recording_preferences.json", "preferences") {
         Ok(stored) => stored,
@@ -169,9 +167,7 @@ pub async fn save_recording_preferences(
 }
 
 /// Recording preferences behind the Tauri commands of the same name
-pub async fn get_recording_preferences(
-    app: HostHandle,
-) -> Result<RecordingPreferences, String> {
+pub async fn get_recording_preferences(app: HostHandle) -> Result<RecordingPreferences, String> {
     load_recording_preferences(&app)
         .await
         .map_err(|e| format!("Failed to load recording preferences: {}", e))
@@ -226,13 +222,11 @@ pub async fn open_recordings_folder(app: HostHandle) -> Result<(), String> {
             .map_err(|e| format!("Failed to open folder: {}", e))?;
     }
 
-    info!("Opened recordings folder: {}", folder_path);
+    info!("Opened recordings folder");
     Ok(())
 }
 
-pub async fn select_recording_folder(
-    _app: HostHandle,
-) -> Result<Option<String>, String> {
+pub async fn select_recording_folder(_app: HostHandle) -> Result<Option<String>, String> {
     // Use Tauri's dialog to select folder
     // For now, return None - this would need to be implemented with tauri-plugin-dialog
     // when it's available in the Cargo.toml
@@ -366,4 +360,3 @@ pub async fn get_audio_backend_info() -> Result<Vec<BackendInfo>, String> {
         }])
     }
 }
-
