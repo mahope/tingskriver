@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 use super::logic::app_style;
 use super::logic::cleanup::Style;
 
+pub use super::logic::modes::CommaStyle;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ModeStyle {
@@ -144,6 +146,8 @@ pub struct Mode {
     pub language: Option<String>,
     pub style: ModeStyle,
     pub polish: Option<bool>,
+    #[serde(default)]
+    pub comma_style: CommaStyle,
     pub prompt: String,
     #[serde(default)]
     pub formatting: Formatting,
@@ -168,6 +172,7 @@ impl Default for ModeCollection {
             language: Some("da".into()),
             style,
             polish: None,
+            comma_style: CommaStyle::default(),
             prompt: String::new(),
             formatting: Formatting::default(),
             output: Output::Insert,
@@ -331,6 +336,43 @@ impl Mode {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn comma_style_survives_mode_settings_round_trip() {
+        let modes = super::ModeCollection::default();
+        let mut json = serde_json::to_value(&modes).unwrap();
+        json["modes"][0]["commaStyle"] = "grammatical".into();
+        let restored = super::ModeCollection::import(&json.to_string()).unwrap();
+        let saved = serde_json::to_value(&restored).unwrap();
+        assert_eq!(saved["modes"][0]["commaStyle"], "grammatical");
+    }
+
+    #[test]
+    fn legacy_modes_preserve_settings_and_default_to_grammatical_commas() {
+        let modes = super::ModeCollection::default();
+        assert!(modes
+            .modes
+            .iter()
+            .all(|mode| mode.comma_style == super::CommaStyle::Grammatical));
+        let mut json = serde_json::to_value(&modes).unwrap();
+        for mode in json["modes"].as_array_mut().unwrap() {
+            mode.as_object_mut().unwrap().remove("commaStyle");
+        }
+        let restored = super::ModeCollection::import(&json.to_string()).unwrap();
+        assert_eq!(restored, modes);
+        for style in [
+            super::CommaStyle::Grammatical,
+            super::CommaStyle::Clarity,
+            super::CommaStyle::Unchanged,
+        ] {
+            let mut configured = restored.clone();
+            configured.modes[0].comma_style = style;
+            assert_eq!(
+                super::ModeCollection::import(&configured.export().unwrap()).unwrap(),
+                configured
+            );
+        }
+    }
+
     #[test]
     fn explicit_provider_and_local_model_change_transcription() {
         let mut mode = super::ModeCollection::default().modes.remove(0);

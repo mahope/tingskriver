@@ -51,7 +51,11 @@ pub struct Plan {
     pub fallback: Option<Engine>,
 }
 
-pub fn plan(preference: EnginePreference, has_syv_key: bool, local_available: bool) -> Option<Plan> {
+pub fn plan(
+    preference: EnginePreference,
+    has_syv_key: bool,
+    local_available: bool,
+) -> Option<Plan> {
     let use_syv = preference == EnginePreference::Auto && has_syv_key;
     match (use_syv, local_available) {
         (true, true) => Some(Plan {
@@ -85,7 +89,9 @@ pub enum Next {
     Use(String),
     /// Start the fallback. If `keep_primary` the primary is still running and
     /// whichever answers first wins.
-    Fallback { keep_primary: bool },
+    Fallback {
+        keep_primary: bool,
+    },
     Fail(String),
 }
 
@@ -104,9 +110,18 @@ pub fn after_primary(attempt: Attempt, plan: &Plan) -> Next {
 
 /// LLM polishing is only used if it finished within the budget and returned
 /// something sensible; otherwise the layer 1 text is inserted.
-pub fn choose_polished(layer1: &str, polished: Option<&str>, elapsed_ms: u64, budget_ms: u64) -> String {
+pub fn choose_polished(
+    layer1: &str,
+    polished: Option<&str>,
+    elapsed_ms: u64,
+    budget_ms: u64,
+) -> String {
     match polished.map(str::trim) {
-        Some(text) if elapsed_ms <= budget_ms && !text.is_empty() && text.len() <= layer1.len() * 3 + 40 => {
+        Some(text)
+            if elapsed_ms <= budget_ms
+                && !text.is_empty()
+                && text.len() <= layer1.len() * 3 + 40 =>
+        {
             text.to_string()
         }
         _ => layer1.to_string(),
@@ -151,13 +166,24 @@ mod tests {
     fn fallback_decisions() {
         let both = plan(EnginePreference::Auto, true, true).unwrap();
         let syv_only = plan(EnginePreference::Auto, true, false).unwrap();
-        assert_eq!(after_primary(Attempt::Text("hej".into()), &both), Next::Use("hej".into()));
+        assert_eq!(
+            after_primary(Attempt::Text("hej".into()), &both),
+            Next::Use("hej".into())
+        );
         assert_eq!(
             after_primary(Attempt::Failed("500".into()), &both),
-            Next::Fallback { keep_primary: false }
+            Next::Fallback {
+                keep_primary: false
+            }
         );
-        assert_eq!(after_primary(Attempt::Slow, &both), Next::Fallback { keep_primary: true });
-        assert_eq!(after_primary(Attempt::Failed("500".into()), &syv_only), Next::Fail("500".into()));
+        assert_eq!(
+            after_primary(Attempt::Slow, &both),
+            Next::Fallback { keep_primary: true }
+        );
+        assert_eq!(
+            after_primary(Attempt::Failed("500".into()), &syv_only),
+            Next::Fail("500".into())
+        );
     }
 
     #[test]
@@ -172,7 +198,10 @@ mod tests {
 
     #[test]
     fn preference_parsing() {
-        assert_eq!(EnginePreference::parse("local"), EnginePreference::LocalOnly);
+        assert_eq!(
+            EnginePreference::parse("local"),
+            EnginePreference::LocalOnly
+        );
         assert_eq!(EnginePreference::parse("auto"), EnginePreference::Auto);
         assert_eq!(EnginePreference::parse(""), EnginePreference::Auto);
     }

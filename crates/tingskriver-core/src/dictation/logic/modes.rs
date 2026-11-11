@@ -10,6 +10,25 @@ use serde::{Deserialize, Serialize};
 use super::app_style;
 use super::cleanup::Style;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CommaStyle {
+    #[default]
+    Grammatical,
+    Clarity,
+    Unchanged,
+}
+
+impl CommaStyle {
+    pub fn instruction(self) -> &'static str {
+        match self {
+            Self::Grammatical => "Brug grammatisk komma med startkomma foran ledsætninger og slutkomma efter ledsætninger. Sæt også komma i opremsninger, ved indskud og mellem helsætninger.",
+            Self::Clarity => "Brug klarhedskomma uden startkomma foran ledsætninger. Sæt slutkomma efter ledsætninger samt komma i opremsninger, ved indskud og mellem helsætninger.",
+            Self::Unchanged => "Bevar tekstens eksisterende kommaer uændret. Tilføj, fjern eller flyt ikke kommaer.",
+        }
+    }
+}
+
 /// How the text leaves Tingskriver.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -431,14 +450,19 @@ pub fn resolve(mode: &Mode, defaults: &Defaults) -> Resolved {
 }
 
 /// Base instruction for LLM polishing (layer 2).
-pub const POLISH_BASE: &str = "Du retter dikteret dansk tekst. Ret grammatik og tegnsætning, \
-fjern gentagelser og selvrettelser (behold den rettede udgave), og lav punktopstilling hvis \
-teksten opremser flere ting. Bevar betydning, sprog og tone. Oversæt aldrig: engelske ord og \
-fagudtryk i en dansk sætning bliver stående med engelsk stavning. Svar kun med den rettede tekst.";
+pub const POLISH_BASE: &str = include_str!("../polish.txt");
 
 /// The polishing prompt for a mode, with the dictionary's English words.
 pub fn polish_prompt(mode_prompt: &str, english_terms: &[String]) -> String {
-    let mut prompt = POLISH_BASE.to_string();
+    polish_prompt_with_style(mode_prompt, english_terms, CommaStyle::default())
+}
+
+pub fn polish_prompt_with_style(
+    mode_prompt: &str,
+    english_terms: &[String],
+    comma_style: CommaStyle,
+) -> String {
+    let mut prompt = POLISH_BASE.replace("{comma_rule}", comma_style.instruction());
     if !mode_prompt.trim().is_empty() {
         prompt.push(' ');
         prompt.push_str(mode_prompt.trim());
@@ -808,6 +832,29 @@ mod tests {
         );
         assert!(prompt.contains("formel"));
         assert!(prompt.ends_with("skal stå præcis sådan: pull request, deploy."));
+    }
+
+    #[test]
+    fn polish_prompt_contains_only_the_selected_comma_rule() {
+        let styles = [
+            CommaStyle::Grammatical,
+            CommaStyle::Clarity,
+            CommaStyle::Unchanged,
+        ];
+        for selected in styles {
+            let prompt = polish_prompt_with_style("Bevar tonen.", &[], selected);
+            assert!(!prompt.contains("{comma_rule}"));
+            for style in styles {
+                assert_eq!(prompt.contains(style.instruction()), style == selected);
+            }
+        }
+        assert!(polish_prompt("", &[]).contains(CommaStyle::Grammatical.instruction()));
+        assert!(polish_prompt_with_style("", &[], CommaStyle::Grammatical)
+            .contains("med startkomma foran ledsætninger"));
+        assert!(polish_prompt_with_style("", &[], CommaStyle::Clarity)
+            .contains("uden startkomma foran ledsætninger"));
+        assert!(polish_prompt_with_style("", &[], CommaStyle::Unchanged)
+            .contains("Tilføj, fjern eller flyt ikke kommaer"));
     }
 
     #[test]

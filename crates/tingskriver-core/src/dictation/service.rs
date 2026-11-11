@@ -873,10 +873,6 @@ async fn local_engine_available() -> bool {
         .unwrap_or(false)
 }
 
-const POLISH_PROMPT: &str = "Du retter dikteret dansk tekst. Ret grammatik og tegnsætning, \
-fjern gentagelser og selvrettelser (behold den rettede udgave), og lav punktopstilling hvis \
-teksten opremser flere ting. Bevar betydning, sprog og tone. Svar kun med den rettede tekst.";
-
 impl Service {
     async fn transcribe_local(&self, samples: Vec<f32>) -> Result<String, String> {
         match &self.backend {
@@ -1048,65 +1044,51 @@ impl Service {
     ) -> String {
         use crate::summary::llm_client::{generate_summary, LLMProvider};
 
-        let provider = match settings.polish_provider.as_str() {
-            "ollama" => LLMProvider::Ollama,
-            _ => LLMProvider::BuiltInAI,
-        };
-        let endpoint = Some(settings.polish_endpoint.trim()).filter(|e| !e.is_empty());
-        let budget = settings.polish_budget_ms;
-        let start = Instant::now();
-        let mut model = settings.polish_model.trim().to_string();
-        if model.is_empty() && provider == LLMProvider::BuiltInAI {
-            // Use the built-in model chosen for summaries.
-            model = self.summary_builtin_model().await.unwrap_or_default();
-        }
-        if model.is_empty() {
-            log::info!("Dictation polishing skipped: no model chosen");
-            return text;
-        }
-        let prompt = format!(
-            "{POLISH_PROMPT} {}",
-            mode.map(Mode::prompt).unwrap_or_default()
-        );
-        let prompt = if let Some(language) = mode.and_then(|m| m.language.as_deref()) {
-            format!("{prompt} Tekstens sprog er {language}; bevar dette sprog.")
-        } else {
-            prompt
-        };
-        let prompt =
-            super::logic::modes::polish_prompt(&prompt, &cleanup::english_terms(&self.rules()));
-        let request = generate_summary(
-            &self.http,
-            &provider,
-            &model,
-            "",
-            &prompt,
-            &text,
-            endpoint,
-            None,
-            Some(512),
-            Some(0.2),
-            None,
-            Some(&self.app_data_dir),
-            None,
-        );
-        let polished = match tokio::time::timeout(Duration::from_millis(budget), request).await {
-            Ok(Ok(completion)) => Some(completion.content),
-            Ok(Err(e)) => {
-                log::info!("Dictation polishing failed, using layer 1 text: {e}");
-                None
+        let request = async {
+            let provider = match settings.polish_provider.as_str() {
+                "ollama" => LLMProvider::Ollama,
+                _ => LLMProvider::BuiltInAI,
+            };
+            let endpoint = Some(settings.polish_endpoint.trim()).filter(|e| !e.is_empty());
+            let mut model = settings.polish_model.trim().to_string();
+            if model.is_empty() && provider == LLMProvider::BuiltInAI {
+                // Use the built-in model chosen for summaries.
+                model = self.summary_builtin_model().await.unwrap_or_default();
             }
-            Err(_) => {
-                log::info!("Dictation polishing slower than {budget} ms, using layer 1 text");
-                None
+            if model.is_empty() {
+                log::info!("Dictation polishing skipped: no model chosen");
+                return Ok(text.clone());
             }
+            let prompt = mode.map(Mode::prompt).unwrap_or_default();
+            let prompt = if let Some(language) = mode.and_then(|m| m.language.as_deref()) {
+                format!("{prompt} Tekstens sprog er {language}; bevar dette sprog.")
+            } else {
+                prompt
+            };
+            let prompt = super::logic::modes::polish_prompt_with_style(
+                &prompt,
+                &cleanup::english_terms(&self.rules()),
+                mode.map(|m| m.comma_style).unwrap_or_default(),
+            );
+            generate_summary(
+                &self.http,
+                &provider,
+                &model,
+                "",
+                &prompt,
+                &text,
+                endpoint,
+                None,
+                Some(512),
+                Some(0.2),
+                None,
+                Some(&self.app_data_dir),
+                None,
+            )
+            .await
+            .map(|completion| completion.content)
         };
-        engine::choose_polished(
-            &text,
-            polished.as_deref(),
-            start.elapsed().as_millis() as u64,
-            budget,
-        )
+        polish_or_fallback(&text, settings.polish_budget_ms, request).await
     }
 
     async fn summary_builtin_model(&self) -> Option<String> {
@@ -1574,10 +1556,72 @@ fn cleanup_options<'a>(
     }
 }
 
+/// Bound the provider call even when an older setting allows a longer budget.
+async fn polish_or_fallback<E: std::fmt::Display>(
+    layer1: &str,
+    budget_ms: u64,
+    request: impl std::future::Future<Output = Result<String, E>>,
+) -> String {
+    let budget_ms = budget_ms.min(2000);
+    let start = std::time::Instant::now();
+    let polished =
+        match tokio::time::timeout(std::time::Duration::from_millis(budget_ms), request).await {
+            Ok(Ok(text)) => Some(text),
+            Ok(Err(error)) => {
+                log::info!("Dictation polishing failed, using layer 1 text: {error}");
+                None
+            }
+            Err(_) => {
+                log::info!("Dictation polishing slower than {budget_ms} ms, using layer 1 text");
+                None
+            }
+        };
+    engine::choose_polished(
+        layer1,
+        polished.as_deref(),
+        start.elapsed().as_millis() as u64,
+        budget_ms,
+    )
+}
+
 #[cfg(test)]
 #[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn slow_polish_provider_returns_layer_one_within_two_seconds() {
+        let start = tokio::time::Instant::now();
+        let slow_provider = async {
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            Ok::<_, String>("Hej, verden.".to_string())
+        };
+        assert_eq!(
+            polish_or_fallback("hej verden", 10_000, slow_provider).await,
+            "hej verden"
+        );
+        assert_eq!(start.elapsed(), std::time::Duration::from_secs(2));
+    }
+
+    #[tokio::test]
+    async fn polish_provider_success_error_and_shorter_budget() {
+        assert_eq!(
+            polish_or_fallback("hej", 2000, async { Ok::<_, String>("Hej.".into()) }).await,
+            "Hej."
+        );
+        assert_eq!(
+            polish_or_fallback("hej", 2000, async { Err::<String, _>("offline") }).await,
+            "hej"
+        );
+        assert_eq!(
+            polish_or_fallback("hej", 10, async {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                Ok::<_, String>("Hej.".into())
+            })
+            .await,
+            "hej"
+        );
+    }
 
     #[test]
     fn dictation_interruption_only_reports_actual_cancellation() {
