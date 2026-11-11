@@ -74,6 +74,7 @@ fn wav_request() -> TranscriptionRequest {
         file_name: "diktering.wav".to_string(),
         language: Some("da".to_string()),
         prompt: Some("Mahoje, Syv.ai".to_string()),
+        extra_languages: Vec::new(),
         diarize: false,
         timestamps: false,
     }
@@ -144,6 +145,40 @@ async fn transcription_sends_openai_compatible_multipart() {
     }
     assert!(!request.contains("name=\"diarize\""));
     assert!(request.contains("filename=\"diktering.wav\""));
+}
+
+#[tokio::test]
+async fn main_and_extra_languages_are_sent_in_the_call() {
+    let server = FakeServer::start(vec![Reply::ok(r#"{"text":"ok"}"#)]).await;
+    let syv = link("syv", &server.base_url, Some("k"));
+    let request = TranscriptionRequest {
+        extra_languages: vec!["en".to_string()],
+        ..wav_request()
+    };
+    client::transcribe(&http(), &syv, &request).await.unwrap();
+    let sent = &server.requests()[0];
+    assert!(field(sent, "language", "da"), "main language");
+    assert!(
+        field(
+            sent,
+            "prompt",
+            "Samtalen foregår på dansk og engelsk. Mahoje, Syv.ai"
+        ),
+        "extra language as context before the dictionary words"
+    );
+}
+
+#[tokio::test]
+async fn without_extra_languages_the_call_is_unchanged() {
+    let server = FakeServer::start(vec![Reply::ok(r#"{"text":"ok"}"#)]).await;
+    let syv = link("syv", &server.base_url, Some("k"));
+    client::transcribe(&http(), &syv, &wav_request())
+        .await
+        .unwrap();
+    let sent = &server.requests()[0];
+    assert!(field(sent, "language", "da"));
+    assert!(field(sent, "prompt", "Mahoje, Syv.ai"));
+    assert!(!sent.contains("Samtalen"));
 }
 
 #[tokio::test]

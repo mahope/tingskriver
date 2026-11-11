@@ -14,7 +14,7 @@ use gpui_component::{
     input::{Input, InputEvent, InputState, Textarea, TextareaState},
     sidebar::{Sidebar, SidebarHeader, SidebarMenu, SidebarMenuItem},
     spinner::Spinner,
-    v_flex, ActiveTheme, Icon, Root,
+    v_flex, ActiveTheme, Icon, Root, Selectable,
 };
 use gpui_kit_assets::IconName;
 use tingskriver_core::audio::power::InterruptNotice;
@@ -44,6 +44,10 @@ pub struct AppModel {
     /// A meeting that sleep or logoff ended, until the user has seen it.
     pub interrupted: Option<InterruptNotice>,
     pub rerun_comparison: Option<tingskriver_core::dictation::rerun::Comparison>,
+    /// Main language, extra spoken languages and the report language.
+    pub languages: tingskriver_core::meeting_language::MeetingLanguages,
+    /// Why the language settings could not be read or saved.
+    pub language_error: Option<String>,
 }
 
 impl AppModel {
@@ -69,7 +73,63 @@ impl AppModel {
             about_metadata: None,
             interrupted: None,
             rerun_comparison: None,
+            languages: Default::default(),
+            language_error: None,
         }
+        .with_languages_loaded()
+    }
+
+    /// Reads the saved language settings. A broken file is shown on the
+    /// settings page and the defaults stay in use until the user saves.
+    fn with_languages_loaded(mut self) -> Self {
+        if let Some(dir) = &self.app_data_dir {
+            match tingskriver_core::meeting_language::MeetingLanguages::load(dir) {
+                Ok(languages) => self.languages = languages,
+                Err(error) => self.language_error = Some(strings::language_load_failed(&error)),
+            }
+        }
+        self
+    }
+
+    /// Applies a change to the language settings and saves it on the runtime,
+    /// so the window thread never waits for the disk. A failed save is shown
+    /// on the settings page.
+    fn change_languages(
+        &mut self,
+        cx: &mut Context<Self>,
+        change: impl FnOnce(
+            tingskriver_core::meeting_language::MeetingLanguages,
+        )
+            -> Result<tingskriver_core::meeting_language::MeetingLanguages, String>,
+    ) {
+        let Some(dir) = self.app_data_dir.clone() else {
+            self.language_error = Some(strings::language_save_failed(strings::UNKNOWN));
+            return;
+        };
+        let languages = match change(self.languages.clone()).and_then(|l| l.normalized()) {
+            Ok(languages) => languages,
+            Err(error) => {
+                self.language_error = Some(strings::language_save_failed(&error));
+                return;
+            }
+        };
+        self.languages = languages.clone();
+        self.language_error = None;
+        let task = self.runtime.spawn_blocking(move || languages.save(&dir));
+        cx.spawn(async move |this, cx| {
+            let failure = match task.await {
+                Ok(Ok(_)) => None,
+                Ok(Err(error)) => Some(error),
+                Err(error) => Some(error.to_string()),
+            };
+            if let Some(error) = failure {
+                let _ = this.update(cx, |m, cx| {
+                    m.language_error = Some(strings::language_save_failed(&error));
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
     }
 
     fn log_dir(&self) -> Option<PathBuf> {
@@ -387,6 +447,8 @@ impl Shell {
                 "x86_64",
             )),
             interrupted: None,
+            languages: Default::default(),
+            language_error: None,
             rerun_comparison: None,
         });
         init(model, cx);
@@ -739,6 +801,7 @@ impl Shell {
                 vec![strings::appearance(mode)],
                 cx,
             ))
+            .child(self.language_group(cx))
             .child(setting_group(
                 strings::VOICEPRINT_TITLE,
                 voiceprint_lines(),
@@ -778,6 +841,99 @@ impl Shell {
                     ),
             );
         page(strings::SETTINGS, None, false, body.into_any_element(), cx)
+    }
+
+    fn language_group(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        use tingskriver_core::meeting_language::{label, CHOICES};
+        let model = self.model.read(cx);
+        let languages = model.languages.clone();
+        let error = model.language_error.clone();
+        let primary_buttons = CHOICES.iter().enumerate().map(|(at, (code, _))| {
+            let code = *code;
+            let model = self.model.clone();
+            Button::new(("language-primary", at))
+                .label(label(code))
+                .selected(languages.primary == code)
+                .on_click(move |_, _, cx| {
+                    model.update(cx, |m, cx| {
+                        m.change_languages(cx, |l| l.with_primary(code));
+                        cx.notify();
+                    })
+                })
+        });
+        let extra_buttons = CHOICES
+            .iter()
+            .enumerate()
+            .filter(|(_, (code, _))| *code != languages.primary)
+            .map(|(at, (code, _))| {
+                let code = *code;
+                let model = self.model.clone();
+                Button::new(("language-extra", at))
+                    .label(label(code))
+                    .selected(languages.extra.iter().any(|c| c == code))
+                    .on_click(move |_, _, cx| {
+                        model.update(cx, |m, cx| {
+                            m.change_languages(cx, |l| l.with_extra_toggled(code));
+                            cx.notify();
+                        })
+                    })
+            });
+        let summary_model = self.model.clone();
+        let summary_button = Button::new("language-summary-primary")
+            .label(if languages.summary_in_primary {
+                strings::LANGUAGE_SUMMARY_ON
+            } else {
+                strings::LANGUAGE_SUMMARY_OFF
+            })
+            .selected(languages.summary_in_primary)
+            .on_click(move |_, _, cx| {
+                summary_model.update(cx, |m, cx| {
+                    m.change_languages(cx, |mut l| {
+                        l.summary_in_primary = !l.summary_in_primary;
+                        Ok(l)
+                    });
+                    cx.notify();
+                })
+            });
+        // The selection is also written out, so it does not rest on the
+        // button highlight alone (screen readers, high contrast).
+        let current = {
+            let extra: Vec<String> = languages.extra.iter().map(|c| label(c)).collect();
+            let extra = if extra.is_empty() {
+                strings::LANGUAGE_NO_EXTRA.to_string()
+            } else {
+                extra.join(", ")
+            };
+            strings::language_current(&format!(
+                "{}, {}",
+                label(&languages.primary),
+                strings::language_extra_list(&extra)
+            ))
+        };
+        v_flex()
+            .gap(space::SM)
+            .p(space::LG)
+            .rounded(theme::RADIUS_LG)
+            .border_1()
+            .border_color(palette(cx).border)
+            .bg(palette(cx).card)
+            .child(section_title(strings::LANGUAGES))
+            .child(paragraph(&current, cx))
+            .child(muted(strings::LANGUAGE_PRIMARY, cx))
+            .child(muted(strings::LANGUAGE_PRIMARY_HELP, cx))
+            .child(
+                h_flex()
+                    .gap(space::SM)
+                    .flex_wrap()
+                    .children(primary_buttons),
+            )
+            .child(muted(strings::LANGUAGE_EXTRA, cx))
+            .child(muted(strings::LANGUAGE_EXTRA_HELP, cx))
+            .child(h_flex().gap(space::SM).flex_wrap().children(extra_buttons))
+            .child(summary_button)
+            .child(muted(strings::LANGUAGE_PROVIDERS, cx))
+            .child(muted(strings::LANGUAGE_NEW_MEETINGS, cx))
+            .children(error.map(|e| paragraph(&e, cx)))
     }
 
     fn database_error_page(&self, failure: &DbFailure, cx: &mut Context<Self>) -> AnyElement {

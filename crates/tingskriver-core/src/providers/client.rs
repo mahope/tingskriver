@@ -79,6 +79,9 @@ pub struct TranscriptionRequest {
     pub language: Option<String>,
     /// Dictionary words as hints.
     pub prompt: Option<String>,
+    /// Extra spoken languages besides `language` (issue #209). They only give
+    /// the provider context, as a sentence in the prompt.
+    pub extra_languages: Vec<String>,
     /// Ask for speaker labels. Only sent to providers with diarization.
     pub diarize: bool,
     /// Request segment timestamps independently of speaker labels.
@@ -204,8 +207,18 @@ pub async fn transcribe(
     if let Some(language) = request.language.as_deref().filter(|l| !l.trim().is_empty()) {
         form = form.text("language", language.to_string());
     }
-    if let Some(prompt) = request.prompt.as_deref().filter(|p| !p.trim().is_empty()) {
-        form = form.text("prompt", prompt.to_string());
+    let hint = request.language.as_deref().and_then(|primary| {
+        crate::meeting_language::extra_languages_hint(primary, &request.extra_languages)
+    });
+    let prompt = [hint.as_deref(), request.prompt.as_deref()]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    if !prompt.is_empty() {
+        form = form.text("prompt", prompt);
     }
     if diarize {
         form = form.text("diarize", "true");

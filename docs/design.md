@@ -90,6 +90,7 @@ The first column is the exact identifier in the code; the script checks it.
 | `paragraph` | Body text in the foreground color. | Running text. |
 | `muted` | Smaller secondary text in the muted color. | Help texts and details. |
 | `setting_group` | Card with a title and muted lines. | Read-only groups on the Indstillinger page. Editable settings need their own component when the first one is built. |
+| `language_group` | Card on Indstillinger: meeting language buttons (primary and extra languages), whether reports are written in the primary language, and the save error. | The meeting and report language settings (#209). Reuses gpui-component buttons. |
 | `loading` | Spinner with a text. | Anything waiting for core (the Møder page while the database opens). |
 | `interrupted_card` | Dismissible alert with the reason, time and audio status of an interrupted recording, and a reminder that recording does not restart automatically. | The Møder page after sleep or logoff interrupts a recording. Uses the persisted `InterruptNotice`. |
 | `empty_state` | Card with an icon, a title and a short explanation. | Every list without content. Every new list needs one. |
@@ -143,6 +144,7 @@ Change a row when the experience changes.
 | Test Danish input | `dictation_page`, `probe` | Manual Windows test 2 and 3 in [gpui.md](gpui.md). |
 | Compare transcription on own sample | `MeasurementView`, `Page` | See [measurement.md](measurement.md). |
 | See app settings | `settings_page`, `setting_group` | Read-only. |
+| Choose meeting and report languages | `settings_page`, `language_group` | Saved through core's language settings; reports default to Danish. |
 | See app information and copy diagnostics | `about_page`, `about`, `page`, `paragraph`, `section_title` | Offline metadata and legal documents; diagnostics include only build information and catalogue-owned model names. Update status is a snapshot. |
 | Database cannot open | `database_error_page` | Replaces sidebar and page. |
 | Second launch, hidden start | `single_instance`, `args` | Shows the existing window, or dispatches CLI/URL commands while hidden; tray is the host's. |

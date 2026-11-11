@@ -68,6 +68,8 @@ use `verbose_json` independently of diarization; nonempty text without valid
 segment timestamps fails that link instead of inventing timing. Results are
 merged by `transcript_merge`; missing system speakers remain unknown.
 Stored results include raw per-track deliveries/provenance and merged segments.
+`JobSpec.extra_languages` (issue #209, see `docs/sprog.md`) lists extra spoken
+languages; they reach the provider as a prompt sentence next to `language`.
 
 ## Run again and versions
 

@@ -244,6 +244,7 @@ pub async fn run(
         file_name: "proeve.wav".into(),
         language: Some("da".into()),
         prompt: None,
+        extra_languages: Vec::new(),
         diarize: false,
         timestamps: false,
     };

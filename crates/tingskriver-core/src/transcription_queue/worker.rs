@@ -135,6 +135,7 @@ where
             wav,
             file_name: "track.wav".into(),
             language: Some(job.spec.language.clone()),
+            extra_languages: job.spec.extra_languages.clone(),
             diarize,
             timestamps: true,
             prompt: job.spec.hotwords.prompt(crate::hotwords::PROMPT_BUDGET),
