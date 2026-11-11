@@ -163,6 +163,7 @@ mod tests {
             start: Utc::now(),
             end: Utc::now(),
             all_day: false,
+            ..Event::default()
         }
     }
 
@@ -171,6 +172,7 @@ mod tests {
             name: name.map(str::to_string),
             email: "x@example.invalid".into(),
             declined,
+            ..Attendee::default()
         }
     }
 

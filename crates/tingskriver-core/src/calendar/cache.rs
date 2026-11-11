@@ -3,6 +3,10 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+// Version 3 requires raw attendee response and organizer metadata. Older
+// caches must be refetched without their ETag to recover that information.
+pub(super) const CACHE_VERSION: u8 = 3;
+
 #[derive(Default, Serialize, Deserialize)]
 pub(super) struct Cache {
     pub version: u8,
@@ -22,7 +26,7 @@ impl Cache {
             return Err(CalendarError::Cache);
         }
         let cache: Self = serde_json::from_slice(&bytes).map_err(|_| CalendarError::Cache)?;
-        if cache.version != 2 {
+        if cache.version != CACHE_VERSION {
             return Err(CalendarError::Cache);
         }
         Ok(cache)

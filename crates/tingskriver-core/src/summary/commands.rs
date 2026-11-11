@@ -809,7 +809,9 @@ mod recording_attendee_tests {
                 name: Some(name.into()),
                 email: "example@example.invalid".into(),
                 declined: false,
+                ..Attendee::default()
             }],
+            ..Event::default()
         }
     }
 

@@ -1,4 +1,7 @@
-use super::{cache::Cache, parse, CalendarConfig, CalendarError, Event, IcsAddress};
+use super::{
+    cache::{Cache, CACHE_VERSION},
+    parse, CalendarConfig, CalendarError, Event, IcsAddress,
+};
 use chrono::{DateTime, Duration, Utc};
 use std::{path::PathBuf, time::Duration as Timeout};
 
@@ -70,6 +73,10 @@ impl Calendar {
                 })
             })
             .cloned()
+            .map(|mut event| {
+                event.resolve_identity(&self.config);
+                event
+            })
             .collect()
     }
     pub async fn refresh_if_due(&mut self, now: DateTime<Utc>) -> RefreshOutcome {
@@ -146,7 +153,7 @@ impl Calendar {
         parse_config.own_addresses.clear();
         let events = parse(&body, &parse_config, from, to)?;
         let cache = Cache {
-            version: 2,
+            version: CACHE_VERSION,
             timezone: self.config.timezone.clone(),
             events,
             etag,

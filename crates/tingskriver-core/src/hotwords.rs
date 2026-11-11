@@ -70,18 +70,22 @@ mod tests {
                     name: Some("Ægir".into()),
                     email: "hidden@example.invalid".into(),
                     declined: false,
+                    ..crate::calendar::Attendee::default()
                 },
                 crate::calendar::Attendee {
                     name: Some("Declined".into()),
                     email: String::new(),
                     declined: true,
+                    ..crate::calendar::Attendee::default()
                 },
                 crate::calendar::Attendee {
                     name: None,
                     email: "unnamed@example.invalid".into(),
                     declined: false,
+                    ..crate::calendar::Attendee::default()
                 },
             ],
+            ..crate::calendar::Event::default()
         };
         let dictionary = vec![crate::dictation::store::DictionaryWord {
             id: 1,

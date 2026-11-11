@@ -11,6 +11,7 @@ fn event(id: &str, start: &str, end: &str) -> Event {
         start: at(start),
         end: at(end),
         all_day: false,
+        ..Event::default()
     }
 }
 #[test]
@@ -32,6 +33,7 @@ fn all_day_is_low_priority_and_expired_events_are_rejected() {
         name: Some("Anna Eksempel".into()),
         email: "anna@example.test".into(),
         declined: false,
+        ..Attendee::default()
     });
     let matched = match_meeting(now, now - Duration::minutes(5), &[day.clone(), meeting]).unwrap();
     assert_eq!(matched.title, "meeting");

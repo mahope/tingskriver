@@ -1,5 +1,7 @@
 use super::timezone::Zone;
-use super::{recurrence, Attendee, CalendarConfig, CalendarError, Event};
+use super::{
+    find_meeting_link, recurrence, Attendee, CalendarConfig, CalendarError, Event, OwnStatus,
+};
 use chrono::{DateTime, Duration, NaiveDate, NaiveDateTime, Utc};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -192,13 +194,74 @@ impl RawEvent {
                 p.params
                     .get("PARTSTAT")
                     .is_some_and(|s| s.eq_ignore_ascii_case("DECLINED"))
-                    && config
-                        .own_addresses
-                        .iter()
-                        .any(|own| email(&p.value).eq_ignore_ascii_case(own.trim()))
+                    && Self::is_own(&p.value, config)
             })
     }
-    fn event(&self, start: &Stamp, begin: DateTime<Utc>) -> Result<Event> {
+    /// ATTENDEE lines, plus an ORGANIZER that is not listed
+    /// as an ATTENDEE (Outlook invitations often leave the organizer out).
+    fn attendees(&self, config: &CalendarConfig) -> Vec<Attendee> {
+        let mut out: Vec<Attendee> = self
+            .props
+            .iter()
+            .filter(|p| p.name == "ATTENDEE")
+            .map(|p| Attendee {
+                name: p.params.get("CN").map(|s| text(s)),
+                email: email(&p.value).into(),
+                declined: p
+                    .params
+                    .get("PARTSTAT")
+                    .is_some_and(|v| v.eq_ignore_ascii_case("DECLINED")),
+                is_self: Self::is_own(&p.value, config),
+                partstat: p.params.get("PARTSTAT").cloned(),
+                organizer: self
+                    .get("ORGANIZER")
+                    .is_some_and(|org| email(&org.value).eq_ignore_ascii_case(email(&p.value))),
+            })
+            .collect();
+        if let Some(org) = self.get("ORGANIZER") {
+            let addr = email(&org.value);
+            let listed = out.iter().any(|a| a.email.eq_ignore_ascii_case(addr));
+            if !listed && !addr.is_empty() {
+                out.push(Attendee {
+                    name: org.params.get("CN").map(|s| text(s)),
+                    email: addr.into(),
+                    declined: false,
+                    is_self: Self::is_own(&org.value, config),
+                    partstat: None,
+                    organizer: true,
+                });
+            }
+        }
+        out
+    }
+    fn is_own(address: &str, config: &CalendarConfig) -> bool {
+        config
+            .own_addresses
+            .iter()
+            .any(|own| !own.trim().is_empty() && email(address).eq_ignore_ascii_case(own.trim()))
+    }
+    fn meeting_link(&self) -> Option<super::MeetingLink> {
+        let names = [
+            "URL",
+            "X-GOOGLE-CONFERENCE",
+            "X-MICROSOFT-SKYPETEAMSMEETINGURL",
+            "LOCATION",
+            "DESCRIPTION",
+        ];
+        let texts: Vec<String> = names
+            .iter()
+            .filter_map(|n| self.get(n))
+            .map(|p| text(&p.value))
+            .collect();
+        find_meeting_link(texts.iter().map(String::as_str))
+    }
+    fn event(
+        &self,
+        start: &Stamp,
+        begin: DateTime<Utc>,
+        original: DateTime<Utc>,
+        config: &CalendarConfig,
+    ) -> Result<Event> {
         let local = start.zone.local(begin)?;
         let end = if let Some(end) = self.get("DTEND") {
             if self.get("DURATION").is_some() {
@@ -237,29 +300,25 @@ impl RawEvent {
         if end < begin {
             return invalid();
         }
-        Ok(Event {
+        let mut event = Event {
             uid: self.uid()?.into(),
             title: self
                 .get("SUMMARY")
                 .map(|p| text(&p.value))
                 .unwrap_or_default(),
-            attendees: self
-                .props
-                .iter()
-                .filter(|p| p.name == "ATTENDEE")
-                .map(|p| Attendee {
-                    name: p.params.get("CN").map(|s| text(s)),
-                    email: email(&p.value).into(),
-                    declined: p
-                        .params
-                        .get("PARTSTAT")
-                        .is_some_and(|v| v.eq_ignore_ascii_case("DECLINED")),
-                })
-                .collect(),
+            attendees: self.attendees(config),
             start: begin,
             end,
             all_day: start.date,
-        })
+            meeting_link: self.meeting_link(),
+            own_status: OwnStatus::Unknown,
+            recurring: self.get("RRULE").is_some()
+                || self.get("RDATE").is_some()
+                || self.get("RECURRENCE-ID").is_some(),
+            original_start: Some(original),
+        };
+        event.resolve_identity(config);
+        Ok(event)
     }
 }
 pub(crate) fn email(s: &str) -> &str {
@@ -436,7 +495,7 @@ pub fn parse(
             if excluded.contains(&utc) || overrides.contains_key(&(raw.uid()?.to_owned(), utc)) {
                 continue;
             }
-            let event = raw.event(&start, utc)?;
+            let event = raw.event(&start, utc, utc, config)?;
             if event.start < to
                 && (event.end > from || event.end == event.start && event.start >= from)
             {
@@ -444,7 +503,7 @@ pub fn parse(
             }
         }
     }
-    for raw in overrides.values() {
+    for ((_, original), raw) in &overrides {
         if raw.excluded(config) {
             continue;
         }
@@ -452,7 +511,7 @@ pub fn parse(
             raw.get("DTSTART").ok_or(CalendarError::Parse)?,
             default_zone.clone(),
         )?;
-        let event = raw.event(&start, start.utc()?)?;
+        let event = raw.event(&start, start.utc()?, *original, config)?;
         if event.start < to && (event.end > from || event.end == event.start && event.start >= from)
         {
             result.push(event);

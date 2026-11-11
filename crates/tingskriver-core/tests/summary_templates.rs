@@ -70,7 +70,9 @@ fn calendar_domain_rules_do_not_guess_or_match_domain_suffixes() {
             name: None,
             email: "guest@other.test".into(),
             declined: false,
+            ..Attendee::default()
         }],
+        ..Event::default()
     };
     assert_eq!(
         select_template(Some(&event), &CalendarConfig::default()),

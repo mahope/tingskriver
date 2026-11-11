@@ -69,14 +69,73 @@ store/små bogstaver). Andres afvisning skjuler ikke mødet. Uden egen
 identitet kan afvisning ikke afgøres; mødet beholdes. Cachen bevarer
 afvisningsmetadata, så et ændret `own_addresses` også gælder offline.
 
-Ukendte almindelige felter, VTODO, VALARM, beskrivelser, vedhæftninger,
-organizer og links ignoreres. Ukendt tidszone, ugyldige data, EXRULE,
+Ukendte almindelige felter, VTODO, VALARM, vedhæftninger og andre felter
+ignoreres (URL, LOCATION, DESCRIPTION og ORGANIZER læses, se næste afsnit). Ukendt tidszone, ugyldige data, EXRULE,
 flere RRULE per event, RECURRENCE-ID med RANGE, BYSETPOS, BYHOUR/BYMINUTE,
 ugenumre og frekvenser under én dag giver en generisk parserfejl.
 Dublerede master-UID'er og dublerede overrides afvises; klienten vælger ikke
 selv mellem forskellige SEQUENCE-versioner. Ikke-eksisterende eksplicitte
 start/sluttider giver fejl. Parseren accepterer højst 8 MiB og højst 200.000
 undersøgte kalenderdage per gentagelsesregel (cirka 547 år).
+
+## Start af planlagte møder (#201)
+
+Parseren udleder pr. begivenhed `meeting_link` (første https-link til en kendt
+platform i URL, X-GOOGLE-CONFERENCE, X-MICROSOFT-SKYPETEAMSMEETINGURL, LOCATION,
+DESCRIPTION; Teams, Zoom, Google Meet, Webex, GoToMeeting, Jitsi, Whereby; et
+vilkårligt link, http og link med brugerinfo tæller ikke), `own_status`
+(`Organizer` fra ORGANIZER, ellers PARTSTAT for en ATTENDEE i `own_addresses`;
+uden PARTSTAT `NeedsAction`; ingen træf eller ingen `own_addresses` giver
+`Unknown`), `Attendee::is_self`, `recurring` og `original_start`
+(RECURRENCE-ID, så en flyttet forekomst bevarer sin identitet). Egen status
+udledes fra rå PARTSTAT og arrangørmarkering pr. deltager. `own_status` og
+`is_self` gemmes ikke i cachen, men beregnes ved hver læsning med aktuelle
+`own_addresses`, også offline. Ældre caches uden svarmetadata kasseres;
+feedet hentes uden ETag, før begivenheder igen kan bruges offline.
+ORGANIZER tilføjes som deltager, hvis adressen ikke allerede er ATTENDEE,
+også når arrangøren er brugeren selv.
+Zoom kræver `/j/`, `/w/` eller `/my/`; Teams `/l/meetup-join/` eller `/meet/`;
+Webex `/meet/`, `/join/` eller `/wbxmp/`; GoTo `/join/` eller en sti med kun
+et mødenummer. Download- og marketinglinks tæller ikke.
+
+`should_auto_start(event, now, mic_holds, ignored)` er en ren funktion og
+returnerer `Start { early }` eller `Skip(årsag)`. Reglerne, i rækkefølge:
+ignoreret; heldags; intet møde-link; egen status ikke arrangør/accepteret
+(afvist, måske, ubesvaret og ukendt starter ikke); ingen andre deltagere eller
+alle andre har afvist; `now` skal ligge fra starten til 5 minutter efter
+(`GRACE`) og før slut. Før starten tæller kun en tidlig deltagelse: en
+mikrofon, som en anden proces har holdt siden højst 10 minutter før starten
+(`EARLY_JOIN_WINDOW`). Er mikrofonen holdt længere, er det forrige opkald, og
+et back-to-back-møde starter ikke tidligt. `MicHold::until` er eksklusiv;
+`None` betyder stadig aktiv. Et afsluttet testopkald tæller ikke.
+
+`auto_start_action(mode, decision, recording_active)` oversætter til
+`Record`, `Ask` eller `Nothing` efter indstillingen `AutoRecordMode`
+(`record`/`ask`/`off`, standard `ask`). Intet starter eller spørges, mens en
+anden optagelse kører, og `off` giver aldrig noget. `should_remind` følger
+samme begivenhedsregler i de 5 minutter før starten (`REMINDER_LEAD`) og er
+falsk ved `off`.
+
+**Åben produktbeslutning:** `should_remind` bruger hele `eligibility`, så
+fysiske møder uden mødelink og tentative møder aldrig får en påmindelse.
+`Off` dæmper også påmindelser, ikke kun automatisk optagelse. Det er den
+nuværende adfærd; om påmindelser skal have selvstændige regler og en
+selvstændig indstilling, er endnu ikke besluttet.
+
+`IgnoredEvents` gemmer "Ignorér denne begivenhed" (UID + oprindelig start) og
+"Ignorér serien" (UID) i `calendar/ignored.json` (0600 på Unix, atomisk
+skrivning). Begge dele stopper påmindelse og start. Enkelte forekomster
+glemmes efter 400 dage (`prune`), serier først ved `unignore_series`. En fil,
+der ikke kan læses eller tolkes, giver fejl og ikke en tom liste; værten må
+da ikke starte automatisk. Et skiftet UID er en ny begivenhed og er ikke
+ignoreret.
+
+Bevidst ikke med: anarlogs krav om et snapshot på højst 3 minutter, fordi
+opdateringsintervallet er 5 til 15 minutter; værten bør hente kalenderen lige
+før en beslutning. `AutoRecordMode` er defineret her, fordi #59 ikke ligger på
+denne gren; den skal samles med #59's indstilling ved merge. Der er endnu
+ingen UI, ingen timer og ingen kobling til promptvinduet og
+`recording_commands`; se PR-beskrivelsen.
 
 ## Hemmelighed og hentning
 
@@ -104,12 +163,14 @@ underlagt opdateringsintervallet. Ved ur, der går baglæns, forsøges igen.
 
 ## Cacheformat og privatliv
 
-`paths::app_data_dir()/calendar/events.json` er JSON version 2 med parserens `timezone`, `events`,
+`paths::app_data_dir()/calendar/events.json` er JSON version 3 med parserens `timezone`, `events`,
 `etag`, `fetched_at`, `range_start` og `range_end`. Begivenheder indeholder
-UID, titel, deltagere (navn/mail/declined), UTC-start/slut og all_day.
+UID, titel, deltagere (navn/mail/declined/PARTSTAT/arrangørmarkering), UTC-start/slut og all_day.
 Der gemmes hverken rå ICS eller ICS-adresse i filen. Ved ændring af
 konfigurationens tidszone kasseres cachen, og feedet hentes uden ETag.
-Version 1 kasseres også, da den ikke gemte parserens tidszone.
+Version 1 og 2 kasseres også: de mangler henholdsvis parserens tidszone
+og rå svarmetadata. Første hentning efter opgradering er derfor uden ETag,
+selv hvis feedet er uændret.
 Den indeholder kalenderens personlige mødeoplysninger og bør behandles som
 andre lokale mødedata. På Unix oprettes filen med mode 0600.
 
@@ -127,7 +188,7 @@ kalenderdata; sletning af legitimationsposten alene sletter ikke mødedata.
 
 ## Verifikation
 
-`cargo test -p tingskriver-core --test calendar --test calendar_fetch --test calendar_matching`
+`cargo test -p tingskriver-core --test calendar --test calendar_fetch --test calendar_matching --test calendar_autostart`
 bruger kun håndskrevne fixtures med fiktive identiteter og TCP på localhost.
 Der testes Google-/Outlook-formater, tidszoner og begge danske sommertidsskift,
 gentagelser og undtagelser, afvisning, matchning, timeout, 304, genåbning
