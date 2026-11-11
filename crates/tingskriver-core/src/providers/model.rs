@@ -352,19 +352,22 @@ fn validate_id(id: &str) -> Result<(), String> {
 }
 
 fn validate_base_url(p: &Provider) -> Result<(), String> {
-    let url = p.base_url.trim();
-    // The host is compared exactly: "http://localhost.example.com" is not local
-    let local_http = reqwest::Url::parse(url).is_ok_and(|u| {
-        u.scheme() == "http" && matches!(u.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"))
-    });
-    if url.starts_with("https://")
-        || local_http
-        || (p.kind.allows_plain_http() && url.starts_with("http://"))
-    {
+    if accepts_base_url(p.kind, &p.base_url) {
         Ok(())
     } else {
         Err(format!("Adressen til {} skal starte med https://", p.name))
     }
+}
+
+pub(super) fn accepts_base_url(kind: ProviderKind, base: &str) -> bool {
+    let url = base.trim();
+    // The host is compared exactly: "http://localhost.example.com" is not local
+    let local_http = reqwest::Url::parse(url).is_ok_and(|u| {
+        u.scheme() == "http" && matches!(u.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"))
+    });
+    url.starts_with("https://")
+        || local_http
+        || (kind.allows_plain_http() && url.starts_with("http://"))
 }
 
 /// The name of `provider_id`'s API key in Credential Manager. Syv.ai keeps

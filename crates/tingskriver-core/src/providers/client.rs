@@ -5,7 +5,7 @@
 //! connection and then never answers. Errors are classified
 //! ([`ProviderError`]) and never contain the key.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use reqwest::multipart::{Form, Part};
 use reqwest::{RequestBuilder, Response, StatusCode};
@@ -145,6 +145,7 @@ impl ChatMessage {
 #[serde(rename_all = "camelCase")]
 pub struct TestReport {
     pub latency_ms: u64,
+    pub warning: Option<String>,
     /// Number of models the service listed.
     pub models: usize,
 }
@@ -292,24 +293,10 @@ pub async fn chat(
         })
 }
 
-#[derive(Deserialize)]
-struct RawModels {
-    #[serde(default)]
-    data: Vec<serde_json::Value>,
-}
-
 /// A real, small call (`GET /models`) with the measured round trip.
-pub async fn test(
-    client: &reqwest::Client,
-    link: &ResolvedLink,
-) -> Result<TestReport, ProviderError> {
+pub async fn test(link: &ResolvedLink) -> Result<TestReport, ProviderError> {
     link.ensure_remote()?;
-    let start = Instant::now();
-    let raw: RawModels = call_json(link, client.get(link.url("models"))).await?;
-    Ok(TestReport {
-        latency_ms: start.elapsed().as_millis() as u64,
-        models: raw.data.len(),
-    })
+    super::verify::test(link).await
 }
 
 /// Send, check the status and decode the JSON body, all within the link's
@@ -376,7 +363,11 @@ pub fn classify_status(status: StatusCode, retry_after: Option<&str>) -> Provide
     }
 }
 
-fn map_reqwest(error: reqwest::Error, timeout: Duration, link: &ResolvedLink) -> ProviderError {
+pub(super) fn map_reqwest(
+    error: reqwest::Error,
+    timeout: Duration,
+    link: &ResolvedLink,
+) -> ProviderError {
     if error.is_timeout() {
         return ProviderError::timeout(timeout);
     }

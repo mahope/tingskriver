@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["summary", "decisions", "tasks", "open_questions"],
+  "properties": {
+    "summary": {"type": "string"},
+    "decisions": {"type": "array", "items": {"type": "string"}},
+    "tasks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["who", "what", "deadline"],
+        "properties": {
+          "who": {"type": ["string", "null"]},
+          "what": {"type": "string"},
+          "deadline": {"type": ["string", "null"]}
+        }
+      }
+    },
+    "open_questions": {"type": "array", "items": {"type": "string"}}
+  }
+}

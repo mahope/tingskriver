@@ -252,7 +252,17 @@ transcription leaves the saved meeting available and reports the error.
 - In the background, `audio::finalize` encodes `microphone.m4a`,
   `system.m4a` and the mixed `audio.mp4` (all on the shared clock), decodes
   each and requires at most 1 s difference from the recorded length. The
-  status is `ok`, `delvis` or `fejlet` (`recording-audio-finalized`,
+  two-track mix is `weight * first + (1 - weight) * second`, so it can never
+  clip. A track counts as active when a 10 ms block has an RMS above about
+  -60 dBFS (DC offset removed), so a noise floor counts as silent, and it stays
+  active for 4 s after its last speech. While both are active each track gets
+  half gain; while only one is, that track keeps unity gain and the quiet
+  one is dropped. A track that starts to speak gets its share at once (one
+  block of lookahead); the move back to unity after the hold takes 1 s, so
+  the level does not change at pauses shorter than the hold. A single-track
+  mix keeps unity gain; the separate track files keep their original levels.
+  More than two tracks cannot be mixed and fail the finalize.
+  The status is `ok`, `delvis` or `fejlet` (`recording-audio-finalized`,
   `metadata.json` field `audio_status`). The raw tracks are deleted only on
   `ok`; otherwise the message is "Lyden kunne ikke samles. Originalen er
   gemt."
@@ -361,6 +371,20 @@ need their own loop. The settings UI uses `config`, `save_config`,
 `statuses`, `set_key`, `delete_key` and `test_provider` (a real `GET /models`
 with the measured round trip).
 
+Connection tests use `providers::verify`, with an eight-second total deadline,
+the same URL policy as the provider settings, and no URL credentials or redirects.
+OpenAI-compatible and Ollama providers allow HTTP to any host; public HTTP
+endpoints produce a warning in `TestReport.warning` rather than an error.
+A redirect returns a Danish explanation without forwarding the key. A custom OpenAI-compatible
+gateway with a configured key also receives a random negative-control key.
+Accepting that key produces a warning in `TestReport.warning`, with a stronger
+warning for public gateways, while connectivity still succeeds. Keyless endpoints
+only test connectivity. Existing HTTP, network and timeout error classes retain
+their Danish explanations. Latency measures only the real request and its body,
+excluding the control. Every Test invocation makes a fresh request; results are
+not cached, so repeated tests measure the current connection and latency.
+GPUI presentation of the verification states remains separate work for #53.
+
 Database safety copies use a unique folder on every attempt, including the
 current WAL and rollback journal. Error advice only confirms a copy when its
 path is available; failed copies are reported explicitly.
@@ -433,3 +457,83 @@ Selection style toggles also set the style for replacement text. When copying
 up to the start of another block, the selected newline is retained without
 including that block's unselected kind. A GPUI widget, keyboard/clipboard
 integration and persistence wiring remain for the UI half of #47.
+## Dictation without the main window
+
+On main before #46, `tingskriver-host::Host::start` already initialized
+`dictation::init` independently of the GPUI window. Core owned the keyboard
+hook control thread, capture, Syv.ai deadline and local Parakeet fallback,
+cleanup, insertion ordering and Windows clipboard/SendInput insertion.
+
+`dictation::service::Service::subscribe_states` now exposes content-free
+lifecycle events through a broadcast channel: inactive → recording →
+processing → inserting → inactive. Error and cancellation return to inactive
+as well. Each overlapping dictation has its own lifecycle; the service stream
+can interleave those lifecycles. `cancel_processing` cancels pending processing;
+an insertion already handed to the operating system cannot be recalled. Its
+processing future and insertion turn remain alive until insertion completes,
+so cancellation cannot release the next insertion early. Cancelling processing
+hides its pill synchronously, before a newer recording can show its own pill.
+Interrupted keyboard chords cancel only the current capture. Released turns
+continue processing when a chord is interrupted or settings reinstall the hook.
+
+`Service::open_for_test` opens an isolated service with a fake `AppHost`,
+overlay and `DictationBackend`, without registering the singleton or keyboard
+hook. Its `test_trigger` accepts 16 kHz mono samples and runs the ordinary
+`Service::process` on a dedicated thread/runtime, returning a per-run state
+channel, cancellation handle and join handle. It disables history for that
+run and requires an injected backend, so the trigger cannot accidentally use
+real providers. Engine planning, fallback, cleanup, ordering and timing remain
+the production implementations. Dropping a cancelled transcription also aborts
+its outstanding Syv request task. Already spawned blocking local inference
+continues after its awaiting future is dropped. Text hooks use
+`kill_on_drop(true)`, so dropping their future kills
+the child process (without guaranteeing termination of its descendants).
+No new dependencies are required.
+
+`cargo test --locked -p tingskriver-core --test dictation_flow` exercises a
+real Syv HTTP request rejected with 401 by a localhost fake server, mock
+Parakeet fallback, fake insertion, cancellation during local inference,
+engine/insertion failures and
+captured logs without dictated text, keys or keyboard events. It does not
+exercise real audio capture, model inference or Windows insertion.
+The manual acceptance checks in #46 (Notepad, measured latency and Start menu
+launch) remain for a Windows session.
+
+## Code dictation identifiers
+
+The pure `dictation::logic::identifiers` token pass runs only for `Style::Raw`,
+using the style already selected by `app_style` and dictation modes. It runs
+before spoken punctuation, after hesitation removal, and leaves literal words,
+snippets and dictionary replacements protected. A trailing `camel case`,
+`snake case`, `kebab case` or `pascal case` formats at most the three preceding
+plain words (also accepted as `camelCase`, `snake_case`, `kebab-case`,
+`PascalCase`). The scan stops at symbols, protected tokens and any word in the
+active spoken-command table, including words in multiword commands. Parts are
+lowercased before the requested casing is applied. This is a bounded heuristic:
+earlier words remain unchanged, even when they belong to a longer identifier.
+
+For example, `lav en variabel get user id camel case` becomes
+`lav en variabel getUserId`. `punktum` joins a filename only when the next word
+has at most four ASCII letters or digits and is not a spoken-command word:
+`index punktum ts` becomes `index.ts`, while `fix login punktum tilføj test`
+becomes `fix login. tilføj test`. Short prose words can still look like file
+extensions under this heuristic. `bindestreg` before an alphanumeric flag
+produces `-`, and two consecutive occurrences produce `--`, with a space
+before the flag: `ls bindestreg la` becomes `ls -la` and
+`cargo build bindestreg bindestreg release` becomes `cargo build --release`.
+Flag recognition is limited to a command with at most one subcommand, followed
+by zero or more flags. After a positional argument or path starts, hyphens
+retain their normal joining: `git checkout bindestreg b feature bindestreg login`
+becomes `git checkout -b feature-login`, and
+`src skråstreg my bindestreg module punktum rs` becomes `src/my-module.rs`.
+This conservative heuristic does not recognize flags after positional arguments
+or command prefixes longer than two words. Flag words are protected from
+subsequent casing commands.
+No application detection or I/O lives in this pass, so it can move to a text
+crate independently of desktop hosts.
+
+The `cleanup::tests::code_identifiers` and regression tests cover the four
+casing styles, bounded phrases, spoken-command boundaries, hesitations,
+filenames, prose punctuation, command flags, paths and Danish words. Separate
+tests cover normal-style isolation, application style overrides and protected
+literal, dictionary and snippet text.

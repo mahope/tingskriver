@@ -27,6 +27,7 @@ pub mod migrate;
 pub mod model;
 pub mod secrets;
 pub mod service;
+mod verify;
 
 #[cfg(test)]
 pub(crate) mod fake_server;

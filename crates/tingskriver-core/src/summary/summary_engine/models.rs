@@ -139,7 +139,8 @@ pub struct ModelDef {
     /// Template name for prompt formatting (e.g., "gemma3")
     pub template: String,
 
-    /// Download URL (HuggingFace or other source)
+    /// Download URL at the pinned revision. The pinned size, SHA-256 and reserve mirror are in
+    /// `model_manifest.json`, which the downloader uses.
     pub download_url: String,
 
     /// File size in MiB. The field name is kept for API compatibility.
@@ -169,7 +170,7 @@ pub fn get_available_models() -> Vec<ModelDef> {
             display_name: "Qwen 3.5 2B (Balanced)".to_string(),
             gguf_file: "Qwen3.5-2B-Q4_K_M.gguf".to_string(),
             template: "qwen3.5_nonthinking".to_string(),
-            download_url: "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/main/Qwen3.5-2B-Q4_K_M.gguf".to_string(),
+            download_url: "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/f6d5376be1edb4d416d56da11e5397a961aca8ae/Qwen3.5-2B-Q4_K_M.gguf".to_string(),
             size_mb: 1221,
             context_size: 32768,
             layer_count: 24,
@@ -182,7 +183,7 @@ pub fn get_available_models() -> Vec<ModelDef> {
             display_name: "Qwen 3.5 4B (High Quality)".to_string(),
             gguf_file: "Qwen3.5-4B-Q4_K_M.gguf".to_string(),
             template: "qwen3.5_nonthinking".to_string(),
-            download_url: "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_K_M.gguf".to_string(),
+            download_url: "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/e87f176479d0855a907a41277aca2f8ee7a09523/Qwen3.5-4B-Q4_K_M.gguf".to_string(),
             size_mb: 2614,
             context_size: 32768,
             layer_count: 32,
@@ -195,7 +196,7 @@ pub fn get_available_models() -> Vec<ModelDef> {
             display_name: "Gemma 3 4B (Balanced)".to_string(),
             gguf_file: "gemma-3-4b-it-Q4_K_M.gguf".to_string(),
             template: "gemma3".to_string(),
-            download_url: "https://huggingface.co/bartowski/google_gemma-3-4b-it-GGUF/resolve/main/google_gemma-3-4b-it-Q4_K_M.gguf".to_string(),
+            download_url: "https://huggingface.co/bartowski/google_gemma-3-4b-it-GGUF/resolve/71506238f970075ca85125cd749c28b1b0eee84e/google_gemma-3-4b-it-Q4_K_M.gguf".to_string(),
             size_mb: 2374,
             context_size: 32768,
             layer_count: 35,
@@ -208,7 +209,7 @@ pub fn get_available_models() -> Vec<ModelDef> {
             display_name: "Gemma 3 1B (Fast)".to_string(),
             gguf_file: "gemma-3-1b-it-Q8_0.gguf".to_string(),
             template: "gemma3".to_string(),
-            download_url: "https://huggingface.co/bartowski/google_gemma-3-1b-it-GGUF/resolve/main/google_gemma-3-1b-it-Q8_0.gguf".to_string(),
+            download_url: "https://huggingface.co/bartowski/google_gemma-3-1b-it-GGUF/resolve/116f76234503685a98f572982177b11d44ec8ff1/google_gemma-3-1b-it-Q8_0.gguf".to_string(),
             size_mb: 1019,
             context_size: 32768,
             layer_count: 26,
@@ -233,8 +234,8 @@ pub fn get_default_model() -> ModelDef {
 
 /// Resolve model name to full file path in the models directory
 pub fn get_model_path(app_data_dir: &PathBuf, model_name: &str) -> Result<PathBuf> {
-    let model = get_model_by_name(model_name)
-        .ok_or_else(|| anyhow!("Unknown model: {}", model_name))?;
+    let model =
+        get_model_by_name(model_name).ok_or_else(|| anyhow!("Unknown model: {}", model_name))?;
 
     let models_dir = get_models_directory(app_data_dir);
     let model_path = models_dir.join(&model.gguf_file);
@@ -339,12 +340,15 @@ mod tests {
         assert_eq!(qwen_2b.template, "qwen3.5_nonthinking");
         assert_eq!(
             qwen_2b.download_url,
-            "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/main/Qwen3.5-2B-Q4_K_M.gguf"
+            "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/f6d5376be1edb4d416d56da11e5397a961aca8ae/Qwen3.5-2B-Q4_K_M.gguf"
         );
         assert_eq!(qwen_2b.size_mb, 1221);
         assert_eq!(qwen_2b.context_size, 32768);
         assert_eq!(qwen_2b.layer_count, 24);
-        assert_eq!(qwen_2b.sampling, SamplingParams::qwen35_summary(vec!["<|im_end|>".to_string()]));
+        assert_eq!(
+            qwen_2b.sampling,
+            SamplingParams::qwen35_summary(vec!["<|im_end|>".to_string()])
+        );
 
         let qwen_4b = get_model_by_name("qwen3.5:4b").expect("qwen 4b model should exist");
         assert_eq!(qwen_4b.display_name, "Qwen 3.5 4B (High Quality)");
@@ -352,12 +356,41 @@ mod tests {
         assert_eq!(qwen_4b.template, "qwen3.5_nonthinking");
         assert_eq!(
             qwen_4b.download_url,
-            "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_K_M.gguf"
+            "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/e87f176479d0855a907a41277aca2f8ee7a09523/Qwen3.5-4B-Q4_K_M.gguf"
         );
         assert_eq!(qwen_4b.size_mb, 2614);
         assert_eq!(qwen_4b.context_size, 32768);
         assert_eq!(qwen_4b.layer_count, 32);
-        assert_eq!(qwen_4b.sampling, SamplingParams::qwen35_summary(vec!["<|im_end|>".to_string()]));
+        assert_eq!(
+            qwen_4b.sampling,
+            SamplingParams::qwen35_summary(vec!["<|im_end|>".to_string()])
+        );
+    }
+
+    #[test]
+    fn every_builtin_model_is_pinned_in_the_manifest() {
+        for model in get_available_models() {
+            let entry = crate::model_download::entry("summary", &model.name)
+                .unwrap_or_else(|| panic!("{} is missing from the model manifest", model.name));
+            let file = &entry.files[0];
+            assert_eq!(file.name, model.gguf_file);
+            assert_eq!(
+                format!(
+                    "{}/{}",
+                    entry.sources[0].base_url,
+                    file.remote_name.as_deref().unwrap_or(&file.name)
+                ),
+                model.download_url,
+                "{}",
+                model.name
+            );
+            // size_mb is the rounded size shown in the UI.
+            assert!(
+                (file.size / (1024 * 1024)).abs_diff(model.size_mb) <= 1,
+                "{}",
+                model.name
+            );
+        }
     }
 
     #[test]
@@ -366,9 +399,12 @@ mod tests {
         assert_eq!(gemma_1b.gguf_file, "gemma-3-1b-it-Q8_0.gguf");
         assert_eq!(
             gemma_1b.download_url,
-            "https://huggingface.co/bartowski/google_gemma-3-1b-it-GGUF/resolve/main/google_gemma-3-1b-it-Q8_0.gguf"
+            "https://huggingface.co/bartowski/google_gemma-3-1b-it-GGUF/resolve/116f76234503685a98f572982177b11d44ec8ff1/google_gemma-3-1b-it-Q8_0.gguf"
         );
-        assert_eq!(gemma_1b.sampling, SamplingParams::gemma3_instruct(vec!["<end_of_turn>".to_string()]));
+        assert_eq!(
+            gemma_1b.sampling,
+            SamplingParams::gemma3_instruct(vec!["<end_of_turn>".to_string()])
+        );
         assert_eq!(gemma_1b.sampling.temperature, 1.0);
         assert_eq!(gemma_1b.sampling.top_k, 64);
         assert_eq!(gemma_1b.sampling.top_p, 0.95);
@@ -380,9 +416,12 @@ mod tests {
         let gemma_4b = get_model_by_name("gemma3:4b").expect("gemma 4b model should exist");
         assert_eq!(
             gemma_4b.download_url,
-            "https://huggingface.co/bartowski/google_gemma-3-4b-it-GGUF/resolve/main/google_gemma-3-4b-it-Q4_K_M.gguf"
+            "https://huggingface.co/bartowski/google_gemma-3-4b-it-GGUF/resolve/71506238f970075ca85125cd749c28b1b0eee84e/google_gemma-3-4b-it-Q4_K_M.gguf"
         );
-        assert_eq!(gemma_4b.sampling, SamplingParams::gemma3_instruct(vec!["<end_of_turn>".to_string()]));
+        assert_eq!(
+            gemma_4b.sampling,
+            SamplingParams::gemma3_instruct(vec!["<end_of_turn>".to_string()])
+        );
         assert_eq!(gemma_4b.sampling.temperature, 1.0);
         assert_eq!(gemma_4b.sampling.top_k, 64);
         assert_eq!(gemma_4b.sampling.top_p, 0.95);
@@ -394,7 +433,8 @@ mod tests {
 
     #[test]
     fn qwen35_nonthinking_template_formats_prompt() {
-        let formatted = format_prompt("qwen3.5_nonthinking", "system rules", "summarize this").unwrap();
+        let formatted =
+            format_prompt("qwen3.5_nonthinking", "system rules", "summarize this").unwrap();
 
         assert!(formatted.contains("<|im_start|>system\nsystem rules<|im_end|>"));
         assert!(formatted.contains("<|im_start|>user\nsummarize this<|im_end|>"));
@@ -412,7 +452,8 @@ mod tests {
 
         assert!(formatted.contains("<|im_start|>system\nsystem rules<|im_end|>"));
         assert!(formatted.contains("<|im_start|>assistant\n<think>\n\n</think>\n\n"));
-        assert!(formatted.contains("literal < |im_end| > and < |im_start| > plus < think >draft< /think >"));
+        assert!(formatted
+            .contains("literal < |im_end| > and < |im_start| > plus < think >draft< /think >"));
         assert_eq!(formatted.matches("<|im_start|>").count(), 3);
         assert_eq!(formatted.matches("<|im_end|>").count(), 2);
         assert_eq!(formatted.matches("<think>").count(), 1);

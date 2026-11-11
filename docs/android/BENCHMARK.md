@@ -251,7 +251,7 @@ Validation commands:
   compilation exhausted the shared filesystem. A benchmark test compile also
   hit that temporary disk shortage; it passed when rerun after Cargo exited.
 - `pnpm --dir frontend build` and `pnpm --dir frontend lint`: blocked because
-  node_modules/Next.js are absent. No frontend test script is defined.
+  node_modules are absent. No frontend test script is defined.
 
 These broader failures are outside this benchmark diff. Full-repository checks
 are **not green**; no desktop/Android application success is claimed.
