@@ -44,6 +44,96 @@ audio was intact. It does **not** establish whether Windows was blocked in
 I/O or delayed by scheduling. No durability defect (b) was demonstrated.
 The temporary diagnostic was removed after the experiment.
 
+## Correction
+
+Only the test changes; the production writers are unchanged. The test now
+drives the same `TrackWriter` and real `WavSegmentStorage` synchronously with
+an explicit clock. It scans after each 10 ms chunk over ten seconds, checks
+that both tracks exist, and asserts **at most 96,000 missing samples per
+track at 48 kHz** (exactly two seconds). No finish, stop, forced commit or
+header repair runs before these snapshots.
+
+The test exercises both normal clock advancement and a frozen clock, where
+sample-count commits must protect audio arriving in a burst. Checking every
+chunk also prevents an implementation with an excessive commit interval
+from passing just because the final snapshot happens to land after a commit.
+The existing threaded recording-writer tests continue to cover queue
+draining, slow storage, storage errors and recovery. The revised test does
+not measure scheduling latency or claim to simulate physical power loss.
+
+## Sensitivity check
+
+Temporarily changing `COMMIT_INTERVAL` from one to three seconds made the
+revised test fail at the first snapshot exceeding its unchanged loss budget:
+
+```text
+burst false, Microphone: fed 2.02s, recovered 0.01s
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 790 filtered out; finished in 0.01s
+```
+
+The production file was restored byte for byte after this experiment; it is
+not part of the diff.
+
+## Repetitions and targeted suite
+
+Each repetition used:
+
+```sh
+export CARGO_TARGET_DIR=$HOME/dev/cargo-target/tingskriver
+cargo test --locked -p tingskriver-core crash_recovery_loses_at_most_two_seconds -- --test-threads=1
+```
+
+| Version | No extra load | CPU and disk load | Total failures | Test duration |
+| --- | --- | --- | --- | --- |
+| Original | 0/15 failed | 0/15 failed | 0/30 | 10.05–11.64 s |
+| Corrected | 0/15 failed | 0/15 failed | 0/30 | 0.11–0.18 s |
+
+The four load workers used scoped Python threads, SHA-256, and independent
+temporary files with repeated 1 MiB writes and `fsync`. The foreground script
+joined every worker on completion. No load processes were left running.
+
+Last relevant output from the corrected repetition:
+
+```text
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 790 filtered out; finished in 0.12s
+after failures: 0/30
+```
+
+`cargo test --locked -p tingskriver-core finalize`:
+
+```text
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 773 filtered out; finished in 2.42s
+```
+
+`rustfmt --edition 2021 --check` on the changed Rust file and
+`git diff --check` both pass. Existing core warnings concern unused items in
+unmodified files; this change adds no warnings.
+
+The final full `cargo test --locked -p tingskriver-core` run exited zero,
+including the threaded recording-writer tests, integration tests and doctests.
+Core unit-test output and the final output line were:
+
+```text
+test result: ok. 786 passed; 0 failed; 5 ignored; 0 measured; 0 filtered out; finished in 31.11s
+test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 3.44s
+```
+
+## Proposed pull request
+
+Title: `Make the crash recovery loss test deterministic`
+
+Body:
+
+The test scanned a live writer after ten wall-clock seconds, counting queued
+audio as written and racing header repair against ongoing writes. Drive the
+production track writers and real WAV storage with a controlled clock instead,
+checking both tracks after every chunk with the unchanged two-second limit.
+
+Validation: 30 runs before and after (15 loaded each), 18 finalize tests and
+the full core suite passed. A three-second commit-interval mutation fails the
+test. Windows and physical power loss remain unverified. No UI components
+were changed.
+
 The architecture's two-second power-loss budget explicitly assumes a healthy
 disk and separately reports storage stalls. No finite loss budget can hold
 while a writer is indefinitely unscheduled or a disk stops completing writes.
