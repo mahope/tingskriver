@@ -47,6 +47,7 @@ pub mod database;
 pub mod delivery;
 pub mod diagnose;
 pub mod dictation;
+pub mod export;
 pub mod fake_device;
 mod file_ops;
 pub mod format_da;
