@@ -120,10 +120,8 @@ pub struct ModelManager {
     /// Active downloads (model names)
     active_downloads: Arc<RwLock<HashSet<String>>>,
 
-    /// Cancellation flag for current download
-    cancel_download_flag: Arc<RwLock<Option<String>>>,
-
-    /// Cancellation tokens of the running downloads
+    /// Cancellation tokens of the running downloads. A token is registered in the same step that
+    /// marks the download as active, so a cancel can never miss a running download.
     cancel_tokens: Arc<RwLock<HashMap<String, CancellationToken>>>,
 }
 
@@ -217,7 +215,6 @@ impl ModelManager {
             models_dir,
             available_models: Arc::new(RwLock::new(HashMap::new())),
             active_downloads: Arc::new(RwLock::new(HashSet::new())),
-            cancel_download_flag: Arc::new(RwLock::new(None)),
             cancel_tokens: Arc::new(RwLock::new(HashMap::new())),
         })
     }
@@ -441,30 +438,12 @@ impl ModelManager {
     ) -> Result<()> {
         log::info!("Starting download for model: {}", model_name);
 
-        // Check if already downloading
-        {
-            let active = self.active_downloads.read().await;
-            if active.contains(model_name) {
-                log::warn!("Download already in progress for model: {}", model_name);
-                return Err(anyhow!("Download already in progress"));
-            }
-        }
-
         // Get model definition
         let model_def = get_model_by_name(model_name)
             .ok_or_else(|| anyhow!("Unknown model: {}", model_name))?;
 
-        // Add to active downloads
-        {
-            let mut active = self.active_downloads.write().await;
-            active.insert(model_name.to_string());
-        }
-
-        // Clear cancellation flag
-        {
-            let mut cancel_flag = self.cancel_download_flag.write().await;
-            *cancel_flag = None;
-        }
+        // Mark the download as active and make it cancellable in one step.
+        let cancel = self.begin_download(model_name).await?;
 
         // Update status to downloading
         {
@@ -502,12 +481,6 @@ impl ModelManager {
             entry.sources.len()
         );
         log::info!("Saving to: {}", file_path.display());
-
-        let cancel = CancellationToken::new();
-        self.cancel_tokens
-            .write()
-            .await
-            .insert(model_name.to_string(), cancel.clone());
 
         let result = async {
             let client =
@@ -601,6 +574,23 @@ impl ModelManager {
         }
     }
 
+    /// Mark a download as active and register its cancellation token in one step. A cancel that
+    /// arrives at any later point, even before the first byte is requested, finds the token and
+    /// stops the download. Fails when the model is already downloading.
+    async fn begin_download(&self, model_name: &str) -> Result<CancellationToken> {
+        let mut active = self.active_downloads.write().await;
+        if !active.insert(model_name.to_string()) {
+            log::warn!("Download already in progress for model: {}", model_name);
+            return Err(anyhow!("Download already in progress"));
+        }
+        let cancel = CancellationToken::new();
+        self.cancel_tokens
+            .write()
+            .await
+            .insert(model_name.to_string(), cancel.clone());
+        Ok(cancel)
+    }
+
     async fn is_installed_with_pinned_size(path: &PathBuf, size: u64) -> bool {
         matches!(fs::metadata(path).await, Ok(metadata) if metadata.len() == size)
     }
@@ -624,6 +614,7 @@ impl ModelManager {
                 };
             }
         }
+        self.cancel_tokens.write().await.remove(model_name);
         self.active_downloads.write().await.remove(model_name);
     }
 
@@ -654,17 +645,11 @@ impl ModelManager {
     pub async fn cancel_download(&self, model_name: &str) -> Result<()> {
         log::info!("Cancelling download for model: {}", model_name);
 
-        // Set cancellation flag - download loop will detect this and handle cleanup
-        {
-            let mut cancel_flag = self.cancel_download_flag.write().await;
-            *cancel_flag = Some(model_name.to_string());
-        }
+        // The download stops through its token and cleans up after itself, including
+        // `active_downloads`; removing the entry here as well would race with that cleanup.
         if let Some(token) = self.cancel_tokens.read().await.get(model_name) {
             token.cancel();
         }
-
-        // Note: active_downloads cleanup is handled by the download loop when it detects
-        // the cancellation flag. This avoids double-removal race condition.
 
         // Update status immediately for UI responsiveness
         {
@@ -709,5 +694,50 @@ impl ModelManager {
     /// Get models directory path
     pub fn get_models_directory(&self) -> PathBuf {
         self.models_dir.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MODEL: &str = "qwen3.5:2b";
+
+    fn manager() -> (tempfile::TempDir, ModelManager) {
+        let dir = tempfile::tempdir().expect("create models directory");
+        let manager = ModelManager::new_with_models_dir(Some(dir.path().to_path_buf()))
+            .expect("create model manager");
+        (dir, manager)
+    }
+
+    #[tokio::test]
+    async fn a_cancel_before_the_first_request_stops_the_download() {
+        let (_dir, manager) = manager();
+        // The download is active and has not set anything up yet.
+        let cancel = manager.begin_download(MODEL).await.expect("begin download");
+        manager
+            .cancel_download(MODEL)
+            .await
+            .expect("cancel download");
+        assert!(
+            cancel.is_cancelled(),
+            "the token the download runs with is the one that was cancelled"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_model_downloads_once_at_a_time_and_a_failed_start_releases_it() {
+        let (dir, manager) = manager();
+        manager.begin_download(MODEL).await.expect("begin download");
+        assert!(manager.begin_download(MODEL).await.is_err());
+
+        // A download that fails before it starts (for example a missing manifest entry) must
+        // not leave a token behind that a later download would be cancelled through.
+        manager
+            .finish_failed_download(MODEL, &dir.path().join("model.gguf"), "failed".to_string())
+            .await;
+        assert!(manager.cancel_tokens.read().await.is_empty());
+        let next = manager.begin_download(MODEL).await.expect("begin again");
+        assert!(!next.is_cancelled());
     }
 }

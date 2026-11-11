@@ -1210,6 +1210,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_download_cancelled_before_it_starts_makes_no_request() {
+        let server = serve(Mode::Serve, GOOD).await;
+        let dir = tempdir().unwrap();
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        let error = fetch(
+            dir.path(),
+            &spec("model.bin", GOOD),
+            &[source("main", &server.base_url)],
+            &cancel,
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(error, TransferError::Cancelled), "{error}");
+        assert!(server.requests.lock().unwrap().is_empty());
+        assert!(!dir.path().join("model.bin").exists());
+        assert!(!part_path(dir.path(), "model.bin").exists());
+    }
+
+    #[tokio::test]
     async fn real_cancellation_leaves_a_resumable_part_file() {
         let server = serve(Mode::Serve, GOOD).await;
         let dir = tempdir().unwrap();
