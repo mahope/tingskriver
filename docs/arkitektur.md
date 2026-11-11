@@ -476,6 +476,38 @@ single-worker fake-server test covers stalled headers, stalled bodies and
 concurrent core calls. `read_audio_file` has already been removed; playback
 uses the core playback API instead of JSON arrays of audio bytes.
 
+## Notes editing
+
+`notes::edit::Editor` edits `notes::model::Document` without UI dependencies.
+`Position` uses a block index and an extended grapheme index in the entire
+block, including graphemes that cross formatting spans. Invalid selections
+return an error without changing the editor. The editor keeps at least one
+paragraph, even for a new empty document.
+
+`type_text` recognizes `# `, `## `, `### `, `- `, `[] ` and `1. ` at the start of an otherwise
+empty paragraph. `insert_plain_text` pastes literal text with normalized line
+endings and no markdown interpretation. Enter splits a block, continues lists
+(with a fresh unchecked checkbox), or leaves an empty list. Headings continue
+as paragraphs. Backspace removes one grapheme, unwraps a list/heading at its
+start, or joins paragraphs with the previous block. Splits retain the original
+block's timestamp on its left half; new blocks are untimed. Enter at the start
+of a nonempty block inserts an empty paragraph above it and preserves the
+existing block's metadata. Joining an empty, untimed predecessor preserves
+the current block's metadata; other joins retain the predecessor's metadata.
+
+Selections can span blocks in either direction. Bold and italic toggle the
+selected text, or the insertion style at an empty selection. A range containing
+only empty blocks enables the insertion style. Consecutive typing is grouped
+by Unicode word boundaries in the combined existing and inserted text, with a
+new step after a one-second pause or another operation. History
+is limited to 500 steps and restores document, selection and insertion style;
+editing after undo clears redo. Selection movement itself is not an undo step.
+`copy_markdown` serializes the selected fragments with `notes::markdown`,
+retaining block kinds and formatting but omitting meeting timestamps.
+Selection style toggles also set the style for replacement text. When copying
+up to the start of another block, the selected newline is retained without
+including that block's unselected kind. A GPUI widget, keyboard/clipboard
+integration and persistence wiring remain for the UI half of #47.
 ## Dictation without the main window
 
 On main before #46, `tingskriver-host::Host::start` already initialized

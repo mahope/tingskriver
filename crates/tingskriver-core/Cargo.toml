@@ -50,6 +50,8 @@ ndarray = "0.16"
 ort = { version = "2.0.0-rc.10" }  # ONNX Runtime for Parakeet models
 sysinfo = "0.32"
 thiserror = "2.0.16"
+# Keep 1.12.0 in Cargo.lock for the Rust 1.77 MSRV.
+unicode-segmentation = "1.12"
 
 [features]
 # GPU/BLAS backends for whisper-rs; the Tauri crate forwards its features here.

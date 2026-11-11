@@ -1,0 +1,376 @@
+use tingskriver_core::notes::{
+    edit::{Editor, Position, Selection, Style},
+    markdown, BlockKind, Document,
+};
+
+fn pos(block: usize, grapheme: usize) -> Position {
+    Position { block, grapheme }
+}
+fn select(e: &mut Editor, a: Position, b: Position) {
+    e.set_selection(Selection {
+        anchor: a,
+        focus: b,
+    })
+    .unwrap();
+}
+fn check(e: &Editor) {
+    assert_eq!(
+        markdown::parse(&markdown::serialize(e.document())).unwrap(),
+        *e.document()
+    );
+    let s = e.selection();
+    let mut other = Editor::new(e.document().clone());
+    other.set_selection(s).unwrap();
+}
+#[test]
+fn selection_toggle_sets_replacement_style() {
+    for (style, marker) in [(Style::Bold, "**"), (Style::Italic, "*")] {
+        for enabled in [false, true] {
+            let input = if enabled {
+                "æøå".into()
+            } else {
+                format!("{marker}æøå{marker}")
+            };
+            let mut e = Editor::new(markdown::parse(&input).unwrap());
+            select(&mut e, pos(0, 0), pos(0, 3));
+            e.toggle_style(style);
+            check(&e);
+            e.type_text("x");
+            check(&e);
+            let span = &e.document().blocks[0].spans[0];
+            assert_eq!(span.text, "x");
+            assert_eq!(
+                match style {
+                    Style::Bold => span.bold,
+                    Style::Italic => span.italic,
+                },
+                enabled
+            );
+            assert!(e.undo());
+            check(&e);
+            assert!(e.redo());
+            check(&e);
+            e.type_text("y");
+            check(&e);
+            assert_eq!(e.document().blocks[0].spans[0].text, "xy");
+        }
+    }
+}
+
+#[test]
+fn copy_to_block_start_excludes_unselected_block_kind() {
+    for ending in ["# xyz", "- xyz", "1. xyz", "- [ ] xyz", "xyz"] {
+        for reversed in [false, true] {
+            let mut e = Editor::new(markdown::parse(&format!("abc\n{ending}")).unwrap());
+            let (a, b) = (pos(0, 0), pos(1, 0));
+            select(
+                &mut e,
+                if reversed { b } else { a },
+                if reversed { a } else { b },
+            );
+            assert_eq!(e.copy_markdown(), "abc\n");
+            check(&e);
+            select(&mut e, pos(0, 3), pos(1, 0));
+            assert_eq!(e.copy_markdown(), "<!--empty-->\n");
+        }
+    }
+}
+#[test]
+fn shortcuts_lists_and_history_round_trip() {
+    for (prefix, kind) in [
+        ("# ", BlockKind::Heading(1)),
+        ("## ", BlockKind::Heading(2)),
+        ("### ", BlockKind::Heading(3)),
+        ("- ", BlockKind::Bullet),
+        ("[] ", BlockKind::Checkbox(false)),
+        ("1. ", BlockKind::Numbered),
+    ] {
+        let mut e = Editor::new(Document::default());
+        for c in prefix.chars() {
+            e.type_text(&c.to_string());
+            check(&e);
+        }
+        assert_eq!(e.document().blocks[0].kind, kind);
+        e.insert_plain_text("æøå");
+        check(&e);
+        e.enter();
+        check(&e);
+        assert_eq!(
+            e.document().blocks[1].kind,
+            if matches!(kind, BlockKind::Heading(_)) {
+                BlockKind::Paragraph
+            } else {
+                kind.clone()
+            }
+        );
+        e.enter();
+        check(&e);
+        assert_eq!(
+            e.document().blocks.last().unwrap().kind,
+            BlockKind::Paragraph
+        );
+        let after = e.document().clone();
+        assert!(e.undo());
+        check(&e);
+        assert!(e.redo());
+        check(&e);
+        assert_eq!(e.document(), &after);
+    }
+}
+#[test]
+fn list_backspace_unwraps_then_merges_and_split_preserves_styles() {
+    let mut e = Editor::new(markdown::parse("first\n- **æøå**").unwrap());
+    select(&mut e, pos(1, 1), pos(1, 1));
+    e.enter();
+    check(&e);
+    assert_eq!(e.document().blocks[2].spans[0].text, "øå");
+    assert!(e.document().blocks[2].spans[0].bold);
+    e.backspace();
+    check(&e);
+    assert_eq!(e.document().blocks[2].kind, BlockKind::Paragraph);
+    e.backspace();
+    check(&e);
+    assert_eq!(e.document().blocks[1].spans[0].text, "æøå");
+    select(&mut e, pos(1, 0), pos(1, 0));
+    e.backspace();
+    check(&e);
+    assert_eq!(e.document().blocks[1].kind, BlockKind::Paragraph);
+    e.backspace();
+    check(&e);
+    assert_eq!(e.document().blocks.len(), 1);
+    assert_eq!(e.selection().focus, pos(0, 5));
+}
+#[test]
+fn formatting_copy_and_cross_block_replacement() {
+    let mut e = Editor::new(markdown::parse("æøå\n- xyz").unwrap());
+    select(&mut e, pos(1, 2), pos(0, 1));
+    e.toggle_style(Style::Bold);
+    check(&e);
+    e.toggle_style(Style::Italic);
+    check(&e);
+    let copied = markdown::parse(&e.copy_markdown()).unwrap();
+    assert_eq!(copied.blocks[0].spans[0].text, "øå");
+    assert_eq!(copied.blocks[1].spans[0].text, "xy");
+    assert!(copied
+        .blocks
+        .iter()
+        .all(|b| b.spans.iter().all(|s| s.bold && s.italic)));
+    e.toggle_style(Style::Bold);
+    check(&e);
+    assert!(!e.document().blocks[0].spans[1].bold);
+    e.insert_plain_text("**plain**\r\n# literal");
+    check(&e);
+    assert_eq!(e.document().blocks.len(), 2);
+    assert_eq!(e.document().blocks[1].kind, BlockKind::Paragraph);
+    assert_eq!(e.document().blocks[1].spans[0].text, "# literal");
+    assert!(e.document().blocks[1].spans[0].italic);
+    assert_eq!(e.document().blocks[1].spans[1].text, "z");
+    assert!(!e.document().blocks[1].spans[1].italic);
+    assert!(e.undo());
+    check(&e);
+    assert!(e.redo());
+    check(&e);
+    assert!(e.undo());
+    e.insert_plain_text("new");
+    check(&e);
+    assert!(!e.redo());
+}
+#[test]
+fn grapheme_boundaries_include_combining_marks_emoji_and_span_boundaries() {
+    let mut e = Editor::new(Document::default());
+    e.insert_plain_text("æøa\u{30a}👨‍👩‍👧‍👦");
+    check(&e);
+    assert_eq!(e.selection().focus, pos(0, 4));
+    e.backspace();
+    check(&e);
+    assert_eq!(e.selection().focus, pos(0, 3));
+    e.backspace();
+    check(&e);
+    assert_eq!(e.document().blocks[0].spans[0].text, "æø");
+    e.toggle_style(Style::Bold);
+    check(&e);
+    e.insert_plain_text("a");
+    check(&e);
+    e.toggle_style(Style::Bold);
+    e.insert_plain_text("\u{30a}");
+    check(&e);
+    assert_eq!(e.selection().focus, pos(0, 3));
+    e.backspace();
+    check(&e);
+    assert_eq!(e.document().blocks[0].spans[0].text, "æø");
+    let before = e.selection();
+    assert!(e
+        .set_selection(Selection {
+            anchor: pos(99, 0),
+            focus: pos(0, 0)
+        })
+        .is_err());
+    assert!(e
+        .set_selection(Selection {
+            anchor: pos(0, 3),
+            focus: pos(0, 0)
+        })
+        .is_err());
+    assert_eq!(e.selection(), before);
+}
+
+#[test]
+fn history_restores_selection_styles_and_offsets() {
+    let mut e = Editor::new(markdown::parse("<!--offset:42--> - [x] **æøå**").unwrap());
+    let original = e.document().clone();
+    select(&mut e, pos(0, 1), pos(0, 2));
+    let selection = e.selection();
+    e.insert_plain_text("x");
+    check(&e);
+    assert_eq!(e.document().blocks[0].created_offset_ms, Some(42));
+    assert!(e.undo());
+    check(&e);
+    assert_eq!(e.document(), &original);
+    assert_eq!(e.selection(), selection);
+    assert!(e.redo());
+    check(&e);
+    select(&mut e, pos(0, 3), pos(0, 3));
+    e.enter();
+    check(&e);
+    assert_eq!(e.document().blocks[1].kind, BlockKind::Checkbox(false));
+    select(&mut e, pos(0, 0), pos(1, 0));
+    let copied = markdown::parse(&e.copy_markdown()).unwrap();
+    assert!(copied.blocks.iter().all(|b| b.created_offset_ms.is_none()));
+}
+
+proptest::proptest! {
+    #[test]
+    fn operation_sequences_preserve_round_trip_and_valid_cursor(operations in proptest::collection::vec((0u8..10, ".{0,12}"), 0..60), offset in proptest::option::of(0u64..100000)) {
+        let mut document = markdown::parse("seed").unwrap();
+        document.blocks[0].created_offset_ms = offset;
+        let mut e = Editor::new(document);
+        for (op, text) in operations {
+            match op {
+                0 => e.type_text(&text),
+                1 => e.insert_plain_text(&text),
+                2 => e.enter(),
+                3 => e.backspace(),
+                4 => e.toggle_style(Style::Bold),
+                5 => e.toggle_style(Style::Italic),
+                6 => { e.undo(); },
+                7 => { e.redo(); },
+                8 => { let end = e.selection().focus; select(&mut e, end, pos(0, 0)); },
+                _ => { let p = e.selection().focus; select(&mut e, p, p); },
+            }
+            check(&e);
+            markdown::parse(&e.copy_markdown()).unwrap();
+        }
+    }
+}
+
+#[test]
+fn toggles_remove_both_styles_and_plain_paste_does_not_trigger_shortcuts() {
+    let mut e = Editor::new(Document::default());
+    e.backspace();
+    check(&e);
+    assert!(!e.undo());
+    e.insert_plain_text("# ");
+    check(&e);
+    assert_eq!(e.document().blocks[0].kind, BlockKind::Paragraph);
+    select(&mut e, pos(0, 0), pos(0, 2));
+    e.toggle_style(Style::Bold);
+    check(&e);
+    e.toggle_style(Style::Italic);
+    check(&e);
+    assert!(e.document().blocks[0].spans[0].bold);
+    assert!(e.document().blocks[0].spans[0].italic);
+    e.toggle_style(Style::Bold);
+    check(&e);
+    e.toggle_style(Style::Italic);
+    check(&e);
+    assert!(!e.document().blocks[0].spans[0].bold);
+    assert!(!e.document().blocks[0].spans[0].italic);
+    e.backspace();
+    check(&e);
+    assert!(e.document().blocks[0].spans.is_empty());
+    e.toggle_style(Style::Italic);
+    check(&e);
+    e.insert_plain_text("æ");
+    check(&e);
+    assert!(e.document().blocks[0].spans[0].italic);
+    e.toggle_style(Style::Italic);
+    check(&e);
+    e.insert_plain_text("ø");
+    check(&e);
+    assert!(!e.document().blocks[0].spans[1].italic);
+}
+
+#[test]
+fn enter_at_start_preserves_existing_block_metadata() {
+    for source in ["# title", "- [x] done", "<!--offset:42--> text"] {
+        let mut e = Editor::new(markdown::parse(source).unwrap());
+        let original = e.document().blocks[0].clone();
+        e.enter();
+        assert_eq!(e.document().blocks[1], original);
+        assert!(e.document().blocks[0].spans.is_empty());
+        assert_eq!(e.document().blocks[0].created_offset_ms, None);
+        assert_eq!(e.selection().focus, pos(1, 0));
+        check(&e);
+    }
+}
+#[test]
+fn backspace_preserves_metadata_and_all_text() {
+    for (source, offset, expected) in [
+        ("<!--empty-->\n<!--offset:42--> text", Some(42), "text"),
+        (
+            "<!--offset:7--> <!--empty-->\n<!--offset:42--> text",
+            Some(7),
+            "text",
+        ),
+        ("before\n<!--offset:42--> text", None, "beforetext"),
+    ] {
+        let mut e = Editor::new(markdown::parse(source).unwrap());
+        select(&mut e, pos(1, 0), pos(1, 0));
+        e.backspace();
+        assert_eq!(e.document().blocks.len(), 1);
+        assert_eq!(e.document().blocks[0].created_offset_ms, offset);
+        assert_eq!(
+            e.document().blocks[0]
+                .spans
+                .iter()
+                .map(|s| s.text.as_str())
+                .collect::<String>(),
+            expected
+        );
+        check(&e);
+    }
+}
+#[test]
+fn typing_groups_words_and_history_has_a_limit() {
+    let mut e = Editor::new(Document::default());
+    for c in ["h", "e", "j", " ", "d", "u"] {
+        e.type_text(c);
+    }
+    assert!(e.undo());
+    assert_eq!(markdown::serialize(e.document()), "hej ");
+    assert!(e.undo());
+    assert_eq!(markdown::serialize(e.document()), "hej");
+    assert!(e.undo());
+    assert!(e.document().blocks[0].spans.is_empty());
+    for c in ["a", ".", "b"] {
+        e.type_text(c);
+    }
+    assert!(e.undo());
+    assert_eq!(e.document().blocks[0].spans[0].text, "a.");
+    for _ in 0..510 {
+        e.insert_plain_text("x");
+    }
+    let mut count = 0;
+    while e.undo() {
+        count += 1;
+    }
+    assert_eq!(count, 500);
+}
+#[test]
+fn empty_block_range_enables_insertion_style() {
+    let mut e = Editor::new(markdown::parse("<!--empty-->\n<!--empty-->").unwrap());
+    select(&mut e, pos(0, 0), pos(1, 0));
+    e.toggle_style(Style::Bold);
+    e.type_text("x");
+    assert!(e.document().blocks[0].spans[0].bold);
+}
