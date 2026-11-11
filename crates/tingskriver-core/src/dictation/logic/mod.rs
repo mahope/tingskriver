@@ -18,6 +18,7 @@ pub mod paste;
 pub mod residency;
 pub mod spoken;
 pub mod startup;
+pub mod suggest;
 pub mod target_check;
 pub mod timing;
 mod token;

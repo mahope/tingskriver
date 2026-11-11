@@ -27,6 +27,23 @@ CREATE TABLE IF NOT EXISTS dictation_dictionary (
     aliases TEXT NOT NULL DEFAULT '',
     created_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS dictation_suggestions (
+    word_key TEXT PRIMARY KEY,
+    word TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'pending' CHECK(state IN ('pending', 'ignored', 'added'))
+);
+CREATE TRIGGER IF NOT EXISTS trim_dictation_suggestions
+AFTER INSERT ON dictation_suggestions
+BEGIN
+    DELETE FROM dictation_suggestions WHERE rowid IN (
+        SELECT rowid FROM dictation_suggestions WHERE state = 'pending'
+        ORDER BY rowid DESC LIMIT -1 OFFSET 200
+    );
+END;
+DELETE FROM dictation_suggestions WHERE rowid IN (
+    SELECT rowid FROM dictation_suggestions WHERE state = 'pending'
+    ORDER BY rowid DESC LIMIT -1 OFFSET 200
+);
 CREATE TABLE IF NOT EXISTS dictation_snippets (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     phrase TEXT NOT NULL,
@@ -250,6 +267,83 @@ impl Store {
             .execute(&self.pool)
             .await
             .map_err(db_err)?;
+        Ok(())
+    }
+
+    /// Store only changed words, never the snapshots or keystrokes.
+    pub async fn suggest_corrections(
+        &self,
+        inserted: &str,
+        observed: &str,
+        elapsed: std::time::Duration,
+        password: bool,
+    ) -> Result<(), String> {
+        let words = super::logic::suggest::corrected_words(inserted, observed, elapsed, password);
+        if words.is_empty() {
+            return Ok(());
+        }
+        let dictionary = self.dictionary().await?;
+        for word in words {
+            let known = dictionary
+                .iter()
+                .any(|entry| entry.word.to_lowercase() == word.to_lowercase());
+            if !known {
+                sqlx::query(
+                    "INSERT OR IGNORE INTO dictation_suggestions (word_key, word) VALUES (?1, ?2)",
+                )
+                .bind(word.to_lowercase())
+                .bind(word)
+                .execute(&self.pool)
+                .await
+                .map_err(db_err)?;
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn suggestions(&self) -> Result<Vec<String>, String> {
+        let rows = sqlx::query(
+            "SELECT word FROM dictation_suggestions WHERE state = 'pending' ORDER BY word_key",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_err)?;
+        Ok(rows.into_iter().map(|row| row.get("word")).collect())
+    }
+
+    /// Forget all pending words and remembered decisions for privacy controls.
+    pub async fn clear_suggestions(&self) -> Result<(), String> {
+        sqlx::query("DELETE FROM dictation_suggestions")
+            .execute(&self.pool)
+            .await
+            .map_err(db_err)?;
+        Ok(())
+    }
+
+    /// The only decisions are explicit addition or permanent ignoring.
+    pub async fn resolve_suggestion(&self, word: &str, add: bool, now: i64) -> Result<(), String> {
+        let mut tx = self.pool.begin().await.map_err(db_err)?;
+        let row = sqlx::query("UPDATE dictation_suggestions SET state = ?1 WHERE word_key = ?2 AND state = 'pending' RETURNING word")
+            .bind(if add { "added" } else { "ignored" }).bind(word.to_lowercase())
+            .fetch_optional(&mut *tx).await.map_err(db_err)?;
+        if add {
+            if let Some(row) = row {
+                let word: String = row.get("word");
+                let word_key = word.to_lowercase();
+                let dictionary = sqlx::query("SELECT word FROM dictation_dictionary")
+                    .fetch_all(&mut *tx)
+                    .await
+                    .map_err(db_err)?;
+                let known = dictionary
+                    .iter()
+                    .any(|entry| entry.get::<String, _>("word").to_lowercase() == word_key);
+                if !known {
+                    sqlx::query("INSERT INTO dictation_dictionary (word, aliases, created_at) VALUES (?1, '', ?2)")
+                        .bind(word).bind(now).execute(&mut *tx).await.map_err(db_err)?;
+                }
+            }
+        }
+        tx.commit().await.map_err(db_err)?;
         Ok(())
     }
 
@@ -568,6 +662,152 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn inserted_sentences_and_case_changes_are_not_stored() {
+        let s = store().await;
+        for observed in [
+            "Hej kære Søren",
+            "Hej Søren. Her er en ny sætning.",
+            "HEJ SØREN",
+        ] {
+            s.suggest_corrections("Hej Søren", observed, std::time::Duration::ZERO, false)
+                .await
+                .unwrap();
+        }
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM dictation_suggestions")
+            .fetch_one(&s.pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn pending_suggestions_are_bounded_and_all_states_can_be_cleared() {
+        let s = store().await;
+        s.suggest_corrections("Soren Ase", "Søren Åse", std::time::Duration::ZERO, false)
+            .await
+            .unwrap();
+        s.resolve_suggestion("søren", false, 1).await.unwrap();
+        s.resolve_suggestion("åse", true, 1).await.unwrap();
+        for i in 0..201 {
+            sqlx::query("INSERT INTO dictation_suggestions (word_key, word) VALUES (?1, ?1)")
+                .bind(format!("candidate{i:03}"))
+                .execute(&s.pool)
+                .await
+                .unwrap();
+        }
+        let pending = s.suggestions().await.unwrap();
+        assert_eq!(pending.len(), 200);
+        assert!(!pending.contains(&"candidate000".to_string()));
+        assert!(pending.contains(&"candidate200".to_string()));
+        s.clear_suggestions().await.unwrap();
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM dictation_suggestions")
+            .fetch_one(&s.pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
+        assert_eq!(s.dictionary().await.unwrap().len(), 1);
+        s.suggest_corrections("Soren Ase", "Søren Åse", std::time::Duration::ZERO, false)
+            .await
+            .unwrap();
+        assert_eq!(s.suggestions().await.unwrap(), vec!["Søren"]);
+    }
+
+    #[tokio::test]
+    async fn opening_existing_database_trims_pending_suggestions() {
+        let s = store().await;
+        sqlx::query("DROP TRIGGER trim_dictation_suggestions")
+            .execute(&s.pool)
+            .await
+            .unwrap();
+        for i in 0..205 {
+            sqlx::query("INSERT INTO dictation_suggestions (word_key, word) VALUES (?1, ?1)")
+                .bind(format!("candidate{i:03}"))
+                .execute(&s.pool)
+                .await
+                .unwrap();
+        }
+        let s = Store::with_pool(s.pool.clone()).await.unwrap();
+        let pending = s.suggestions().await.unwrap();
+        assert_eq!(pending.len(), 200);
+        assert_eq!(pending.first().unwrap(), "candidate005");
+        assert_eq!(pending.last().unwrap(), "candidate204");
+    }
+
+    #[tokio::test]
+    async fn suggestions_require_explicit_decisions_and_remember_ignored_words() {
+        let s = store().await;
+        let elapsed = std::time::Duration::from_secs(30);
+        s.suggest_corrections("Soren og Ase", "Søren og Åse", elapsed, false)
+            .await
+            .unwrap();
+        assert_eq!(s.suggestions().await.unwrap(), vec!["Søren", "Åse"]);
+        assert!(s.dictionary().await.unwrap().is_empty());
+        s.resolve_suggestion("søren", false, 1).await.unwrap();
+        s.resolve_suggestion("Åse", true, 1).await.unwrap();
+        s.resolve_suggestion("Åse", true, 1).await.unwrap();
+        assert_eq!(s.dictionary().await.unwrap().len(), 1);
+        let s = Store::with_pool(s.pool.clone()).await.unwrap();
+        s.suggest_corrections("soren og ase", "SØREN og Åse", elapsed, false)
+            .await
+            .unwrap();
+        assert!(s.suggestions().await.unwrap().is_empty());
+        s.suggest_corrections("Oystein", "Øystein", elapsed, true)
+            .await
+            .unwrap();
+        s.suggest_corrections(
+            "Oystein",
+            "Øystein",
+            elapsed + std::time::Duration::from_millis(1),
+            false,
+        )
+        .await
+        .unwrap();
+        assert!(s.suggestions().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn accepting_suggestion_rechecks_dictionary_with_unicode_lowercase() {
+        let s = store().await;
+        s.suggest_corrections("Soren", "Søren", std::time::Duration::ZERO, false)
+            .await
+            .unwrap();
+        assert_eq!(s.suggestions().await.unwrap(), vec!["Søren"]);
+        let id = s.upsert_word(None, "SØREN", "soren", 1).await.unwrap();
+        s.set_word_english(id, true).await.unwrap();
+
+        s.resolve_suggestion("søren", true, 2).await.unwrap();
+
+        let dictionary = s.dictionary().await.unwrap();
+        assert_eq!(dictionary.len(), 1);
+        assert_eq!(dictionary[0].id, id);
+        assert_eq!(dictionary[0].word, "SØREN");
+        assert_eq!(dictionary[0].aliases, "soren");
+        assert!(dictionary[0].english);
+        assert!(s.suggestions().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn suggestions_deduplicate_and_skip_existing_dictionary_words() {
+        let s = store().await;
+        s.upsert_word(None, "SØREN", "", 1).await.unwrap();
+        s.suggest_corrections(
+            "Soren Ase Ase",
+            "Søren Åse ÅSE",
+            std::time::Duration::ZERO,
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(s.suggestions().await.unwrap(), vec!["Åse"]);
+        s.resolve_suggestion("missing", true, 1).await.unwrap();
+        assert_eq!(s.dictionary().await.unwrap().len(), 1);
+        s.resolve_suggestion("åse", false, 1).await.unwrap();
+        s.resolve_suggestion("Åse", true, 1).await.unwrap();
+        assert_eq!(s.dictionary().await.unwrap().len(), 1);
+        assert!(s.suggestions().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
     async fn history_migration_preserves_legacy_rows_with_unknown_provider() {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
@@ -661,6 +901,12 @@ mod tests {
             (words[0].word.as_str(), words[0].english),
             ("Mahoje", false)
         );
+        // The additive suggestion table also exists in upgraded databases.
+        s.suggest_corrections("Soren", "Søren", std::time::Duration::ZERO, false)
+            .await
+            .unwrap();
+        assert_eq!(s.suggestions().await.unwrap(), vec!["Søren"]);
+        assert_eq!(s.dictionary().await.unwrap()[0].word, "Mahoje");
         // Opening again does not add the column twice.
         Store::with_pool(s.pool.clone()).await.unwrap();
     }

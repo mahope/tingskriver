@@ -485,6 +485,30 @@ single-worker fake-server test covers stalled headers, stalled bodies and
 concurrent core calls. `read_audio_file` has already been removed; playback
 uses the core playback API instead of JSON arrays of audio bytes.
 
+## Dictionary suggestions from corrections (#81)
+
+`dictation::logic::suggest` compares word snapshots of the inserted span within
+30 seconds (inclusive). It skips password fields and bounds comparisons to 256
+words per snapshot. Case-only changes, punctuation, insertions and deletions
+yield no new words. Only equal-sized replacement gaps between LCS anchors
+(including snapshot boundaries) produce candidates; unequal gaps fail closed.
+Leading/trailing apostrophes and hyphens are trimmed, while internal ones remain.
+`Store::suggest_corrections` persists only candidate words in the additive
+`dictation_suggestions` table, never snapshots or keystrokes. Unicode lowercase
+keys deduplicate suggestions and retain ignored/added decisions across restarts.
+Only the 200 newest pending candidates are retained, including when an existing
+database is opened. `clear_suggestions` deletes pending candidates and all
+remembered decisions without changing dictionary entries.
+Only `resolve_suggestion` with an explicit add decision writes to the dictionary;
+ignoring is permanent, including when the same word later has different casing.
+Addition rechecks dictionary words with the same Unicode lowercase normalization
+inside the decision transaction, preserving words added manually in the meantime.
+
+Windows UIA snapshot reading, identifying the same field and inserted span,
+checking password status before reading, and UI controls for add/ignore remain
+follow-up work. The caller must measure elapsed time from insertion with a
+monotonic clock and supply only that span, never unrelated field contents.
+
 ## Summary quality nets
 
 `summary/quality.rs` and `summary/names.rs` hold pure functions around the
