@@ -1,19 +1,19 @@
-use std::sync::Arc;
 use crate::host::HostHandle;
-use tokio::sync::mpsc;
 use anyhow::Result;
-use log::{debug, error, info, warn};
-#[cfg(target_os = "macos")]
-use std::time::Duration;
 #[cfg(target_os = "macos")]
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use log::{debug, error, info, warn};
+use std::sync::Arc;
+#[cfg(target_os = "macos")]
+use std::time::Duration;
+use tokio::sync::mpsc;
 
 use super::devices::AudioDevice;
 
+use super::device_monitor::{AudioDeviceMonitor, DeviceEvent};
+use super::recording_saver::{RecordingSaver, SaveResult};
 use super::recording_state::RecordingState;
 use super::stream::AudioStreamManager;
-use super::recording_saver::{RecordingSaver, SaveResult};
-use super::device_monitor::{AudioDeviceMonitor, DeviceEvent};
 
 /// Stream manager type enumeration
 pub enum StreamManagerType {
@@ -53,36 +53,45 @@ const AUDIO_WAKE_SWAP_DURATION: Duration = Duration::from_millis(150);
 /// sync cpal I/O. The async wrapper below routes to it via spawn_blocking.
 #[cfg(target_os = "macos")]
 fn wake_audio_connection_sync(speaker_device_name: &str) -> Result<()> {
-    info!("[AUDIO_WAKE] Waking audio via speaker: '{}'", speaker_device_name);
+    info!(
+        "[AUDIO_WAKE] Waking audio via speaker: '{}'",
+        speaker_device_name
+    );
 
     let host = cpal::default_host();
 
-    let output_device = host.output_devices()?
+    let output_device = host
+        .output_devices()?
         .find(|d| d.name().ok().as_deref() == Some(speaker_device_name))
         .ok_or_else(|| anyhow::anyhow!("Output device '{}' not found", speaker_device_name))?;
 
     let config = output_device.default_output_config()?;
-    info!("[AUDIO_WAKE] Output config: {} Hz, {} channels",
-          config.sample_rate().0, config.channels());
+    info!(
+        "[AUDIO_WAKE] Output config: {} Hz, {} channels",
+        config.sample_rate().0,
+        config.channels()
+    );
 
     let stream = match config.sample_format() {
-        cpal::SampleFormat::F32 => {
-            output_device.build_output_stream(
-                &config.into(),
-                |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                    for sample in data.iter_mut() { *sample = 0.0; }
-                },
-                |err| error!("[AUDIO_WAKE] Output stream error: {}", err),
-                None,
-            )?
-        }
+        cpal::SampleFormat::F32 => output_device.build_output_stream(
+            &config.into(),
+            |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                for sample in data.iter_mut() {
+                    *sample = 0.0;
+                }
+            },
+            |err| error!("[AUDIO_WAKE] Output stream error: {}", err),
+            None,
+        )?,
         cpal::SampleFormat::I16 => {
             // BT HFP mode frequently picks I16 for the output config — without
             // this branch the wake would error out exactly when we need it most.
             output_device.build_output_stream(
                 &config.into(),
                 |data: &mut [i16], _: &cpal::OutputCallbackInfo| {
-                    for sample in data.iter_mut() { *sample = 0; }
+                    for sample in data.iter_mut() {
+                        *sample = 0;
+                    }
                 },
                 |err| error!("[AUDIO_WAKE] Output stream error: {}", err),
                 None,
@@ -94,7 +103,10 @@ fn wake_audio_connection_sync(speaker_device_name: &str) -> Result<()> {
     };
 
     stream.play()?;
-    info!("[AUDIO_WAKE] Playing silence for {} ms to wake audio connection...", AUDIO_WAKE_DURATION.as_millis());
+    info!(
+        "[AUDIO_WAKE] Playing silence for {} ms to wake audio connection...",
+        AUDIO_WAKE_DURATION.as_millis()
+    );
     std::thread::sleep(AUDIO_WAKE_DURATION);
     drop(stream);
     info!("[AUDIO_WAKE] Audio wake completed");
@@ -109,9 +121,9 @@ fn wake_audio_connection_sync(speaker_device_name: &str) -> Result<()> {
 #[cfg(target_os = "macos")]
 pub(super) async fn wake_audio_connection(speaker_device_name: &str) -> Result<()> {
     let name = speaker_device_name.to_string();
-    tokio::task::spawn_blocking(move || {
-        wake_audio_connection_sync(&name)
-    }).await.map_err(|e| anyhow::anyhow!("Join error: {}", e))?
+    tokio::task::spawn_blocking(move || wake_audio_connection_sync(&name))
+        .await
+        .map_err(|e| anyhow::anyhow!("Join error: {}", e))?
 }
 
 /// Public async wake for use by the disconnect-fallback hot-swap path in
@@ -133,38 +145,45 @@ pub async fn wake_audio_connection_for_swap(speaker_device_name: &str) -> Result
         // Try the specified device first, fall back to default output. During
         // a BT disconnect the original output device name may no longer
         // enumerate, so the fallback is what actually runs in practice.
-        let (output_device, config) = host.output_devices()?
+        let (output_device, config) = host
+            .output_devices()?
             .find(|d| d.name().ok().as_deref() == Some(&*name))
             .and_then(|d| d.default_output_config().ok().map(|c| (d, c)))
             .or_else(|| {
-                info!("[AUDIO_WAKE] '{}' not found or config failed — using default output device", name);
+                info!(
+                    "[AUDIO_WAKE] '{}' not found or config failed — using default output device",
+                    name
+                );
                 host.default_output_device()
                     .and_then(|d| d.default_output_config().ok().map(|c| (d, c)))
             })
             .ok_or_else(|| anyhow::anyhow!("No output device available for wake"))?;
         let stream = match config.sample_format() {
-            cpal::SampleFormat::F32 => {
-                output_device.build_output_stream(
-                    &config.into(),
-                    |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                        for sample in data.iter_mut() { *sample = 0.0; }
-                    },
-                    |err| error!("[AUDIO_WAKE] Hot-swap wake error: {}", err),
-                    None,
-                )?
-            }
-            cpal::SampleFormat::I16 => {
-                output_device.build_output_stream(
-                    &config.into(),
-                    |data: &mut [i16], _: &cpal::OutputCallbackInfo| {
-                        for sample in data.iter_mut() { *sample = 0; }
-                    },
-                    |err| error!("[AUDIO_WAKE] Hot-swap wake error: {}", err),
-                    None,
-                )?
-            }
+            cpal::SampleFormat::F32 => output_device.build_output_stream(
+                &config.into(),
+                |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                    for sample in data.iter_mut() {
+                        *sample = 0.0;
+                    }
+                },
+                |err| error!("[AUDIO_WAKE] Hot-swap wake error: {}", err),
+                None,
+            )?,
+            cpal::SampleFormat::I16 => output_device.build_output_stream(
+                &config.into(),
+                |data: &mut [i16], _: &cpal::OutputCallbackInfo| {
+                    for sample in data.iter_mut() {
+                        *sample = 0;
+                    }
+                },
+                |err| error!("[AUDIO_WAKE] Hot-swap wake error: {}", err),
+                None,
+            )?,
             format => {
-                return Err(anyhow::anyhow!("Unsupported sample format for wake: {:?}", format));
+                return Err(anyhow::anyhow!(
+                    "Unsupported sample format for wake: {:?}",
+                    format
+                ));
             }
         };
         stream.play()?;
@@ -172,7 +191,9 @@ pub async fn wake_audio_connection_for_swap(speaker_device_name: &str) -> Result
         drop(stream);
         info!("[AUDIO_WAKE] Hot-swap wake completed");
         Ok(())
-    }).await.map_err(|e| anyhow::anyhow!("Join error: {}", e))?
+    })
+    .await
+    .map_err(|e| anyhow::anyhow!("Join error: {}", e))?
 }
 
 /// Simplified recording manager that coordinates all audio components
@@ -228,10 +249,14 @@ impl RecordingManager {
         self.state.set_audio_sender(sender);
         self.recording_saver.set_device_info(
             microphone_device.as_ref().map(|d| d.name.clone()),
-            system_device.as_ref().map(|d| d.name.clone())
+            system_device.as_ref().map(|d| d.name.clone()),
         );
 
-        if let Err(e) = self.stream_manager.start_streams(microphone_device.clone(), system_device.clone(), None).await {
+        if let Err(e) = self
+            .stream_manager
+            .start_streams(microphone_device.clone(), system_device.clone(), None)
+            .await
+        {
             // Closing the sender lets the writer finish on its own.
             self.state.stop_recording();
             return Err(e);
@@ -250,8 +275,10 @@ impl RecordingManager {
             }
         }
 
-        info!("Recording manager started successfully with {} active streams",
-               self.stream_manager.active_stream_count());
+        info!(
+            "Recording manager started successfully with {} active streams",
+            self.stream_manager.active_stream_count()
+        );
 
         Ok(())
     }
@@ -290,13 +317,23 @@ impl RecordingManager {
     }
 
     /// Wait for the writer, write metadata and report the save status.
-    pub async fn save_recording_only(&mut self, app: &HostHandle) -> std::result::Result<Option<SaveResult>, String> {
+    pub async fn save_recording_only(
+        &mut self,
+        app: &HostHandle,
+    ) -> std::result::Result<Option<SaveResult>, String> {
         let recording_duration = self.state.get_active_recording_duration();
         info!("Recording duration from state: {:?}s", recording_duration);
 
-        let result = self.recording_saver.stop_and_save(app, recording_duration).await;
+        let result = self
+            .recording_saver
+            .stop_and_save(app, recording_duration)
+            .await;
         match &result {
-            Ok(Some(saved)) => info!("Recording saved ({}): {}", saved.status.as_str(), saved.message),
+            Ok(Some(saved)) => info!(
+                "Recording saved ({}): {}",
+                saved.status.as_str(),
+                saved.message
+            ),
             Ok(None) => debug!("Recording not saved (no writer was started)"),
             Err(e) => error!("Failed to save recording: {}", e),
         }
@@ -305,7 +342,10 @@ impl RecordingManager {
     }
 
     /// Stop recording and save
-    pub async fn stop_recording(&mut self, app: &HostHandle) -> std::result::Result<Option<SaveResult>, String> {
+    pub async fn stop_recording(
+        &mut self,
+        app: &HostHandle,
+    ) -> std::result::Result<Option<SaveResult>, String> {
         info!("Stopping recording manager");
         self.stop_capture().await;
         let result = self.save_recording_only(app).await;
@@ -488,7 +528,10 @@ impl RecordingManager {
         self.stream_manager.set_system_stream(stream);
         // Keep the device monitor tracking the live devices (see
         // set_mic_stream_after_swap).
-        if let (Some(monitor), Some(mic)) = (self.device_monitor.as_ref(), self.state.get_microphone_device()) {
+        if let (Some(monitor), Some(mic)) = (
+            self.device_monitor.as_ref(),
+            self.state.get_microphone_device(),
+        ) {
             monitor.notify_mic_swapped(mic.name.clone(), Some(device.name.clone()));
         }
         self.state.set_system_device(device);
