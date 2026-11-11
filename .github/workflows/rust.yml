@@ -272,6 +272,19 @@ jobs:
       - name: Test recording soak verifier
         run: .github/scripts/annotate-errors.sh cargo test --locked -p tingskriver-core --example recording_soak
 
+      # Pilot tones through the production capture and writer; leakage between
+      # the microphone and system tracks fails the job (#189, docs/recording-soak.md).
+      - name: Channel isolation on the synthetic device
+        run: >-
+          cargo run --locked -p tingskriver-core --example recording_soak --
+          isolation "$RUNNER_TEMP/isolation" 2 docs/kanalisolation-graenser.json
+
+      # Leaking WAV fixtures must fail and clean ones pass, through the CLI.
+      - name: Channel isolation tool on WAV fixtures
+        run: |
+          cargo build --locked -p tingskriver-core --example kanalisolation
+          KANALISOLATION_BINARY=target/debug/examples/kanalisolation python3 -I scripts/tests/test_kanalisolation.py
+
       # The overlay's state model, layout and renderer are platform independent.
       - name: Test tingskriver-overlay
         run: .github/scripts/annotate-errors.sh cargo test --locked -p tingskriver-overlay

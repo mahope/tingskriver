@@ -12,6 +12,7 @@ use tingskriver_core::audio::{
         AudioSaveStatus, Source, SourceReader, RAW_DIR,
     },
     incremental_saver::{has_audio_checkpoints, recover_audio_from_checkpoints},
+    isolation::{analyze, sine, tone_amplitude, Phase, Thresholds},
     pipeline::AudioCapture,
     recording_state::{DeviceType, RecordingState},
     recording_writer::{spawn_writer, LogObserver},
@@ -49,11 +50,125 @@ fn signal(position: u64, kind: TrackKind) -> f32 {
     }
 }
 
+/// Pilot-tone isolation (#189): both pilots, then only the microphone pilot,
+/// then only the system pilot, through the production capture and writer, and
+/// the saved tracks analysed with `docs/kanalisolation-graenser.json`.
+/// Nothing in the recording path changes; the analysis reads the finished files.
+fn isolation_session(
+    dir: &std::path::Path,
+    phase_seconds: f64,
+    thresholds: &Thresholds,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    std::fs::create_dir_all(dir.join(RAW_DIR))?;
+    let (sender, writer) = spawn_writer(dir.join(RAW_DIR), RATE, Arc::new(LogObserver))?;
+    let state = RecordingState::new();
+    state.set_audio_sender(sender);
+    let captures: Vec<_> = [DeviceType::Microphone, DeviceType::System]
+        .into_iter()
+        .map(|kind| {
+            AudioCapture::new(
+                Arc::new(AudioDevice::new("synthetic".into(), DeviceKind::Input)),
+                state.clone(),
+                RATE,
+                1,
+                kind,
+                None,
+            )
+        })
+        .collect();
+    state.start_recording()?;
+    let start = Instant::now();
+    let blocks_per_phase = (phase_seconds * 100.0).round() as u64;
+    for block in 0..blocks_per_phase * 3 {
+        let deadline = start + Duration::from_secs_f64((block + 1) as f64 / 100.0);
+        std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
+        let phase = block / blocks_per_phase;
+        for (capture, (hz, on)) in captures.iter().zip([
+            (thresholds.microphone_hz, phase <= 1),
+            (thresholds.system_hz, phase != 1),
+        ]) {
+            let samples = if on {
+                sine(RATE, hz, 0.25, block * BLOCK, BLOCK as usize)
+            } else {
+                vec![0.0; BLOCK as usize]
+            };
+            capture.process_audio_data(&samples);
+        }
+    }
+    for capture in &captures {
+        capture.flush_tail();
+    }
+    state.stop_recording();
+    let summary = writer.join()?;
+    assert_eq!(summary.lost_samples(), 0);
+    let scanned = scan_raw_tracks(&dir.join(RAW_DIR), true)?;
+    assert!(scanned.problems.is_empty(), "{:?}", scanned.problems);
+    let mut tracks = std::collections::HashMap::new();
+    for track in scanned.tracks {
+        let mut sources = vec![Source::Silence(track.offset_samples)];
+        sources.extend(track.sources.iter().cloned());
+        let mut reader = SourceReader::new(sources);
+        let (mut all, mut block) = (Vec::new(), Vec::new());
+        while reader.read_block(&mut block, 4800)? {
+            all.extend(block.iter().map(|s| f32::from(*s) / 32768.0));
+        }
+        tracks.insert(format!("{:?}", track.kind), all);
+    }
+    let (mic, system) = (
+        tracks.remove("Microphone").ok_or("no microphone track")?,
+        tracks.remove("System").ok_or("no system track")?,
+    );
+    let phases: Vec<_> = ["both", "mic", "system"]
+        .iter()
+        .enumerate()
+        .map(|(i, kind)| {
+            Phase::parse(&format!(
+                "{kind}:{}:{}",
+                i as f64 * phase_seconds,
+                (i + 1) as f64 * phase_seconds
+            ))
+        })
+        .collect::<Result<_, _>>()?;
+    for phase in &phases[..2] {
+        let from = ((phase.start_s + thresholds.phase_guard_s) * RATE as f64) as usize;
+        let to = ((phase.end_s - thresholds.phase_guard_s) * RATE as f64) as usize;
+        let actual = mic
+            .get(from..to)
+            .ok_or("microphone pilot track too short")?;
+        // A -23 LUFS sine at 523 Hz is approximately -19 dBFS peak after
+        // K-weighting. Allow 2 dB for settling, windowing and PCM quantization.
+        let level_dbfs = 20.0
+            * tone_amplitude(actual, RATE, thresholds.microphone_hz)
+                .max(1e-6)
+                .log10();
+        if (level_dbfs - (-19.0)).abs() > 2.0 {
+            return Err(format!("microphone pilot level {level_dbfs:.1} dBFS outside -19 +/- 2 dBFS; expected 80 Hz high-pass + EBU R128 -23 LUFS, RNNoise disabled").into());
+        }
+    }
+    let report = analyze(&mic, &system, RATE, &phases, thresholds);
+    print!("{}", report.to_text());
+    Ok(report.passed())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().collect();
     let mode = args.get(1).ok_or("mode required")?;
     let dir = PathBuf::from(args.get(2).ok_or("directory required")?);
+    if mode == "isolation" {
+        // recording_soak isolation <dir> <seconds per phase> <thresholds.json>
+        let seconds: f64 = args.get(3).ok_or("seconds per phase required")?.parse()?;
+        if !seconds.is_finite() || seconds < 1.5 {
+            return Err("seconds per phase must be at least 1.5".into());
+        }
+        let thresholds = Thresholds::from_json(&std::fs::read_to_string(
+            args.get(4).ok_or("thresholds file required")?,
+        )?)?;
+        if !isolation_session(&dir, seconds, &thresholds)? {
+            return Err("channel isolation failed".into());
+        }
+        return Ok(());
+    }
     let seconds: f64 = args.get(3).ok_or("seconds required")?.parse()?;
     if !seconds.is_finite() || seconds <= 0.0 {
         return Err("invalid duration".into());

@@ -32,6 +32,45 @@ PowerShell 5.1.
 - [ ] Mads godkender reference-resultatet før udgivelse. Mere end 20 % forværring
   af blot én fælles måling stopper releasen. Præcis 20 % accepteres.
 
+## Kanalisolation før hver release
+
+Pilottone-testen (#189) finder mute- og routingfejl mellem mikrofon- og systemsporet,
+som et lydniveau ikke ser. Tærsklerne står kun i
+[`kanalisolation-graenser.json`](kanalisolation-graenser.json); værktøjet læser filen,
+og checklisten henviser til den i stedet for at gentage tallene.
+
+- [ ] Optag på Mads' pc med en pilottone på mikrofonen (523 Hz) og en på systemet
+  (997 Hz): først begge i 10 sekunder, så kun mikrofonen i 10 sekunder, så kun
+  systemet i 10 sekunder. Brug høretelefoner eller en loopback-kabel, så højttalerne
+  ikke selv lækker lyd ind i mikrofonen. Kun syntetisk lyd, aldrig rigtige stemmer.
+  Efter en normal optagelse findes sporene kun som `microphone.m4a` og `system.m4a`
+  (de rå WAV-filer slettes, når optagelsen er verificeret), og værktøjet læser kun
+  WAV. Konvertér først begge spor uden at ændre optagelsen:
+
+  ```powershell
+  ffmpeg -i microphone.m4a -ar 48000 -ac 1 microphone.wav
+  ffmpeg -i system.m4a -ar 48000 -ac 1 system.wav
+  ```
+
+  Kør værktøjet på de to WAV-spor og vedhæft rapporten (exit 0 = bestået):
+
+  ```powershell
+  cargo run --release --locked -p tingskriver-core --example kanalisolation -- `
+    microphone.wav system.wav docs\kanalisolation-graenser.json
+  ```
+
+  Uden fasetider finder værktøjet piloternes start og skift med Goertzel i 100 ms
+  vinduer. Stilhed før og efter er tilladt, så tonerne behøver ikke starte ved
+  optagelsens start. Der kræves rækkefølgen begge, mikrofon, system; ved manglende
+  eller afbrudte faser fejler det. Faste tider kan stadig angives som
+  `both:1:11 mic:11:21 system:21:31` (og `microphone` er alias for `mic`).
+
+  Exit 1 betyder lækage, manglende pilot (kanal mutet eller forkert routet), klipning
+  eller for stor forskel i varighed. Exit 2 betyder ubrugeligt input. Releasen må ikke
+  fortsætte ved exit 1 eller 2.
+- [ ] Den automatiske del kører på hver push i CI (`recording_soak isolation` på den
+  syntetiske enhed) og i den natlige soak. Den erstatter ikke optagelsen fra Mads' pc.
+
 ## Privatlivspolitik før hver release
 
 [PRIVACY_POLICY.md](../PRIVACY_POLICY.md) skal beskrive, hvad koden faktisk gør.
@@ -78,3 +117,28 @@ committet baseline via inputtet `baseline`. Baseline skal måles på samme
 runner-type med samme lokale model, inputlyd og konfiguration. Der er endnu ingen
 måleproducent på Linux i dette workflow. Push/PR kører tests og README-tjek;
 ingen faktiske app-målinger eller baseline-tal er opfundet.
+
+## Målinger og tærskler for pilottoner
+
+Alle fem grænser fra issue #189 bruges uden afvigende tal:
+
+| JSON-grænse | Måling |
+| --- | --- |
+| `mic_isolation_db_min` (12 dB) | Begge: mikrofonpilot minus systempilot i mikrofonsporet |
+| `speaker_isolation_db_min` (15 dB) | Begge: systempilot minus mikrofonpilot i systemsporet |
+| `system_tone_isolation_db_min` (18 dB) | Kun system: systempilot i systemsporet minus samme pilot i mikrofonsporet |
+| `mic_pilot_isolation_db_min` (6 dB) | Kun mikrofon: mikrofonpilot i mikrofonsporet minus samme pilot i systemsporet |
+| `cross_channel_isolation_db_min` (12 dB) | Begge enkeltpilotfaser: samme pilot i kildesporet minus i det andet spor |
+
+Den fælles tværkanalgrænse kontrolleres separat: den skærper mikrofonfasens
+6 dB til 12 dB og er redundant med systemfasens strengere 18 dB. Det er bevidst,
+så både den specifikke grænse og den fælles routingregel fremgår af rapporten.
+Det tidligere `system_only_db` er fjernet, ikke en ekstra opfundet grænse.
+
+CI bruger soak-harnessens syntetiske enhed ved produktionsstiens capture-grænse,
+ikke `fake_device`, som ikke kan bære toner. Mikrofonstien har 80 Hz højpas og
+EBU R128 ved -23 LUFS; RNNoise er aktuelt deaktiveret i produktionsflaget.
+Harnessen kræver særskilt mikrofonpilotens niveau på -19 ± 2 dBFS peak i begge
+mikrofonaktive faser. En 523 Hz sinus ved -23 LUFS ligger omkring -19 dBFS peak
+efter K-vægtning; tolerancen dækker indsvingsforløb og vindueseffekt. Filterændringer,
+der flytter niveauet uden for intervallet, giver en konkret niveaumeddelelse.

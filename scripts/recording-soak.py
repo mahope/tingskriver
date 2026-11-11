@@ -73,14 +73,28 @@ def run(binary, root, seconds, crash=False, interval=300):
         child.wait(timeout=10)
 
 
+def run_isolation(binary, root, phase_seconds, thresholds):
+    """Pilot-tone channel isolation (#189) on the finished tracks of a short extra recording."""
+    folder = root / 'isolation'
+    folder.mkdir(parents=True, exist_ok=False)
+    subprocess.run([str(binary), 'isolation', str(folder), str(phase_seconds), str(thresholds)],
+                   check=True, timeout=phase_seconds * 3 + 300)
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--seconds', type=float, default=10800)
     parser.add_argument('--interval', type=float, default=300)
+    parser.add_argument('--isolation-seconds', type=float, default=3,
+                        help='seconds per phase of the pilot-tone isolation check; 0 skips it')
+    parser.add_argument('--thresholds', type=Path,
+                        default=Path(__file__).resolve().parent.parent / 'docs' / 'kanalisolation-graenser.json')
     args = parser.parse_args()
     if args.seconds < 4 or args.interval <= 0:
         parser.error('seconds must be >= 4; interval must be positive')
     run(args.binary.resolve(), args.output, args.seconds, interval=args.interval)
     run(args.binary.resolve(), args.output, args.seconds, crash=True, interval=args.interval)
+    if args.isolation_seconds > 0:
+        run_isolation(args.binary.resolve(), args.output, args.isolation_seconds, args.thresholds)

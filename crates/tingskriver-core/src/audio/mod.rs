@@ -29,6 +29,7 @@ pub(crate) mod disk_guard;
 pub mod finalize; // Raw tracks -> verified final files (after stop or a crash)
 pub mod hardware_detector;
 pub mod incremental_saver; // Crash recovery and cleanup commands for the raw tracks
+pub mod isolation; // Pilot-tone channel isolation between the two tracks
 pub mod level_monitor;
 pub mod pipeline;
 pub mod playback_monitor;
