@@ -191,6 +191,17 @@ pub async fn prepare<M: Model + ?Sized>(
     final_system: &str,
     custom: &str,
 ) -> Result<Prepared, String> {
+    prepare_with_system(model, budget, segments, final_system, custom, MAP_SYSTEM).await
+}
+
+pub(super) async fn prepare_with_system<M: Model + ?Sized>(
+    model: &mut M,
+    budget: &Budget,
+    segments: &[String],
+    final_system: &str,
+    custom: &str,
+    map_system: &str,
+) -> Result<Prepared, String> {
     let mut stats = Stats::default();
     let original = segments.join("\n");
     if budget.fits(final_system, &final_input(&original, custom)) {
@@ -199,11 +210,11 @@ pub async fn prepare<M: Model + ?Sized>(
             stats,
         });
     }
-    let chunks = pack(segments, budget, MAP_SYSTEM, "", true)?;
+    let chunks = pack(segments, budget, map_system, "", true)?;
     let start = Instant::now();
     let mut summaries = Vec::new();
     for chunk in chunks {
-        let summary = model.generate(Phase::Map, MAP_SYSTEM, &chunk).await?;
+        let summary = model.generate(Phase::Map, map_system, &chunk).await?;
         validate_summary(&summary, budget)?;
         summaries.push(summary);
         stats.map_chunks += 1;
@@ -217,10 +228,10 @@ pub async fn prepare<M: Model + ?Sized>(
             return Ok(Prepared { content, stats });
         }
         let previous_size = (budget.estimate)(&content);
-        let groups = pack(&summaries, budget, MAP_SYSTEM, "", false)?;
+        let groups = pack(&summaries, budget, map_system, "", false)?;
         let mut next = Vec::new();
         for group in groups {
-            let summary = model.generate(Phase::Reduce, MAP_SYSTEM, &group).await?;
+            let summary = model.generate(Phase::Reduce, map_system, &group).await?;
             validate_summary(&summary, budget)?;
             next.push(summary);
             stats.reduce_calls += 1;
