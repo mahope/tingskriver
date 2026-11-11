@@ -91,6 +91,7 @@ The first column is the exact identifier in the code; the script checks it.
 | `muted` | Smaller secondary text in the muted color. | Help texts and details. |
 | `setting_group` | Card with a title and muted lines. | Read-only groups on the Indstillinger page. Editable settings need their own component when the first one is built. |
 | `loading` | Spinner with a text. | Anything waiting for core (the Møder page while the database opens). |
+| `interrupted_card` | Dismissible alert with the reason, time and audio status of an interrupted recording, and a reminder that recording does not restart automatically. | The Møder page after sleep or logoff interrupts a recording. Uses the persisted `InterruptNotice`. |
 | `empty_state` | Card with an icon, a title and a short explanation. | Every list without content. Every new list needs one. |
 | `meetings_page` | Hosts `MeetingsView`. | Møder navigation. |
 | `MeetingsView` | Fixed viewport with GPUI `list`, date groups, durations and job explanations; empty/loading/error states, rename, confirmed deletion and recovery. | Reuses `page`, `loading`, `empty_state`, text blocks, Button and Input. Recording and meeting-document screens remain separate ports; opens the saved audio folder. |
@@ -138,6 +139,7 @@ Change a row when the experience changes.
 |---|---|---|
 | Start | `startup`, `Shell`, `loading` | First frame within 500 ms; the database opens in the background. |
 | Look at meetings | `meetings_page`, `MeetingsView`, `empty_state`, `loading` | Virtual date groups; open audio folder, rename, confirmed deletion and recovery of interrupted audio. Recording and document handoffs explain the pending ports. |
+| See why a recording stopped | `MeetingsView`, `interrupted_card` | After sleep or logoff, shows the interruption notice on resume or next launch until dismissed. Recording does not restart automatically. |
 | Test Danish input | `dictation_page`, `probe` | Manual Windows test 2 and 3 in [gpui.md](gpui.md). |
 | Compare transcription on own sample | `MeasurementView`, `Page` | See [measurement.md](measurement.md). |
 | See app settings | `settings_page`, `setting_group` | Read-only. |

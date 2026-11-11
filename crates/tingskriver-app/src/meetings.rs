@@ -287,6 +287,10 @@ impl Render for MeetingsView {
                         })),
                 ),
         );
+        if let Some(interrupted) = self.model.read(cx).interrupted.clone() {
+            // Sleep or logoff ended a recording (#179): shown until dismissed.
+            body = body.child(ui::interrupted_card(&interrupted, cx));
+        }
         if let Some(notice) = self.notice {
             body = body.child(ui::paragraph(notice, cx));
         }

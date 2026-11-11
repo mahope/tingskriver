@@ -93,6 +93,16 @@ catalogue! {
     VERSION = "Version {value}";
     PROBE_LINE = "Skriv fx æøå, é, ü, ê, @ og € her";
     PROBE_TEXT = "Flere linjer: prøv også IME-komposition, fx Windows' emoji-panel (Win+.)";
+    INTERRUPTED_BY_SLEEP = "Mødet blev afsluttet, fordi computeren gik i dvale.";
+    INTERRUPTED_BY_LOGOFF = "Mødet blev afsluttet, fordi Windows blev logget af eller lukket ned.";
+    INTERRUPTED_TITLE = "Et møde blev afsluttet af systemet";
+    INTERRUPTED_WHEN = "Tidspunkt: {value}";
+    INTERRUPTED_AUDIO_OK = "Lyden er gemt.";
+    INTERRUPTED_AUDIO_PARTIAL = "Lyden er delvist gemt. De rå spor er bevaret og kan gendannes.";
+    INTERRUPTED_AUDIO_FAILED = "Lyden kunne ikke færdigbehandles. De rå spor er bevaret.";
+    INTERRUPTED_AUDIO_UNKNOWN = "Lyden nåede ikke at blive bekræftet. Appen tjekker den, næste gang den starter.";
+    INTERRUPTED_NO_RESTART = "Der starter ikke en ny optagelse af sig selv.";
+    INTERRUPTED_DISMISS = "Forstået";
     LOADING_MEETINGS = "Indlæser møder …";
     NO_MEETINGS = "Ingen møder endnu";
     FIRST_MEETING = "Når du har optaget dit første møde, står det her.";
@@ -215,6 +225,7 @@ parameterized! {
     data_dir => DATA_DIR;
     database => DATABASE;
     log_file => LOG_FILE;
+    interrupted_when => INTERRUPTED_WHEN;
     proposals_many => PROPOSALS_MANY;
     proposal_source => PROPOSAL_SOURCE;
     proposal_stale_reason => PROPOSAL_STALE_REASON;

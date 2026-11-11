@@ -17,6 +17,7 @@ use gpui_component::{
     v_flex, ActiveTheme, Icon, Root,
 };
 use gpui_kit_assets::IconName;
+use tingskriver_core::audio::power::InterruptNotice;
 use tingskriver_core::strings;
 use tokio::runtime::Handle;
 
@@ -37,6 +38,8 @@ pub struct AppModel {
     /// Whether the first-frame time is still to be reported. Off for
     /// `--hidden`, where the window opens long after process start.
     pub report_first_frame: bool,
+    /// A meeting that sleep or logoff ended, until the user has seen it.
+    pub interrupted: Option<InterruptNotice>,
     pub rerun_comparison: Option<tingskriver_core::dictation::rerun::Comparison>,
 }
 
@@ -59,6 +62,7 @@ impl AppModel {
             clock,
             start_page: Page::Meetings,
             report_first_frame: true,
+            interrupted: None,
             rerun_comparison: None,
         }
     }
@@ -149,6 +153,48 @@ pub fn load_database(cx: &mut App) {
         });
     })
     .detach();
+}
+
+/// Show a meeting that sleep or logoff ended (event from the host).
+pub fn set_interrupted(notice: InterruptNotice, cx: &mut App) {
+    model(cx).update(cx, |m, cx| {
+        m.interrupted = Some(notice);
+        cx.notify();
+    });
+    // The window may be hidden in the tray: the user should see why.
+    show_main_window(cx);
+}
+
+/// Read a notice left by the last run (logoff ends the process, so it is
+/// shown at the next start).
+pub fn load_interrupted(cx: &mut App) {
+    let model = model(cx);
+    let (runtime, dir) = model.read_with(cx, |m, _| (m.runtime.clone(), m.app_data_dir.clone()));
+    let Some(dir) = dir else { return };
+    let task = runtime.spawn_blocking(move || InterruptNotice::load(&dir));
+    cx.spawn(async move |cx| {
+        if let Ok(Some(notice)) = task.await {
+            model.update(cx, |m, cx| {
+                if m.interrupted.is_none() {
+                    m.interrupted = Some(notice);
+                    cx.notify();
+                }
+            });
+        }
+    })
+    .detach();
+}
+
+fn dismiss_interrupted(cx: &mut App) {
+    let model = model(cx);
+    let (runtime, dir) = model.update(cx, |m, cx| {
+        m.interrupted = None;
+        cx.notify();
+        (m.runtime.clone(), m.app_data_dir.clone())
+    });
+    if let Some(dir) = dir {
+        runtime.spawn_blocking(move || InterruptNotice::dismiss(&dir));
+    }
 }
 
 /// Navigate to About in an existing or newly opened window.
@@ -894,6 +940,32 @@ pub(crate) fn loading(text: &str, cx: &App) -> AnyElement {
         .text_color(palette(cx).muted_foreground)
         .child(Spinner::new())
         .child(text.to_string())
+        .into_any_element()
+}
+
+pub(crate) fn interrupted_card(notice: &InterruptNotice, cx: &App) -> AnyElement {
+    let palette = palette(cx);
+    let lines = notice.lines();
+    v_flex()
+        .id("interrupted-notice")
+        .role(gpui::Role::Alert)
+        .aria_label(SharedString::from(strings::INTERRUPTED_TITLE))
+        .gap(space::SM)
+        .p(space::LG)
+        .rounded(theme::RADIUS_LG)
+        .border_1()
+        .border_color(palette.warning)
+        .bg(palette.card)
+        .child(section_title(strings::INTERRUPTED_TITLE))
+        .children(lines.into_iter().map(|line| paragraph(&line, cx)))
+        .child(
+            h_flex().pt(space::SM).child(
+                Button::new("interrupted-dismiss")
+                    .primary()
+                    .label(strings::INTERRUPTED_DISMISS)
+                    .on_click(|_, _, cx| dismiss_interrupted(cx)),
+            ),
+        )
         .into_any_element()
 }
 

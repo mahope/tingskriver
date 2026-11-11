@@ -241,7 +241,15 @@ pub fn run() {
             if let Some(mut events) = events {
                 cx.spawn(async move |cx| {
                     while let Some(event) = events.recv().await {
-                        if event.name == tingskriver_core::dictation::rerun::COMPARISON_EVENT {
+                        if event.name == "recording-interrupted" {
+                            match serde_json::from_str(&event.payload_json) {
+                                Ok(notice) => cx.update(|cx| ui::set_interrupted(notice, cx)),
+                                Err(e) => {
+                                    log::warn!("recording-interrupted: unreadable payload: {e}")
+                                }
+                            }
+                        } else if event.name == tingskriver_core::dictation::rerun::COMPARISON_EVENT
+                        {
                             match serde_json::from_str(&event.payload_json) {
                                 Ok(comparison) => {
                                     cx.update(|cx| ui::show_rerun_comparison(comparison, cx))
@@ -293,6 +301,7 @@ pub fn run() {
                 ui::show_main_window(cx);
             }
             ui::load_database(cx);
+            ui::load_interrupted(cx);
         });
     // Remove the tray icon, the shortcuts and the hook before the runtime goes.
     drop(host);

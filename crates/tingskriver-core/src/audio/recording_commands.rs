@@ -144,7 +144,7 @@ fn install_recording_error_callback(manager: &RecordingManager, app: &HostHandle
                 if !session_live(&session) {
                     return;
                 }
-                if let Err(error) = stop_recording_with_reason(app, Some(reason)).await {
+                if let Err(error) = stop_recording_with_reason(app, Some(reason), None).await {
                     error!("Internal recording stop failed: {}", error);
                 }
             });
@@ -600,12 +600,36 @@ pub async fn stop_recording(
     app: HostHandle,
     _args: RecordingArgs,
 ) -> Result<Option<SaveResult>, String> {
-    stop_recording_with_reason(app, None).await
+    stop_recording_with_reason(app, None, None).await
+}
+
+/// Stop because the computer sleeps or the session ends (issue #179). Same
+/// path as a user stop; the meeting's `metadata.json` gets `ended_by` and
+/// the stop event carries the cause.
+pub async fn stop_recording_for_power(
+    app: HostHandle,
+    cause: super::power::InterruptCause,
+    at: String,
+) -> Result<Option<SaveResult>, String> {
+    // The user may already be stopping (Stop and the lid in the same second).
+    // Then that stop owns the writer; wait for it, so the machine does not
+    // sleep before the audio is on disk. The caller's budget cuts this off.
+    let deadline = std::time::Instant::now() + cause.budget();
+    while IS_RECORDING_STOPPING.load(Ordering::SeqCst) && std::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    stop_recording_with_reason(app, Some(cause.message().to_string()), Some((cause, at))).await
+}
+
+/// A recording runs now (not awaiting; for the power handler's thread).
+pub fn is_recording_now() -> bool {
+    IS_RECORDING.load(Ordering::SeqCst)
 }
 
 async fn stop_recording_with_reason(
     app: HostHandle,
     reason: Option<String>,
+    ended_by: Option<(super::power::InterruptCause, String)>,
 ) -> Result<Option<SaveResult>, String> {
     info!("🛑 Stopping recording");
     let stop_started = std::time::Instant::now();
@@ -670,6 +694,9 @@ async fn stop_recording_with_reason(
 
     let mut save_status = None;
     let (meeting_folder, meeting_name) = if let Some(manager) = manager_for_cleanup.as_mut() {
+        if let Some((cause, at)) = &ended_by {
+            manager.set_ended_by(cause.as_str(), at);
+        }
         let meeting_folder = manager.get_meeting_folder();
         let meeting_name = manager.get_meeting_name();
 
@@ -749,6 +776,7 @@ async fn stop_recording_with_reason(
         serde_json::json!({
             "message": "Recording stopped - audio saved",
             "reason": reason,
+            "ended_by": ended_by.as_ref().map(|(cause, _)| cause.as_str()),
             "folder_path": folder_path_str,
             "meeting_name": meeting_name_str,
             "audio_status": save_status.as_ref().map(|s| s.status),

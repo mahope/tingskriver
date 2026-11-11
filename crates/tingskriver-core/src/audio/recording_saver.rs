@@ -58,6 +58,12 @@ pub struct MeetingMetadata {
     /// "ok", "delvis" or "fejlet" once known (see `finalize`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub audio_status: Option<String>,
+    /// "sleep" or "logoff" when the system ended the recording (issue #179).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ended_by: Option<String>,
+    /// When the system ended it, RFC 3339 local time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ended_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -120,6 +126,9 @@ pub struct RecordingSaver {
     metadata: Option<MeetingMetadata>,
     transcript_segments: Arc<Mutex<Vec<TranscriptSegment>>>,
     writer: Option<WriterHandle>,
+    /// Set when sleep or logoff ends the recording; written with the
+    /// completed metadata, so no later rewrite can lose it.
+    ended_by: Option<(String, String)>,
 }
 
 impl RecordingSaver {
@@ -130,7 +139,13 @@ impl RecordingSaver {
             metadata: None,
             transcript_segments: Arc::new(Mutex::new(Vec::new())),
             writer: None,
+            ended_by: None,
         }
+    }
+
+    /// The system ends this recording (`cause`, `at`): `metadata.json` says so.
+    pub fn set_ended_by(&mut self, cause: &str, at: &str) {
+        self.ended_by = Some((cause.to_string(), at.to_string()));
     }
 
     /// Set the meeting name for this recording session
@@ -247,6 +262,8 @@ impl RecordingSaver {
             sample_rate: RECORDING_SAMPLE_RATE,
             status: "recording".to_string(),
             audio_status: None,
+            ended_by: None,
+            ended_at: None,
         };
 
         // Write initial metadata.json
@@ -367,6 +384,10 @@ impl RecordingSaver {
         // Update metadata to completed status with the length of the saved audio
         if let (Some(folder), Some(mut metadata)) = (&self.meeting_folder, self.metadata.clone()) {
             metadata.status = "completed".to_string();
+            if let Some((cause, at)) = &self.ended_by {
+                metadata.ended_by = Some(cause.clone());
+                metadata.ended_at = Some(at.clone());
+            }
             metadata.completed_at = Some(chrono::Utc::now().to_rfc3339());
             if let Some(clock) = recording_duration {
                 if (clock - audio_duration).abs() > 1.0 {
@@ -470,5 +491,47 @@ fn spawn_finalize(app: HostHandle, folder: PathBuf) {
 impl Default for RecordingSaver {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[allow(clippy::disallowed_methods)]
+mod tests {
+    use super::*;
+
+    fn metadata(ended: Option<(&str, &str)>) -> MeetingMetadata {
+        MeetingMetadata {
+            version: "1.0".into(),
+            meeting_id: None,
+            meeting_name: Some("Syntetisk møde".into()),
+            created_at: "2026-11-05T09:00:00Z".into(),
+            completed_at: None,
+            duration_seconds: None,
+            devices: DeviceInfo {
+                microphone: None,
+                system_audio: None,
+            },
+            audio_file: MIXED_FILE.into(),
+            transcript_file: "transcripts.json".into(),
+            sample_rate: RECORDING_SAMPLE_RATE,
+            status: "completed".into(),
+            audio_status: None,
+            ended_by: ended.map(|(cause, _)| cause.to_string()),
+            ended_at: ended.map(|(_, at)| at.to_string()),
+        }
+    }
+
+    #[test]
+    fn a_meeting_ended_by_sleep_says_so_in_its_metadata() {
+        let json =
+            serde_json::to_value(metadata(Some(("sleep", "2026-11-05T10:00:00+01:00")))).unwrap();
+        assert_eq!(json["ended_by"], "sleep");
+        assert_eq!(json["ended_at"], "2026-11-05T10:00:00+01:00");
+        // An ordinary stop leaves the keys out, and old files without them still load.
+        let plain = serde_json::to_value(metadata(None)).unwrap();
+        assert!(plain.get("ended_by").is_none() && plain.get("ended_at").is_none());
+        let back: MeetingMetadata = serde_json::from_value(plain).unwrap();
+        assert_eq!(back.ended_by, None);
     }
 }
