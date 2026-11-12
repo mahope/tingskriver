@@ -38,16 +38,23 @@ the step you stopped at.
 All values come from `crates/tingskriver-app/src/theme.rs`. A page never
 writes a literal color, size or font; it uses a token. Tokens that
 gpui-component's theme has no slot for (`recording`, `success`, `warning`)
-are read through `Palette`, via the private `palette(cx)` in `ui.rs`.
+are read through `Palette`, via `palette(cx)` in `ui.rs`. The values are the
+Tauri app's (`frontend/src/app/globals.css`, `tailwind.config.js` and
+`components/ui/*`); [design-paritet.md](design-paritet.md) maps each one to
+its source and plans the screen ports.
 
 | Area | Tokens |
 |---|---|
-| Typography | Hanken Grotesk for text (`typography::SANS`), Literata for page headings (`typography::SERIF`). Sizes `XS` 12, `SM` 13, `BASE` 15, `LG` 17, `XL` 20, `XXL` 26 px; line height 1.55. Fonts are embedded by `assets`. |
-| Spacing | `space::XS` 4, `SM` 8, `MD` 12, `LG` 16, `XL` 24, `XXL` 32 px. Nothing between the steps. |
-| Radii | `RADIUS` 6 px (small boxes), `RADIUS_LG` 8 px (cards). |
-| Layout | Sidebar 256 px, page content at most 760 px wide, notices at most 600 px, empty-state text at most 420 px, default window 1100×720, minimum 640×420 (`layout::*`). |
-| Icons | `icon_size::EMPTY_STATE` 28 px, `icon_size::ERROR` 32 px. Icons come from gpui-component's defaults plus the few the shell names in `assets`. |
-| Light and dark | `Palette::LIGHT` (warm paper, ink-blue accent) and `Palette::DARK` (cool slate). The window follows the system live; `TINGSKRIVER_APPEARANCE=light\|dark` pins it for tests and screenshots. Every text pair has a WCAG AA contrast test, so a new color pair needs a row in that test. |
+| Typography | Hanken Grotesk for text (`typography::SANS`), Literata for every heading (`typography::SERIF`, Tauri's `h1, h2, h3`). Tailwind steps: `XS` 12, `SM` 14, `BASE` 15 (body), `MD` 16 (`text-base`), `LG` 18, `XL` 20, `XXL` 24, `XXXL` 30, `DISPLAY` 36 px; body line height 1.55 (`LINE_HEIGHT`), headings 1.25 (`LINE_HEIGHT_TIGHT`). Fonts are embedded by `assets`. |
+| Headings | `heading(text, Level)`: `Page` 30 regular, `Document` 36 semibold, `Hero` 30 semibold, `Section` 24 regular. `section_title` is 18 semibold serif (Tauri h3). Known deviation: Tauri sets `letter-spacing: -0.01em` on headings; GPUI has no letter spacing, so GPUI headings are a hair wider. |
+| Spacing | Tailwind's 4 px grid: `space::XXS` 2, `XS` 4, `XS2` 6, `SM` 8, `MD` 12, `LG` 16, `XL2` 20, `XL` 24, `XXL` 32, `XXXL` 40 px. |
+| Radii | `RADIUS_SM` 4 (kbd chips), `RADIUS` 6 (controls), `RADIUS_LG` 8 (cards), `RADIUS_FULL` (pills, switches, dots). |
+| Controls | `layout::CONTROL_HEIGHT` 44 (default button), `CONTROL_HEIGHT_SM` 32, `ICON_BUTTON` 36, `ICON_BUTTON_SM` 32, `INPUT_HEIGHT` 36 (inputs, segmented items). Build them with `controls`, never `Button::new`. |
+| Layout | Sidebar 256 px (`SIDEBAR_WIDTH`), collapsed 64 px (`SIDEBAR_COLLAPSED_WIDTH`). Content width per page: `TRANSCRIPT_MAX` 704, `DOCUMENT_MAX` 736, `SETTINGS_MAX` 1152, `SETTINGS_SECTION_MAX` 672, `DICTATION_MAX` 768, `ONBOARDING_TEXT_MAX` 448, `NOTICE_MAX` 576; empty-state text at most 420 px. Default window 1100×700 (as Tauri), minimum 640×420. |
+| Shadows | `shadow::sm()` (outline and secondary buttons), `shadow::base()` (primary button), `shadow::md()` (recording pill, toasts); the same in both modes. gpui-component's own shadows are on (`theme.shadow`). |
+| States | Hover and pressed are the fill painted on the background at an alpha (`over`), as Tauri's `bg-primary/90`: filled buttons hover at `HOVER_ALPHA` 0.9 and press at `PRESSED_ALPHA` 0.8 (Tauri has no pressed state; destructive stops at 0.9 so dark-mode text stays AA), secondary at 0.8 / 0.7, list rows hover at accent 0.6 and are active at `accent` without a border. Outline and ghost buttons hover on `accent`. Selection is `primary` at 0.22. |
+| Icons | Lucide. `icon_size::SM` 16 (buttons, rows), `MD` 20 (collapsed sidebar, "Tilbage"), `EMPTY_STATE` 28, `ERROR` 32. `assets` adds the lucide icons the Tauri UI uses that gpui-component's defaults lack, and the logo mark (`assets::LOGO_MARK`). |
+| Light and dark | `Palette::LIGHT` (warm paper, ink-blue accent) and `Palette::DARK` (cool slate), value for value the Tauri tokens. The window follows the system live; `TINGSKRIVER_APPEARANCE=light\|dark` pins it for tests and screenshots. Every text pair has a WCAG AA contrast test, and every filled button keeps AA while hovered and pressed, so a new color pair needs a row in that test. |
 | Text | Danish, with æøå, from `tingskriver_core::strings`; never a string literal in a component and never a sentence built with `format!`. See [dansk-tekst.md](dansk-tekst.md). |
 | Accessibility | Use gpui-component controls (they carry role and name for UI Automation) and give custom elements an id and a text label. Manual check: [gpui.md](gpui.md#manual-test-on-windows-mads), test 4. |
 
@@ -60,8 +67,10 @@ The first column is the exact identifier in the code; the script checks it.
 
 | Name | Responsibility | Use it for / do not use it for |
 |---|---|---|
-| `theme` | Tokens (`Palette`, `space`, `typography`, `layout`, `icon_size`, radii), mapping onto gpui-component's theme (`apply`), live light/dark (`sync_with_window`). | All visual values. Not for page structure. |
-| `ui` | Main window, `Shell` (sidebar plus the page in the window), the pages and the shared page building blocks below. | New pages and page-level blocks. |
+| `theme` | Tokens (`Palette`, `space`, `typography`, `layout`, `icon_size`, `shadow`, radii, hover alphas and `over`), mapping onto gpui-component's theme (`apply`), live light/dark (`sync_with_window`). | All visual values. Not for page structure. |
+| `controls` | Buttons, inputs, switches, the segmented control and the recording pill button with the Tauri sizes (see [Controls](#controls-in-controlsrs)). | Every button and text input. Not for page layout. |
+| `ui` | Main window, `Shell` (sidebar plus the page in the window), shared state (`AppModel`) and the page building blocks below. | The shell and blocks shared by several pages. |
+| `pages` | One file per page, each an `impl Shell` block: `settings` (`settings_page`, `mcp_settings`, `language_group`), `dictation`, `about`, `database_error`. | A page's own code, so each page port owns its file. |
 | `meetings` | Virtual meeting list backed by the core list model, inline rename/delete confirmation, startup recovery and navigation handoffs. | Only meeting-list presentation; data, status mapping and mutations live in core. |
 | `measurement` | The Måling page: compare a user's sample against a reference text, per model. | Only this page. |
 | `about` | Offline build metadata, an update-status snapshot, allowlisted diagnostics and bundled legal documents. | The Om page and copying diagnostics. Opening the page never starts an update check. |
@@ -76,7 +85,19 @@ The first column is the exact identifier in the code; the script checks it.
 | `update` | Velopack installer hooks, background update check and download, applying an update at next start. | Update behaviour. The update screen is not built yet. |
 | `proposals` | Review of AI proposals for a meeting's notes and summary: the band "N ventende ændringer", a diff per proposal and Anvend / Afvis / Fortryd. Changes go only through `ProposalStore::apply/undo` on a click. Not mounted in `ui.rs` until the meeting document exists. | AI proposals. Never write notes or summary directly. |
 
-### Page building blocks (in `ui.rs`)
+### Controls (in `controls.rs`)
+
+| Name | Responsibility | Use it for / do not use it for |
+|---|---|---|
+| `button` | A gpui-component `Button` 44 px high, 16 px padding, 14 px medium text, content width, with the shadow of its `Variant` (`Primary`, `Outline`, `Secondary`, `Ghost`, `Danger`, `Success`, `Link`). | Every button. It does not stretch in a column; in a row with taller neighbours add `.self_center()`. |
+| `small_button` | Tauri's `size="sm"`: 32 px, 12 px text. | Toolbars and compact rows. |
+| `icon_button` | A 36 px square icon button whose label is the accessible name and the tooltip. | Icon-only actions. `small_icon_button` is the 32 px row variant (rename, delete). |
+| `input` | A text input 36 px high. | Single-line text fields. |
+| `switch` | gpui-component's `Switch` (36×20, primary when on, muted when off). | Boolean settings. |
+| `segmented` | A segmented control: card with an `input` border, 36 px items, the selected one primary, with radio-group semantics. | Choosing one of a few options (Udseende). |
+| `pill_button` | The fully rounded 44 px recording pill button: `Start` primary, `Pause` outline on the card, `Stop` foreground fill. | The recording pill only. |
+
+### Page building blocks (in `ui.rs` and `pages`)
 
 | Name | Responsibility | Use it for / do not use it for |
 |---|---|---|
@@ -86,9 +107,9 @@ The first column is the exact identifier in the code; the script checks it.
 | `Page` | The pages in the sidebar (Møder, Diktering, Måling, Indstillinger, Om), their Danish labels, icons and `--page` names. | Adding a page: add a variant, `label`, `icon`, `from_arg` and the arm in `Shell::render`. |
 | `AppModel` | Shared state: database state (`DbState`: loading, not created, ready, failed), data folder, log path, runtime handle. | Reading state in a page. Core is only called on its runtime, never on the UI thread. |
 | `sidebar` | Sidebar with the app name and one menu item per `Page`. | Navigation. |
-| `page` | Frame around every page: scroll area, heading, optional subtitle, content width limit. | Every page body. Do not rebuild the frame. |
-| `heading` | Page heading in Literata. | Page titles and the error page title. |
-| `section_title` | Semibold title for a block inside a page. | Grouping within a page. |
+| `page` | Frame around every page: scroll area, 30 px page title, optional subtitle and the page's content width (`layout::*_MAX`). | Every page body. Do not rebuild the frame. |
+| `heading` | A Literata heading at one of the Tauri levels (`Level::Page`, `Document`, `Hero`, `Section`). | Page, document and section titles. |
+| `section_title` | 18 px semibold Literata title for a block inside a page (Tauri h3). | Grouping within a page. |
 | `paragraph` | Body text in the foreground color. | Running text. |
 | `muted` | Smaller secondary text in the muted color. | Help texts and details. |
 | `setting_group` | Card with a title and muted lines. | Read-only groups on the Indstillinger page. Editable settings need their own component when the first one is built. |
@@ -108,9 +129,10 @@ The first column is the exact identifier in the code; the script checks it.
 
 ### From gpui-component (use as they are)
 
-`Button`, `Input`, `Textarea`, `Sidebar`/`SidebarMenu`, `Spinner`, `Icon`,
-`Root`. Wrap one only when the wrapper adds a Tingskriver rule (a token, a
-Danish default); do not restyle one inline in a page.
+`Textarea`, `Sidebar`/`SidebarMenu`, `Spinner`, `Icon`, `Root`, and `Button`,
+`Input` and `Switch` through `controls`. Wrap one only when the wrapper adds a
+Tingskriver rule (a token, a Danish default); do not restyle one inline in a
+page.
 
 ### Outside the app crate
 
