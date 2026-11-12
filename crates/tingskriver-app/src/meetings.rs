@@ -199,11 +199,14 @@ impl MeetingsView {
                         this.error = None;
                         match list {
                             Ok(list) => {
-                                if !this.list.same_rows(&list) {
-                                    this.list = Rc::new(list);
+                                let changed = !this.list.same_rows(&list);
+                                this.list = Rc::new(list);
+                                if changed {
+                                    // A renamed title can change a row's
+                                    // height with the same row count: measure
+                                    // every row again.
+                                    this.shown = Rc::new(Vec::new());
                                     this.update_shown();
-                                } else {
-                                    this.list = Rc::new(list);
                                 }
                             }
                             Err(_) => this.error = Some(strings::MEETING_LOAD_FAILED.into()),
