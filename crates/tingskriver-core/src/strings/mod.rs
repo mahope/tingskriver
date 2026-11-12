@@ -30,6 +30,41 @@ catalogue! {
     ABOUT_NOTICE = "Tredjepartsattribution";
     ABOUT_PRIVACY = "Privatlivspolitik";
     ABOUT_CONTACT = "Kontakt: Mahoje (mahoje.dk)";
+    // Job 8: the About dialog, copied from the Tauri app
+    // (frontend/src/components/About.tsx, UpdateDialog.tsx, UpdateNotification.tsx).
+    ABOUT_TAGLINE = "Referater der aldrig forlader din computer.";
+    ABOUT_DIFFERENT = "Det adskiller Tingskriver";
+    ABOUT_LOCAL_TITLE = "Lokalt fra start til slut";
+    ABOUT_LOCAL_TEXT = "Optagelse, transskription og opsummering sker på din egen computer. Ingen sky, ingen lækager.";
+    ABOUT_MODEL_TITLE = "Vælg din egen model";
+    ABOUT_MODEL_TEXT = "Brug en lokal åben model, eller tilslut en ekstern udbyder. Du er ikke låst fast.";
+    ABOUT_PRICE_TITLE = "Ingen pris pr. minut";
+    ABOUT_PRICE_TEXT = "Kører modellerne lokalt, betaler du ikke for tid. Bruger du en ekstern udbyder, betaler du kun for de kald, du selv vælger.";
+    ABOUT_MEETINGS_TITLE = "Virker med dine møder";
+    ABOUT_MEETINGS_TEXT = "Google Meet, Zoom og Teams, og møder uden internet.";
+    // The upstream project is named in NOTICE.md, not in the UI (danish_ui.rs).
+    ABOUT_OPEN_SOURCE = "Gratis og open source. Tingskriver bygger på et projekt fra Zackriya Solutions (MIT-licens), se NOTICE.md.";
+    ABOUT_NOTICE_LINK = "NOTICE.md";
+    ABOUT_WEBSITE = "tingskriver.mahoje.dk";
+    ABOUT_GITHUB = "GitHub";
+    ABOUT_LINK_SEPARATOR = "·";
+    ABOUT_BUILD_DETAILS = "Byggeoplysninger og diagnose";
+    ABOUT_LEGAL = "Licenser og privatliv";
+    UPDATE_CHECK = "Søg efter opdateringer";
+    UPDATE_LATEST = "Du har den nyeste version";
+    UPDATE_CHECK_FAILED = "Kunne ikke søge efter opdateringer. Tjek din internetforbindelse og prøv igen.";
+    UPDATE_READY_LINE = "Opdatering klar: version {value}";
+    UPDATE_READY = "Opdatering klar";
+    UPDATE_READY_DETAIL = "Version {value} er hentet";
+    UPDATE_AT_RESTART = "Opdateringen installeres automatisk, næste gang Tingskriver starter.";
+    UPDATE_DOWNLOADING = "Henter opdatering";
+    UPDATE_DOWNLOADING_DETAIL = "Henter den nyeste version…";
+    UPDATE_FAILED = "Opdatering mislykkedes";
+    UPDATE_FAILED_DETAIL = "Noget gik galt under opdateringen";
+    UPDATE_CURRENT = "Nuværende version:";
+    UPDATE_NEW = "Ny version:";
+    UPDATE_DETAILS = "Se detaljer";
+    UPDATE_CLOSE = "Luk";
     APP_NAME = "Tingskriver";
     MEETING_DELETE = "Slet";
     MEETING_NEW = "Ny optagelse";
@@ -327,6 +362,8 @@ parameterized! {
     measure_wer => MEASURE_WER;
     measure_ms => MEASURE_MS;
     version => VERSION;
+    update_ready_line => UPDATE_READY_LINE;
+    update_ready_detail => UPDATE_READY_DETAIL;
     special_characters => SPECIAL;
     appearance => APPEARANCE_DETAIL;
     data_dir => DATA_DIR;

@@ -254,6 +254,35 @@ pub mod sidebar {
 
 // ---- end of Job 2 block ----
 
+// ---- Job 8 block: the About and update dialogs ----
+
+/// The About dialog (`Info.tsx`, `About.tsx`) and the update dialog
+/// (`UpdateDialog.tsx`).
+pub mod about_dialog {
+    use gpui::{px, Pixels};
+
+    /// `DialogContent`: `max-w-lg`.
+    pub const WIDTH: Pixels = px(512.0);
+    /// `UpdateDialog`: `sm:max-w-[500px]`.
+    pub const UPDATE_WIDTH: Pixels = px(500.0);
+    /// The logo mark above the name (`width={56}`).
+    pub const LOGO: Pixels = px(56.0);
+    /// The content scrolls beyond `max-h-[80vh]`.
+    pub const MAX_HEIGHT_FRACTION: f32 = 0.8;
+    /// A bundled legal document inside "Licenser og privatliv".
+    pub const DOCUMENT_HEIGHT: Pixels = px(200.0);
+    /// The error box of the update dialog: `bg-destructive/10`.
+    pub const ERROR_TINT: f32 = 0.1;
+    /// Its border: `border-destructive/30`.
+    pub const ERROR_BORDER: f32 = 0.3;
+    /// The underline of "NOTICE.md" in the footer note.
+    pub const LINK_UNDERLINE: Pixels = px(1.0);
+    /// One arrow-key step in a legal document.
+    pub const DOCUMENT_SCROLL_LINE: Pixels = px(32.0);
+}
+
+// ---- end of Job 8 block ----
+
 /// Tailwind's shadows (`shadow-sm`, `shadow`, `shadow-md`), the same in both
 /// modes as in the Tauri app.
 pub mod shadow {
@@ -508,6 +537,12 @@ mod tests {
                 "recording text on the recording tint over card",
                 p.recording,
                 over(p.recording, p.card, sidebar::RECORDING_TINT),
+            ),
+            // Job 8: the error box of the update dialog.
+            (
+                "destructive text on the destructive tint over background",
+                p.destructive,
+                over(p.destructive, p.background, about_dialog::ERROR_TINT),
             ),
         ]
     }

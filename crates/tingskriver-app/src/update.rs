@@ -87,7 +87,7 @@ pub fn is_installed_layout(exe: &Path, exists: impl Fn(&Path) -> bool) -> bool {
 /// Where the updater is.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum UpdateStatus {
-    /// Reserved About-page slot until the update UI is connected (#170).
+    /// Nothing known yet: no check has run in this process.
     #[default]
     Unavailable,
     /// Not an installed copy, or updates are off.
@@ -158,7 +158,6 @@ pub fn status() -> UpdateStatus {
         .unwrap_or(UpdateStatus::Inactive)
 }
 
-#[cfg_attr(not(windows), allow(dead_code))]
 fn set_status(status: UpdateStatus) {
     if let Ok(mut current) = STATUS.lock() {
         *current = status;
@@ -227,6 +226,42 @@ pub fn apply_pending_update(primary: bool) {
     platform::apply_pending(&args);
 }
 
+/// One check (and download) at a time: the background thread and "Søg
+/// efter opdateringer" in About must not download the same package twice.
+static CHECK_LOCK: Mutex<()> = Mutex::new(());
+
+fn check_and_download_once(feed: &Feed) -> UpdateStatus {
+    let _guard = CHECK_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    platform::check_and_download(feed)
+}
+
+/// The feed of an installed copy, or `None` when updates are off here.
+fn active_feed() -> Option<Feed> {
+    installed_exe()?;
+    let env = std::env::var(FEED_ENV).ok();
+    let feed = Feed::choose(env.as_deref(), crate::about::VERSION);
+    (feed != Feed::Off).then_some(feed)
+}
+
+/// Does this copy update itself (an installed copy, feed not off)?
+pub fn updates_active() -> bool {
+    active_feed().is_some()
+}
+
+/// Check now, for "Søg efter opdateringer" in About (Tauri
+/// `About.tsx` `handleCheckForUpdates`). Blocks while it checks and
+/// downloads, so call it off the UI thread. A copy that does not update
+/// itself returns [`UpdateStatus::Inactive`] without touching the network.
+pub fn check_now() -> UpdateStatus {
+    let Some(feed) = active_feed() else {
+        return UpdateStatus::Inactive;
+    };
+    let status = check_and_download_once(&feed);
+    log::info!("update: manual check: {status:?}");
+    set_status(status.clone());
+    status
+}
+
 /// Look for updates in the background while the app runs.
 pub fn start_background_checks() {
     if installed_exe().is_none() {
@@ -246,7 +281,7 @@ pub fn start_background_checks() {
             let mut delay = FIRST_CHECK_DELAY;
             loop {
                 std::thread::sleep(delay);
-                let status = platform::check_and_download(&feed);
+                let status = check_and_download_once(&feed);
                 log::info!("update: {status:?}");
                 let next = status.next_check();
                 set_status(status);

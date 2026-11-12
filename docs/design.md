@@ -70,10 +70,11 @@ The first column is the exact identifier in the code; the script checks it.
 | `theme` | Tokens (`Palette`, `space`, `typography`, `layout`, `icon_size`, `shadow`, radii, hover alphas and `over`), mapping onto gpui-component's theme (`apply`), live light/dark (`sync_with_window`). | All visual values. Not for page structure. |
 | `controls` | Buttons, inputs, switches, the segmented control and the recording pill button with the Tauri sizes (see [Controls](#controls-in-controlsrs)). | Every button and text input. Not for page layout. |
 | `ui` | Main window, `Shell` (sidebar plus the page in the window), shared state (`AppModel`) and the page building blocks below. | The shell and blocks shared by several pages. |
-| `pages` | One file per page, each an `impl Shell` block: `settings` (`settings_page`, `mcp_settings`, `language_group`), `dictation`, `about`, `database_error`. | A page's own code, so each page port owns its file. |
+| `pages` | One file per page, each an `impl Shell` block: `settings` (`settings_page`, `mcp_settings`, `language_group`), `dictation`, `database_error`. | A page's own code, so each page port owns its file. |
 | `meetings` | Virtual meeting list backed by the core list model, inline rename/delete confirmation, startup recovery and navigation handoffs. | Only meeting-list presentation; data, status mapping and mutations live in core. |
 | `measurement` | The Måling page: compare a user's sample against a reference text, per model. | Only this page. |
-| `about` | Offline build metadata, an update-status snapshot, allowlisted diagnostics and bundled legal documents. | The Om page and copying diagnostics. Opening the page never starts an update check. |
+| `about` | Offline build metadata, an update-status snapshot, allowlisted diagnostics and bundled legal documents. | The About dialog and copying diagnostics. Opening it never starts an update check. |
+| `about_dialog` | "Om Tingskriver" as a dialog over the current screen (Tauri `Info.tsx`, `About.tsx`), the update dialog (`UpdateDialog.tsx`) and the "Opdatering klar" notification (`UpdateNotification.tsx`). | ⓘ, the logo, `--page om` and the tray open it; `Page::About` is not a page. Not for other dialogs. |
 | `probe` | Describes what the keyboard produced (code points, uncomposed dead keys) for the test field on the Diktering page. | Manual input tests. |
 | `assets` | Embedded fonts and icons (`Assets`). | Adding a font or an icon. |
 | `startup` | Startup clock, first-frame budget log, database open with Danish error classification (`DbFailure`). | Timing and database start. Not for rendering. |
@@ -82,7 +83,7 @@ The first column is the exact identifier in the code; the script checks it.
 | `single_instance` | One app per user over a named pipe or socket; a second launch shows the first window or queues a core command; parsing and transport live in core. | Process-level behaviour. |
 | `args` | Command line (`StartupArgs`): `--hidden`, `--page`. | Start options. |
 | `crash` | Panic hook that turns graphics failures into a log entry and a native error dialog. | Never a place for UI. |
-| `update` | Velopack installer hooks, background update check and download, applying an update at next start. | Update behaviour. The update screen is not built yet. |
+| `update` | Velopack installer hooks, background update check and download, a manual check (`check_now`) for About, applying an update at next start. | Update behaviour. Its UI is in `about_dialog`. |
 | `proposals` | Review of AI proposals for a meeting's notes and summary: the band "N ventende ændringer", a diff per proposal and Anvend / Afvis / Fortryd. Changes go only through `ProposalStore::apply/undo` on a click. Not mounted in `ui.rs` until the meeting document exists. | AI proposals. Never write notes or summary directly. |
 
 ### Controls (in `controls.rs`)
@@ -131,7 +132,14 @@ The first column is the exact identifier in the code; the script checks it.
 | `recovery_card` | Card with "Gendan optagelse" buttons for interrupted recordings. | Shown on Home. |
 | `dictation_page` | Diktering: placeholder text plus the input test field. | |
 | `settings_page` | Indstillinger: read-only groups (appearance, data folder and database, log) and the buttons "Åbn logmappen" and "Afslut". | |
-| `about_page` | Om: build metadata, update status, copying diagnostics with progress and result feedback, and bundled legal documents. | Reuses the page frame, text helpers and gpui-component buttons. |
+| `AboutView` | The About dialog's content: the Tauri layout (`hero`, `features`, `footer`) and, collapsed below it, the build details and the legal documents. Scrolls beyond 80 % of the window height. | Only inside the dialog `about_dialog::open_about` opens. |
+| `hero` | Logo mark (56 px), "Tingskriver" 20 px semibold serif, version, tagline, the outline 44 px button "Søg efter opdateringer" and "Opdatering klar: version x". | Only in `AboutView`. |
+| `features` | "Det adskiller Tingskriver": 16 px semibold serif title and four term/description pairs (14 px medium / muted). | Only in `AboutView`. |
+| `footer` | Top border, 12 px muted centered note with an underlined NOTICE.md and the links to the website and GitHub. | Only in `AboutView`. |
+| `footer_link` | A focusable, underlined 12 px muted link that opens a URL. | Footer links in a dialog. Not for buttons. |
+| `disclosure` | A 44 px row with a chevron and a medium title that shows or hides a section (`aria-expanded`). | GPUI-only extras inside the About dialog. |
+| `build_details` | Build metadata, update status and "Kopiér diagnoseoplysninger" with its status line. | Only in `AboutView`. |
+| `legal` | "Privatlivspolitik", "Kontakt" and the four bundled documents in 200 px scroll boxes (arrow keys, Page Up/Down, Home/End). | Only in `AboutView`. |
 | `database_error_page` | Full-window error: icon, summary, advice, technical error, paths, "Åbn logmappen" and "Prøv igen". | The model for any blocking error: say what happened, what to do, where the log is. |
 | `MeasurementView` | The view behind the Måling page (inputs, model choices, result). | |
 | `ProposalReview` | The view behind `proposals`: pending proposals for one meeting with their diffs and buttons. | |
@@ -179,7 +187,8 @@ Change a row when the experience changes.
 | Compare transcription on own sample | `MeasurementView`, `Page` | See [measurement.md](measurement.md). |
 | See app settings | `settings_page`, `setting_group` | Read-only. |
 | Choose meeting and report languages | `settings_page`, `language_group` | Saved through core's language settings; reports default to Danish. |
-| See app information and copy diagnostics | `about_page`, `about`, `page`, `paragraph`, `section_title` | Offline metadata and legal documents; diagnostics include only build information and catalogue-owned model names. Update status is a snapshot. |
+| See app information and copy diagnostics | `about_dialog`, `AboutView`, `disclosure`, `build_details`, `about` | A dialog over the current screen. Offline metadata and legal documents; diagnostics include only build information and catalogue-owned model names. Update status is a snapshot until "Søg efter opdateringer". |
+| Update the app | `about_dialog`, `update` | A found update shows the update dialog (current and new version, installs at the next start); other results are notifications. The background updater shows "Opdatering klar" with "Se detaljer". |
 | Database cannot open | `database_error_page` | Replaces sidebar and page. |
 | Second launch, hidden start | `single_instance`, `args` | Shows the existing window, or dispatches CLI/URL commands while hidden; tray is the host's. |
 | Dictate | pill (overlay), host | Not a GPUI screen. |

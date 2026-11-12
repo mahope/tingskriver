@@ -9,9 +9,7 @@ use tingskriver_core::strings;
 use crate::controls::{self, Variant};
 use crate::startup::{self, DbState};
 use crate::theme::{self, layout, space};
-use crate::ui::{
-    muted, page, palette, paragraph, section_title, setting_group, AppModel, Page, Shell,
-};
+use crate::ui::{muted, page, palette, paragraph, section_title, setting_group, AppModel, Shell};
 
 impl Shell {
     pub(crate) fn settings_page(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -44,11 +42,7 @@ impl Shell {
             .child(
                 controls::button("settings-about", Variant::Outline)
                     .label(strings::ABOUT)
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.page = Page::About;
-                        this.about_copy_focus.focus(window, cx);
-                        cx.notify();
-                    })),
+                    .on_click(cx.listener(|this, _, window, cx| this.open_about(window, cx))),
             )
             .child(paragraph(strings::SETTINGS_MCP_HELP, cx))
             .child(self.mcp_settings(cx))

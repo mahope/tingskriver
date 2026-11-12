@@ -40,6 +40,14 @@ fn fixtures() -> Vec<(String, Page, DbState, FixtureVariant)> {
         DbState::NotCreated,
         FixtureVariant::SidebarCollapsed,
     ));
+    // The update dialog over the home screen (UpdateDialog.tsx); "about"
+    // (Page::About) is the About dialog over the home screen.
+    fixtures.push((
+        "update-available".into(),
+        Page::Home,
+        DbState::NotCreated,
+        FixtureVariant::UpdateAvailable,
+    ));
     fixtures.push((
         "loading".into(),
         Page::Home,

@@ -11,6 +11,7 @@
 //! requests (show the window, quit).
 
 pub mod about;
+mod about_dialog;
 pub mod args;
 pub mod assets;
 pub mod console;
@@ -252,6 +253,8 @@ pub fn run() {
                 .detach();
             }
             ui::init(model, cx);
+            // "Opdatering klar" when the background updater has a version.
+            about_dialog::watch_updates(cx);
 
             if let Some(mut events) = events {
                 cx.spawn(async move |cx| {

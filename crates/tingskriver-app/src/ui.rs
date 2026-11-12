@@ -362,8 +362,8 @@ fn dismiss_interrupted(cx: &mut App) {
     }
 }
 
-/// Navigate to About in an existing or newly opened window.
-pub fn show_about(cx: &mut App) {
+/// Run `f` on the shell of the main window, opening the window if needed.
+fn with_shell(cx: &mut App, f: impl FnOnce(&mut Shell, &mut Window, &mut Context<Shell>)) {
     show_main_window(cx);
     if let Some(handle) = cx.global::<Globals>().main_window {
         let shell = cx
@@ -373,14 +373,30 @@ pub fn show_about(cx: &mut App) {
             .and_then(|shell| shell.upgrade());
         let _ = handle.update(cx, |_, window, cx| {
             if let Some(shell) = shell {
-                shell.update(cx, |shell, cx| {
-                    shell.page = Page::About;
-                    shell.about_copy_focus.focus(window, cx);
-                    cx.notify();
-                });
+                shell.update(cx, |shell, cx| f(shell, window, cx));
             }
         });
     }
+}
+
+/// Open "Om Tingskriver" over the screen of an existing or newly opened
+/// window.
+pub fn show_about(cx: &mut App) {
+    with_shell(cx, |shell, window, cx| shell.open_about(window, cx));
+}
+
+/// "Opdatering klar" for an update the background updater downloaded.
+pub(crate) fn show_update_ready(version: String, cx: &mut App) {
+    let Some(handle) = cx.global::<Globals>().main_window else {
+        return;
+    };
+    let current = model(cx).read(cx).display_version;
+    let _ = handle.update(cx, |_, window, cx| {
+        window.push_notification(
+            crate::about_dialog::ready_notification(version, current),
+            cx,
+        );
+    });
 }
 
 /// Show the main window, opening it if needed.
@@ -471,7 +487,9 @@ pub enum Page {
     Home,
     Dictation,
     Settings,
-    /// Om, opened from ⓘ in the sidebar footer.
+    /// Om Tingskriver: not a page but the About dialog over the home
+    /// screen (`--page om`, the tray). The shell opens the dialog and shows
+    /// Home underneath.
     About,
     /// Not in the sidebar: reachable with `--page måling` until Settings
     /// links it (docs/design-paritet.md, Job 6).
@@ -511,13 +529,14 @@ pub enum FixtureVariant {
     Meetings,
     /// The 64 px sidebar.
     SidebarCollapsed,
+    /// The update dialog with a downloaded update over the home screen.
+    UpdateAvailable,
 }
 
 pub struct Shell {
     focus_handle: gpui::FocusHandle,
-    pub(crate) about_copy_focus: gpui::FocusHandle,
-    pub(crate) about_document_scroll: Vec<gpui::ScrollHandle>,
-    pub(crate) diagnosis_status: Option<&'static str>,
+    /// "Om Tingskriver", shown as a dialog (`about_dialog`).
+    about: Entity<crate::about_dialog::AboutView>,
     pub(crate) model: Entity<AppModel>,
     pub(crate) page: Page,
     measurement: Entity<crate::measurement::MeasurementView>,
@@ -591,6 +610,19 @@ impl Shell {
                 .meetings
                 .update(cx, |meetings, _| meetings.freeze(list));
             shell.sidebar_collapsed = variant == FixtureVariant::SidebarCollapsed;
+            if variant == FixtureVariant::UpdateAvailable {
+                // After this update, once the window's Root exists.
+                window.defer(cx, |window, cx| {
+                    crate::about_dialog::open_update(
+                        crate::about::UpdateStatus::ReadyAtRestart {
+                            version: "0.0.1-test".to_string(),
+                        },
+                        "0.0.0-test",
+                        window,
+                        cx,
+                    )
+                });
+            }
             shell.probe_line.update(cx, |input, cx| {
                 input.set_value("æøå ÆØÅ é ü @ €", window, cx)
             });
@@ -658,14 +690,10 @@ impl Shell {
             true
         });
         let page = model.read(cx).start_page;
+        let about = cx.new(|cx| crate::about_dialog::AboutView::new(model.clone(), cx));
         Shell {
             focus_handle,
-            about_copy_focus: cx.focus_handle(),
-            about_document_scroll: crate::about::DOCUMENTS
-                .iter()
-                .map(|_| gpui::ScrollHandle::new())
-                .collect(),
-            diagnosis_status: None,
+            about,
             model,
             page,
             measurement,
@@ -679,6 +707,11 @@ impl Shell {
             pending_save: None,
             _subscriptions: subscriptions,
         }
+    }
+
+    /// Open "Om Tingskriver" over the current screen (ⓘ, the logo).
+    pub(crate) fn open_about(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        crate::about_dialog::open_about(self.about.clone(), window, cx);
     }
 
     /// Save the position half a second after the window stops moving.
@@ -702,7 +735,15 @@ impl Shell {
 }
 
 impl Render for Shell {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.page == Page::About {
+            // Om is a dialog over the home screen, not a page.
+            self.page = Page::Home;
+            let shell = cx.entity().downgrade();
+            window.defer(cx, move |window, cx| {
+                let _ = shell.update(cx, |shell, cx| shell.open_about(window, cx));
+            });
+        }
         let palette = palette(cx);
         let failure = match &self.model.read(cx).db {
             DbState::Failed(failure) => Some(failure.clone()),
@@ -743,12 +784,13 @@ impl Render for Shell {
             )
         } else {
             match (&failure, self.page) {
-                (_, Page::About) => self.about_page(cx),
                 (Some(failure), _) => self.database_error_page(failure, cx),
-                (None, Page::Home) => match self.meetings.read(cx).selected_meeting().is_some() {
-                    true => self.meeting_page(cx),
-                    false => self.home_page(cx),
-                },
+                (None, Page::Home | Page::About) => {
+                    match self.meetings.read(cx).selected_meeting().is_some() {
+                        true => self.meeting_page(cx),
+                        false => self.home_page(cx),
+                    }
+                }
                 (None, Page::Dictation) => self.dictation_page(cx),
                 (None, Page::Settings) => self.settings_page(cx),
                 (None, Page::Measurement) => self.measurement.clone().into_any_element(),

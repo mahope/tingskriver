@@ -63,6 +63,17 @@ impl Shell {
         }
     }
 
+    /// Open the About dialog without leaving the current screen.
+    fn on_about(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static {
+        let shell = cx.entity().downgrade();
+        move |_, window, cx| {
+            let _ = shell.update(cx, |this, cx| this.open_about(window, cx));
+        }
+    }
+
     /// The sidebar column: 256 px, or 64 px when collapsed.
     pub(crate) fn sidebar(&self, cx: &mut Context<Self>) -> AnyElement {
         let palette = palette(cx);
@@ -170,7 +181,7 @@ impl Shell {
                         .child(strings::APP_NAME),
                 )
             })
-            .on_click(self.on_nav(Destination::Page(Page::About), cx))
+            .on_click(self.on_about(cx))
             .into_any_element()
     }
 
@@ -319,7 +330,7 @@ impl Shell {
             .into_any_element()
     }
 
-    /// ⓘ: opens Om (Tauri opens the About dialog here).
+    /// ⓘ: opens the About dialog over the current screen (`Info.tsx`).
     fn info_button(&self, collapsed: bool, cx: &mut Context<Self>) -> Button {
         let palette = palette(cx);
         if collapsed {
@@ -327,7 +338,7 @@ impl Shell {
                 "sidebar-about",
                 IconName::Info,
                 strings::ABOUT_APP,
-                self.page == Page::About,
+                false,
                 cx,
             )
         } else {
@@ -339,9 +350,8 @@ impl Shell {
             )
             .self_center()
             .text_color(palette.muted_foreground)
-            .when(self.page == Page::About, |this| this.bg(palette.accent))
         }
-        .on_click(self.on_nav(Destination::Page(Page::About), cx))
+        .on_click(self.on_about(cx))
     }
 
     /// A 44 px icon square of the collapsed column with a 20 px icon and a

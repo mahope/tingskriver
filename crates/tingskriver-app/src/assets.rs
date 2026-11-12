@@ -87,6 +87,8 @@ gpui_kit_assets::icon_assets!(
         CircleCheckBig,
         // Job 2: "Møder" in the collapsed sidebar.
         NotebookPen,
+        // Job 8: the update dialog ("Opdatering klar").
+        Download,
     ]
 );
 
@@ -220,6 +222,7 @@ mod tests {
             IconName::Keyboard,
             IconName::Info,
             IconName::CircleCheckBig,
+            IconName::Download,
         ];
         for icon in icons {
             let path = icon.path();
