@@ -366,7 +366,7 @@ pub fn load_interrupted(cx: &mut App) {
     .detach();
 }
 
-fn dismiss_interrupted(cx: &mut App) {
+pub(crate) fn dismiss_interrupted(cx: &mut App) {
     let model = model(cx);
     let (runtime, dir) = model.update(cx, |m, cx| {
         m.interrupted = None;
@@ -378,8 +378,20 @@ fn dismiss_interrupted(cx: &mut App) {
     }
 }
 
-/// Navigate to About in an existing or newly opened window.
-pub fn show_about(cx: &mut App) {
+/// Dictation history changed in core: the Diktering page reads it again.
+pub fn dictation_history_changed(cx: &mut App) {
+    let shell = cx
+        .global::<Globals>()
+        .shell
+        .as_ref()
+        .and_then(|shell| shell.upgrade());
+    if let Some(shell) = shell {
+        shell.update(cx, |shell, cx| shell.dictation_changed(cx));
+    }
+}
+
+/// Run `f` on the shell of the main window, opening the window if needed.
+fn with_shell(cx: &mut App, f: impl FnOnce(&mut Shell, &mut Window, &mut Context<Shell>)) {
     show_main_window(cx);
     if let Some(handle) = cx.global::<Globals>().main_window {
         let shell = cx
@@ -389,14 +401,30 @@ pub fn show_about(cx: &mut App) {
             .and_then(|shell| shell.upgrade());
         let _ = handle.update(cx, |_, window, cx| {
             if let Some(shell) = shell {
-                shell.update(cx, |shell, cx| {
-                    shell.page = Page::About;
-                    shell.about_copy_focus.focus(window, cx);
-                    cx.notify();
-                });
+                shell.update(cx, |shell, cx| f(shell, window, cx));
             }
         });
     }
+}
+
+/// Open "Om Tingskriver" over the screen of an existing or newly opened
+/// window.
+pub fn show_about(cx: &mut App) {
+    with_shell(cx, |shell, window, cx| shell.open_about(window, cx));
+}
+
+/// "Opdatering klar" for an update the background updater downloaded.
+pub(crate) fn show_update_ready(version: String, cx: &mut App) {
+    let Some(handle) = cx.global::<Globals>().main_window else {
+        return;
+    };
+    let current = model(cx).read(cx).display_version;
+    let _ = handle.update(cx, |_, window, cx| {
+        window.push_notification(
+            crate::about_dialog::ready_notification(version, current),
+            cx,
+        );
+    });
 }
 
 /// Show the main window, opening it if needed.
@@ -487,7 +515,9 @@ pub enum Page {
     Home,
     Dictation,
     Settings,
-    /// Om, opened from ⓘ in the sidebar footer.
+    /// Om Tingskriver: not a page but the About dialog over the home
+    /// screen (`--page om`, the tray). The shell opens the dialog and shows
+    /// Home underneath.
     About,
     /// Not in the sidebar: reachable with `--page måling` until Settings
     /// links it (docs/design-paritet.md, Job 6).
@@ -518,6 +548,9 @@ impl Page {
     }
 }
 
+#[cfg(feature = "screenshot-tests")]
+pub use crate::pages::meeting::FixtureMeeting;
+
 /// Extra state of a screenshot fixture.
 #[cfg(feature = "screenshot-tests")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -529,29 +562,52 @@ pub enum FixtureVariant {
     SidebarCollapsed,
     /// The settings page on a given tab.
     Settings(SettingsTab),
+    /// Job 3: the recording screen (docs/screenshots/optagelse-*.png),
+    /// with the meetings of `Meetings` in the sidebar.
+    Recording,
+    RecordingPaused,
+    RecordingDeviceSwitched,
+    /// "Stop og gem" was pressed: "Gemmer optagelsen…" in the pill.
+    RecordingSaving,
+    /// After saving: the overlay "Gør transskriptionen færdig…".
+    RecordingFinishing,
+    /// Starting failed: the alert under the pill on the idle screen.
+    RecordingStartError,
     /// First start, step 1 (docs/screenshots/onboarding-*.png).
     OnboardingWelcome,
     /// First start, step 2: the transcription model has just started.
     OnboardingModel,
+    /// An open meeting document (Job 4).
+    Meeting(FixtureMeeting),
+    /// Diktering without history (docs/screenshots/diktering-tom-*.png).
+    DictationEmpty,
+    /// Diktering with "Test tastatur" unfolded.
+    DictationProbe,
+    /// The update dialog with a downloaded update over the home screen.
+    UpdateAvailable,
 }
 
 pub use crate::pages::settings::SettingsTab;
 
 pub struct Shell {
     focus_handle: gpui::FocusHandle,
-    pub(crate) about_copy_focus: gpui::FocusHandle,
-    pub(crate) about_document_scroll: Vec<gpui::ScrollHandle>,
-    pub(crate) diagnosis_status: Option<&'static str>,
+    /// "Om Tingskriver", shown as a dialog (`about_dialog`).
+    about: Entity<crate::about_dialog::AboutView>,
     pub(crate) model: Entity<AppModel>,
     pub(crate) page: Page,
     measurement: Entity<crate::measurement::MeasurementView>,
     pub(crate) meetings: Entity<crate::meetings::MeetingsView>,
+    /// The open meeting's document, replaced when another meeting opens.
+    pub(crate) meeting_view: Option<Entity<crate::pages::meeting::MeetingView>>,
     pub(crate) sidebar_collapsed: bool,
     pub(crate) settings: crate::pages::settings::SettingsView,
     /// Why "Ny optagelse" or an import did not open a screen (not ported).
     pub(crate) home_notice: Option<&'static str>,
+    /// The home page's recording state (`recording`).
+    pub(crate) home: crate::recording::HomeState,
     pub(crate) probe_line: Entity<InputState>,
     pub(crate) probe_text: Entity<TextareaState>,
+    pub(crate) dictation: crate::pages::dictation::DictationPage,
     state_path: Option<PathBuf>,
     last_saved: Option<window_state::SavedWindow>,
     pending_save: Option<Task<()>>,
@@ -625,13 +681,44 @@ impl Shell {
                     cx,
                 )
             });
-            let list = (variant == FixtureVariant::Meetings).then(crate::meetings::fixture_list);
+            // The fixtures whose goldens show the synthetic meetings in the
+            // sidebar; the rest (settings, Diktering, first start, the start
+            // error) keep the empty list they were drawn with.
+            let with_meetings = matches!(
+                variant,
+                FixtureVariant::Meetings
+                    | FixtureVariant::Recording
+                    | FixtureVariant::RecordingPaused
+                    | FixtureVariant::RecordingDeviceSwitched
+                    | FixtureVariant::RecordingSaving
+                    | FixtureVariant::RecordingFinishing
+                    | FixtureVariant::Meeting(_)
+            );
+            let list = with_meetings.then(crate::meetings::fixture_list);
             shell
                 .meetings
                 .update(cx, |meetings, _| meetings.freeze(list));
             shell.sidebar_collapsed = variant == FixtureVariant::SidebarCollapsed;
             if let FixtureVariant::Settings(tab) = variant {
                 shell.settings.select_tab(tab);
+            }
+            shell.home = crate::recording::fixture(variant);
+            if let FixtureVariant::Meeting(kind) = variant {
+                shell.open_fixture_meeting(kind, cx);
+            }
+            shell.dictation = crate::pages::dictation::DictationPage::fixture(variant);
+            if variant == FixtureVariant::UpdateAvailable {
+                // After this update, once the window's Root exists.
+                window.defer(cx, |window, cx| {
+                    crate::about_dialog::open_update(
+                        crate::about::UpdateStatus::ReadyAtRestart {
+                            version: "0.0.1-test".to_string(),
+                        },
+                        "0.0.0-test",
+                        window,
+                        cx,
+                    )
+                });
             }
             shell.probe_line.update(cx, |input, cx| {
                 input.set_value("æøå ÆØÅ é ü @ €", window, cx)
@@ -701,28 +788,32 @@ impl Shell {
         });
         let page = model.read(cx).start_page;
         let settings = crate::pages::settings::SettingsView::new(&model, window, cx);
+        let about = cx.new(|cx| crate::about_dialog::AboutView::new(model.clone(), cx));
         Shell {
             focus_handle,
-            about_copy_focus: cx.focus_handle(),
-            about_document_scroll: crate::about::DOCUMENTS
-                .iter()
-                .map(|_| gpui::ScrollHandle::new())
-                .collect(),
-            diagnosis_status: None,
+            about,
             model,
             page,
             measurement,
             meetings,
+            meeting_view: None,
             sidebar_collapsed: false,
             settings,
             home_notice: None,
+            home: crate::recording::HomeState::default(),
             probe_line,
             probe_text,
+            dictation: crate::pages::dictation::DictationPage::new(),
             state_path,
             last_saved: None,
             pending_save: None,
             _subscriptions: subscriptions,
         }
+    }
+
+    /// Open "Om Tingskriver" over the current screen (ⓘ, the logo).
+    pub(crate) fn open_about(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        crate::about_dialog::open_about(self.about.clone(), window, cx);
     }
 
     /// Save the position half a second after the window stops moving.
@@ -746,8 +837,19 @@ impl Shell {
 }
 
 impl Render for Shell {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.page == Page::About {
+            // Om is a dialog over the home screen, not a page.
+            self.page = Page::Home;
+            let shell = cx.entity().downgrade();
+            window.defer(cx, move |window, cx| {
+                let _ = shell.update(cx, |shell, cx| shell.open_about(window, cx));
+            });
+        }
         let palette = palette(cx);
+        if self.page != Page::Dictation {
+            self.dictation.hide();
+        }
         let failure = match &self.model.read(cx).db {
             DbState::Failed(failure) => Some(failure.clone()),
             _ => None,
@@ -791,12 +893,13 @@ impl Render for Shell {
             )
         } else {
             match (&failure, self.page) {
-                (_, Page::About) => self.about_page(cx),
                 (Some(failure), _) => self.database_error_page(failure, cx),
-                (None, Page::Home) => match self.meetings.read(cx).selected_meeting().is_some() {
-                    true => self.meeting_page(cx),
-                    false => self.home_page(cx),
-                },
+                (None, Page::Home | Page::About) => {
+                    match self.meetings.read(cx).selected_meeting().is_some() {
+                        true => self.meeting_page(window, cx),
+                        false => self.home_page(cx),
+                    }
+                }
                 (None, Page::Dictation) => self.dictation_page(cx),
                 (None, Page::Settings) => self.settings_page(cx),
                 (None, Page::Measurement) => self.measurement.clone().into_any_element(),
@@ -916,31 +1019,6 @@ pub(crate) fn loading(text: &str, cx: &App) -> AnyElement {
         .text_color(palette(cx).muted_foreground)
         .child(Spinner::new())
         .child(text.to_string())
-        .into_any_element()
-}
-
-pub(crate) fn interrupted_card(notice: &InterruptNotice, cx: &App) -> AnyElement {
-    let palette = palette(cx);
-    let lines = notice.lines();
-    v_flex()
-        .id("interrupted-notice")
-        .role(gpui::Role::Alert)
-        .aria_label(SharedString::from(strings::INTERRUPTED_TITLE))
-        .gap(space::SM)
-        .p(space::LG)
-        .rounded(theme::RADIUS_LG)
-        .border_1()
-        .border_color(palette.warning)
-        .bg(palette.card)
-        .child(section_title(strings::INTERRUPTED_TITLE))
-        .children(lines.into_iter().map(|line| paragraph(&line, cx)))
-        .child(
-            h_flex().pt(space::SM).child(
-                controls::button("interrupted-dismiss", Variant::Primary)
-                    .label(strings::INTERRUPTED_DISMISS)
-                    .on_click(|_, _, cx| dismiss_interrupted(cx)),
-            ),
-        )
         .into_any_element()
 }
 

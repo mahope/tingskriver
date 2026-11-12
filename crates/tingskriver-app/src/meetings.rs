@@ -435,7 +435,7 @@ impl MeetingsView {
     }
 
     /// "Omdøb møde" (Tauri `Sidebar/index.tsx:764-805`).
-    fn open_rename(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn open_rename(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
         let title = self.meeting_title(&id);
         self.rename_id = Some(id);
         self.rename_input

@@ -3,8 +3,8 @@
 //! The band "N ventende ændringer", a diff per proposal and the buttons
 //! Anvend / Afvis / Fortryd. Nothing here writes notes or summary directly:
 //! every change goes through `ProposalStore::apply/undo`, and only from a
-//! button click. The view is meant to sit in the meeting document (#51); until
-//! that page exists on `main` it is not mounted in `ui.rs`.
+//! button click. Mounted in the meeting document (`pages/meeting.rs`) as a
+//! band between the summary toolbar and the summary.
 
 use crate::{
     controls::{self, Variant},
@@ -31,6 +31,12 @@ pub enum ReviewState {
     Failed,
     Loaded(Vec<Proposal>),
 }
+
+/// Emitted after a proposal was applied or undone: the meeting's notes or
+/// summary changed, so the page showing them reloads.
+pub struct ProposalsApplied;
+
+impl gpui::EventEmitter<ProposalsApplied> for ProposalReview {}
 
 pub struct ProposalReview {
     store: Option<ProposalStore>,
@@ -91,6 +97,15 @@ impl ProposalReview {
         }
     }
 
+    /// Whether there is anything to show: proposals, or a load error.
+    pub fn has_items(&self) -> bool {
+        match &self.state {
+            ReviewState::Loading => false,
+            ReviewState::Failed => true,
+            ReviewState::Loaded(list) => !list.is_empty(),
+        }
+    }
+
     pub fn reload(&mut self, cx: &mut Context<Self>) {
         let Some(store) = self.store.clone() else {
             return;
@@ -136,8 +151,10 @@ impl ProposalReview {
                 .unwrap_or_else(|_| Err(ProposalError::Storage("task ended".into())));
             let _ = view.update(cx, |view, cx| {
                 view.busy = false;
-                if let Err(error) = result {
-                    view.message = Some(error.user_message());
+                match result {
+                    Err(error) => view.message = Some(error.user_message()),
+                    Ok(_) if !matches!(action, Action::Reject) => cx.emit(ProposalsApplied),
+                    Ok(_) => {}
                 }
                 view.reload(cx);
                 cx.notify();

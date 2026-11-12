@@ -66,6 +66,7 @@ pub mod mcp_audit;
 pub mod mcp_ipc;
 pub mod mcp_probe;
 pub mod measurement;
+pub mod meeting_document;
 pub mod meeting_language;
 pub mod meeting_list;
 pub mod model_download;

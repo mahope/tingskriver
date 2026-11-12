@@ -87,8 +87,13 @@ gpui_kit_assets::icon_assets!(
         CircleCheckBig,
         // Job 2: "Møder" in the collapsed sidebar.
         NotebookPen,
-        // Job 9: the note under the onboarding download cards.
+        // Job 9: the note under the onboarding download cards; Job 8: the
+        // update dialog ("Opdatering klar").
         Download,
+        // Job 4: the meeting document (Gem, empty summary, task items).
+        Save,
+        FileQuestionMark,
+        SquareCheck,
     ]
 );
 
@@ -222,6 +227,7 @@ mod tests {
             IconName::Keyboard,
             IconName::Info,
             IconName::CircleCheckBig,
+            IconName::Download,
         ];
         for icon in icons {
             let path = icon.path();

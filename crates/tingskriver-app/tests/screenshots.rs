@@ -11,7 +11,7 @@ pub mod native;
 use std::path::PathBuf;
 use tingskriver_app::{
     startup::{DbFailure, DbState},
-    ui::{FixtureVariant, Page, SettingsTab},
+    ui::{FixtureMeeting, FixtureVariant, Page, SettingsTab},
 };
 
 fn fixtures() -> Vec<(String, Page, DbState, FixtureVariant)> {
@@ -50,6 +50,20 @@ fn fixtures() -> Vec<(String, Page, DbState, FixtureVariant)> {
             FixtureVariant::Settings(tab),
         ));
     }
+    // Job 3: the recording screen (docs/screenshots/optagelse-*.png).
+    for (name, variant) in [
+        ("recording", FixtureVariant::Recording),
+        ("recording-paused", FixtureVariant::RecordingPaused),
+        (
+            "recording-device-switched",
+            FixtureVariant::RecordingDeviceSwitched,
+        ),
+        ("recording-saving", FixtureVariant::RecordingSaving),
+        ("recording-finishing", FixtureVariant::RecordingFinishing),
+        ("recording-start-error", FixtureVariant::RecordingStartError),
+    ] {
+        fixtures.push((name.into(), Page::Home, DbState::NotCreated, variant));
+    }
     // First start (docs/screenshots/onboarding-*.png).
     fixtures.push((
         "onboarding-welcome".into(),
@@ -62,6 +76,42 @@ fn fixtures() -> Vec<(String, Page, DbState, FixtureVariant)> {
         Page::Home,
         DbState::NotCreated,
         FixtureVariant::OnboardingModel,
+    ));
+    // The meeting document (docs/screenshots/moedeside-*.png).
+    for (name, kind) in [
+        ("meeting-summary", FixtureMeeting::Summary),
+        ("meeting-transcript", FixtureMeeting::Transcript),
+        ("meeting-no-summary", FixtureMeeting::NoSummary),
+        ("meeting-summary-error", FixtureMeeting::SummaryFailed),
+        ("meeting-proposals", FixtureMeeting::Proposals),
+    ] {
+        fixtures.push((
+            name.into(),
+            Page::Home,
+            DbState::NotCreated,
+            FixtureVariant::Meeting(kind),
+        ));
+    }
+    // Diktering without history and with the keyboard test unfolded.
+    fixtures.push((
+        "dictation-empty".into(),
+        Page::Dictation,
+        DbState::NotCreated,
+        FixtureVariant::DictationEmpty,
+    ));
+    fixtures.push((
+        "dictation-probe".into(),
+        Page::Dictation,
+        DbState::NotCreated,
+        FixtureVariant::DictationProbe,
+    ));
+    // The update dialog over the home screen (UpdateDialog.tsx); "about"
+    // (Page::About) is the About dialog over the home screen.
+    fixtures.push((
+        "update-available".into(),
+        Page::Home,
+        DbState::NotCreated,
+        FixtureVariant::UpdateAvailable,
     ));
     fixtures.push((
         "loading".into(),

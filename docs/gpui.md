@@ -134,7 +134,7 @@ the same time; both use the same database with the same migrations.
    main, …)` and `startup: database ready after …`. The first frame line must
    come before the database line. Compare with the 0.5.0-dev.2 baseline in
    `docs/ydeevne.md` on main (issue #3).
-2. **Danish input.** Diktering page, test field. Type `æøå ÆØÅ`. Dead keys:
+2. **Danish input.** Diktering page: unfold "Test tastatur" at the bottom. Type `æøå ÆØÅ`. Dead keys:
    `´` then `e` gives `é`, `¨` then `u` gives `ü`, `^` then `o` gives `ô`,
    `~` then `n` gives `ñ`, `` ` `` then `a` gives `à`; a dead key followed
    by space gives the accent itself. AltGr: `@ £ $ € { [ ] } | \`. The line
@@ -197,7 +197,9 @@ gpui-component's next release; the rest are fixable in the app.
 - The database error texts classify the sqlx error message. When issue #5
   adds `DbInitError` to core, the error page should map its variants and add
   "Åbn backup".
-- The pages are placeholders: no meeting list, settings or dictation yet.
+- Settings and dictation are still placeholders. The meeting document shows the
+  summary read-only; editing, making a summary, delivery and retranscription
+  are disabled with an explanation until they are ported.
 - `AppHost` is implemented by `tingskriver-host`'s bridge ([host.md](host.md));
   the pages do not subscribe to its events yet.
 

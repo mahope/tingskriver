@@ -267,6 +267,55 @@ pub mod settings {
 }
 
 // ---- end of Job 5 block ----
+// ---- Job 3 (home and recording screen, docs/design-paritet.md) ----
+
+/// The recording screen of the Tauri app (`RecordingControls.tsx`,
+/// `RecordingStatusBar.tsx`, `VirtualizedTranscriptView.tsx`,
+/// `StatusOverlays.tsx`).
+pub mod recording {
+    use gpui::{px, Pixels};
+
+    /// The transcript column's padding (`pt-6`, `pb-32`, `px-6`).
+    pub const TRANSCRIPT_TOP: Pixels = px(24.0);
+    pub const TRANSCRIPT_BOTTOM: Pixels = px(128.0);
+    pub const TRANSCRIPT_PADDING_X: Pixels = px(24.0);
+    /// The state dot in the status bar (`h-2.5 w-2.5`).
+    pub const STATUS_DOT: Pixels = px(10.0);
+    /// The "Lytter …" dot (`w-2 h-2`).
+    pub const LISTENING_DOT: Pixels = px(8.0);
+    /// The dot of the empty transcript while recording (`w-3 h-3`, `mt-8`).
+    pub const EMPTY_DOT: Pixels = px(12.0);
+    pub const EMPTY_TOP: Pixels = px(32.0);
+    /// Transcript text: `text-base` with `leading-[1.65]`.
+    pub const LINE_HEIGHT: f32 = 1.65;
+    /// The timestamp sits 3 px lower to share the text's baseline (`mt-[3px]`).
+    pub const TIMESTAMP_NUDGE: Pixels = px(3.0);
+    /// The low-confidence underline (1 px). Tauri draws it dotted; gpui only
+    /// has solid and wavy, so it is solid in the muted color.
+    pub const UNDERLINE: Pixels = px(1.0);
+    /// The filled stop square: lucide `Square` (18 of 24 units) at 14 px.
+    pub const STOP_SQUARE: Pixels = px(10.5);
+    pub const STOP_SQUARE_RADIUS: Pixels = px(2.0);
+    /// The level bars next to the pill buttons (`w-1`, `gap-1`, `mx-3`).
+    pub const LEVEL_BAR_WIDTH: Pixels = px(4.0);
+    /// Bar heights relative to the 44 px pill row (`58%`, `76%`, `58%`).
+    pub const LEVEL_BAR_MAX: Pixels = px(44.0);
+    /// Paused bars are 4 px dots at 60 % opacity.
+    pub const LEVEL_BAR_PAUSED: Pixels = px(4.0);
+    pub const LEVEL_PAUSED_OPACITY: f32 = 0.6;
+    /// Notice tints: `bg-primary/10 border-primary/30` (information),
+    /// `bg-warning/10 border-warning/40` (warning), `bg-destructive/10
+    /// border-destructive/40` (start error).
+    pub const NOTICE_TINT: f32 = 0.1;
+    pub const INFO_BORDER: f32 = 0.3;
+    pub const ALERT_BORDER: f32 = 0.4;
+    /// The 32 px dismiss button of a notice (`h-8 w-8`).
+    pub const DISMISS: Pixels = px(32.0);
+    /// The saving overlays sit 16 px above the window edge (`bottom-4`).
+    pub const OVERLAY_BOTTOM: Pixels = px(16.0);
+}
+
+// ---- end of Job 3 block ----
 
 // ---- Job 9 (onboarding, docs/design-paritet.md): added constants ----
 
@@ -306,6 +355,102 @@ pub mod onboarding {
 }
 
 // ---- end of Job 9 block ----
+
+// ---- Job 4 (meeting document, docs/design-paritet.md): added constants ----
+
+/// The meeting document (`MeetingDocument.tsx`, `SummaryPanel.tsx`,
+/// BlockNote's default styles and `VirtualizedTranscriptView.tsx`).
+pub mod document {
+    use gpui::{px, Pixels};
+
+    /// Article padding below the content (`pb-28`).
+    pub const BOTTOM_SPACE: Pixels = px(112.0);
+    /// Space above the transcript section (`mt-12`).
+    pub const TRANSCRIPT_GAP: Pixels = px(48.0);
+    /// The summary text column; BlockNote wraps about here in the
+    /// reference images (`docs/screenshots/moedeside-lys.png`).
+    pub const SUMMARY_TEXT_MAX: Pixels = px(560.0);
+    /// BlockNote's line height for summary text (16 px over 28 px lines).
+    pub const SUMMARY_LINE_HEIGHT: f32 = 1.75;
+    /// Space between summary blocks.
+    pub const BLOCK_GAP: Pixels = px(10.0);
+    /// Extra space above a summary heading.
+    pub const HEADING_GAP: Pixels = px(24.0);
+    /// A level-1 summary heading (BlockNote's `2em` on 16 px).
+    pub const HEADING_1: Pixels = px(32.0);
+    /// Bullet and number column, also the indent per nesting level.
+    pub const LIST_INDENT: Pixels = px(24.0);
+    /// The bullet square.
+    pub const BULLET: Pixels = px(5.0);
+    /// The empty-state icon (`w-16 h-16`).
+    pub const EMPTY_ICON: Pixels = px(64.0);
+    /// The transcript panel takes this share of the window height (`h-[70vh]`).
+    pub const TRANSCRIPT_PANEL_SHARE: f32 = 0.7;
+    /// Time column of a transcript line (`min-w-[3.5rem]`).
+    pub const TIME_COLUMN: Pixels = px(56.0);
+    /// Transcript text line height (`leading-[1.65]`).
+    pub const TRANSCRIPT_LINE_HEIGHT: f32 = 1.65;
+    /// Toolbar labels collapse to icons below these container widths
+    /// (Tailwind `@[34rem]`, `@[40rem]` and `@[22rem]`).
+    pub const LABELS_MIN: Pixels = px(544.0);
+    pub const LANGUAGE_LABEL_MIN: Pixels = px(640.0);
+    pub const TRANSCRIPT_LABELS_MIN: Pixels = px(352.0);
+    /// The "Lav om" segment's border tint (`border-primary/40`).
+    pub const GENERATE_BORDER_ALPHA: f32 = 0.4;
+    /// The summary error box (`bg-destructive/10`).
+    pub const ERROR_TINT: f32 = 0.1;
+    /// A one-pixel line (rule, tinted segment border).
+    pub const HAIRLINE: Pixels = px(1.0);
+    /// The transcript toggle's focus border (Tauri `focus-visible:ring-2`).
+    pub const FOCUS_BORDER: Pixels = px(2.0);
+    /// The proposals band above the summary scrolls inside this height.
+    pub const PROPOSALS_MAX: Pixels = px(480.0);
+}
+
+// ---- end of Job 4 block ----
+
+// ---- Job 7 (Diktering page, docs/design-paritet.md): added constants ----
+
+/// The Diktering page (`dictation/DictationHistory.tsx`).
+pub mod dictation {
+    use gpui::{px, Pixels};
+
+    /// A loading placeholder card (`h-20`).
+    pub const SKELETON_HEIGHT: Pixels = px(80.0);
+    /// The keyboard icon of the empty history (`h-6 w-6`).
+    pub const EMPTY_ICON: Pixels = px(24.0);
+}
+
+// ---- end of Job 7 block ----
+
+// ---- Job 8 block: the About and update dialogs ----
+
+/// The About dialog (`Info.tsx`, `About.tsx`) and the update dialog
+/// (`UpdateDialog.tsx`).
+pub mod about_dialog {
+    use gpui::{px, Pixels};
+
+    /// `DialogContent`: `max-w-lg`.
+    pub const WIDTH: Pixels = px(512.0);
+    /// `UpdateDialog`: `sm:max-w-[500px]`.
+    pub const UPDATE_WIDTH: Pixels = px(500.0);
+    /// The logo mark above the name (`width={56}`).
+    pub const LOGO: Pixels = px(56.0);
+    /// The content scrolls beyond `max-h-[80vh]`.
+    pub const MAX_HEIGHT_FRACTION: f32 = 0.8;
+    /// A bundled legal document inside "Licenser og privatliv".
+    pub const DOCUMENT_HEIGHT: Pixels = px(200.0);
+    /// The error box of the update dialog: `bg-destructive/10`.
+    pub const ERROR_TINT: f32 = 0.1;
+    /// Its border: `border-destructive/30`.
+    pub const ERROR_BORDER: f32 = 0.3;
+    /// The underline of "NOTICE.md" in the footer note.
+    pub const LINK_UNDERLINE: Pixels = px(1.0);
+    /// One arrow-key step in a legal document.
+    pub const DOCUMENT_SCROLL_LINE: Pixels = px(32.0);
+}
+
+// ---- end of Job 8 block ----
 
 /// Tailwind's shadows (`shadow-sm`, `shadow`, `shadow-md`), the same in both
 /// modes as in the Tauri app.
@@ -595,6 +740,40 @@ mod tests {
                 p.recording,
                 over(p.recording, p.card, sidebar::RECORDING_TINT),
             ),
+            // Job 3: the recording screen. Device notices and the start
+            // error are tints over the background; the live line is secondary.
+            (
+                "foreground on the information notice",
+                p.foreground,
+                over(p.primary, p.background, recording::NOTICE_TINT),
+            ),
+            (
+                "foreground on the warning notice",
+                p.foreground,
+                over(p.warning, p.background, recording::NOTICE_TINT),
+            ),
+            (
+                "foreground on the start error",
+                p.foreground,
+                over(p.destructive, p.background, recording::NOTICE_TINT),
+            ),
+            (
+                "destructive title on the start error",
+                p.destructive,
+                over(p.destructive, p.background, recording::NOTICE_TINT),
+            ),
+            (
+                "muted dismiss on the information notice",
+                p.muted_foreground,
+                over(p.primary, p.background, recording::NOTICE_TINT),
+            ),
+            (
+                "muted dismiss on the warning notice",
+                p.muted_foreground,
+                over(p.warning, p.background, recording::NOTICE_TINT),
+            ),
+            ("foreground on the live line", p.foreground, p.secondary),
+            ("stop pill", p.background, p.foreground),
             // Job 9: onboarding download cards and the note under them.
             ("destructive text on card", p.destructive, p.card),
             (
@@ -603,6 +782,34 @@ mod tests {
                 over(p.destructive, p.card, onboarding::ERROR_TINT),
             ),
             ("foreground on secondary", p.foreground, p.secondary),
+            // Job 4: the summary error box and the transcript disclosure
+            // row's hover on the page background.
+            (
+                "destructive text on the error tint over background",
+                p.destructive,
+                over(p.destructive, p.background, document::ERROR_TINT),
+            ),
+            (
+                "muted text on the transcript row hover",
+                p.muted_foreground,
+                over(p.accent, p.background, LIST_HOVER_ALPHA),
+            ),
+            // Job 7: the Diktering status line, "reserve brugt" in a history
+            // card and the shortcut chip.
+            ("warning text on background", p.warning, p.background),
+            (
+                "destructive text on background",
+                p.destructive,
+                p.background,
+            ),
+            ("warning text on card", p.warning, p.card),
+            ("shortcut chip", p.foreground, p.muted),
+            // Job 8: the error box of the update dialog.
+            (
+                "destructive text on the destructive tint over background",
+                p.destructive,
+                over(p.destructive, p.background, about_dialog::ERROR_TINT),
+            ),
         ]
     }
 

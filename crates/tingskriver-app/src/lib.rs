@@ -11,6 +11,7 @@
 //! requests (show the window, quit).
 
 pub mod about;
+mod about_dialog;
 pub mod args;
 pub mod assets;
 pub mod console;
@@ -22,6 +23,7 @@ mod onboarding;
 mod pages;
 pub mod probe;
 pub mod proposals;
+pub mod recording;
 mod sidebar;
 pub mod single_instance;
 pub mod startup;
@@ -260,6 +262,8 @@ pub fn run() {
             }
             onboarding::init(model.clone(), onboarding_host, cx);
             ui::init(model, cx);
+            // "Opdatering klar" when the background updater has a version.
+            about_dialog::watch_updates(cx);
 
             if let Some(mut events) = events {
                 cx.spawn(async move |cx| {
@@ -279,6 +283,8 @@ pub fn run() {
                                 }
                                 Err(error) => log::warn!("Invalid dictation comparison: {error}"),
                             }
+                        } else if event.name == tingskriver_core::dictation::HISTORY_CHANGED_EVENT {
+                            cx.update(ui::dictation_history_changed);
                         }
                     }
                 })

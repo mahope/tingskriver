@@ -30,6 +30,41 @@ catalogue! {
     ABOUT_NOTICE = "Tredjepartsattribution";
     ABOUT_PRIVACY = "Privatlivspolitik";
     ABOUT_CONTACT = "Kontakt: Mahoje (mahoje.dk)";
+    // Job 8: the About dialog, copied from the Tauri app
+    // (frontend/src/components/About.tsx, UpdateDialog.tsx, UpdateNotification.tsx).
+    ABOUT_TAGLINE = "Referater der aldrig forlader din computer.";
+    ABOUT_DIFFERENT = "Det adskiller Tingskriver";
+    ABOUT_LOCAL_TITLE = "Lokalt fra start til slut";
+    ABOUT_LOCAL_TEXT = "Optagelse, transskription og opsummering sker på din egen computer. Ingen sky, ingen lækager.";
+    ABOUT_MODEL_TITLE = "Vælg din egen model";
+    ABOUT_MODEL_TEXT = "Brug en lokal åben model, eller tilslut en ekstern udbyder. Du er ikke låst fast.";
+    ABOUT_PRICE_TITLE = "Ingen pris pr. minut";
+    ABOUT_PRICE_TEXT = "Kører modellerne lokalt, betaler du ikke for tid. Bruger du en ekstern udbyder, betaler du kun for de kald, du selv vælger.";
+    ABOUT_MEETINGS_TITLE = "Virker med dine møder";
+    ABOUT_MEETINGS_TEXT = "Google Meet, Zoom og Teams, og møder uden internet.";
+    // The upstream project is named in NOTICE.md, not in the UI (danish_ui.rs).
+    ABOUT_OPEN_SOURCE = "Gratis og open source. Tingskriver bygger på et projekt fra Zackriya Solutions (MIT-licens), se NOTICE.md.";
+    ABOUT_NOTICE_LINK = "NOTICE.md";
+    ABOUT_WEBSITE = "tingskriver.mahoje.dk";
+    ABOUT_GITHUB = "GitHub";
+    ABOUT_LINK_SEPARATOR = "·";
+    ABOUT_BUILD_DETAILS = "Byggeoplysninger og diagnose";
+    ABOUT_LEGAL = "Licenser og privatliv";
+    UPDATE_CHECK = "Søg efter opdateringer";
+    UPDATE_LATEST = "Du har den nyeste version";
+    UPDATE_CHECK_FAILED = "Kunne ikke søge efter opdateringer. Tjek din internetforbindelse og prøv igen.";
+    UPDATE_READY_LINE = "Opdatering klar: version {value}";
+    UPDATE_READY = "Opdatering klar";
+    UPDATE_READY_DETAIL = "Version {value} er hentet";
+    UPDATE_AT_RESTART = "Opdateringen installeres automatisk, næste gang Tingskriver starter.";
+    UPDATE_DOWNLOADING = "Henter opdatering";
+    UPDATE_DOWNLOADING_DETAIL = "Henter den nyeste version…";
+    UPDATE_FAILED = "Opdatering mislykkedes";
+    UPDATE_FAILED_DETAIL = "Noget gik galt under opdateringen";
+    UPDATE_CURRENT = "Nuværende version:";
+    UPDATE_NEW = "Ny version:";
+    UPDATE_DETAILS = "Se detaljer";
+    UPDATE_CLOSE = "Luk";
     APP_NAME = "Tingskriver";
     MEETING_DELETE = "Slet";
     MEETING_NEW = "Ny optagelse";
@@ -42,9 +77,6 @@ catalogue! {
     MEETING_ACTION_FAILED = "Handlingen kunne ikke gennemføres. Prøv igen.";
     MEETING_SCAN_FAILED = "Efterladte optagelser kunne ikke undersøges. Prøv at opdatere listen. Dine lydfiler er ikke ændret.";
     MEETING_LOAD_FAILED = "Møder eller efterladte optagelser kunne ikke indlæses. Prøv at opdatere listen.";
-    MEETING_DOCUMENT_LATER = "Mødedokumentet er endnu ikke flyttet til denne app. Du kan åbne lydmappen her eller læse teksten i den nuværende app.";
-    MEETING_RECORDING_LATER = "Optageskærmen er endnu ikke flyttet hertil. Start din optagelse i den nuværende app.";
-    MEETING_FOLDER = "Åbn lydmappe";
     // The sidebar, copied from the Tauri app (frontend/src/components/Sidebar/index.tsx).
     SIDEBAR_LABEL = "Hovedmenu";
     SIDEBAR_COLLAPSE = "Fold sidepanelet sammen";
@@ -282,8 +314,38 @@ catalogue! {
     NO_MEETINGS = "Ingen møder endnu";
     NO_MEETINGS_YET = "Ingen møder at vise endnu";
     MEETINGS_LATER = "Mødelisten kommer hertil i en senere version. Indtil da finder du dine møder i den nuværende app.";
-    DICTATION_LATER = "Hold Ctrl+Win nede, tal, og slip. Teksten skrives der, hvor markøren står. Diktering flytter hertil i en senere version.";
-    PROBE = "Prøvefelt";
+    // The Diktering page, copied from the Tauri app
+    // (frontend/src/components/dictation/DictationHistory.tsx).
+    DICTATION_SETTINGS = "Indstillinger";
+    DICTATION_HOLD = "Hold {value}, tal, og slip. Teksten bliver skrevet ind dér, hvor markøren står. Tryk to gange hurtigt for at diktere uden at holde tasterne nede, og tryk igen, når du er færdig.";
+    DICTATION_ONLY_WINDOWS = "Genvejen og indsættelse virker kun på Windows. Historik, ordbog og snippets kan stadig redigeres.";
+    DICTATION_DISABLED = "Diktering er slået fra under Indstillinger.";
+    DICTATION_NO_ENGINE = "Der er hverken en Syv.ai-nøgle eller en lokal model. Tilføj en af dem under Indstillinger.";
+    DICTATION_READY = "Genvejen er klar. Transskriberes med {value}.";
+    DICTATION_ENGINE_LOCAL = "den lokale model";
+    DICTATION_ENGINE_SYV = "Syv.ai (lokal model som reserve)";
+    DICTATION_HISTORY = "Seneste dikteringer";
+    DICTATION_CLEAR = "Ryd historik";
+    DICTATION_CLEAR_CONFIRM = "Klik igen for at rydde alt";
+    DICTATION_HISTORY_OFF = "Historikken er slået fra, så nye dikteringer gemmes ikke.";
+    DICTATION_EMPTY = "Ingen dikteringer endnu";
+    DICTATION_EMPTY_HINT = "Stil markøren i et tekstfelt, hold {value} og sig noget. Så dukker det op her.";
+    DICTATION_COPY = "Kopiér";
+    DICTATION_COPY_LABEL = "Kopiér teksten";
+    DICTATION_DELETE_LABEL = "Slet dikteringen";
+    DICTATION_LATENCY = "Tid fra du slap tasterne, til teksten var indsat";
+    DICTATION_FALLBACK = "reserve brugt";
+    DICTATION_ENGINE_SYV_SHORT = "Syv.ai";
+    DICTATION_ENGINE_LOCAL_SHORT = "Lokal model";
+    DICTATION_COPIED = "Teksten er kopieret";
+    DICTATION_LOAD_FAILED = "Historikken kunne ikke hentes: {value}";
+    DICTATION_LOAD_RETRYING = "Siden prøver igen af sig selv om et øjeblik.";
+    DICTATION_LOAD_GAVE_UP = "Åbn siden igen for at prøve igen.";
+    DICTATION_DELETE_FAILED = "Dikteringen kunne ikke slettes";
+    DICTATION_CLEARED = "Historikken er ryddet";
+    DICTATION_CLEAR_FAILED = "Historikken kunne ikke ryddes";
+    // GPUI only: the keyboard test field folds away under the history.
+    PROBE = "Test tastatur";
     PROBE_HELP = "Brug felterne til at teste tastaturet: æøå, dødtaster (^ ¨ ~ ´ `) efterfulgt af en vokal, AltGr-tegn (@ £ $ € { [ ] } | \\) og IME-komposition.";
     SPECIAL_EMPTY = "Særlige tegn vises her med deres Unicode-nummer.";
     SPECIAL = "Særlige tegn: {value}";
@@ -394,6 +456,100 @@ catalogue! {
     PROMPT_KEYS_HINT = "Ctrl+Alt+Enter vælger den første knap, Ctrl+Alt+Esc lukker, og Ctrl+Alt+P flytter fokus til vinduet. Så virker Tab, Enter og Esc.";
     PROMPT_QUIET_MARK = "Stille tilstand: spørgsmål udsat";
     PROMPT_WINDOW_NAME = "Tingskriver spørger";
+    // Job 3 (docs/design-paritet.md): the home and recording screen. GPUI
+    // only: why recording cannot start here yet, and the name of the
+    // transcript list. The rest is verbatim from Tauri RecordingControls.tsx,
+    // RecordingStatusBar.tsx, TranscriptPanel.tsx,
+    // VirtualizedTranscriptView.tsx, StatusOverlays.tsx and
+    // RecordingStateContext.tsx.
+    RECORDING_NOT_IN_APP = "Optagelse er endnu ikke flyttet til denne app. Start din optagelse i den nuværende app.";
+    RECORDING_TRANSCRIPT_LABEL = "Transskription";
+    RECORDING_STATUS_LABEL = "{state} {clock}, Mikrofon: {microphone}, Systemlyd: {system}";
+    RECORDING_PAUSE = "Pause";
+    RECORDING_RESUME = "Genoptag";
+    RECORDING_STOP = "Stop og gem";
+    RECORDING_ACTIVE = "Optager";
+    RECORDING_PAUSED = "På pause";
+    RECORDING_MICROPHONE = "Mikrofon:";
+    RECORDING_SYSTEM = "Systemlyd:";
+    RECORDING_DEFAULT_MICROPHONE = "Standardmikrofon";
+    RECORDING_DEFAULT_SYSTEM = "Standard for systemlyd";
+    RECORDING_MICROPHONE_LOST = "ingen (kun systemlyd)";
+    RECORDING_LISTENING = "Lytter …";
+    RECORDING_EMPTY_LISTENING = "Lytter efter tale …";
+    RECORDING_EMPTY_LISTENING_HINT = "Tal, så vises transskriptionen her";
+    RECORDING_EMPTY_PAUSED = "Optagelsen er sat på pause";
+    RECORDING_EMPTY_PAUSED_HINT = "Vælg Genoptag for at fortsætte optagelsen";
+    RECORDING_COPY = "Kopiér";
+    RECORDING_COPY_TITLE = "Kopiér transskriptionen";
+    RECORDING_COPIED = "Transskriptet er kopieret";
+    RECORDING_LOW_CONFIDENCE = "Lav sikkerhed: ordene kan være opfattet forkert";
+    RECORDING_NOTICE_DISMISS = "Luk beskeden";
+    RECORDING_ERROR_DISMISS = "Luk besked";
+    RECORDING_SAVING = "Gemmer optagelsen…";
+    RECORDING_FINISHING = "Gør transskriptionen færdig…";
+    RECORDING_SAVING_MEETING = "Gemmer mødet…";
+    RECORDING_DEVICE_SWITCHED = "Mikrofonen er skiftet til {value}. Optagelsen fortsætter som normalt.";
+    RECORDING_DEVICE_SWITCH_FAILED = "Vi kunne ikke skifte til {value}. Optagelsen fortsætter på den forrige mikrofon, hvis den stadig virker.";
+    RECORDING_DEVICE_LOST = "Mikrofonen {value} kunne ikke genoprettes. Der optages kun systemlyd. Stop og start optagelsen igen for at rette det.";
+    RECORDING_ERROR_MICROPHONE_TITLE = "Mikrofonen er ikke tilgængelig";
+    RECORDING_ERROR_MICROPHONE = "Tingskriver kan ikke bruge din mikrofon. Tjek at:\n• mikrofonen er sluttet til\n• Tingskriver har adgang til mikrofonen i Windows under Indstillinger > Anonymitet og sikkerhed\n• ingen anden app bruger mikrofonen";
+    RECORDING_ERROR_SYSTEM_TITLE = "Systemlyd er ikke tilgængelig";
+    RECORDING_ERROR_SYSTEM = "Tingskriver kan ikke optage lyden fra computeren. Tjek at:\n• der er valgt en lydenhed til systemlyd under Indstillinger\n• lydenheden er tændt i Windows";
+    RECORDING_ERROR_PERMISSION_TITLE = "Tilladelse mangler";
+    RECORDING_ERROR_PERMISSION = "Tingskriver skal have adgang til at optage. Giv adgang til mikrofonen i Windows-indstillingerne, og genstart derefter Tingskriver.";
+    RECORDING_ERROR_START_TITLE = "Optagelsen kunne ikke starte";
+    RECORDING_ERROR_START = "Tjek lydenhederne under Indstillinger, og prøv igen.";
+    // ---- Job 4: the meeting document (frontend/src/components/MeetingDetails) ----
+    DOC_LOADING = "Henter mødet …";
+    DOC_LOAD_FAILED = "Mødet kunne ikke indlæses. Prøv at åbne det igen.";
+    DOC_RENAME = "Omdøb mødet";
+    DOC_SHARED = "Må deles med AI-værktøjer";
+    DOC_SHARING_LOAD_FAILED = "Deling kunne ikke læses. Åbn mødet igen for at prøve igen.";
+    DOC_SHARING_SAVE_FAILED = "Deling kunne ikke gemmes. Prøv igen.";
+    DOC_REGENERATE = "Lav om";
+    DOC_GENERATE = "Lav opsummering";
+    DOC_LANGUAGE_AUTO = "Automatisk";
+    DOC_LANGUAGE_LABEL = "Vælg opsummeringssprog";
+    DOC_MODEL = "AI-model";
+    DOC_TEMPLATE = "Skabelon";
+    DOC_SAVE = "Gem";
+    DOC_COPY = "Kopiér";
+    DOC_COPY_SUMMARY = "Kopiér opsummeringen";
+    DOC_SUMMARY_COPIED = "Opsummeringen er kopieret";
+    DOC_NO_SUMMARY_TO_COPY = "Der er ingen opsummering at kopiere";
+    DOC_SUMMARY_LATER = "Opsummeringer laves og ændres endnu i den nuværende app.";
+    DOC_EDIT_LATER = "Referatet kan endnu ikke redigeres i denne app.";
+    DOC_EMPTY_TITLE = "Ingen opsummering endnu";
+    DOC_EMPTY_TEXT = "Lad AI lave en opsummering af mødets transskript med hovedpunkter, handlepunkter og beslutninger.";
+    DOC_SUMMARY_RUNNING = "Skriver opsummeringen…";
+    DOC_SUMMARY_RUNNING_HELP = "Det kan tage et par minutter for lange møder.";
+    DOC_SUMMARY_FAILED = "Referatet kunne ikke laves. Mødet og transskriptet er gemt.";
+    DOC_SUMMARY_RETRY = "Lav referat igen";
+    DOC_SUMMARY_INVALID = "Det gemte referat mangler eller kan ikke læses. Lav referatet igen.";
+    DOC_DELIVERY_TITLE = "Aflever referatet til";
+    DOC_DELIVERY_LATER = "Aflevering af referatet er endnu ikke flyttet til denne app.";
+    DOC_TRANSCRIPT = "Transskript";
+    DOC_LINES_NONE = "Ingen linjer";
+    DOC_LINES_ONE = "1 linje";
+    DOC_LINES_MANY = "{value} linjer";
+    DOC_SHOW = "Vis";
+    DOC_HIDE = "Skjul";
+    DOC_COPY_TRANSCRIPT = "Kopiér transskriptet";
+    DOC_NO_TRANSCRIPT_TO_COPY = "Der er intet transskript at kopiere";
+    DOC_TRANSCRIPT_COPIED = "Transskriptet er kopieret";
+    DOC_RECORDING = "Optagelse";
+    DOC_OPEN_RECORDING = "Åbn mappen med optagelsen";
+    DOC_NO_AUDIO = "Mødet har ingen lyd, kun et importeret transskript.";
+    DOC_IMPROVE = "Forbedr";
+    DOC_IMPROVE_LATER = "Ny transskription af optagelsen er endnu ikke flyttet til denne app.";
+    DOC_TRANSCRIPT_EMPTY = "Ingen transskription";
+    DOC_TRANSCRIPT_EMPTY_HELP = "Der blev ikke genkendt tale i denne optagelse.";
+    DOC_NUMBERED = "{value}.";
+    DOC_ACTIONS = "Handlinger for opsummeringen";
+    DOC_SUMMARY_ACTIONS = "Gem og kopiér";
+    DOC_TRANSCRIPT_ACTIONS = "Handlinger for transskriptet";
+    // ---- end of Job 4 block ----
 }
 
 macro_rules! parameterized {
@@ -412,12 +568,18 @@ parameterized! {
     measure_wer => MEASURE_WER;
     measure_ms => MEASURE_MS;
     version => VERSION;
+    update_ready_line => UPDATE_READY_LINE;
+    update_ready_detail => UPDATE_READY_DETAIL;
     special_characters => SPECIAL;
     appearance_save_failed => APPEARANCE_SAVE_FAILED;
     appearance_load_failed => APPEARANCE_LOAD_FAILED;
     delivery_remove_confirm => DELIVERY_REMOVE_CONFIRM;
     delivery_next_attempt => DELIVERY_NEXT_ATTEMPT;
     mcp_setup_label => MCP_SETUP_LABEL;
+    dictation_hold => DICTATION_HOLD;
+    dictation_ready => DICTATION_READY;
+    dictation_empty_hint => DICTATION_EMPTY_HINT;
+    dictation_load_failed => DICTATION_LOAD_FAILED;
     data_dir => DATA_DIR;
     database => DATABASE;
     log_file => LOG_FILE;
@@ -434,6 +596,10 @@ parameterized! {
     language_load_failed => LANGUAGE_LOAD_FAILED;
     language_current => LANGUAGE_CURRENT;
     language_extra_list => LANGUAGE_EXTRA_LIST;
+    // Job 3: device notices during a recording.
+    recording_device_switched => RECORDING_DEVICE_SWITCHED;
+    recording_device_switch_failed => RECORDING_DEVICE_SWITCH_FAILED;
+    recording_device_lost => RECORDING_DEVICE_LOST;
 }
 
 pub fn about_models(whisper: &str, parakeet: &str) -> String {
@@ -451,10 +617,33 @@ pub fn proposals_banner(count: usize) -> String {
     }
 }
 
+/// The number of a numbered summary item: "1.".
+pub fn numbered_item(number: u32) -> String {
+    DOC_NUMBERED.replace("{value}", &number.to_string())
+}
+
+/// "Ingen linjer", "1 linje", "1.234 linjer" (Tauri `MeetingDocument`).
+pub fn transcript_lines(count: usize) -> String {
+    match count {
+        0 => DOC_LINES_NONE.to_string(),
+        1 => DOC_LINES_ONE.to_string(),
+        n => DOC_LINES_MANY.replace("{value}", &crate::format_da::integer(n as i64)),
+    }
+}
+
 pub fn proposal_title(field: &str, status: &str) -> String {
     PROPOSAL_TITLE
         .replace("{field}", field)
         .replace("{status}", status)
+}
+
+/// The status bar of a recording as a screen reader reads it.
+pub fn recording_status_label(state: &str, clock: &str, microphone: &str, system: &str) -> String {
+    RECORDING_STATUS_LABEL
+        .replace("{state}", state)
+        .replace("{clock}", clock)
+        .replace("{microphone}", microphone)
+        .replace("{system}", system)
 }
 
 pub fn mcp_action(action: &str) -> String {
@@ -505,5 +694,13 @@ mod tests {
     fn proposal_banner_uses_singular_and_plural() {
         assert_eq!(super::proposals_banner(1), "1 ventende ændring");
         assert_eq!(super::proposals_banner(3), "3 ventende ændringer");
+    }
+
+    #[test]
+    fn transcript_line_count_uses_singular_plural_and_grouping() {
+        assert_eq!(super::transcript_lines(0), "Ingen linjer");
+        assert_eq!(super::transcript_lines(1), "1 linje");
+        assert_eq!(super::transcript_lines(10), "10 linjer");
+        assert_eq!(super::transcript_lines(1234), "1.234 linjer");
     }
 }

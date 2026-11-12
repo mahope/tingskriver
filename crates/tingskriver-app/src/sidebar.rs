@@ -23,8 +23,8 @@ use crate::ui::{palette, Page, SettingsTab, Shell};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Destination {
     Page(Page),
-    /// "Ny optagelse": the home screen, with the explanation that recording
-    /// has not moved to this app yet.
+    /// "Ny optagelse": the home screen, with a notice while recording has
+    /// not moved to this app yet.
     Record,
     /// "Importér transskript" / "Importér lyd": not in this app yet.
     Import,
@@ -46,9 +46,13 @@ impl Shell {
                 }
                 self.page = page
             }
+            // Say why recording cannot start here yet, so the click
+            // visibly does something even on the home screen.
             Destination::Record => {
                 self.page = Page::Home;
-                self.home_notice = Some(strings::MEETING_RECORDING_LATER);
+                if !self.home.can_record {
+                    self.home_notice = Some(strings::RECORDING_NOT_IN_APP);
+                }
             }
             Destination::Import => {
                 self.page = Page::Home;
@@ -66,6 +70,17 @@ impl Shell {
         let shell = cx.entity().downgrade();
         move |_, _, cx| {
             let _ = shell.update(cx, |this, cx| this.navigate(to, cx));
+        }
+    }
+
+    /// Open the About dialog without leaving the current screen.
+    fn on_about(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static {
+        let shell = cx.entity().downgrade();
+        move |_, window, cx| {
+            let _ = shell.update(cx, |this, cx| this.open_about(window, cx));
         }
     }
 
@@ -176,14 +191,14 @@ impl Shell {
                         .child(strings::APP_NAME),
                 )
             })
-            .on_click(self.on_nav(Destination::Page(Page::About), cx))
+            .on_click(self.on_about(cx))
             .into_any_element()
     }
 
     /// "Ny optagelse", or "Optagelse i gang" while a meeting records.
     fn record_button(&self, cx: &mut Context<Self>) -> AnyElement {
         let palette = palette(cx);
-        if self.meetings.read(cx).recording() {
+        if self.meetings.read(cx).recording() || self.home.is_recording() {
             return h_flex()
                 .id("sidebar-recording")
                 .role(gpui::Role::Status)
@@ -325,7 +340,7 @@ impl Shell {
             .into_any_element()
     }
 
-    /// ⓘ: opens Om (Tauri opens the About dialog here).
+    /// ⓘ: opens the About dialog over the current screen (`Info.tsx`).
     fn info_button(&self, collapsed: bool, cx: &mut Context<Self>) -> Button {
         let palette = palette(cx);
         if collapsed {
@@ -333,7 +348,7 @@ impl Shell {
                 "sidebar-about",
                 IconName::Info,
                 strings::ABOUT_APP,
-                self.page == Page::About,
+                false,
                 cx,
             )
         } else {
@@ -345,9 +360,8 @@ impl Shell {
             )
             .self_center()
             .text_color(palette.muted_foreground)
-            .when(self.page == Page::About, |this| this.bg(palette.accent))
         }
-        .on_click(self.on_nav(Destination::Page(Page::About), cx))
+        .on_click(self.on_about(cx))
     }
 
     /// A 44 px icon square of the collapsed column with a 20 px icon and a

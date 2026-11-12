@@ -301,7 +301,7 @@ fn summary_contains_reasoning_marker(value: &serde_json::Value) -> bool {
     }
 }
 
-fn summary_is_renderable(value: &serde_json::Value) -> bool {
+pub(crate) fn summary_is_renderable(value: &serde_json::Value) -> bool {
     let Some(object) = value.as_object() else {
         return false;
     };
@@ -332,7 +332,7 @@ fn sanitize_markdown_value(value: Option<&mut serde_json::Value>) -> bool {
     reasoning_stripped
 }
 
-fn redact_flagged_reasoning(mut result: serde_json::Value) -> serde_json::Value {
+pub(crate) fn redact_flagged_reasoning(mut result: serde_json::Value) -> serde_json::Value {
     let Some(object) = result.as_object_mut() else {
         return result;
     };
