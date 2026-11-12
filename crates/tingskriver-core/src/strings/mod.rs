@@ -31,11 +31,7 @@ catalogue! {
     ABOUT_PRIVACY = "Privatlivspolitik";
     ABOUT_CONTACT = "Kontakt: Mahoje (mahoje.dk)";
     APP_NAME = "Tingskriver";
-    MEETING_OPEN = "Åbn";
-    MEETING_RENAME = "Omdøb";
     MEETING_DELETE = "Slet";
-    MEETING_SAVE = "Gem titel";
-    MEETING_CANCEL = "Annuller";
     MEETING_NEW = "Ny optagelse";
     MEETING_REFRESH = "Opdater";
     MEETING_RECOVERED = "Lyden er gendannet og mødet er gemt. Åbn det i den nuværende app for at transskribere.";
@@ -49,7 +45,6 @@ catalogue! {
     MEETING_DOCUMENT_LATER = "Mødedokumentet er endnu ikke flyttet til denne app. Du kan åbne lydmappen her eller læse teksten i den nuværende app.";
     MEETING_RECORDING_LATER = "Optageskærmen er endnu ikke flyttet hertil. Start din optagelse i den nuværende app.";
     MEETING_FOLDER = "Åbn lydmappe";
-    MEETING_BACK = "Tilbage til møder";
     // The sidebar, copied from the Tauri app (frontend/src/components/Sidebar/index.tsx).
     SIDEBAR_LABEL = "Hovedmenu";
     SIDEBAR_COLLAPSE = "Fold sidepanelet sammen";
@@ -116,7 +111,7 @@ catalogue! {
     MCP_TRANSCRIPT = "Transskript";
     MCP_PARTICIPANTS = "Deltagere og talere";
     MCP_SHARED_COUNT = "Delte møder: {value}";
-    MCP_OPEN_MEETINGS = "Vælg delte møder på mødesiden";
+    MCP_SHARE_HELP = "Del et møde med MCP ved at åbne det i sidebjælken.";
     MCP_TEST = "Test forbindelsen";
     MCP_TESTING = "Tester forbindelsen …";
     MCP_TEST_OK = "Forbindelsen virker. Serveren svarede med værktøjslisten. Intet mødeindhold blev læst. Testprocessen er stoppet igen.";
@@ -133,6 +128,7 @@ catalogue! {
     MCP_SHARE = "Del med AI-værktøjer";
     MCP_UNSHARE = "Stop deling med AI-værktøjer";
     MCP_REFRESH = "Opdatér mødelisten";
+    MCP_MEETING_NOT_LISTED = "Mødet er ikke i delingslisten endnu. Opdatér mødelisten for at kunne dele det.";
     MCP_MARKED = "Kun markerede møder";
     MCP_METADATA = "Kun metadata";
     MCP_ALL = "Alt";
@@ -198,7 +194,6 @@ catalogue! {
     INTERRUPTED_DISMISS = "Forstået";
     LOADING_MEETINGS = "Indlæser møder …";
     NO_MEETINGS = "Ingen møder endnu";
-    FIRST_MEETING = "Når du har optaget dit første møde, står det her.";
     NO_MEETINGS_YET = "Ingen møder at vise endnu";
     MEETINGS_LATER = "Mødelisten kommer hertil i en senere version. Indtil da finder du dine møder i den nuværende app.";
     DICTATION_LATER = "Hold Ctrl+Win nede, tal, og slip. Teksten skrives der, hvor markøren står. Diktering flytter hertil i en senere version.";

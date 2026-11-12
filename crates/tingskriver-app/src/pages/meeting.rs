@@ -82,6 +82,9 @@ impl Shell {
             None => body = body.child(loading(strings::LOADING_MEETINGS, cx)),
             Some(Err(error)) => body = body.child(paragraph(error, cx)),
             Some(Ok(meetings)) => {
+                if !meetings.iter().any(|m| m.id == meeting_id) {
+                    body = body.child(paragraph(strings::MCP_MEETING_NOT_LISTED, cx));
+                }
                 for (index, meeting) in meetings
                     .iter()
                     .enumerate()

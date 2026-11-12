@@ -191,6 +191,19 @@ pub fn matching_rows(
     shown
 }
 
+/// Where `row` (from an earlier list) sits among the `shown` rows of `list`:
+/// the same meeting (by id) or the same day heading. Keeps the sidebar's
+/// scroll position on the row the user was looking at when the list reloads.
+pub fn position_of_row(row: &Row, list: &List, shown: &[usize]) -> Option<usize> {
+    shown
+        .iter()
+        .position(|&index| match (row, list.rows.get(index)) {
+            (Row::Meeting(a), Some(Row::Meeting(b))) => a.data.id == b.data.id,
+            (Row::Date { date: a, .. }, Some(Row::Date { date: b, .. })) => a == b,
+            _ => false,
+        })
+}
+
 /// A search snippet as plain text: the match markers of
 /// `database::repositories::search` removed.
 pub fn snippet_text(snippet: &str) -> String {
@@ -482,6 +495,18 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert!(matches!(&list.rows()[rows[1]], Row::Meeting(m) if m.data.id == "3"));
         assert!(matching_rows(&list, "budget", &none).is_empty());
+    }
+    #[test]
+    fn a_row_is_found_again_after_the_list_changes() {
+        let old = make_list(vec![meeting(1, 3), meeting(2, 1), meeting(3, 1)]);
+        let new = make_list(vec![meeting(4, 5), meeting(1, 3), meeting(3, 1)]);
+        let none = std::collections::HashSet::new();
+        let shown = matching_rows(&new, "", &none);
+        // Old rows: [date 3, 1, date 1, 2, 3]; new: [date 5, 4, date 3, 1, date 1, 3].
+        assert_eq!(position_of_row(&old.rows()[1], &new, &shown), Some(3));
+        assert_eq!(position_of_row(&old.rows()[2], &new, &shown), Some(4));
+        // A deleted meeting is not found.
+        assert_eq!(position_of_row(&old.rows()[3], &new, &shown), None);
     }
     #[test]
     fn snippets_drop_match_markers_and_short_status_is_one_sentence() {

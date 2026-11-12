@@ -11,8 +11,9 @@ use crate::{
 };
 use chrono::NaiveDate;
 use gpui::{
-    div, list as virtual_list, prelude::*, AnyElement, Context, Entity, EventEmitter, FocusHandle,
-    FontWeight, KeyDownEvent, ListAlignment, ListState, SharedString, Subscription, Task, Window,
+    div, list as virtual_list, prelude::*, px, AnyElement, Context, Entity, EventEmitter,
+    FocusHandle, FontWeight, KeyDownEvent, ListAlignment, ListOffset, ListState, SharedString,
+    Subscription, Task, Window,
 };
 use gpui_component::{
     dialog::DialogFooter,
@@ -200,13 +201,16 @@ impl MeetingsView {
                         match list {
                             Ok(list) => {
                                 let changed = !this.list.same_rows(&list);
-                                this.list = Rc::new(list);
+                                let old_list = std::mem::replace(&mut this.list, Rc::new(list));
                                 if changed {
                                     // A renamed title can change a row's
                                     // height with the same row count: measure
-                                    // every row again.
-                                    this.shown = Rc::new(Vec::new());
+                                    // every row again, but keep the row the
+                                    // user scrolled to at the top.
+                                    let top = this.viewport.logical_scroll_top();
+                                    let old_shown = std::mem::take(&mut this.shown);
                                     this.update_shown();
+                                    this.keep_scroll(&old_list, &old_shown, top);
                                 }
                             }
                             Err(_) => this.error = Some(strings::MEETING_LOAD_FAILED.into()),
@@ -247,6 +251,32 @@ impl MeetingsView {
                 self.selected = None;
             }
         }
+    }
+
+    /// After a reload reset the viewport: scroll back to the row that was
+    /// at the top (`top` in `old_shown` of `old_list`), or to the same
+    /// place when that row is gone.
+    fn keep_scroll(&self, old_list: &List, old_shown: &[usize], top: ListOffset) {
+        if top.item_ix == 0 && top.offset_in_item == px(0.) {
+            return;
+        }
+        let Some(row) = old_shown
+            .get(top.item_ix)
+            .and_then(|&index| old_list.rows().get(index))
+        else {
+            return;
+        };
+        let offset = match meeting_list::position_of_row(row, &self.list, &self.shown) {
+            Some(item_ix) => ListOffset {
+                item_ix,
+                offset_in_item: top.offset_in_item,
+            },
+            None => ListOffset {
+                item_ix: top.item_ix.min(self.shown.len().saturating_sub(1)),
+                offset_in_item: px(0.),
+            },
+        };
+        self.viewport.scroll_to(offset);
     }
 
     /// Filter by title at once; run the full-text search (titles, notes,
