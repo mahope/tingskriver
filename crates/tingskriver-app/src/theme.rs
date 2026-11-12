@@ -273,7 +273,9 @@ pub mod document {
     /// Space between summary blocks.
     pub const BLOCK_GAP: Pixels = px(10.0);
     /// Extra space above a summary heading.
-    pub const HEADING_GAP: Pixels = px(36.0);
+    pub const HEADING_GAP: Pixels = px(24.0);
+    /// A level-1 summary heading (BlockNote's `2em` on 16 px).
+    pub const HEADING_1: Pixels = px(32.0);
     /// Bullet and number column, also the indent per nesting level.
     pub const LIST_INDENT: Pixels = px(24.0);
     /// The bullet square.
@@ -557,6 +559,18 @@ mod tests {
                 "recording text on the recording tint over card",
                 p.recording,
                 over(p.recording, p.card, sidebar::RECORDING_TINT),
+            ),
+            // Job 4: the summary error box and the transcript disclosure
+            // row's hover on the page background.
+            (
+                "destructive text on the error tint over background",
+                p.destructive,
+                over(p.destructive, p.background, document::ERROR_TINT),
+            ),
+            (
+                "muted text on the transcript row hover",
+                p.muted_foreground,
+                over(p.accent, p.background, LIST_HOVER_ALPHA),
             ),
         ]
     }

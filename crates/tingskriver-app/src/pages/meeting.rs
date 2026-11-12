@@ -559,7 +559,7 @@ impl MeetingView {
     fn delivery(&self, cx: &mut Context<Self>) -> AnyElement {
         let palette = Self::palette(cx);
         v_flex()
-            .mt(space::LG)
+            .mt(space::XXL)
             .pt(space::LG)
             .gap(space::SM)
             .border_t_1()
@@ -884,12 +884,13 @@ impl Render for MeetingView {
                 if let Some(band) = self.proposals_band(cx) {
                     article = article.child(band);
                 }
+                article = article.child(div().mt(space::XL).child(self.summary(loaded, cx)));
+                // Tauri puts `DeliveryApproval` above the summary; until
+                // delivery is ported it is one note, so it sits below.
                 if summary.has_content() && summary.status != SummaryStatus::Running {
                     article = article.child(self.delivery(cx));
                 }
-                article = article
-                    .child(div().mt(space::XL).child(self.summary(loaded, cx)))
-                    .child(self.transcript_section(loaded, window, cx));
+                article = article.child(self.transcript_section(loaded, window, cx));
             }
         }
         div()
@@ -923,7 +924,7 @@ fn summary_block(block: &Block, first: bool, palette: &Palette) -> AnyElement {
     match &block.kind {
         BlockKind::Heading(level) => {
             let font_size = match level {
-                1 => typography::DISPLAY,
+                1 => size::HEADING_1,
                 2 => typography::XXXL,
                 _ => typography::XL,
             };

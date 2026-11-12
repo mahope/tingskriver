@@ -83,7 +83,7 @@ The first column is the exact identifier in the code; the script checks it.
 | `args` | Command line (`StartupArgs`): `--hidden`, `--page`. | Start options. |
 | `crash` | Panic hook that turns graphics failures into a log entry and a native error dialog. | Never a place for UI. |
 | `update` | Velopack installer hooks, background update check and download, applying an update at next start. | Update behaviour. The update screen is not built yet. |
-| `proposals` | Review of AI proposals for a meeting's notes and summary: the band "N ventende ændringer", a diff per proposal and Anvend / Afvis / Fortryd. Changes go only through `ProposalStore::apply/undo` on a click. Not mounted in `ui.rs` until the meeting document exists. | AI proposals. Never write notes or summary directly. |
+| `proposals` | Review of AI proposals for a meeting's notes and summary: the band "N ventende ændringer", a diff per proposal and Anvend / Afvis / Fortryd. Changes go only through `ProposalStore::apply/undo` on a click. Mounted in `MeetingView` as a card between the toolbar and the summary, hidden while loading and when empty. | AI proposals. Never write notes or summary directly. |
 
 ### Controls (in `controls.rs`)
 
@@ -102,8 +102,17 @@ The first column is the exact identifier in the code; the script checks it.
 | Name | Responsibility | Use it for / do not use it for |
 |---|---|---|
 | `mcp_settings` | MCP access, consent, data controls and audit status. | MCP controls on the Indstillinger page; reuse the shared settings and text blocks. |
-| `meeting_sharing` | MCP sharing of the open meeting, with loading/error states (`pages/meeting.rs`). | Choosing whether MCP may read this meeting. Moves into the meeting document header (Job 4). |
-| `meeting_page` | The open meeting until the document is ported: title, time and duration, job status, "Åbn lydmappe" and `meeting_sharing`. | Replaced by the meeting document (docs/design-paritet.md, Job 4). |
+| `meeting_page` | Opens the meeting document for the meeting selected in the sidebar: creates a `MeetingView` when another meeting opens and tells it the content width (`pages/meeting.rs`). | The content area when a meeting is open. |
+| `MeetingView` | The meeting document (Tauri `MeetingDocument`): a 736 px article centered in the content area, px 32, pt 40, pb 112, the whole page scrolling. Loads `tingskriver_core::meeting_document` on the runtime and reloads when the sidebar status of the meeting changes. Summary is read-only rendered Markdown; editing (BlockNote in Tauri) is a separate functional issue. | One open meeting. Never write notes or summary from here; proposals go through `ProposalReview`. |
+| `header` | Title (36 px semibold Literata) with a 32 px pencil that opens the "Omdøb møde" dialog, the date line "29. okt. 2026 kl. 09.30" (14 px muted), `sharing` and the `toolbar`. | Only in `MeetingView`. |
+| `sharing` | "Må deles med AI-værktøjer" checkbox (Tauri `MeetingSharing`), saving through `mcp::set_shared`; "Opdatér mødelisten" when the meeting is not yet in the sharing list; errors as alerts. Replaces the old `meeting_sharing` block. | Per-meeting MCP sharing. MCP access itself is in Indstillinger. |
+| `toolbar` | Two joined outline button groups (32 px segments, 12 px text, 16 px icons): [Lav om / Lav opsummering, Automatisk ▾, AI-model, Skabelon] and [Gem, Kopiér]. Labels collapse to icons below 544 px (language below 640 px). Only Kopiér works; the rest are disabled with the note "Opsummeringer laves og ændres endnu i den nuværende app." | Summary actions. Enable a segment when its function is ported. |
+| `summary` | The summary area: "Skriver opsummeringen…" while running, the empty state (64 px FileQuestionMark, 18 px serif title, disabled "Lav opsummering"), or the blocks with the `bg-destructive/10` error box after a failed run. | Only in `MeetingView`. |
+| `summary_block` | One rendered Markdown block in BlockNote's look: Literata headings 32/30/20 px, 16 px text on 28 px lines, 560 px text column, square bullets, numbers and task boxes in a 24 px column. | Read-only summary text. |
+| `delivery` | "Aflever referatet til" with the note that delivery is not ported yet, below the summary. | Replaced by the real approval (target, consent) when delivery is ported. |
+| `transcript_section` | The folded transcript: top border, 44 px disclosure row (chevron, "Transskript" 16 px semibold, "10 linjer", Skjul/Vis) with `aria-expanded`, Enter/Space, and a 70 % window-height card when open. | Only in `MeetingView`. |
+| `transcript_toolbar` | Right-aligned button group [Kopiér, Optagelse (opens the audio folder), Forbedr (disabled)], or "Mødet har ingen lyd, kun et importeret transskript." without a folder. | Only in `transcript_section`. |
+| `transcript_lines` | Virtualized transcript lines: 56 px muted time column (MM:SS) and 16 px text on 1.65 lines; empty state "Ingen transskription". | Only in `transcript_section`. |
 | `home_page` | The idle home screen: hero "Klar til dit næste møde" and the floating "Start optagelse" pill (`shadow::md`), with the interruption card, recovery card and the "not ported yet" notice above it (`pages/home.rs`). | The default content. Recording itself is Job 3. |
 | `Shell` | The window content: sidebar plus the current page, or the database error page instead of both. Owns page selection, sidebar collapse, the home notice, appearance observer and the debounced window-position save. | The one root view. Do not add a second root. |
 | `Page` | What the content area shows: `Home` (or the open meeting), Diktering, Indstillinger, Om, and Måling (not in the sidebar, `--page måling`), with their `--page` names (`møder` opens Home). `Page::ALL` is the screenshot inventory. | Adding a page: add a variant, `from_arg`, the arm in `Shell::render`, a sidebar entry if it needs one, and goldens. |
@@ -160,7 +169,7 @@ docs.
 | Concept | Danish in the UI | What it is | Where |
 |---|---|---|---|
 | Pill | pille | The small floating window at the bottom of the screen: audio level while dictating, "Skriver …" while processing. Never takes focus. It also carries the recording indicator. | `tingskriver-overlay` (`PillState`, `Pill`), started by the host |
-| Meeting document | mødedokument | One meeting's page: transcript (microphone and system tracks), own notes, summary, and the approval to deliver. Built in the Tauri app; the GPUI port is a separate issue, so no GPUI component exists yet. | Tauri `frontend/`; data in `tingskriver_core::database`, `notes`, `summary` |
+| Meeting document | mødedokument | One meeting's page: title and time, MCP sharing, summary (read-only for now), pending AI proposals and the folded transcript. Notes and delivery approval are not ported yet. | `MeetingView` (`pages/meeting.rs`); data in `tingskriver_core::meeting_document`, `proposals` |
 | Queue | kø | Persistent job queue for saved audio that is transcribed after the recording, with retries and back-off. A delivery queue with the same shape exists for delivery. Neither runs during recording. | [transcription-queue.md](transcription-queue.md), `transcription_queue`; [delivery.md](delivery.md) |
 | Delivery | aflevering | Sending an approved meeting document to a target (folder, and others as described in delivery.md). Opt-in, blocked by "Kun lokal" and "Privat tilstand". Never sends on save. | [delivery.md](delivery.md), `tingskriver_core::delivery` |
 | Microphone track / system track | mikrofonspor / systemspor | The user's own voice / what the PC plays. Always called "microphone" and "system" in code. | [SPEC.md](SPEC.md) |
@@ -173,7 +182,7 @@ Change a row when the experience changes.
 | Experience | Components | Notes |
 |---|---|---|
 | Start | `startup`, `Shell`, `home_page`, `loading` | First frame within 500 ms; the database opens in the background. |
-| Look at meetings | `sidebar`, `MeetingsView`, `meeting_page`, `loading` | The list is always in the sidebar; search by title and content; open a meeting (title, status, audio folder, MCP sharing), rename and delete in dialogs, restore interrupted audio from Home. Recording and import explain the pending ports. |
+| Look at meetings | `sidebar`, `MeetingsView`, `meeting_page`, `MeetingView`, `loading` | The list is always in the sidebar; search by title and content; open a meeting as a document (summary, transcript, audio folder, MCP sharing, copy), rename and delete in dialogs, restore interrupted audio from Home. Recording and import explain the pending ports. |
 | See why a recording stopped | `home_page`, `interrupted_card` | After sleep or logoff, shows the interruption notice on resume or next launch until dismissed. Recording does not restart automatically. |
 | Test Danish input | `dictation_page`, `probe` | Manual Windows test 2 and 3 in [gpui.md](gpui.md). |
 | Compare transcription on own sample | `MeasurementView`, `Page` | See [measurement.md](measurement.md). |
