@@ -134,7 +134,7 @@ the same time; both use the same database with the same migrations.
    main, …)` and `startup: database ready after …`. The first frame line must
    come before the database line. Compare with the 0.5.0-dev.2 baseline in
    `docs/ydeevne.md` on main (issue #3).
-2. **Danish input.** Diktering page, test field. Type `æøå ÆØÅ`. Dead keys:
+2. **Danish input.** Diktering page: unfold "Test tastatur" at the bottom. Type `æøå ÆØÅ`. Dead keys:
    `´` then `e` gives `é`, `¨` then `u` gives `ü`, `^` then `o` gives `ô`,
    `~` then `n` gives `ñ`, `` ` `` then `a` gives `à`; a dead key followed
    by space gives the accent itself. AltGr: `@ £ $ € { [ ] } | \`. The line

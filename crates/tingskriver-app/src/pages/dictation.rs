@@ -611,13 +611,16 @@ impl Shell {
                                     })),
                             )
                             .child(
-                                controls::small_button(("dictation-delete", key), Variant::Ghost)
-                                    .icon(IconName::Trash)
-                                    .accessibility_label(strings::DICTATION_DELETE_LABEL)
-                                    .tooltip(strings::DICTATION_DELETE_LABEL)
-                                    .on_click(cx.listener(move |shell, _, window, cx| {
+                                controls::small_icon_button(
+                                    ("dictation-delete", key),
+                                    IconName::Trash,
+                                    strings::DICTATION_DELETE_LABEL,
+                                )
+                                .on_click(cx.listener(
+                                    move |shell, _, window, cx| {
                                         shell.delete_dictation(id, window, cx)
-                                    })),
+                                    },
+                                )),
                             ),
                     ),
             )

@@ -129,7 +129,11 @@ The first column is the exact identifier in the code; the script checks it.
 | `list_message` | Muted 14 px text in the list slot, optionally with a title (empty list, no match, load errors). | Only in `MeetingsView`. |
 | `search_field` | The sidebar search input: search icon, clear X. | Only in the sidebar. |
 | `recovery_card` | Card with "Gendan optagelse" buttons for interrupted recordings. | Shown on Home. |
-| `dictation_page` | Diktering: placeholder text plus the input test field. | |
+| `dictation_page` | Diktering (Tauri `DictationHistory.tsx`): 768 px column centred with 32 px padding; header, history and "Test tastatur". Reads history, settings and status from core's dictation service when shown and again on `dictation-history-changed`. | |
+| `dictation_header` | "Diktering" (30 px serif) with the outline "Indstillinger" button, the shortcut explanation with the shortcut on a muted chip, and the status line (muted, warning or destructive). | Only on the Diktering page. The chip is a text highlight: GPUI text runs have no border or padding. |
+| `dictation_history` | "Seneste dikteringer" (20 px serif) with "Ryd historik" (ghost sm; a second click confirms, red), the history-off line, three muted loading cards, the dashed empty card (keyboard icon) or the list. | Only on the Diktering page. |
+| `dictation_entry` | One history card (`rounded-lg`, border, card, p 16): text, "dato · program · udbyder · varighed" (latency tooltip, "reserve brugt" in warning with the reason as tooltip), Kopiér (ghost sm) and Slet (32 px icon button). | Only in `dictation_history`. |
+| `dictation_probe` | "Test tastatur" (GPUI only): a ghost disclosure under a top border that unfolds the `probe` fields. | Manual Windows tests 2 and 3 in [gpui.md](gpui.md). |
 | `settings_page` | Indstillinger: read-only groups (appearance, data folder and database, log) and the buttons "Åbn logmappen" and "Afslut". | |
 | `about_page` | Om: build metadata, update status, copying diagnostics with progress and result feedback, and bundled legal documents. | Reuses the page frame, text helpers and gpui-component buttons. |
 | `database_error_page` | Full-window error: icon, summary, advice, technical error, paths, "Åbn logmappen" and "Prøv igen". | The model for any blocking error: say what happened, what to do, where the log is. |
@@ -175,7 +179,7 @@ Change a row when the experience changes.
 | Start | `startup`, `Shell`, `home_page`, `loading` | First frame within 500 ms; the database opens in the background. |
 | Look at meetings | `sidebar`, `MeetingsView`, `meeting_page`, `loading` | The list is always in the sidebar; search by title and content; open a meeting (title, status, audio folder, MCP sharing), rename and delete in dialogs, restore interrupted audio from Home. Recording and import explain the pending ports. |
 | See why a recording stopped | `home_page`, `interrupted_card` | After sleep or logoff, shows the interruption notice on resume or next launch until dismissed. Recording does not restart automatically. |
-| Test Danish input | `dictation_page`, `probe` | Manual Windows test 2 and 3 in [gpui.md](gpui.md). |
+| Test Danish input | `dictation_probe`, `probe` | Manual Windows test 2 and 3 in [gpui.md](gpui.md). |
 | Compare transcription on own sample | `MeasurementView`, `Page` | See [measurement.md](measurement.md). |
 | See app settings | `settings_page`, `setting_group` | Read-only. |
 | Choose meeting and report languages | `settings_page`, `language_group` | Saved through core's language settings; reports default to Danish. |
