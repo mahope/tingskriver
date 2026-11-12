@@ -70,6 +70,7 @@ pub mod meeting_list;
 pub mod model_download;
 pub mod notes;
 pub mod ollama;
+pub mod onboarding;
 pub mod openai;
 pub mod openrouter;
 pub mod parakeet_engine;

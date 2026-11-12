@@ -776,9 +776,17 @@ pub(crate) fn fixture(variant: crate::ui::FixtureVariant) -> HomeState {
     // The recording fixtures show what the app looks like once recording is
     // wired to core; a start error or a running recording cannot happen
     // while it cannot record.
-    state.can_record = !matches!(variant, V::Plain | V::Meetings | V::SidebarCollapsed);
+    let idle = matches!(
+        variant,
+        V::Plain | V::Meetings | V::SidebarCollapsed | V::OnboardingWelcome | V::OnboardingModel
+    );
+    state.can_record = !idle;
     match variant {
-        V::Plain | V::Meetings | V::SidebarCollapsed => {}
+        V::Plain
+        | V::Meetings
+        | V::SidebarCollapsed
+        | V::OnboardingWelcome
+        | V::OnboardingModel => {}
         V::Recording => state.recording = Some(fixture_recording(false, None)),
         V::RecordingPaused => state.recording = Some(fixture_recording(true, None)),
         V::RecordingDeviceSwitched => {
