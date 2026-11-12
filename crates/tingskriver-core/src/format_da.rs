@@ -68,6 +68,32 @@ pub fn time(value: NaiveTime) -> String {
     format!("kl. {:02}.{:02}", value.hour(), value.minute())
 }
 
+/// Day, short month and clock without year: "30. okt., 14.02" (Tauri's
+/// `Intl.DateTimeFormat('da-DK', { day, month: 'short', hour, minute })`,
+/// the Diktering history).
+pub fn day_month_clock(value: NaiveDateTime) -> String {
+    format!(
+        "{}. {}, {}",
+        value.day(),
+        SHORT_MONTHS[value.month0() as usize],
+        clock(value.time())
+    )
+}
+
+/// A latency as the Tauri `formatMs`: "940 ms" under a second, otherwise
+/// seconds with at most one decimal ("2,4 s", "2 s").
+pub fn milliseconds(ms: i64) -> String {
+    if ms < 1000 {
+        return format!("{ms} ms");
+    }
+    let tenths = (ms as f64 / 100.0).round() as i64;
+    let whole = integer(tenths / 10);
+    match tenths % 10 {
+        0 => format!("{whole} s"),
+        tenth => format!("{whole},{tenth} s"),
+    }
+}
+
 pub fn date_time(value: NaiveDateTime) -> String {
     format!("{} {}", date(value.date()), time(value.time()))
 }

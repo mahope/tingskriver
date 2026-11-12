@@ -271,6 +271,8 @@ pub fn run() {
                                 }
                                 Err(error) => log::warn!("Invalid dictation comparison: {error}"),
                             }
+                        } else if event.name == tingskriver_core::dictation::HISTORY_CHANGED_EVENT {
+                            cx.update(ui::dictation_history_changed);
                         }
                     }
                 })

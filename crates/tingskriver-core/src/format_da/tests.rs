@@ -97,3 +97,29 @@ fn danish_durations_and_sizes() {
         assert_eq!(file_size(bytes), expected);
     }
 }
+
+#[test]
+fn day_month_clock_matches_the_dictation_history() {
+    let at = NaiveDate::from_ymd_opt(2026, 10, 30)
+        .unwrap()
+        .and_hms_opt(14, 2, 0)
+        .unwrap();
+    assert_eq!(day_month_clock(at), "30. okt., 14.02");
+    let may = NaiveDate::from_ymd_opt(2026, 5, 1)
+        .unwrap()
+        .and_hms_opt(9, 5, 0)
+        .unwrap();
+    assert_eq!(day_month_clock(may), "1. maj, 09.05");
+}
+
+#[test]
+fn milliseconds_as_the_tauri_format_ms() {
+    assert_eq!(milliseconds(0), "0 ms");
+    assert_eq!(milliseconds(940), "940 ms");
+    assert_eq!(milliseconds(999), "999 ms");
+    assert_eq!(milliseconds(1000), "1 s");
+    assert_eq!(milliseconds(1100), "1,1 s");
+    assert_eq!(milliseconds(2400), "2,4 s");
+    assert_eq!(milliseconds(2449), "2,4 s");
+    assert_eq!(milliseconds(1950), "2 s");
+}

@@ -254,6 +254,20 @@ pub mod sidebar {
 
 // ---- end of Job 2 block ----
 
+// ---- Job 7 (Diktering page, docs/design-paritet.md): added constants ----
+
+/// The Diktering page (`dictation/DictationHistory.tsx`).
+pub mod dictation {
+    use gpui::{px, Pixels};
+
+    /// A loading placeholder card (`h-20`).
+    pub const SKELETON_HEIGHT: Pixels = px(80.0);
+    /// The keyboard icon of the empty history (`h-6 w-6`).
+    pub const EMPTY_ICON: Pixels = px(24.0);
+}
+
+// ---- end of Job 7 block ----
+
 /// Tailwind's shadows (`shadow-sm`, `shadow`, `shadow-md`), the same in both
 /// modes as in the Tauri app.
 pub mod shadow {
@@ -509,6 +523,16 @@ mod tests {
                 p.recording,
                 over(p.recording, p.card, sidebar::RECORDING_TINT),
             ),
+            // Job 7: the Diktering status line, "reserve brugt" in a history
+            // card and the shortcut chip.
+            ("warning text on background", p.warning, p.background),
+            (
+                "destructive text on background",
+                p.destructive,
+                p.background,
+            ),
+            ("warning text on card", p.warning, p.card),
+            ("shortcut chip", p.foreground, p.muted),
         ]
     }
 

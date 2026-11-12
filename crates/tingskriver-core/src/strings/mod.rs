@@ -196,8 +196,36 @@ catalogue! {
     NO_MEETINGS = "Ingen møder endnu";
     NO_MEETINGS_YET = "Ingen møder at vise endnu";
     MEETINGS_LATER = "Mødelisten kommer hertil i en senere version. Indtil da finder du dine møder i den nuværende app.";
-    DICTATION_LATER = "Hold Ctrl+Win nede, tal, og slip. Teksten skrives der, hvor markøren står. Diktering flytter hertil i en senere version.";
-    PROBE = "Prøvefelt";
+    // The Diktering page, copied from the Tauri app
+    // (frontend/src/components/dictation/DictationHistory.tsx).
+    DICTATION_SETTINGS = "Indstillinger";
+    DICTATION_HOLD = "Hold {value}, tal, og slip. Teksten bliver skrevet ind dér, hvor markøren står. Tryk to gange hurtigt for at diktere uden at holde tasterne nede, og tryk igen, når du er færdig.";
+    DICTATION_ONLY_WINDOWS = "Genvejen og indsættelse virker kun på Windows. Historik, ordbog og snippets kan stadig redigeres.";
+    DICTATION_DISABLED = "Diktering er slået fra under Indstillinger.";
+    DICTATION_NO_ENGINE = "Der er hverken en Syv.ai-nøgle eller en lokal model. Tilføj en af dem under Indstillinger.";
+    DICTATION_READY = "Genvejen er klar. Transskriberes med {value}.";
+    DICTATION_ENGINE_LOCAL = "den lokale model";
+    DICTATION_ENGINE_SYV = "Syv.ai (lokal model som reserve)";
+    DICTATION_HISTORY = "Seneste dikteringer";
+    DICTATION_CLEAR = "Ryd historik";
+    DICTATION_CLEAR_CONFIRM = "Klik igen for at rydde alt";
+    DICTATION_HISTORY_OFF = "Historikken er slået fra, så nye dikteringer gemmes ikke.";
+    DICTATION_EMPTY = "Ingen dikteringer endnu";
+    DICTATION_EMPTY_HINT = "Stil markøren i et tekstfelt, hold {value} og sig noget. Så dukker det op her.";
+    DICTATION_COPY = "Kopiér";
+    DICTATION_COPY_LABEL = "Kopiér teksten";
+    DICTATION_DELETE_LABEL = "Slet dikteringen";
+    DICTATION_LATENCY = "Tid fra du slap tasterne, til teksten var indsat";
+    DICTATION_FALLBACK = "reserve brugt";
+    DICTATION_ENGINE_SYV_SHORT = "Syv.ai";
+    DICTATION_ENGINE_LOCAL_SHORT = "Lokal model";
+    DICTATION_COPIED = "Teksten er kopieret";
+    DICTATION_LOAD_FAILED = "Historikken kunne ikke hentes: {value}";
+    DICTATION_DELETE_FAILED = "Dikteringen kunne ikke slettes";
+    DICTATION_CLEARED = "Historikken er ryddet";
+    DICTATION_CLEAR_FAILED = "Historikken kunne ikke ryddes";
+    // GPUI only: the keyboard test field folds away under the history.
+    PROBE = "Test tastatur";
     PROBE_HELP = "Brug felterne til at teste tastaturet: æøå, dødtaster (^ ¨ ~ ´ `) efterfulgt af en vokal, AltGr-tegn (@ £ $ € { [ ] } | \\) og IME-komposition.";
     SPECIAL_EMPTY = "Særlige tegn vises her med deres Unicode-nummer.";
     SPECIAL = "Særlige tegn: {value}";
@@ -328,6 +356,10 @@ parameterized! {
     measure_ms => MEASURE_MS;
     version => VERSION;
     special_characters => SPECIAL;
+    dictation_hold => DICTATION_HOLD;
+    dictation_ready => DICTATION_READY;
+    dictation_empty_hint => DICTATION_EMPTY_HINT;
+    dictation_load_failed => DICTATION_LOAD_FAILED;
     appearance => APPEARANCE_DETAIL;
     data_dir => DATA_DIR;
     database => DATABASE;

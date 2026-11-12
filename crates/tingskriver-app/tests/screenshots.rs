@@ -40,6 +40,19 @@ fn fixtures() -> Vec<(String, Page, DbState, FixtureVariant)> {
         DbState::NotCreated,
         FixtureVariant::SidebarCollapsed,
     ));
+    // Diktering without history and with the keyboard test unfolded.
+    fixtures.push((
+        "dictation-empty".into(),
+        Page::Dictation,
+        DbState::NotCreated,
+        FixtureVariant::DictationEmpty,
+    ));
+    fixtures.push((
+        "dictation-probe".into(),
+        Page::Dictation,
+        DbState::NotCreated,
+        FixtureVariant::DictationProbe,
+    ));
     fixtures.push((
         "loading".into(),
         Page::Home,

@@ -362,6 +362,18 @@ fn dismiss_interrupted(cx: &mut App) {
     }
 }
 
+/// Dictation history changed in core: the Diktering page reads it again.
+pub fn dictation_history_changed(cx: &mut App) {
+    let shell = cx
+        .global::<Globals>()
+        .shell
+        .as_ref()
+        .and_then(|shell| shell.upgrade());
+    if let Some(shell) = shell {
+        shell.update(cx, |shell, cx| shell.dictation_changed(cx));
+    }
+}
+
 /// Navigate to About in an existing or newly opened window.
 pub fn show_about(cx: &mut App) {
     show_main_window(cx);
@@ -511,6 +523,10 @@ pub enum FixtureVariant {
     Meetings,
     /// The 64 px sidebar.
     SidebarCollapsed,
+    /// Diktering without history (docs/screenshots/diktering-tom-*.png).
+    DictationEmpty,
+    /// Diktering with "Test tastatur" unfolded.
+    DictationProbe,
 }
 
 pub struct Shell {
@@ -527,6 +543,7 @@ pub struct Shell {
     pub(crate) home_notice: Option<&'static str>,
     pub(crate) probe_line: Entity<InputState>,
     pub(crate) probe_text: Entity<TextareaState>,
+    pub(crate) dictation: crate::pages::dictation::DictationPage,
     state_path: Option<PathBuf>,
     last_saved: Option<window_state::SavedWindow>,
     pending_save: Option<Task<()>>,
@@ -591,6 +608,7 @@ impl Shell {
                 .meetings
                 .update(cx, |meetings, _| meetings.freeze(list));
             shell.sidebar_collapsed = variant == FixtureVariant::SidebarCollapsed;
+            shell.dictation = crate::pages::dictation::DictationPage::fixture(variant);
             shell.probe_line.update(cx, |input, cx| {
                 input.set_value("æøå ÆØÅ é ü @ €", window, cx)
             });
@@ -674,6 +692,7 @@ impl Shell {
             home_notice: None,
             probe_line,
             probe_text,
+            dictation: crate::pages::dictation::DictationPage::new(),
             state_path,
             last_saved: None,
             pending_save: None,
@@ -704,6 +723,9 @@ impl Shell {
 impl Render for Shell {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = palette(cx);
+        if self.page != Page::Dictation {
+            self.dictation.hide();
+        }
         let failure = match &self.model.read(cx).db {
             DbState::Failed(failure) => Some(failure.clone()),
             _ => None,
