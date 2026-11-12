@@ -21,6 +21,7 @@ mod meetings;
 mod pages;
 pub mod probe;
 pub mod proposals;
+mod sidebar;
 pub mod single_instance;
 pub mod startup;
 pub mod theme;
@@ -193,7 +194,7 @@ pub fn run() {
             let start_page = args.page.as_deref().and_then(|name| {
                 let page = ui::Page::from_arg(name);
                 if page.is_none() {
-                    log::warn!("Unknown page {name:?}; opening Møder");
+                    log::warn!("Unknown page {name:?}; opening the home screen");
                 }
                 page
             });

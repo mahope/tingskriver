@@ -102,11 +102,19 @@ The first column is the exact identifier in the code; the script checks it.
 | Name | Responsibility | Use it for / do not use it for |
 |---|---|---|
 | `mcp_settings` | MCP access, consent, data controls and audit status. | MCP controls on the Indstillinger page; reuse the shared settings and text blocks. |
-| `meeting_sharing` | Per-meeting MCP sharing controls and loading/error states. | Choosing which meetings MCP may read. |
-| `Shell` | The window content: sidebar plus the current page, or the database error page instead of both. Owns page selection, appearance observer and the debounced window-position save. | The one root view. Do not add a second root. |
-| `Page` | The pages in the sidebar (Møder, Diktering, Måling, Indstillinger, Om), their Danish labels, icons and `--page` names. | Adding a page: add a variant, `label`, `icon`, `from_arg` and the arm in `Shell::render`. |
+| `meeting_sharing` | MCP sharing of the open meeting, with loading/error states (`pages/meeting.rs`). | Choosing whether MCP may read this meeting. Moves into the meeting document header (Job 4). |
+| `meeting_page` | The open meeting until the document is ported: title, time and duration, job status, "Åbn lydmappe" and `meeting_sharing`. | Replaced by the meeting document (docs/design-paritet.md, Job 4). |
+| `home_page` | The idle home screen: hero "Klar til dit næste møde" and the floating "Start optagelse" pill (`shadow::md`), with the interruption card, recovery card and the "not ported yet" notice above it (`pages/home.rs`). | The default content. Recording itself is Job 3. |
+| `Shell` | The window content: sidebar plus the current page, or the database error page instead of both. Owns page selection, sidebar collapse, the home notice, appearance observer and the debounced window-position save. | The one root view. Do not add a second root. |
+| `Page` | What the content area shows: `Home` (or the open meeting), Diktering, Indstillinger, Om, and Måling (not in the sidebar, `--page måling`), with their `--page` names (`møder` opens Home). `Page::ALL` is the screenshot inventory. | Adding a page: add a variant, `from_arg`, the arm in `Shell::render`, a sidebar entry if it needs one, and goldens. |
 | `AppModel` | Shared state: database state (`DbState`: loading, not created, ready, failed), data folder, log path, runtime handle. | Reading state in a page. Core is only called on its runtime, never on the UI thread. |
-| `sidebar` | Sidebar with the app name and one menu item per `Page`. | Navigation. |
+| `sidebar` | The Tauri sidebar (`sidebar.rs`): logo mark and wordmark (opens Om), "Ny optagelse" or "Optagelse i gang", the search field, `MeetingsView`, footer rows Diktering / Importér transskript / Importér lyd / Indstillinger and ⓘ (Om); collapses to 64 px icons with tooltips. Focus order: record, search, list, footer, collapse handle. | Navigation. Imports explain that they are not ported yet. |
+| `sidebar_header` | Logo, record button and search field (px 16, pt 20). | Only in `sidebar`. |
+| `logo` | Logo mark (24 px, 28 px collapsed, primary) and the 20 px semibold Literata wordmark; a click opens Om. Not a tab stop (ⓘ is). | Only in `sidebar`. |
+| `record_button` | "Ny optagelse" (primary, 44 px, `rounded-lg`), or the "Optagelse i gang" status with a recording dot on an 8 % recording tint while a meeting records. | Only in `sidebar`. |
+| `sidebar_footer` | Footer rows (44 px, 16 px icons, `bg-accent` on the current page) and ⓘ. | Only in `sidebar`. |
+| `collapsed_column` | The 64 px column: logo, round record button, Møder (unfolds), imports, Diktering, Indstillinger, ⓘ; 44 px squares with 20 px icons and tooltips. | Only in `sidebar`. |
+| `collapse_handle` | The 24 px round chevron on the sidebar's right edge; drawn last by the shell so it sits over the border. | Folding the sidebar in and out. |
 | `page` | Frame around every page: scroll area, 30 px page title, optional subtitle and the page's content width (`layout::*_MAX`). | Every page body. Do not rebuild the frame. |
 | `heading` | A Literata heading at one of the Tauri levels (`Level::Page`, `Document`, `Hero`, `Section`). | Page, document and section titles. |
 | `section_title` | 18 px semibold Literata title for a block inside a page (Tauri h3). | Grouping within a page. |
@@ -114,11 +122,13 @@ The first column is the exact identifier in the code; the script checks it.
 | `muted` | Smaller secondary text in the muted color. | Help texts and details. |
 | `setting_group` | Card with a title and muted lines. | Read-only groups on the Indstillinger page. Editable settings need their own component when the first one is built. |
 | `language_group` | Card on Indstillinger: meeting language buttons (primary and extra languages), whether reports are written in the primary language, and the save error. | The meeting and report language settings (#209). Reuses gpui-component buttons. |
-| `loading` | Spinner with a text. | Anything waiting for core (the Møder page while the database opens). |
-| `interrupted_card` | Dismissible alert with the reason, time and audio status of an interrupted recording, and a reminder that recording does not restart automatically. | The Møder page after sleep or logoff interrupts a recording. Uses the persisted `InterruptNotice`. |
-| `empty_state` | Card with an icon, a title and a short explanation. | Every list without content. Every new list needs one. |
-| `meetings_page` | Hosts `MeetingsView`. | Møder navigation. |
-| `MeetingsView` | Fixed viewport with GPUI `list`, date groups, durations and job explanations; empty/loading/error states, rename, confirmed deletion and recovery. | Reuses `page`, `loading`, `empty_state`, text blocks, Button and Input. Recording and meeting-document screens remain separate ports; opens the saved audio folder. |
+| `loading` | Spinner with a text. | Anything waiting for core (the sidebar list while the database opens). |
+| `interrupted_card` | Dismissible alert with the reason, time and audio status of an interrupted recording, and a reminder that recording does not restart automatically. | The home screen after sleep or logoff interrupts a recording. Uses the persisted `InterruptNotice`. |
+| `MeetingsView` | The meeting list in the sidebar: GPUI virtual `list` over core's `meeting_list::List` (borrowed through row indices), day groups ("I dag", "I går", "mandag 26. oktober"), Tauri rows (title, time, short job status, search snippet), hover/focus actions Omdøb and Slet with the "Omdøb møde" and "Bekræft sletning" dialogs, full-text search through core (`search::search`, title filter at once), empty/loading/error/no-match states and the recovery card for Home. | Every list without content says what to do next in its own slot (Tauri text), not a card. |
+| `meeting_row` | One row of the virtual list: a day heading (12 px medium muted) or a meeting (44 px min, `rounded-md`, `bg-accent` when open, accent/60 on hover) with its action chip. | Only in `MeetingsView`. |
+| `list_message` | Muted 14 px text in the list slot, optionally with a title (empty list, no match, load errors). | Only in `MeetingsView`. |
+| `search_field` | The sidebar search input: search icon, clear X. | Only in the sidebar. |
+| `recovery_card` | Card with "Gendan optagelse" buttons for interrupted recordings. | Shown on Home. |
 | `dictation_page` | Diktering: placeholder text plus the input test field. | |
 | `settings_page` | Indstillinger: read-only groups (appearance, data folder and database, log) and the buttons "Åbn logmappen" and "Afslut". | |
 | `about_page` | Om: build metadata, update status, copying diagnostics with progress and result feedback, and bundled legal documents. | Reuses the page frame, text helpers and gpui-component buttons. |
@@ -162,9 +172,9 @@ Change a row when the experience changes.
 
 | Experience | Components | Notes |
 |---|---|---|
-| Start | `startup`, `Shell`, `loading` | First frame within 500 ms; the database opens in the background. |
-| Look at meetings | `meetings_page`, `MeetingsView`, `empty_state`, `loading` | Virtual date groups; open audio folder, rename, confirmed deletion and recovery of interrupted audio. Recording and document handoffs explain the pending ports. |
-| See why a recording stopped | `MeetingsView`, `interrupted_card` | After sleep or logoff, shows the interruption notice on resume or next launch until dismissed. Recording does not restart automatically. |
+| Start | `startup`, `Shell`, `home_page`, `loading` | First frame within 500 ms; the database opens in the background. |
+| Look at meetings | `sidebar`, `MeetingsView`, `meeting_page`, `loading` | The list is always in the sidebar; search by title and content; open a meeting (title, status, audio folder, MCP sharing), rename and delete in dialogs, restore interrupted audio from Home. Recording and import explain the pending ports. |
+| See why a recording stopped | `home_page`, `interrupted_card` | After sleep or logoff, shows the interruption notice on resume or next launch until dismissed. Recording does not restart automatically. |
 | Test Danish input | `dictation_page`, `probe` | Manual Windows test 2 and 3 in [gpui.md](gpui.md). |
 | Compare transcription on own sample | `MeasurementView`, `Page` | See [measurement.md](measurement.md). |
 | See app settings | `settings_page`, `setting_group` | Read-only. |
@@ -176,8 +186,8 @@ Change a row when the experience changes.
 
 ## Naming
 
-- A component is named for what it is, not where it sits: `empty_state`, not
-  `meetings_empty_box`. Page-level methods are `<page>_page`.
+- A component is named for what it is, not where it sits: `recovery_card`, not
+  `home_restore_box`. Page-level methods are `<page>_page`.
 - One word per concept: "pill", "queue", "delivery", "meeting document" (see
   [Concepts](#concepts)); do not coin synonyms in code or text.
 - Tokens, not values: if you need a number twice, it belongs in `theme.rs`.

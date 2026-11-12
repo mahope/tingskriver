@@ -42,6 +42,20 @@ impl Status {
             Some(_) => Self::Unknown,
         }
     }
+    /// The first sentence of [`Status::text`] for states the user should
+    /// notice in the sidebar (work in progress, failure); `None` when the
+    /// meeting is simply saved or done.
+    pub fn short(self) -> Option<&'static str> {
+        match self {
+            Self::Recording
+            | Self::Pending
+            | Self::Transcribing
+            | Self::Summarizing
+            | Self::Failed
+            | Self::Cancelled => self.text().split('.').next(),
+            _ => None,
+        }
+    }
     pub fn text(self) -> &'static str {
         match self {
             Self::Saved => "Gemt. Lyden er klar til transskription.",
@@ -65,6 +79,8 @@ pub struct Meeting {
     pub data: MeetingModel,
     pub status: Status,
     pub duration: String,
+    /// Local clock time of the start, "09.30"; set by [`List::new`].
+    pub time: String,
 }
 #[derive(Debug)]
 pub enum Row {
@@ -86,13 +102,10 @@ impl List {
         });
         let mut rows = Vec::with_capacity(meetings.len() * 2);
         let mut previous = None;
-        for meeting in meetings {
-            let date = meeting
-                .data
-                .created_at
-                .0
-                .with_timezone(timezone)
-                .date_naive();
+        for mut meeting in meetings {
+            let local = meeting.data.created_at.0.with_timezone(timezone);
+            let date = local.date_naive();
+            meeting.time = format_da::clock(local.time());
             if previous != Some(date) {
                 rows.push(Row::Date {
                     date,
@@ -131,6 +144,72 @@ impl List {
                 .min(self.rows.len())
                 .max(range.start.min(self.rows.len()))]
     }
+}
+
+/// The heading of a day in the sidebar, as the Tauri app: "I dag", "I går",
+/// otherwise weekday and date ("mandag 26. oktober").
+pub fn day_label(date: NaiveDate, today: NaiveDate) -> String {
+    if date == today {
+        crate::strings::DAY_TODAY.to_string()
+    } else if today.pred_opt() == Some(date) {
+        crate::strings::DAY_YESTERDAY.to_string()
+    } else {
+        format_da::day_long(date)
+    }
+}
+
+/// The rows a sidebar search shows: meetings whose title contains `query`
+/// (ignoring case) or that a full-text hit names (`hits`, meeting ids), each
+/// with its date heading. An empty query shows every row. Indices point into
+/// [`List::rows`], so the list itself is never copied.
+pub fn matching_rows(
+    list: &List,
+    query: &str,
+    hits: &std::collections::HashSet<String>,
+) -> Vec<usize> {
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return (0..list.rows.len()).collect();
+    }
+    let mut shown = Vec::new();
+    let mut heading = None;
+    for (index, row) in list.rows.iter().enumerate() {
+        match row {
+            Row::Date { .. } => heading = Some(index),
+            Row::Meeting(meeting) => {
+                if hits.contains(&meeting.data.id)
+                    || meeting.data.title.to_lowercase().contains(&query)
+                {
+                    if let Some(heading) = heading.take() {
+                        shown.push(heading);
+                    }
+                    shown.push(index);
+                }
+            }
+        }
+    }
+    shown
+}
+
+/// Where `row` (from an earlier list) sits among the `shown` rows of `list`:
+/// the same meeting (by id) or the same day heading. Keeps the sidebar's
+/// scroll position on the row the user was looking at when the list reloads.
+pub fn position_of_row(row: &Row, list: &List, shown: &[usize]) -> Option<usize> {
+    shown
+        .iter()
+        .position(|&index| match (row, list.rows.get(index)) {
+            (Row::Meeting(a), Some(Row::Meeting(b))) => a.data.id == b.data.id,
+            (Row::Date { date: a, .. }, Some(Row::Date { date: b, .. })) => a == b,
+            _ => false,
+        })
+}
+
+/// A search snippet as plain text: the match markers of
+/// `database::repositories::search` removed.
+pub fn snippet_text(snippet: &str) -> String {
+    snippet
+        .replace(crate::database::repositories::search::MATCH_START, "")
+        .replace(crate::database::repositories::search::MATCH_END, "")
 }
 
 pub fn title(value: &str) -> Result<&str, &'static str> {
@@ -269,6 +348,7 @@ pub async fn load_with_jobs(
             data,
             status,
             duration,
+            time: String::new(),
         });
     }
     Ok(List::new(rows, &Local))
@@ -363,7 +443,81 @@ mod tests {
             },
             status: Status::Saved,
             duration: "Varighed ukendt".into(),
+            time: String::new(),
         }
+    }
+    #[test]
+    fn day_labels_follow_the_tauri_sidebar() {
+        let today = NaiveDate::from_ymd_opt(2026, 10, 29).unwrap();
+        assert_eq!(day_label(today, today), "I dag");
+        assert_eq!(day_label(today.pred_opt().unwrap(), today), "I går");
+        assert_eq!(
+            day_label(NaiveDate::from_ymd_opt(2026, 10, 26).unwrap(), today),
+            "mandag 26. oktober"
+        );
+        // A day after today (clock moved back) is not "I går".
+        assert_eq!(
+            day_label(today.succ_opt().unwrap(), today),
+            "fredag 30. oktober"
+        );
+    }
+    #[test]
+    fn rows_carry_the_local_clock_time() {
+        let list = make_list(vec![meeting(1, 3)]);
+        let Row::Meeting(m) = &list.rows()[1] else {
+            panic!()
+        };
+        assert_eq!(m.time, "12.00");
+    }
+    #[test]
+    fn search_keeps_matching_meetings_with_their_day_headings() {
+        let mut a = meeting(1, 3);
+        a.data.title = "Kickoff med Havnens Bageri".into();
+        let mut b = meeting(2, 3);
+        b.data.title = "Ugentligt statusmøde".into();
+        let mut c = meeting(3, 1);
+        c.data.title = "Retrospektiv".into();
+        let list = make_list(vec![a, b, c]);
+        let none = std::collections::HashSet::new();
+        assert_eq!(matching_rows(&list, "  ", &none).len(), list.rows().len());
+        let rows = matching_rows(&list, "BAGERI", &none);
+        let ids: Vec<_> = rows
+            .iter()
+            .map(|&i| match &list.rows()[i] {
+                Row::Date { .. } => "date".to_string(),
+                Row::Meeting(m) => m.data.id.clone(),
+            })
+            .collect();
+        assert_eq!(ids, ["date", "1"]);
+        // A transcript hit shows a meeting whose title does not match.
+        let hits = std::collections::HashSet::from(["3".to_string()]);
+        let rows = matching_rows(&list, "budget", &hits);
+        assert_eq!(rows.len(), 2);
+        assert!(matches!(&list.rows()[rows[1]], Row::Meeting(m) if m.data.id == "3"));
+        assert!(matching_rows(&list, "budget", &none).is_empty());
+    }
+    #[test]
+    fn a_row_is_found_again_after_the_list_changes() {
+        let old = make_list(vec![meeting(1, 3), meeting(2, 1), meeting(3, 1)]);
+        let new = make_list(vec![meeting(4, 5), meeting(1, 3), meeting(3, 1)]);
+        let none = std::collections::HashSet::new();
+        let shown = matching_rows(&new, "", &none);
+        // Old rows: [date 3, 1, date 1, 2, 3]; new: [date 5, 4, date 3, 1, date 1, 3].
+        assert_eq!(position_of_row(&old.rows()[1], &new, &shown), Some(3));
+        assert_eq!(position_of_row(&old.rows()[2], &new, &shown), Some(4));
+        // A deleted meeting is not found.
+        assert_eq!(position_of_row(&old.rows()[3], &new, &shown), None);
+    }
+    #[test]
+    fn snippets_drop_match_markers_and_short_status_is_one_sentence() {
+        use crate::database::repositories::search::{MATCH_END, MATCH_START};
+        assert_eq!(
+            snippet_text(&format!("om {MATCH_START}budget{MATCH_END} i år")),
+            "om budget i år"
+        );
+        assert_eq!(Status::Transcribing.short(), Some("Transskriberer"));
+        assert_eq!(Status::SummaryReady.short(), None);
+        assert_eq!(Status::Saved.short(), None);
     }
     #[test]
     fn unchanged_rows_preserve_measurements() {

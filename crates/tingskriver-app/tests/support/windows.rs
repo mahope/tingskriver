@@ -98,7 +98,7 @@ async fn capture(cx: &mut gpui::AsyncApp, runtime: tokio::runtime::Handle) -> Re
     });
     let mut light_images: HashMap<String, image::RgbaImage> = HashMap::new();
     for (appearance, mode) in [("light", ThemeMode::Light), ("dark", ThemeMode::Dark)] {
-        for (scenario, page, db) in crate::fixtures() {
+        for (scenario, page, db, variant) in crate::fixtures() {
             let name = format!("{scenario}-{appearance}.png");
             println!("Opening {name}");
             let handle = cx.update(|cx| {
@@ -113,7 +113,7 @@ async fn capture(cx: &mut gpui::AsyncApp, runtime: tokio::runtime::Handle) -> Re
                         ..Default::default()
                     },
                     |window, cx| {
-                        let shell = Shell::fixture(page, db, runtime.clone(), window, cx);
+                        let shell = Shell::fixture(page, db, variant, runtime.clone(), window, cx);
                         cx.new(|cx| Root::new(shell, window, cx))
                     },
                 )

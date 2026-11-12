@@ -11,11 +11,11 @@ pub mod native;
 use std::path::PathBuf;
 use tingskriver_app::{
     startup::{DbFailure, DbState},
-    ui::Page,
+    ui::{FixtureVariant, Page},
 };
 
-fn fixtures() -> Vec<(String, Page, DbState)> {
-    // Navigation and screenshots share this inventory; new pages require goldens.
+fn fixtures() -> Vec<(String, Page, DbState, FixtureVariant)> {
+    // Every page has a golden (Page::ALL); new pages require goldens.
     let mut fixtures: Vec<_> = Page::ALL
         .into_iter()
         .map(|page| {
@@ -23,17 +23,37 @@ fn fixtures() -> Vec<(String, Page, DbState)> {
                 format!("{page:?}").to_lowercase(),
                 page,
                 DbState::NotCreated,
+                FixtureVariant::Plain,
             )
         })
         .collect();
-    fixtures.push(("loading".into(), Page::Meetings, DbState::Loading));
+    // The sidebar with meetings (docs/screenshots/moedeliste-*.png).
+    fixtures.push((
+        "meetings".into(),
+        Page::Home,
+        DbState::NotCreated,
+        FixtureVariant::Meetings,
+    ));
+    fixtures.push((
+        "sidebar-collapsed".into(),
+        Page::Home,
+        DbState::NotCreated,
+        FixtureVariant::SidebarCollapsed,
+    ));
+    fixtures.push((
+        "loading".into(),
+        Page::Home,
+        DbState::Loading,
+        FixtureVariant::Plain,
+    ));
     fixtures.push((
         "database-error".into(),
-        Page::Meetings,
+        Page::Home,
         DbState::Failed(DbFailure::from_error(
             "fixture: not a database",
             PathBuf::from("fixtures/meeting_minutes.sqlite"),
         )),
+        FixtureVariant::Plain,
     ));
     fixtures
 }

@@ -289,14 +289,8 @@ impl Shell {
                 cx,
             ));
         }
-        body = body.child(
-            controls::button("mcp-open-meetings", Variant::Outline)
-                .label(strings::MCP_OPEN_MEETINGS)
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.page = Page::Meetings;
-                    cx.notify();
-                })),
-        );
+        // Sharing is chosen per meeting on its page (pages/meeting.rs).
+        body = body.child(paragraph(strings::MCP_SHARE_HELP, cx));
         let model = self.model.clone();
         let dir = state.app_data_dir.clone();
         let test_exe = exe.clone();
