@@ -144,7 +144,8 @@ pub struct Line {
     /// Start in the recording, in seconds.
     pub seconds: u64,
     pub text: String,
-    /// The recognizer is unsure: dotted underline in Tauri.
+    /// The recognizer is unsure: dotted underline in Tauri, a solid muted
+    /// underline here (gpui has no dotted text decoration).
     pub low_confidence: bool,
 }
 
@@ -233,6 +234,10 @@ impl Shell {
                             .role(gpui::Role::Log)
                             .aria_label(SharedString::from(strings::RECORDING_TRANSCRIPT_LABEL))
                             .children(lines),
+                    )
+                    .when_some(
+                        state.recording.as_ref().filter(|_| state.lines.is_empty()),
+                        |this, recording| this.child(empty_transcript(recording.paused, cx)),
                     )
                     .when(live == Some(true) && !state.lines.is_empty(), |this| {
                         this.child(
@@ -542,6 +547,34 @@ fn dot(diameter: gpui::Pixels, color: Hsla) -> impl IntoElement {
         .size(diameter)
         .rounded(theme::RADIUS_FULL)
         .bg(color)
+}
+
+/// A recording without lines yet (Tauri `VirtualizedTranscriptView.tsx`
+/// empty state): a dot, what is happening and what to do.
+fn empty_transcript(paused: bool, cx: &App) -> AnyElement {
+    let palette = palette(cx);
+    let (color, title, hint) = if paused {
+        (
+            palette.warning,
+            strings::RECORDING_EMPTY_PAUSED,
+            strings::RECORDING_EMPTY_PAUSED_HINT,
+        )
+    } else {
+        (
+            palette.primary,
+            strings::RECORDING_EMPTY_LISTENING,
+            strings::RECORDING_EMPTY_LISTENING_HINT,
+        )
+    };
+    v_flex()
+        .id("recording-empty")
+        .mt(size::EMPTY_TOP)
+        .items_center()
+        .text_color(palette.muted_foreground)
+        .child(div().mb(space::MD).child(dot(size::EMPTY_DOT, color)))
+        .child(div().text_size(typography::SM).child(title))
+        .child(div().mt(space::XS).text_size(typography::XS).child(hint))
+        .into_any_element()
 }
 
 /// One line: the timestamp column and the text. The newest line while

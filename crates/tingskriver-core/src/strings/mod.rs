@@ -328,6 +328,10 @@ catalogue! {
     RECORDING_DEFAULT_SYSTEM = "Standard for systemlyd";
     RECORDING_MICROPHONE_LOST = "ingen (kun systemlyd)";
     RECORDING_LISTENING = "Lytter …";
+    RECORDING_EMPTY_LISTENING = "Lytter efter tale …";
+    RECORDING_EMPTY_LISTENING_HINT = "Tal, så vises transskriptionen her";
+    RECORDING_EMPTY_PAUSED = "Optagelsen er sat på pause";
+    RECORDING_EMPTY_PAUSED_HINT = "Vælg Genoptag for at fortsætte optagelsen";
     RECORDING_COPY = "Kopiér";
     RECORDING_COPY_TITLE = "Kopiér transskriptionen";
     RECORDING_COPIED = "Transskriptet er kopieret";

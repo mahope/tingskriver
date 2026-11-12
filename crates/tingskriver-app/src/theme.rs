@@ -270,11 +270,15 @@ pub mod recording {
     pub const STATUS_DOT: Pixels = px(10.0);
     /// The "Lytter …" dot (`w-2 h-2`).
     pub const LISTENING_DOT: Pixels = px(8.0);
+    /// The dot of the empty transcript while recording (`w-3 h-3`, `mt-8`).
+    pub const EMPTY_DOT: Pixels = px(12.0);
+    pub const EMPTY_TOP: Pixels = px(32.0);
     /// Transcript text: `text-base` with `leading-[1.65]`.
     pub const LINE_HEIGHT: f32 = 1.65;
     /// The timestamp sits 3 px lower to share the text's baseline (`mt-[3px]`).
     pub const TIMESTAMP_NUDGE: Pixels = px(3.0);
-    /// The low-confidence underline (`underline-offset-4`, 1 px).
+    /// The low-confidence underline (1 px). Tauri draws it dotted; gpui only
+    /// has solid and wavy, so it is solid in the muted color.
     pub const UNDERLINE: Pixels = px(1.0);
     /// The filled stop square: lucide `Square` (18 of 24 units) at 14 px.
     pub const STOP_SQUARE: Pixels = px(10.5);
