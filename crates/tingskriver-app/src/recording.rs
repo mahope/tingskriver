@@ -152,9 +152,9 @@ pub struct Line {
 pub fn clock(seconds: u64) -> String {
     let (hours, minutes, secs) = (seconds / 3600, (seconds % 3600) / 60, seconds % 60);
     if hours > 0 {
-        format!("{hours}:{minutes:02}:{secs:02}")
+        format!("{}:{:02}:{:02}", hours, minutes, secs)
     } else {
-        format!("{minutes:02}:{secs:02}")
+        format!("{:02}:{:02}", minutes, secs)
     }
 }
 
@@ -273,7 +273,7 @@ impl Shell {
         let status = h_flex()
             .id("recording-status")
             .role(gpui::Role::Status)
-            .aria_label(SharedString::from(format!("{state} {clock}")))
+            .aria_label(SharedString::from(format!("{} {}", state, clock)))
             .flex_wrap()
             .gap_x(space::LG)
             .gap_y(space::XS)

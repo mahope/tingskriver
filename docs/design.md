@@ -83,6 +83,7 @@ The first column is the exact identifier in the code; the script checks it.
 | `args` | Command line (`StartupArgs`): `--hidden`, `--page`. | Start options. |
 | `crash` | Panic hook that turns graphics failures into a log entry and a native error dialog. | Never a place for UI. |
 | `update` | Velopack installer hooks, background update check and download, applying an update at next start. | Update behaviour. The update screen is not built yet. |
+| `recording` | The recording screen of Home (`HomeState`): status bar, transcript lines, the floating pill, saving overlays and the start error, copied from Tauri `RecordingControls.tsx`, `RecordingStatusBar.tsx`, `VirtualizedTranscriptView.tsx` and `StatusOverlays.tsx`. Recording is not wired to core in this app yet (`HomeState::can_record` is false): "Start optagelse" is disabled and the hero says why; screenshot fixtures fill the other states. | Home only. Feed `HomeState` from core when the recording port lands; do not make a button look active before it works. |
 | `proposals` | Review of AI proposals for a meeting's notes and summary: the band "N ventende ændringer", a diff per proposal and Anvend / Afvis / Fortryd. Changes go only through `ProposalStore::apply/undo` on a click. Not mounted in `ui.rs` until the meeting document exists. | AI proposals. Never write notes or summary directly. |
 
 ### Controls (in `controls.rs`)
@@ -104,7 +105,7 @@ The first column is the exact identifier in the code; the script checks it.
 | `mcp_settings` | MCP access, consent, data controls and audit status. | MCP controls on the Indstillinger page; reuse the shared settings and text blocks. |
 | `meeting_sharing` | MCP sharing of the open meeting, with loading/error states (`pages/meeting.rs`). | Choosing whether MCP may read this meeting. Moves into the meeting document header (Job 4). |
 | `meeting_page` | The open meeting until the document is ported: title, time and duration, job status, "Åbn lydmappe" and `meeting_sharing`. | Replaced by the meeting document (docs/design-paritet.md, Job 4). |
-| `home_page` | The idle home screen: hero "Klar til dit næste møde" and the floating "Start optagelse" pill (`shadow::md`), with the interruption card, recovery card and the "not ported yet" notice above it (`pages/home.rs`). | The default content. Recording itself is Job 3. |
+| `home_page` | Home (`pages/home.rs`): the hero "Klar til dit næste møde", or the transcript of a recording, with the interruption card, recovery card and the import notice above it and the recording pill at the bottom. While recording cannot start here, the hint line under the lead says so instead of "Tryk på \"Start optagelse\"". | The default content. |
 | `Shell` | The window content: sidebar plus the current page, or the database error page instead of both. Owns page selection, sidebar collapse, the home notice, appearance observer and the debounced window-position save. | The one root view. Do not add a second root. |
 | `Page` | What the content area shows: `Home` (or the open meeting), Diktering, Indstillinger, Om, and Måling (not in the sidebar, `--page måling`), with their `--page` names (`møder` opens Home). `Page::ALL` is the screenshot inventory. | Adding a page: add a variant, `from_arg`, the arm in `Shell::render`, a sidebar entry if it needs one, and goldens. |
 | `AppModel` | Shared state: database state (`DbState`: loading, not created, ready, failed), data folder, log path, runtime handle. | Reading state in a page. Core is only called on its runtime, never on the UI thread. |
@@ -123,7 +124,15 @@ The first column is the exact identifier in the code; the script checks it.
 | `setting_group` | Card with a title and muted lines. | Read-only groups on the Indstillinger page. Editable settings need their own component when the first one is built. |
 | `language_group` | Card on Indstillinger: meeting language buttons (primary and extra languages), whether reports are written in the primary language, and the save error. | The meeting and report language settings (#209). Reuses gpui-component buttons. |
 | `loading` | Spinner with a text. | Anything waiting for core (the sidebar list while the database opens). |
-| `interrupted_card` | Dismissible alert with the reason, time and audio status of an interrupted recording, and a reminder that recording does not restart automatically. | The home screen after sleep or logoff interrupts a recording. Uses the persisted `InterruptNotice`. |
+| `interrupted_card` | Dismissible alert (`pages/home.rs`) in the status-bar style with a warning border and icon: the reason, time and audio status of an interrupted recording, a reminder that recording does not restart automatically, and "Forstået". | The home screen after sleep or logoff interrupts a recording. Uses the persisted `InterruptNotice`. |
+| `transcript_view` | The transcript column of Home (704 px): "Kopiér" (outline sm, copies `[MM:SS] tekst` lines), `status_bar` and `transcript_line`s, and "Lytter …" while recording. | Home while a recording runs or is being saved. |
+| `status_bar` | Card above the transcript: state dot (`recording`, or `warning` when paused), "Optager"/"På pause", mm:ss, "Mikrofon: … · Systemlyd: …", and `device_notice`. Role status. | The running recording only. |
+| `device_notice` | Notice inside `status_bar` when the microphone changed: information (primary tint) or warning (warning tint), with "Luk beskeden". | Device changes during a recording. |
+| `transcript_line` | Timestamp (14 px muted) and 16 px text at line height 1.65; the newest line while recording sits on `secondary`; unsure words are underlined in the muted color with a tooltip. | Transcript lines on Home. |
+| `recording_pill` | The floating pill (card, border, `rounded-full`, `shadow::md`): "Start optagelse", or Pause/Genoptag, "Stop og gem" and `level_bars`, or a spinner with "Gemmer optagelsen…"; the overlays "Gør transskriptionen færdig…" and "Gemmer mødet…" replace it. `start_error` hangs under it. | Home only. |
+| `level_bars` | Three 4 px bars next to the pill buttons whose height follows the input level; 4 px `warning` dots at 60 % when paused. They never animate on their own, so reduced motion needs no special case. | The recording pill. |
+| `start_error` | Destructive alert under the pill (448 px): title, the lines of the Tauri message and "Luk besked". Role alert. | Why a recording could not start. |
+| `dot` | A round color dot (status bar 10 px, "Lytter …" 8 px). | Small state markers on the recording screen. |
 | `MeetingsView` | The meeting list in the sidebar: GPUI virtual `list` over core's `meeting_list::List` (borrowed through row indices), day groups ("I dag", "I går", "mandag 26. oktober"), Tauri rows (title, time, short job status, search snippet), hover/focus actions Omdøb and Slet with the "Omdøb møde" and "Bekræft sletning" dialogs, full-text search through core (`search::search`, title filter at once), empty/loading/error/no-match states and the recovery card for Home. | Every list without content says what to do next in its own slot (Tauri text), not a card. |
 | `meeting_row` | One row of the virtual list: a day heading (12 px medium muted) or a meeting (44 px min, `rounded-md`, `bg-accent` when open, accent/60 on hover) with its action chip. | Only in `MeetingsView`. |
 | `list_message` | Muted 14 px text in the list slot, optionally with a title (empty list, no match, load errors). | Only in `MeetingsView`. |
@@ -172,8 +181,9 @@ Change a row when the experience changes.
 
 | Experience | Components | Notes |
 |---|---|---|
-| Start | `startup`, `Shell`, `home_page`, `loading` | First frame within 500 ms; the database opens in the background. |
+| Start | `startup`, `Shell`, `home_page`, `recording_pill`, `loading` | First frame within 500 ms; the database opens in the background. |
 | Look at meetings | `sidebar`, `MeetingsView`, `meeting_page`, `loading` | The list is always in the sidebar; search by title and content; open a meeting (title, status, audio folder, MCP sharing), rename and delete in dialogs, restore interrupted audio from Home. Recording and import explain the pending ports. |
+| Record a meeting | `home_page`, `recording_pill`, `transcript_view`, `status_bar`, `start_error` | The screen is ported (Tauri `/`), but starting a recording is not wired to core yet: "Start optagelse" is disabled and the hint says to use the current app. "Ny optagelse" opens Home. |
 | See why a recording stopped | `home_page`, `interrupted_card` | After sleep or logoff, shows the interruption notice on resume or next launch until dismissed. Recording does not restart automatically. |
 | Test Danish input | `dictation_page`, `probe` | Manual Windows test 2 and 3 in [gpui.md](gpui.md). |
 | Compare transcription on own sample | `MeasurementView`, `Page` | See [measurement.md](measurement.md). |
