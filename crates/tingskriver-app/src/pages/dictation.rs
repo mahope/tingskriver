@@ -8,6 +8,8 @@
 //! History, settings and status come from core's dictation service, as the
 //! Tauri commands read them (`frontend/src-tauri/src/dictation/commands.rs`).
 
+use std::time::Duration;
+
 use chrono::{DateTime, FixedOffset, Local};
 use gpui::{
     div, prelude::*, relative, AnyElement, ClipboardItem, Context, FontWeight, HighlightStyle,
@@ -25,6 +27,9 @@ use crate::controls::{self, Variant};
 use crate::probe;
 use crate::theme::{self, dictation as size, layout, space, typography};
 use crate::ui::{heading, muted, palette, Level, Page, Shell};
+
+/// How long a failed load waits before the page reads again.
+const LOAD_RETRY: Duration = Duration::from_secs(3);
 
 /// What the status line knows about dictation (Tauri `DictationStatus`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,6 +77,23 @@ impl DictationPage {
             stale: true,
             ..Default::default()
         }
+    }
+
+    /// The shortcut the page explains: the saved one, or core's default
+    /// until the settings are read.
+    fn shortcut(&self) -> String {
+        self.settings
+            .as_ref()
+            .map(|s| s.shortcut.clone())
+            .unwrap_or_else(|| DictationSettings::default().shortcut)
+    }
+
+    /// A load failed: keep what was shown (no false "Ingen dikteringer
+    /// endnu") and read again on the next draw. Returns whether a retry is
+    /// worth scheduling (fixtures never read from core).
+    fn load_failed(&mut self, error: String) -> bool {
+        self.load_error = Some(error);
+        !self.frozen
     }
 
     /// The page left the screen: read again on return (Tauri reloads on
@@ -263,8 +285,15 @@ impl Shell {
                     }
                     Err(error) => {
                         log::warn!("Dictation history could not be read: {error}");
-                        state.history.get_or_insert_with(Vec::new);
-                        state.load_error = Some(error);
+                        // The service may not be ready yet (startup, or the
+                        // Tauri app still owns dictation): try again soon.
+                        if state.load_failed(error) {
+                            cx.spawn(async move |this, cx| {
+                                cx.background_executor().timer(LOAD_RETRY).await;
+                                let _ = this.update(cx, |shell, cx| shell.dictation_changed(cx));
+                            })
+                            .detach();
+                        }
                     }
                 }
                 cx.notify();
@@ -371,11 +400,7 @@ impl Shell {
     fn dictation_header(&self, cx: &mut Context<Self>) -> AnyElement {
         let palette = palette(cx);
         let state = &self.dictation;
-        let shortcut = state
-            .settings
-            .as_ref()
-            .map(|s| s.shortcut.clone())
-            .unwrap_or_else(|| DictationSettings::default().shortcut);
+        let shortcut = state.shortcut();
         // Tauri's <kbd>: the shortcut on a muted chip inside the running
         // text. A text run has no border or padding; no-break spaces pad it.
         let mut chip = String::from('\u{a0}');
@@ -451,12 +476,13 @@ impl Shell {
         let state = &self.dictation;
         let has_entries = state.history.as_ref().is_some_and(|h| !h.is_empty());
         let history_off = state.settings.as_ref().is_some_and(|s| !s.history_enabled);
-        let shortcut = state
-            .settings
-            .as_ref()
-            .map(|s| s.shortcut.clone())
-            .unwrap_or_else(|| DictationSettings::default().shortcut);
+        let shortcut = state.shortcut();
         let content = match &state.history {
+            // Not read yet and the read failed: the status line says why,
+            // and the page tries again by itself.
+            None if state.load_error.is_some() => {
+                muted(strings::DICTATION_LOAD_RETRYING, cx).into_any_element()
+            }
             None => v_flex()
                 .gap(space::MD)
                 .children((0..3).map(|_| {
@@ -517,23 +543,34 @@ impl Shell {
                             .child(strings::DICTATION_HISTORY),
                     )
                     .when(has_entries, |this| {
+                        // Tauri resets the confirmation on blur; a click
+                        // anywhere else does the same here.
                         this.child(
-                            controls::small_button(
-                                "dictation-clear",
-                                if confirm {
-                                    Variant::Danger
-                                } else {
-                                    Variant::Ghost
-                                },
-                            )
-                            .label(if confirm {
-                                strings::DICTATION_CLEAR_CONFIRM
-                            } else {
-                                strings::DICTATION_CLEAR
-                            })
-                            .on_click(cx.listener(
-                                |shell, _, window, cx| shell.clear_dictations(window, cx),
-                            )),
+                            div()
+                                .on_mouse_down_out(cx.listener(|shell, _, _, cx| {
+                                    if shell.dictation.confirm_clear {
+                                        shell.dictation.confirm_clear = false;
+                                        cx.notify();
+                                    }
+                                }))
+                                .child(
+                                    controls::small_button(
+                                        "dictation-clear",
+                                        if confirm {
+                                            Variant::Danger
+                                        } else {
+                                            Variant::Ghost
+                                        },
+                                    )
+                                    .label(if confirm {
+                                        strings::DICTATION_CLEAR_CONFIRM
+                                    } else {
+                                        strings::DICTATION_CLEAR
+                                    })
+                                    .on_click(cx.listener(
+                                        |shell, _, window, cx| shell.clear_dictations(window, cx),
+                                    )),
+                                ),
                         )
                     }),
             )
@@ -750,6 +787,21 @@ mod tests {
             ..failed
         };
         assert_eq!(status_line(&linux, &off).0, strings::DICTATION_ONLY_WINDOWS);
+    }
+
+    #[test]
+    fn failed_load_keeps_the_history_unknown_and_retries() {
+        let mut page = DictationPage::new();
+        assert!(page.load_failed("Diktering er ikke klar endnu".into()));
+        // No false empty history: the empty card needs Some(vec![]).
+        assert!(page.history.is_none());
+        assert!(page.load_error.is_some());
+
+        let mut fixture = DictationPage {
+            frozen: true,
+            ..Default::default()
+        };
+        assert!(!fixture.load_failed("x".into()));
     }
 
     #[test]

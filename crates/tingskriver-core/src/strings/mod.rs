@@ -221,6 +221,7 @@ catalogue! {
     DICTATION_ENGINE_LOCAL_SHORT = "Lokal model";
     DICTATION_COPIED = "Teksten er kopieret";
     DICTATION_LOAD_FAILED = "Historikken kunne ikke hentes: {value}";
+    DICTATION_LOAD_RETRYING = "Siden prøver igen af sig selv om et øjeblik.";
     DICTATION_DELETE_FAILED = "Dikteringen kunne ikke slettes";
     DICTATION_CLEARED = "Historikken er ryddet";
     DICTATION_CLEAR_FAILED = "Historikken kunne ikke ryddes";
