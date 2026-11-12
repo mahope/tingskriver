@@ -39,6 +39,22 @@ pub fn date_with_weekday(value: NaiveDate) -> String {
     )
 }
 
+/// Weekday, day and month without year: "mandag 26. oktober" (the Tauri
+/// sidebar's `formatDayLong`).
+pub fn day_long(value: NaiveDate) -> String {
+    format!(
+        "{} {}. {}",
+        DAYS[value.weekday().num_days_from_monday() as usize],
+        value.day(),
+        MONTHS[value.month0() as usize]
+    )
+}
+
+/// Clock time without "kl.": "09.30" (the Tauri `formatTime`).
+pub fn clock(value: NaiveTime) -> String {
+    format!("{:02}.{:02}", value.hour(), value.minute())
+}
+
 pub fn short_date(value: NaiveDate) -> String {
     format!(
         "{}. {} {}",
