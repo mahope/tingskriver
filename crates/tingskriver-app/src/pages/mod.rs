@@ -5,4 +5,6 @@
 pub(crate) mod about;
 pub(crate) mod database_error;
 pub(crate) mod dictation;
+pub(crate) mod home;
+pub(crate) mod meeting;
 pub(crate) mod settings;

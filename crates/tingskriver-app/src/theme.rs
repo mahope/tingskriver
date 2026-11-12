@@ -216,6 +216,44 @@ pub mod icon_size {
     pub const ERROR: Pixels = px(32.0);
 }
 
+// ---- Job 2 (sidebar shell, docs/design-paritet.md): added constants ----
+
+/// The sidebar of the Tauri app (`Sidebar/index.tsx`, `Logo.tsx`).
+pub mod sidebar {
+    use gpui::{px, Pixels};
+
+    /// The logo mark next to the wordmark (`h-6 w-6`).
+    pub const LOGO_MARK: Pixels = px(24.0);
+    /// The logo mark in the collapsed column (`h-7 w-7`).
+    pub const LOGO_MARK_COLLAPSED: Pixels = px(28.0);
+    /// The round collapse handle on the right edge (`h-6 w-6`).
+    pub const HANDLE: Pixels = px(24.0);
+    /// The handle's distance from the top (`top-5`).
+    pub const HANDLE_TOP: Pixels = px(20.0);
+    /// The pulsing dot of "Optagelse i gang" (`h-2.5 w-2.5`).
+    pub const RECORDING_DOT: Pixels = px(10.0);
+    /// "Optagelse i gang" is drawn on a `recording` tint. Tauri uses 10 %
+    /// (`bg-recording/10`), which leaves the dark-mode text at 4.42:1; 8 %
+    /// keeps it above WCAG AA.
+    pub const RECORDING_TINT: f32 = 0.08;
+    /// The home recording pill sits 48 px above the window edge (`bottom-12`).
+    pub const PILL_BOTTOM: Pixels = px(48.0);
+    /// Space kept free under the home hero for the pill (`pb-32`).
+    pub const HOME_BOTTOM_SPACE: Pixels = px(128.0);
+    /// The pill's inner padding (`px-2.5 py-2`).
+    pub const PILL_PADDING_X: Pixels = px(10.0);
+    /// Line heights of `text-sm` (20) and `text-xs` (16) in the list rows.
+    pub const SM_LINE: Pixels = px(20.0);
+    pub const XS_LINE: Pixels = px(16.0);
+    /// The clear button inside the search field.
+    pub const SEARCH_CLEAR: Pixels = px(24.0);
+    /// "Omdøb møde" (`sm:max-w-[425px]`) and "Bekræft sletning" (`max-w-md`).
+    pub const RENAME_DIALOG_WIDTH: Pixels = px(425.0);
+    pub const CONFIRM_DIALOG_WIDTH: Pixels = px(448.0);
+}
+
+// ---- end of Job 2 block ----
+
 /// Tailwind's shadows (`shadow-sm`, `shadow`, `shadow-md`), the same in both
 /// modes as in the Tauri app.
 pub mod shadow {
@@ -458,6 +496,19 @@ mod tests {
             ("success", p.success_foreground, p.success),
             ("warning", p.warning_foreground, p.warning),
             ("primary text on background", p.primary, p.background),
+            // Job 2: the sidebar is a card; rows hover at accent/60 and the
+            // active row is accent, with the muted time line on both.
+            ("muted text on accent", p.muted_foreground, p.accent),
+            (
+                "muted text on sidebar row hover",
+                p.muted_foreground,
+                over(p.accent, p.card, LIST_HOVER_ALPHA),
+            ),
+            (
+                "recording text on the recording tint over card",
+                p.recording,
+                over(p.recording, p.card, sidebar::RECORDING_TINT),
+            ),
         ]
     }
 

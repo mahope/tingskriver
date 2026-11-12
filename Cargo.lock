@@ -10810,6 +10810,7 @@ name = "tingskriver-app"
 version = "0.5.3-dev.1"
 dependencies = [
  "anyhow",
+ "chrono",
  "dirs 5.0.1",
  "gpui-component",
  "gpui-kit-assets",

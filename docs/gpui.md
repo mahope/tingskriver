@@ -80,17 +80,17 @@ logged, because tokio catches panics in core tasks.
 |---|---|
 | `theme` | Design tokens from 0.5.0-dev.2 (`frontend/src/app/globals.css`): palette for light and dark, spacing, type sizes, radii, layout sizes. `apply` maps them onto gpui-component's theme. The window follows the system appearance live (`observe_window_appearance`, Windows sends `ImmersiveColorSet`). Tests check WCAG AA contrast for every text pair in both modes. |
 | `assets` | Hanken Grotesk (400, 500, 600, 700) and Literata (400, 600, italic 400) as static TTF, embedded and registered at start. They are instances of the woff2 variable fonts the Tauri UI uses, made with fontTools (licence in `assets/fonts/OFL.txt`). Tests parse each font and require glyphs for æøåÆØÅ, the vowels dead keys produce, and AltGr symbols. Icons: gpui-component's defaults plus the shell's Lucide icons. |
-| `ui` | Main window with sidebar (Møder, Diktering, Indstillinger; Assistent comes later), the placeholder pages, the loading state and the database error page. |
+| `ui` | Main window: the Tauri sidebar (`sidebar.rs`: Ny optagelse, search, the meeting list from `meetings.rs`, Diktering, imports, Indstillinger, ⓘ for Om; collapses to 64 px), the home screen, the open meeting, the placeholder pages, the loading state and the database error page. Måling is not in the sidebar; open it with `--page måling`. |
 | `startup` | Startup clock (on Windows from process creation via `GetProcessTimes`), the first-frame log line against the 500 ms budget, and the database open with Danish error texts. |
 | `window_state` | Window position and size in `%APPDATA%\dk.mahoje.tingskriver\gpui-window.json`, saved 0.5 s after the last move and on close, restored only when at least 120×40 px land on a connected display. |
 | `single_instance` | Per-user named pipe `\\.\pipe\dk.mahoje.tingskriver.gpui-<user>` (Unix socket elsewhere). A second launch asks the running app to show its window and exits. |
-| `args` | `--hidden` (start without a window; a later launch or the tray shows it), `--page meetings|dictation|settings`. With a tray icon the app stays running when the window closes. |
+| `args` | `--hidden` (start without a window; a later launch or the tray shows it), `--page home|dictation|settings|about|måling` (`meetings`/`møder` opens home). With a tray icon the app stays running when the window closes. |
 | `crash` | Panic hook for graphics failures, see above. |
 | `probe` | The test field on the Diktering page lists every special character with its code point and warns when a dead key was not composed. |
 
 Core is only called on the tokio runtime the app starts (`runtime.spawn`),
 never on the UI thread. The database opens there while the window draws;
-the Møder page shows "Indlæser møder …" until it is done. No database file
+the sidebar list shows "Indlæser møder …" until it is done. No database file
 means first launch: the shell does not create one (onboarding will). A
 database that fails to open shows the error page with summary, advice, the
 technical error, the database path, the log path and the buttons "Åbn
@@ -146,7 +146,7 @@ the same time; both use the same database with the same migrations.
    at the caret.
 4. **UI Automation.** Start Accessibility Insights for Windows (Live
    Inspect), hover the sidebar items, a button and the text fields. Each
-   must show a name ("Møder", "Åbn logmappen", …) and a role.
+   must show a name ("Ny optagelse", "Søg i møder og transskripter", "Om Tingskriver", "Åbn logmappen", …) and a role. Tab from the window start: Ny optagelse, search, the meeting rows (with Omdøb and Slet), the footer rows, ⓘ, the collapse handle.
 5. **Light and dark.** Settings, Personalisering, Farver: switch between
    light and dark while the app is open. The app must follow without
    restart.
@@ -168,8 +168,8 @@ the same time; both use the same database with the same migrations.
    ```
    The error page ("Tingskriver kunne ikke åbne dine møder", "Databasefilen
    er beskadiget.") with the log path appears instead of an exit; "Åbn
-   logmappen" opens the log folder. With an empty folder instead, the Møder
-   page says "Ingen møder endnu" and no database file is created.
+   logmappen" opens the log folder. With an empty folder instead, the sidebar
+   says "Ingen møder endnu" and no database file is created.
 9. **No usable GPU.** In a Hyper-V or VirtualBox VM without GPU passthrough,
    start the app. Expected: it runs in software rendering and the log says
    `Using GPU: Microsoft Basic Render Driver`. If it cannot render at all,

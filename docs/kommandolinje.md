@@ -27,7 +27,7 @@ the mode is deleted, the selection is cleared and automatic matching resumes.
 
 Only one action is allowed per invocation, optionally with `--hidden`.
 Unknown arguments and URLs are errors. The existing `--diagnose [--json]`
-and `--page meetings|dictation|settings` options remain available; diagnosis
+and `--page home|dictation|settings|about|måling` options remain available (`meetings` opens home); diagnosis
 cannot be combined with an external action. Installer hooks run before
 normal argument validation.
 

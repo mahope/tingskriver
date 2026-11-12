@@ -293,7 +293,7 @@ impl Shell {
             controls::button("mcp-open-meetings", Variant::Outline)
                 .label(strings::MCP_OPEN_MEETINGS)
                 .on_click(cx.listener(|this, _, _, cx| {
-                    this.page = Page::Meetings;
+                    this.page = Page::Home;
                     cx.notify();
                 })),
         );

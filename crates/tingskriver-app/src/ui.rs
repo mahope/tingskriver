@@ -12,18 +12,16 @@ use gpui::{
 use gpui_component::{
     h_flex,
     input::{InputEvent, InputState, TextareaState},
-    sidebar::{Sidebar, SidebarHeader, SidebarMenu, SidebarMenuItem},
     spinner::Spinner,
-    v_flex, ActiveTheme, Disableable, Icon, Root, Selectable, WindowExt,
+    v_flex, ActiveTheme, Root, WindowExt,
 };
-use gpui_kit_assets::IconName;
 use tingskriver_core::audio::power::InterruptNotice;
 use tingskriver_core::strings;
 use tokio::runtime::Handle;
 
 use crate::controls::{self, Variant};
 use crate::startup::{self, DbFailure, DbState, StartupClock};
-use crate::theme::{self, icon_size, layout, space, typography, Palette};
+use crate::theme::{self, layout, space, typography, Palette};
 use crate::window_state;
 
 /// State shared by every window: the database and where things live.
@@ -92,7 +90,7 @@ impl AppModel {
             runtime,
             meeting_jobs: Vec::new(),
             clock,
-            start_page: Page::Meetings,
+            start_page: Page::Home,
             report_first_frame: true,
             mcp_access: None,
             mcp_message: String::new(),
@@ -465,28 +463,36 @@ fn open_main_window(cx: &mut App) -> anyhow::Result<WindowHandle<Root>> {
     )
 }
 
+/// What the content area shows next to the sidebar. Meetings are not a
+/// page: the list lives in the sidebar and an open meeting replaces Home.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Page {
-    Meetings,
+    /// The idle home screen (Tauri `/`), or the open meeting.
+    Home,
     Dictation,
     Settings,
+    /// Om, opened from ⓘ in the sidebar footer.
     About,
+    /// Not in the sidebar: reachable with `--page måling` until Settings
+    /// links it (docs/design-paritet.md, Job 6).
     Measurement,
 }
 
 impl Page {
+    /// Every page, in sidebar order; the screenshot inventory too.
     pub const ALL: [Page; 5] = [
-        Page::Meetings,
+        Page::Home,
         Page::Dictation,
         Page::Measurement,
         Page::Settings,
         Page::About,
     ];
 
-    /// The page for a `--page` argument (English or Danish name).
+    /// The page for a `--page` argument (English or Danish name). The old
+    /// Møder page opens the home screen, where the sidebar lists meetings.
     pub fn from_arg(name: &str) -> Option<Page> {
         match name.to_lowercase().as_str() {
-            "meetings" | "møder" => Some(Page::Meetings),
+            "home" | "hjem" | "meetings" | "møder" => Some(Page::Home),
             "dictation" | "diktering" => Some(Page::Dictation),
             "about" | "om" => Some(Page::About),
             "settings" | "indstillinger" => Some(Page::Settings),
@@ -494,26 +500,17 @@ impl Page {
             _ => None,
         }
     }
+}
 
-    pub fn label(self) -> &'static str {
-        match self {
-            Page::Meetings => strings::MEETINGS,
-            Page::Dictation => strings::DICTATION,
-            Page::About => strings::ABOUT,
-            Page::Settings => strings::SETTINGS,
-            Page::Measurement => strings::MEASURE_TITLE,
-        }
-    }
-
-    fn icon(self) -> IconName {
-        match self {
-            Page::Meetings => IconName::Calendar,
-            Page::Dictation => IconName::Mic,
-            Page::About => IconName::Info,
-            Page::Settings => IconName::Settings,
-            Page::Measurement => IconName::Mic,
-        }
-    }
+/// Extra state of a screenshot fixture.
+#[cfg(feature = "screenshot-tests")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FixtureVariant {
+    Plain,
+    /// Synthetic meetings in the sidebar (four, over three days).
+    Meetings,
+    /// The 64 px sidebar.
+    SidebarCollapsed,
 }
 
 pub struct Shell {
@@ -524,7 +521,10 @@ pub struct Shell {
     pub(crate) model: Entity<AppModel>,
     pub(crate) page: Page,
     measurement: Entity<crate::measurement::MeasurementView>,
-    meetings: Entity<crate::meetings::MeetingsView>,
+    pub(crate) meetings: Entity<crate::meetings::MeetingsView>,
+    pub(crate) sidebar_collapsed: bool,
+    /// Why "Ny optagelse" or an import did not open a screen (not ported).
+    pub(crate) home_notice: Option<&'static str>,
     pub(crate) probe_line: Entity<InputState>,
     pub(crate) probe_text: Entity<TextareaState>,
     state_path: Option<PathBuf>,
@@ -540,6 +540,7 @@ impl Shell {
     pub fn fixture(
         page: Page,
         db: DbState,
+        variant: FixtureVariant,
         runtime: Handle,
         window: &mut Window,
         cx: &mut App,
@@ -585,6 +586,11 @@ impl Shell {
                     cx,
                 )
             });
+            let list = (variant == FixtureVariant::Meetings).then(crate::meetings::fixture_list);
+            shell
+                .meetings
+                .update(cx, |meetings, _| meetings.freeze(list));
+            shell.sidebar_collapsed = variant == FixtureVariant::SidebarCollapsed;
             shell.probe_line.update(cx, |input, cx| {
                 input.set_value("æøå ÆØÅ é ü @ €", window, cx)
             });
@@ -627,7 +633,20 @@ impl Shell {
                 cx,
             )
         });
-        let meetings = cx.new(|cx| crate::meetings::MeetingsView::new(model.clone(), cx));
+        let meetings = cx.new(|cx| crate::meetings::MeetingsView::new(model.clone(), window, cx));
+        let subscriptions = {
+            let mut subscriptions = subscriptions;
+            subscriptions.push(cx.subscribe(
+                &meetings,
+                |this, _, _: &crate::meetings::MeetingsEvent, cx| {
+                    // A row was opened (or the open meeting deleted).
+                    this.page = Page::Home;
+                    this.home_notice = None;
+                    cx.notify();
+                },
+            ));
+            subscriptions
+        };
         let save_path = state_path.clone();
         window.on_window_should_close(cx, move |window, _| {
             if let Some(path) = &save_path {
@@ -651,6 +670,8 @@ impl Shell {
             page,
             measurement,
             meetings,
+            sidebar_collapsed: false,
+            home_notice: None,
             probe_line,
             probe_text,
             state_path,
@@ -677,181 +698,6 @@ impl Shell {
                 log::warn!("Could not save the window position: {error}");
             }
         }));
-    }
-
-    fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let palette = palette(cx);
-        Sidebar::new("main-sidebar")
-            .w(layout::SIDEBAR_WIDTH)
-            .collapsible(false)
-            .header(
-                SidebarHeader::new().child(
-                    div()
-                        .font_family(typography::SERIF)
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_size(typography::XL)
-                        .child(strings::APP_NAME),
-                ),
-            )
-            .child(
-                SidebarMenu::new().children(
-                    Page::ALL
-                        .into_iter()
-                        .filter(|page| *page != Page::About)
-                        .map(|page| {
-                            SidebarMenuItem::new(page.label())
-                                .icon(page.icon())
-                                .active(self.page == page)
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.page = page;
-                                    cx.notify();
-                                }))
-                        }),
-                ),
-            )
-            .footer(
-                v_flex()
-                    .child(
-                        controls::button("nav-about", Variant::Outline)
-                            .label(strings::ABOUT)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.page = Page::About;
-                                cx.notify();
-                            })),
-                    )
-                    .px(space::SM)
-                    .text_size(typography::XS)
-                    .text_color(palette.muted_foreground)
-                    .child(strings::version(self.model.read(cx).display_version)),
-            )
-    }
-
-    fn meetings_page(&self, cx: &mut Context<Self>) -> AnyElement {
-        // The virtual meeting list owns the page; MCP sharing per meeting
-        // stays on Møder below it while the database is open.
-        let sharing = matches!(self.model.read(cx).db, DbState::Ready(_));
-        v_flex()
-            .size_full()
-            .min_h_0()
-            .child(div().flex_1().min_h_0().child(self.meetings.clone()))
-            .when(sharing, |this| {
-                this.child(
-                    div()
-                        .id("meeting-sharing")
-                        .flex_none()
-                        .max_h(gpui::px(280.))
-                        .overflow_y_scroll()
-                        .px(space::XXL)
-                        .pb(space::XL)
-                        .child(
-                            v_flex()
-                                .w_full()
-                                .max_w(layout::DOCUMENT_MAX)
-                                .gap(space::SM)
-                                .child(section_title(strings::MCP_TITLE))
-                                .child(self.meeting_sharing(cx)),
-                        ),
-                )
-            })
-            .into_any_element()
-    }
-
-    fn meeting_sharing(&self, cx: &mut Context<Self>) -> AnyElement {
-        let state = self.model.read(cx);
-        let mut body = v_flex()
-            .gap(space::SM)
-            .child(paragraph(strings::MCP_PRIVACY, cx))
-            .child(
-                controls::button("refresh-mcp-sharing", Variant::Outline)
-                    .label(strings::MCP_REFRESH)
-                    .disabled(state.sharing_pending)
-                    .on_click(|_, _, cx| load_database(cx)),
-            )
-            .child(
-                div()
-                    .id("mcp-result")
-                    .role(gpui::Role::Status)
-                    .aria_label(state.mcp_message.clone())
-                    .child(paragraph(&state.mcp_message, cx)),
-            );
-        match &state.sharing_meetings {
-            None => body = body.child(loading(strings::LOADING_MEETINGS, cx)),
-            Some(Err(error)) => body = body.child(paragraph(error, cx)),
-            Some(Ok(meetings)) if meetings.is_empty() => {
-                body = body.child(paragraph(strings::NO_MEETINGS, cx));
-            }
-            Some(Ok(meetings)) => {
-                for (index, meeting) in meetings.iter().enumerate() {
-                    let model = self.model.clone();
-                    let id = meeting.id.clone();
-                    let shared = !meeting.shared;
-                    body = body.child(
-                        v_flex()
-                            .gap(space::SM)
-                            .child(paragraph(&meeting.title, cx))
-                            .child(
-                                controls::button(("share-meeting", index), Variant::Outline)
-                                    .label(if meeting.shared {
-                                        strings::MCP_UNSHARE
-                                    } else {
-                                        strings::MCP_SHARE
-                                    })
-                                    .selected(meeting.shared)
-                                    .disabled(state.sharing_pending)
-                                    .on_click(move |_, _, cx| {
-                                        let model = model.clone();
-                                        let id = id.clone();
-                                        let task = model.update(cx, |state, cx| {
-                                            if state.sharing_pending {
-                                                return None;
-                                            }
-                                            let DbState::Ready(db) = &state.db else {
-                                                return None;
-                                            };
-                                            let pool = db.pool().clone();
-                                            state.sharing_pending = true;
-                                            cx.notify();
-                                            Some(state.runtime.spawn(async move {
-                                                let result = tingskriver_core::mcp::set_shared(
-                                                    &pool, &id, shared,
-                                                )
-                                                .await;
-                                                (id, result)
-                                            }))
-                                        });
-                                        let Some(task) = task else {
-                                            return;
-                                        };
-                                        cx.spawn(async move |cx| {
-                                            let result = task.await;
-                                            model.update(cx, |state, cx| {
-                                                state.sharing_pending = false;
-                                                if let Ok((id, Ok(()))) = result {
-                                                    if let Some(Ok(meetings)) =
-                                                        &mut state.sharing_meetings
-                                                    {
-                                                        if let Some(meeting) =
-                                                            meetings.iter_mut().find(|m| m.id == id)
-                                                        {
-                                                            meeting.shared = shared;
-                                                        }
-                                                    }
-                                                    state.mcp_message = strings::MCP_SAVED.into();
-                                                } else {
-                                                    state.mcp_message =
-                                                        strings::MCP_SAVE_FAILED.into();
-                                                }
-                                                cx.notify();
-                                            });
-                                        })
-                                        .detach();
-                                    }),
-                            ),
-                    );
-                }
-            }
-        }
-        body.into_any_element()
     }
 }
 
@@ -899,22 +745,29 @@ impl Render for Shell {
             match (&failure, self.page) {
                 (_, Page::About) => self.about_page(cx),
                 (Some(failure), _) => self.database_error_page(failure, cx),
-                (None, Page::Meetings) => self.meetings_page(cx),
+                (None, Page::Home) => match self.meetings.read(cx).selected_meeting().is_some() {
+                    true => self.meeting_page(cx),
+                    false => self.home_page(cx),
+                },
                 (None, Page::Dictation) => self.dictation_page(cx),
                 (None, Page::Settings) => self.settings_page(cx),
                 (None, Page::Measurement) => self.measurement.clone().into_any_element(),
             }
         };
+        let sidebar = failure.is_none();
         h_flex()
             .track_focus(&self.focus_handle)
+            .relative()
             .size_full()
             .bg(palette.background)
             .text_color(palette.foreground)
             .font_family(typography::SANS)
             .text_size(typography::BASE)
             .line_height(relative(typography::LINE_HEIGHT))
-            .when(failure.is_none(), |this| this.child(self.sidebar(cx)))
+            .when(sidebar, |this| this.child(self.sidebar(cx)))
             .child(div().flex_1().h_full().min_w_0().child(content))
+            // Last, so the handle draws over the sidebar border and the page.
+            .when(sidebar, |this| this.child(self.collapse_handle(cx)))
     }
 }
 
@@ -1056,45 +909,15 @@ pub(crate) fn interrupted_card(notice: &InterruptNotice, cx: &App) -> AnyElement
         .into_any_element()
 }
 
-pub(crate) fn empty_state(icon: IconName, title: &str, text: &str, cx: &App) -> AnyElement {
-    let palette = palette(cx);
-    v_flex()
-        .items_center()
-        .gap(space::SM)
-        .py(space::XXL)
-        .px(space::XL)
-        .rounded(theme::RADIUS_LG)
-        .border_1()
-        .border_color(palette.border)
-        .bg(palette.card)
-        .child(
-            Icon::from(icon)
-                .size(icon_size::EMPTY_STATE)
-                .text_color(palette.muted_foreground),
-        )
-        .child(section_title(title))
-        .child(
-            div()
-                .max_w(layout::EMPTY_TEXT_MAX_WIDTH)
-                .text_center()
-                .text_size(typography::SM)
-                .text_color(palette.muted_foreground)
-                .child(text.to_string()),
-        )
-        .into_any_element()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn navigation_is_danish_and_ordered() {
-        let labels: Vec<_> = Page::ALL.iter().map(|p| p.label()).collect();
-        assert_eq!(
-            labels,
-            ["Møder", "Diktering", "Måling", "Indstillinger", "Om"]
-        );
+    fn every_page_is_in_the_inventory_once() {
+        for page in Page::ALL {
+            assert_eq!(Page::ALL.iter().filter(|p| **p == page).count(), 1);
+        }
     }
 
     #[test]
@@ -1103,7 +926,8 @@ mod tests {
         assert_eq!(Page::from_arg("about"), Some(Page::About));
         assert_eq!(Page::from_arg("Om"), Some(Page::About));
         assert_eq!(Page::from_arg("Diktering"), Some(Page::Dictation));
-        assert_eq!(Page::from_arg("møder"), Some(Page::Meetings));
+        assert_eq!(Page::from_arg("møder"), Some(Page::Home));
+        assert_eq!(Page::from_arg("måling"), Some(Page::Measurement));
         assert_eq!(Page::from_arg("assistent"), None);
     }
 }

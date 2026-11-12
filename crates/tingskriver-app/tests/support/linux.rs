@@ -42,7 +42,7 @@ pub fn run() -> Result<()> {
     // Page::ALL is also the navigation source, so new pages cannot silently
     // escape the golden inventory.
     for (appearance, mode) in [("light", ThemeMode::Light), ("dark", ThemeMode::Dark)] {
-        for (scenario, page, db) in fixtures() {
+        for (scenario, page, db, variant) in fixtures() {
             let mut cx = context();
             cx.update(|cx| {
                 gpui_component::init(cx);
@@ -52,7 +52,7 @@ pub fn run() -> Result<()> {
                 theme::apply(mode, cx);
             });
             let build = |window: &mut gpui::Window, cx: &mut gpui::App| {
-                let shell = Shell::fixture(page, db, runtime.handle().clone(), window, cx);
+                let shell = Shell::fixture(page, db, variant, runtime.handle().clone(), window, cx);
                 cx.new(|cx| Root::new(shell, window, cx))
             };
             let window = cx.open_window(size(px(1100.0), px(760.0)), build)?;

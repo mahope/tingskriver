@@ -85,6 +85,8 @@ gpui_kit_assets::icon_assets!(
         Monitor,
         Keyboard,
         CircleCheckBig,
+        // Job 2: "Møder" in the collapsed sidebar.
+        NotebookPen,
     ]
 );
 
