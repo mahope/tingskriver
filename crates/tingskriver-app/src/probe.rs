@@ -1,4 +1,4 @@
-//! The test field on the dictation page shows what the keyboard actually
+//! The "Test tastatur" fields on the Diktering page show what the keyboard actually
 //! produced, so a manual test can tell a composed "é" (U+00E9) from a dead
 //! key that was passed through as "´" + "e".
 
