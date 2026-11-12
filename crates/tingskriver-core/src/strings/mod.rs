@@ -309,6 +309,42 @@ catalogue! {
     PROMPT_KEYS_HINT = "Ctrl+Alt+Enter vælger den første knap, Ctrl+Alt+Esc lukker, og Ctrl+Alt+P flytter fokus til vinduet. Så virker Tab, Enter og Esc.";
     PROMPT_QUIET_MARK = "Stille tilstand: spørgsmål udsat";
     PROMPT_WINDOW_NAME = "Tingskriver spørger";
+    // Job 3 (docs/design-paritet.md): the home and recording screen, verbatim
+    // from Tauri RecordingControls.tsx, RecordingStatusBar.tsx,
+    // TranscriptPanel.tsx, VirtualizedTranscriptView.tsx, StatusOverlays.tsx
+    // and RecordingStateContext.tsx.
+    RECORDING_NOT_IN_APP = "Optagelse er endnu ikke flyttet til denne app. Start din optagelse i den nuværende app.";
+    RECORDING_PAUSE = "Pause";
+    RECORDING_RESUME = "Genoptag";
+    RECORDING_STOP = "Stop og gem";
+    RECORDING_ACTIVE = "Optager";
+    RECORDING_PAUSED = "På pause";
+    RECORDING_MICROPHONE = "Mikrofon:";
+    RECORDING_SYSTEM = "Systemlyd:";
+    RECORDING_DEFAULT_MICROPHONE = "Standardmikrofon";
+    RECORDING_DEFAULT_SYSTEM = "Standard for systemlyd";
+    RECORDING_MICROPHONE_LOST = "ingen (kun systemlyd)";
+    RECORDING_LISTENING = "Lytter …";
+    RECORDING_COPY = "Kopiér";
+    RECORDING_COPY_TITLE = "Kopiér transskriptionen";
+    RECORDING_COPIED = "Transskriptet er kopieret";
+    RECORDING_LOW_CONFIDENCE = "Lav sikkerhed: ordene kan være opfattet forkert";
+    RECORDING_NOTICE_DISMISS = "Luk beskeden";
+    RECORDING_ERROR_DISMISS = "Luk besked";
+    RECORDING_SAVING = "Gemmer optagelsen…";
+    RECORDING_FINISHING = "Gør transskriptionen færdig…";
+    RECORDING_SAVING_MEETING = "Gemmer mødet…";
+    RECORDING_DEVICE_SWITCHED = "Mikrofonen er skiftet til {value}. Optagelsen fortsætter som normalt.";
+    RECORDING_DEVICE_SWITCH_FAILED = "Vi kunne ikke skifte til {value}. Optagelsen fortsætter på den forrige mikrofon, hvis den stadig virker.";
+    RECORDING_DEVICE_LOST = "Mikrofonen {value} kunne ikke genoprettes. Der optages kun systemlyd. Stop og start optagelsen igen for at rette det.";
+    RECORDING_ERROR_MICROPHONE_TITLE = "Mikrofonen er ikke tilgængelig";
+    RECORDING_ERROR_MICROPHONE = "Tingskriver kan ikke bruge din mikrofon. Tjek at:\n• mikrofonen er sluttet til\n• Tingskriver har adgang til mikrofonen i Windows under Indstillinger > Anonymitet og sikkerhed\n• ingen anden app bruger mikrofonen";
+    RECORDING_ERROR_SYSTEM_TITLE = "Systemlyd er ikke tilgængelig";
+    RECORDING_ERROR_SYSTEM = "Tingskriver kan ikke optage lyden fra computeren. Tjek at:\n• der er valgt en lydenhed til systemlyd under Indstillinger\n• lydenheden er tændt i Windows";
+    RECORDING_ERROR_PERMISSION_TITLE = "Tilladelse mangler";
+    RECORDING_ERROR_PERMISSION = "Tingskriver skal have adgang til at optage. Giv adgang til mikrofonen i Windows-indstillingerne, og genstart derefter Tingskriver.";
+    RECORDING_ERROR_START_TITLE = "Optagelsen kunne ikke starte";
+    RECORDING_ERROR_START = "Tjek lydenhederne under Indstillinger, og prøv igen.";
 }
 
 macro_rules! parameterized {
@@ -345,6 +381,10 @@ parameterized! {
     language_load_failed => LANGUAGE_LOAD_FAILED;
     language_current => LANGUAGE_CURRENT;
     language_extra_list => LANGUAGE_EXTRA_LIST;
+    // Job 3: device notices during a recording.
+    recording_device_switched => RECORDING_DEVICE_SWITCHED;
+    recording_device_switch_failed => RECORDING_DEVICE_SWITCH_FAILED;
+    recording_device_lost => RECORDING_DEVICE_LOST;
 }
 
 pub fn about_models(whisper: &str, parakeet: &str) -> String {

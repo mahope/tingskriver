@@ -21,6 +21,7 @@ mod meetings;
 mod pages;
 pub mod probe;
 pub mod proposals;
+pub mod recording;
 mod sidebar;
 pub mod single_instance;
 pub mod startup;

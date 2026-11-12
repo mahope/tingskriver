@@ -40,6 +40,20 @@ fn fixtures() -> Vec<(String, Page, DbState, FixtureVariant)> {
         DbState::NotCreated,
         FixtureVariant::SidebarCollapsed,
     ));
+    // Job 3: the recording screen (docs/screenshots/optagelse-*.png).
+    for (name, variant) in [
+        ("recording", FixtureVariant::Recording),
+        ("recording-paused", FixtureVariant::RecordingPaused),
+        (
+            "recording-device-switched",
+            FixtureVariant::RecordingDeviceSwitched,
+        ),
+        ("recording-saving", FixtureVariant::RecordingSaving),
+        ("recording-finishing", FixtureVariant::RecordingFinishing),
+        ("recording-start-error", FixtureVariant::RecordingStartError),
+    ] {
+        fixtures.push((name.into(), Page::Home, DbState::NotCreated, variant));
+    }
     fixtures.push((
         "loading".into(),
         Page::Home,

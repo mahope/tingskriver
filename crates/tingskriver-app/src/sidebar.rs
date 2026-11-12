@@ -23,7 +23,7 @@ use crate::ui::{palette, Page, Shell};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Destination {
     Page(Page),
-    /// "Ny optagelse": the home screen, with the explanation that recording
+    /// "Ny optagelse": the home screen, whose pill explains that recording
     /// has not moved to this app yet.
     Record,
     /// "Importér transskript" / "Importér lyd": not in this app yet.
@@ -40,10 +40,8 @@ impl Shell {
         self.home_notice = None;
         match to {
             Destination::Page(page) => self.page = page,
-            Destination::Record => {
-                self.page = Page::Home;
-                self.home_notice = Some(strings::MEETING_RECORDING_LATER);
-            }
+            // The home pill says why recording cannot start here yet.
+            Destination::Record => self.page = Page::Home,
             Destination::Import => {
                 self.page = Page::Home;
                 self.home_notice = Some(strings::IMPORT_LATER);
@@ -177,7 +175,7 @@ impl Shell {
     /// "Ny optagelse", or "Optagelse i gang" while a meeting records.
     fn record_button(&self, cx: &mut Context<Self>) -> AnyElement {
         let palette = palette(cx);
-        if self.meetings.read(cx).recording() {
+        if self.meetings.read(cx).recording() || self.home.is_recording() {
             return h_flex()
                 .id("sidebar-recording")
                 .role(gpui::Role::Status)

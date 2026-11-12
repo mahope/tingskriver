@@ -350,7 +350,7 @@ pub fn load_interrupted(cx: &mut App) {
     .detach();
 }
 
-fn dismiss_interrupted(cx: &mut App) {
+pub(crate) fn dismiss_interrupted(cx: &mut App) {
     let model = model(cx);
     let (runtime, dir) = model.update(cx, |m, cx| {
         m.interrupted = None;
@@ -511,6 +511,17 @@ pub enum FixtureVariant {
     Meetings,
     /// The 64 px sidebar.
     SidebarCollapsed,
+    /// Job 3: the recording screen (docs/screenshots/optagelse-*.png),
+    /// with the meetings of `Meetings` in the sidebar.
+    Recording,
+    RecordingPaused,
+    RecordingDeviceSwitched,
+    /// "Stop og gem" was pressed: "Gemmer optagelsen…" in the pill.
+    RecordingSaving,
+    /// After saving: the overlay "Gør transskriptionen færdig…".
+    RecordingFinishing,
+    /// Starting failed: the alert under the pill on the idle screen.
+    RecordingStartError,
 }
 
 pub struct Shell {
@@ -525,6 +536,8 @@ pub struct Shell {
     pub(crate) sidebar_collapsed: bool,
     /// Why "Ny optagelse" or an import did not open a screen (not ported).
     pub(crate) home_notice: Option<&'static str>,
+    /// The home page's recording state (`recording`).
+    pub(crate) home: crate::recording::HomeState,
     pub(crate) probe_line: Entity<InputState>,
     pub(crate) probe_text: Entity<TextareaState>,
     state_path: Option<PathBuf>,
@@ -586,11 +599,18 @@ impl Shell {
                     cx,
                 )
             });
-            let list = (variant == FixtureVariant::Meetings).then(crate::meetings::fixture_list);
+            let with_meetings = !matches!(
+                variant,
+                FixtureVariant::Plain
+                    | FixtureVariant::SidebarCollapsed
+                    | FixtureVariant::RecordingStartError
+            );
+            let list = with_meetings.then(crate::meetings::fixture_list);
             shell
                 .meetings
                 .update(cx, |meetings, _| meetings.freeze(list));
             shell.sidebar_collapsed = variant == FixtureVariant::SidebarCollapsed;
+            shell.home = crate::recording::fixture(variant);
             shell.probe_line.update(cx, |input, cx| {
                 input.set_value("æøå ÆØÅ é ü @ €", window, cx)
             });
@@ -672,6 +692,7 @@ impl Shell {
             meetings,
             sidebar_collapsed: false,
             home_notice: None,
+            home: crate::recording::HomeState::default(),
             probe_line,
             probe_text,
             state_path,
@@ -881,31 +902,6 @@ pub(crate) fn loading(text: &str, cx: &App) -> AnyElement {
         .text_color(palette(cx).muted_foreground)
         .child(Spinner::new())
         .child(text.to_string())
-        .into_any_element()
-}
-
-pub(crate) fn interrupted_card(notice: &InterruptNotice, cx: &App) -> AnyElement {
-    let palette = palette(cx);
-    let lines = notice.lines();
-    v_flex()
-        .id("interrupted-notice")
-        .role(gpui::Role::Alert)
-        .aria_label(SharedString::from(strings::INTERRUPTED_TITLE))
-        .gap(space::SM)
-        .p(space::LG)
-        .rounded(theme::RADIUS_LG)
-        .border_1()
-        .border_color(palette.warning)
-        .bg(palette.card)
-        .child(section_title(strings::INTERRUPTED_TITLE))
-        .children(lines.into_iter().map(|line| paragraph(&line, cx)))
-        .child(
-            h_flex().pt(space::SM).child(
-                controls::button("interrupted-dismiss", Variant::Primary)
-                    .label(strings::INTERRUPTED_DISMISS)
-                    .on_click(|_, _, cx| dismiss_interrupted(cx)),
-            ),
-        )
         .into_any_element()
 }
 

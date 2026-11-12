@@ -254,6 +254,52 @@ pub mod sidebar {
 
 // ---- end of Job 2 block ----
 
+// ---- Job 3 (home and recording screen, docs/design-paritet.md) ----
+
+/// The recording screen of the Tauri app (`RecordingControls.tsx`,
+/// `RecordingStatusBar.tsx`, `VirtualizedTranscriptView.tsx`,
+/// `StatusOverlays.tsx`).
+pub mod recording {
+    use gpui::{px, Pixels};
+
+    /// The transcript column's padding (`pt-6`, `pb-32`, `px-6`).
+    pub const TRANSCRIPT_TOP: Pixels = px(24.0);
+    pub const TRANSCRIPT_BOTTOM: Pixels = px(128.0);
+    pub const TRANSCRIPT_PADDING_X: Pixels = px(24.0);
+    /// The state dot in the status bar (`h-2.5 w-2.5`).
+    pub const STATUS_DOT: Pixels = px(10.0);
+    /// The "Lytter …" dot (`w-2 h-2`).
+    pub const LISTENING_DOT: Pixels = px(8.0);
+    /// Transcript text: `text-base` with `leading-[1.65]`.
+    pub const LINE_HEIGHT: f32 = 1.65;
+    /// The timestamp sits 3 px lower to share the text's baseline (`mt-[3px]`).
+    pub const TIMESTAMP_NUDGE: Pixels = px(3.0);
+    /// The low-confidence underline (`underline-offset-4`, 1 px).
+    pub const UNDERLINE: Pixels = px(1.0);
+    /// The filled stop square: lucide `Square` (18 of 24 units) at 14 px.
+    pub const STOP_SQUARE: Pixels = px(10.5);
+    pub const STOP_SQUARE_RADIUS: Pixels = px(2.0);
+    /// The level bars next to the pill buttons (`w-1`, `gap-1`, `mx-3`).
+    pub const LEVEL_BAR_WIDTH: Pixels = px(4.0);
+    /// Bar heights relative to the 44 px pill row (`58%`, `76%`, `58%`).
+    pub const LEVEL_BAR_MAX: Pixels = px(44.0);
+    /// Paused bars are 4 px dots at 60 % opacity.
+    pub const LEVEL_BAR_PAUSED: Pixels = px(4.0);
+    pub const LEVEL_PAUSED_OPACITY: f32 = 0.6;
+    /// Notice tints: `bg-primary/10 border-primary/30` (information),
+    /// `bg-warning/10 border-warning/40` (warning), `bg-destructive/10
+    /// border-destructive/40` (start error).
+    pub const NOTICE_TINT: f32 = 0.1;
+    pub const INFO_BORDER: f32 = 0.3;
+    pub const ALERT_BORDER: f32 = 0.4;
+    /// The 32 px dismiss button of a notice (`h-8 w-8`).
+    pub const DISMISS: Pixels = px(32.0);
+    /// The saving overlays sit 16 px above the window edge (`bottom-4`).
+    pub const OVERLAY_BOTTOM: Pixels = px(16.0);
+}
+
+// ---- end of Job 3 block ----
+
 /// Tailwind's shadows (`shadow-sm`, `shadow`, `shadow-md`), the same in both
 /// modes as in the Tauri app.
 pub mod shadow {
@@ -509,6 +555,40 @@ mod tests {
                 p.recording,
                 over(p.recording, p.card, sidebar::RECORDING_TINT),
             ),
+            // Job 3: the recording screen. Device notices and the start
+            // error are tints over the background; the live line is secondary.
+            (
+                "foreground on the information notice",
+                p.foreground,
+                over(p.primary, p.background, recording::NOTICE_TINT),
+            ),
+            (
+                "foreground on the warning notice",
+                p.foreground,
+                over(p.warning, p.background, recording::NOTICE_TINT),
+            ),
+            (
+                "foreground on the start error",
+                p.foreground,
+                over(p.destructive, p.background, recording::NOTICE_TINT),
+            ),
+            (
+                "destructive title on the start error",
+                p.destructive,
+                over(p.destructive, p.background, recording::NOTICE_TINT),
+            ),
+            (
+                "muted dismiss on the information notice",
+                p.muted_foreground,
+                over(p.primary, p.background, recording::NOTICE_TINT),
+            ),
+            (
+                "muted dismiss on the warning notice",
+                p.muted_foreground,
+                over(p.warning, p.background, recording::NOTICE_TINT),
+            ),
+            ("foreground on the live line", p.foreground, p.secondary),
+            ("stop pill", p.background, p.foreground),
         ]
     }
 
