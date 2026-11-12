@@ -17,7 +17,7 @@ use gpui_component::{
     h_flex,
     input::{Input, InputState},
     switch::Switch,
-    Selectable, Sizable,
+    Sizable,
 };
 use gpui_kit_assets::IconName;
 
@@ -171,7 +171,8 @@ pub fn segmented(
             .when_some(segment.icon, |this, icon| this.icon(icon))
             .when(active, |this| this.primary())
             .when(!active, |this| this.ghost())
-            .selected(active)
+            // Not `.selected`: its tint would replace the solid primary fill
+            // (and the primary foreground) of the active item.
             .toggled(active)
             .h(layout::INPUT_HEIGHT)
             .px(space::MD)

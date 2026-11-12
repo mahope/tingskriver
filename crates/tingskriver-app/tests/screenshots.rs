@@ -11,7 +11,7 @@ pub mod native;
 use std::path::PathBuf;
 use tingskriver_app::{
     startup::{DbFailure, DbState},
-    ui::{FixtureVariant, Page},
+    ui::{FixtureVariant, Page, SettingsTab},
 };
 
 fn fixtures() -> Vec<(String, Page, DbState, FixtureVariant)> {
@@ -40,6 +40,16 @@ fn fixtures() -> Vec<(String, Page, DbState, FixtureVariant)> {
         DbState::NotCreated,
         FixtureVariant::SidebarCollapsed,
     ));
+    // One per settings tab; `settings` above is Generelt
+    // (docs/screenshots/indstillinger-*.png).
+    for tab in SettingsTab::ALL.into_iter().skip(1) {
+        fixtures.push((
+            format!("settings-{}", tab.slug()),
+            Page::Settings,
+            DbState::NotCreated,
+            FixtureVariant::Settings(tab),
+        ));
+    }
     // First start (docs/screenshots/onboarding-*.png).
     fixtures.push((
         "onboarding-welcome".into(),

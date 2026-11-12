@@ -173,6 +173,7 @@ pub fn run() {
         receiver
     });
     let bridge = host.as_ref().map(|h| h.bridge().clone());
+    let delivery = host.as_ref().map(Host::delivery);
     // First start: onboarding fetches the models through core.
     let onboarding_host = host.as_ref().map(|h| (h.handle(), h.bridge().subscribe()));
     let events = bridge.as_ref().map(|bridge| bridge.subscribe());
@@ -209,6 +210,9 @@ pub fn run() {
                 }
                 model
             });
+            if let Some(delivery) = delivery {
+                pages::settings_delivery::start(model.clone(), delivery, cx);
+            }
             if let Some(bridge) = bridge {
                 let mut events = bridge.subscribe();
                 let event_model = model.clone();

@@ -106,6 +106,11 @@ pub struct Target {
     pub destination: Destination,
 }
 
+/// A fresh id for a new target (a UUID, which [`Target::validate`] accepts).
+pub fn new_target_id() -> String {
+    uuid::Uuid::new_v4().to_string()
+}
+
 pub(crate) fn safe_id(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 100

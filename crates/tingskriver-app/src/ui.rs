@@ -58,6 +58,8 @@ pub struct AppModel {
     /// Where the MCP server program should be, next to the app. Screenshot
     /// fixtures set a fixed path so the image is the same on every machine.
     pub mcp_server: Option<std::path::PathBuf>,
+    /// Indstillinger: recordings folder, Udseende and crash dump state.
+    pub(crate) settings: crate::pages::settings::SettingsModel,
 }
 
 /// The MCP server program ships next to the app executable.
@@ -105,6 +107,7 @@ impl AppModel {
             interrupted: None,
             rerun_comparison: None,
             mcp_server: mcp_server_path(),
+            settings: crate::pages::settings::SettingsModel::load(),
             languages: Default::default(),
             language_error: None,
         }
@@ -181,6 +184,7 @@ struct Globals {
 impl Global for Globals {}
 
 pub fn init(model: Entity<AppModel>, cx: &mut App) {
+    crate::pages::settings::load_appearance(&model, cx);
     cx.set_global(Globals {
         model,
         main_window: None,
@@ -197,6 +201,18 @@ pub fn show_rerun_comparison(
         cx.notify();
     });
     show_main_window(cx);
+}
+
+/// Whether the main window shows Indstillinger on Generelt (job 5: the
+/// delivery block reads the queue only then, as Tauri does).
+pub(crate) fn settings_general_shown(cx: &App) -> bool {
+    cx.try_global::<Globals>()
+        .and_then(|globals| globals.shell.as_ref())
+        .and_then(|shell| shell.upgrade())
+        .is_some_and(|shell| {
+            let shell = shell.read(cx);
+            shell.page == Page::Settings && shell.settings.tab == SettingsTab::General
+        })
 }
 
 fn model(cx: &App) -> Entity<AppModel> {
@@ -511,11 +527,15 @@ pub enum FixtureVariant {
     Meetings,
     /// The 64 px sidebar.
     SidebarCollapsed,
+    /// The settings page on a given tab.
+    Settings(SettingsTab),
     /// First start, step 1 (docs/screenshots/onboarding-*.png).
     OnboardingWelcome,
     /// First start, step 2: the transcription model has just started.
     OnboardingModel,
 }
+
+pub use crate::pages::settings::SettingsTab;
 
 pub struct Shell {
     focus_handle: gpui::FocusHandle,
@@ -527,6 +547,7 @@ pub struct Shell {
     measurement: Entity<crate::measurement::MeasurementView>,
     pub(crate) meetings: Entity<crate::meetings::MeetingsView>,
     pub(crate) sidebar_collapsed: bool,
+    pub(crate) settings: crate::pages::settings::SettingsView,
     /// Why "Ny optagelse" or an import did not open a screen (not ported).
     pub(crate) home_notice: Option<&'static str>,
     pub(crate) probe_line: Entity<InputState>,
@@ -579,6 +600,11 @@ impl Shell {
             language_error: None,
             rerun_comparison: None,
             mcp_server: Some(std::path::PathBuf::from("/opt/tingskriver/tingskriver-mcp")),
+            settings: crate::pages::settings::SettingsModel {
+                // Nothing set up yet: Kun lokal on, no targets, no jobs.
+                delivery: crate::pages::settings_delivery::DeliveryModel::fixture(),
+                ..Default::default()
+            },
         });
         crate::onboarding::set_fixture(
             match variant {
@@ -604,6 +630,9 @@ impl Shell {
                 .meetings
                 .update(cx, |meetings, _| meetings.freeze(list));
             shell.sidebar_collapsed = variant == FixtureVariant::SidebarCollapsed;
+            if let FixtureVariant::Settings(tab) = variant {
+                shell.settings.select_tab(tab);
+            }
             shell.probe_line.update(cx, |input, cx| {
                 input.set_value("æøå ÆØÅ é ü @ €", window, cx)
             });
@@ -671,6 +700,7 @@ impl Shell {
             true
         });
         let page = model.read(cx).start_page;
+        let settings = crate::pages::settings::SettingsView::new(&model, window, cx);
         Shell {
             focus_handle,
             about_copy_focus: cx.focus_handle(),
@@ -684,6 +714,7 @@ impl Shell {
             measurement,
             meetings,
             sidebar_collapsed: false,
+            settings,
             home_notice: None,
             probe_line,
             probe_text,
@@ -876,19 +907,6 @@ pub(crate) fn muted(text: &str, cx: &App) -> impl IntoElement {
         .text_size(typography::SM)
         .text_color(palette(cx).muted_foreground)
         .child(text.to_string())
-}
-
-pub(crate) fn setting_group(title: &str, lines: Vec<String>, cx: &App) -> impl IntoElement {
-    let palette = palette(cx);
-    v_flex()
-        .gap(space::XS)
-        .p(space::LG)
-        .rounded(theme::RADIUS_LG)
-        .border_1()
-        .border_color(palette.border)
-        .bg(palette.card)
-        .child(section_title(title))
-        .children(lines.into_iter().map(|line| muted(&line, cx)))
 }
 
 pub(crate) fn loading(text: &str, cx: &App) -> AnyElement {

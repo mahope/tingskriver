@@ -254,6 +254,20 @@ pub mod sidebar {
 
 // ---- end of Job 2 block ----
 
+// ---- Job 5 (settings frame, docs/design-paritet.md): added constants ----
+
+/// The settings page (`app/settings/page.tsx`, `PreferenceSettings.tsx`).
+pub mod settings {
+    use gpui::{px, Pixels};
+
+    /// The bar under the active tab (`h-0.5`).
+    pub const TAB_INDICATOR: Pixels = px(2.0);
+    /// Space between sections (`space-y-10`).
+    pub const SECTION_GAP: Pixels = px(40.0);
+}
+
+// ---- end of Job 5 block ----
+
 // ---- Job 9 (onboarding, docs/design-paritet.md): added constants ----
 
 /// The first-start screens (`onboarding/OnboardingContainer.tsx`,
@@ -494,10 +508,43 @@ pub fn apply(mode: ThemeMode, cx: &mut App) {
     });
 }
 
-/// Follow the window's (that is, the system's) appearance.
+/// Follow the window's (that is, the system's) appearance, unless the user
+/// picked Lyst or Mørkt under Udseende.
 pub fn sync_with_window(window: &Window, cx: &mut App) {
-    apply(mode_for(window.appearance()), cx);
+    apply(mode_for_choice(choice(cx), window.appearance()), cx);
 }
+
+// --- Job 5 (settings): the Udseende choice -------------------------------
+
+use tingskriver_core::appearance::Appearance;
+
+struct AppearanceChoice(Appearance);
+
+impl gpui::Global for AppearanceChoice {}
+
+/// The appearance the user picked (Følg systemet until something is saved).
+pub fn choice(cx: &App) -> Appearance {
+    cx.try_global::<AppearanceChoice>()
+        .map(|c| c.0)
+        .unwrap_or_default()
+}
+
+/// Remember the user's pick for this process; `sync_with_window` applies it.
+pub fn set_choice(appearance: Appearance, cx: &mut App) {
+    cx.set_global(AppearanceChoice(appearance));
+}
+
+/// The theme mode for the user's pick and the system appearance.
+/// `TINGSKRIVER_APPEARANCE` still wins (manual tests and screenshots).
+pub fn mode_for_choice(choice: Appearance, appearance: WindowAppearance) -> ThemeMode {
+    forced_mode(std::env::var(APPEARANCE_ENV).ok().as_deref()).unwrap_or(match choice {
+        Appearance::System => ThemeMode::from(appearance),
+        Appearance::Light => ThemeMode::Light,
+        Appearance::Dark => ThemeMode::Dark,
+    })
+}
+
+// --- End job 5 ------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -669,6 +716,26 @@ mod tests {
         );
         assert_eq!(ThemeMode::from(WindowAppearance::Light), ThemeMode::Light);
         assert!(Palette::for_mode(ThemeMode::Dark) == &Palette::DARK);
+    }
+
+    #[test]
+    fn a_picked_appearance_overrides_the_system() {
+        if std::env::var_os(APPEARANCE_ENV).is_some() {
+            return;
+        }
+        let pick = |choice, system| mode_for_choice(choice, system);
+        assert_eq!(
+            pick(Appearance::System, WindowAppearance::Dark),
+            ThemeMode::Dark
+        );
+        assert_eq!(
+            pick(Appearance::Light, WindowAppearance::Dark),
+            ThemeMode::Light
+        );
+        assert_eq!(
+            pick(Appearance::Dark, WindowAppearance::Light),
+            ThemeMode::Dark
+        );
     }
 
     #[test]

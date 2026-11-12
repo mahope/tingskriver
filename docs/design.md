@@ -67,10 +67,10 @@ The first column is the exact identifier in the code; the script checks it.
 
 | Name | Responsibility | Use it for / do not use it for |
 |---|---|---|
-| `theme` | Tokens (`Palette`, `space`, `typography`, `layout`, `icon_size`, `shadow`, radii, hover alphas and `over`), mapping onto gpui-component's theme (`apply`), live light/dark (`sync_with_window`). | All visual values. Not for page structure. |
+| `theme` | Tokens (`Palette`, `space`, `typography`, `layout`, `icon_size`, `shadow`, radii, hover alphas and `over`), mapping onto gpui-component's theme (`apply`), live light/dark (`sync_with_window`), and the Udseende choice that can pin light or dark (`choice`, `set_choice`, `mode_for_choice`). | All visual values. Not for page structure. |
 | `controls` | Buttons, inputs, switches, the segmented control and the recording pill button with the Tauri sizes (see [Controls](#controls-in-controlsrs)). | Every button and text input. Not for page layout. |
 | `ui` | Main window, `Shell` (sidebar plus the page in the window), shared state (`AppModel`) and the page building blocks below. | The shell and blocks shared by several pages. |
-| `pages` | One file per page, each an `impl Shell` block: `settings` (`settings_page`, `mcp_settings`, `language_group`), `dictation`, `about`, `database_error`. | A page's own code, so each page port owns its file. |
+| `pages` | One file per page, each an `impl Shell` block: `settings` (`settings_page` with its tabs, `mcp_settings`, `language_section`), `dictation`, `about`, `database_error`. | A page's own code, so each page port owns its file. |
 | `meetings` | Virtual meeting list backed by the core list model, inline rename/delete confirmation, startup recovery and navigation handoffs. | Only meeting-list presentation; data, status mapping and mutations live in core. |
 | `measurement` | The Måling page: compare a user's sample against a reference text, per model. | Only this page. |
 | `about` | Offline build metadata, an update-status snapshot, allowlisted diagnostics and bundled legal documents. | The Om page and copying diagnostics. Opening the page never starts an update check. |
@@ -102,7 +102,7 @@ The first column is the exact identifier in the code; the script checks it.
 
 | Name | Responsibility | Use it for / do not use it for |
 |---|---|---|
-| `mcp_settings` | MCP access, consent, data controls and audit status. | MCP controls on the Indstillinger page; reuse the shared settings and text blocks. |
+| `mcp_settings` | AI-værktøjer (MCP) on Generelt: access level as a select (Tauri), consent text, setup to copy with the text shown below each button, status, data parts as switch rows, test, the server's tools and the call log. | MCP controls on the Indstillinger page. |
 | `meeting_sharing` | MCP sharing of the open meeting, with loading/error states (`pages/meeting.rs`). | Choosing whether MCP may read this meeting. Moves into the meeting document header (Job 4). |
 | `meeting_page` | The open meeting until the document is ported: title, time and duration, job status, "Åbn lydmappe" and `meeting_sharing`. | Replaced by the meeting document (docs/design-paritet.md, Job 4). |
 | `home_page` | The idle home screen: hero "Klar til dit næste møde" and the floating "Start optagelse" pill (`shadow::md`), with the interruption card, recovery card and the "not ported yet" notice above it (`pages/home.rs`). | The default content. Recording itself is Job 3. |
@@ -121,8 +121,7 @@ The first column is the exact identifier in the code; the script checks it.
 | `section_title` | 18 px semibold Literata title for a block inside a page (Tauri h3). | Grouping within a page. |
 | `paragraph` | Body text in the foreground color. | Running text. |
 | `muted` | Smaller secondary text in the muted color. | Help texts and details. |
-| `setting_group` | Card with a title and muted lines. | Read-only groups on the Indstillinger page. Editable settings need their own component when the first one is built. |
-| `language_group` | Card on Indstillinger: meeting language buttons (primary and extra languages), whether reports are written in the primary language, and the save error. | The meeting and report language settings (#209). Reuses gpui-component buttons. |
+| `language_section` | Sprog on the Transskription tab: meeting language buttons (primary and extra languages), whether reports are written in the primary language, and the save error. | The meeting and report language settings (#209). Reuses gpui-component buttons. |
 | `loading` | Spinner with a text. | Anything waiting for core (the sidebar list while the database opens). |
 | `interrupted_card` | Dismissible alert with the reason, time and audio status of an interrupted recording, and a reminder that recording does not restart automatically. | The home screen after sleep or logoff interrupts a recording. Uses the persisted `InterruptNotice`. |
 | `MeetingsView` | The meeting list in the sidebar: GPUI virtual `list` over core's `meeting_list::List` (borrowed through row indices), day groups ("I dag", "I går", "mandag 26. oktober"), Tauri rows (title, time, short job status, search snippet), hover/focus actions Omdøb and Slet with the "Omdøb møde" and "Bekræft sletning" dialogs, full-text search through core (`search::search`, title filter at once), empty/loading/error/no-match states and the recovery card for Home. | Every list without content says what to do next in its own slot (Tauri text), not a card. |
@@ -131,7 +130,24 @@ The first column is the exact identifier in the code; the script checks it.
 | `search_field` | The sidebar search input: search icon, clear X. | Only in the sidebar. |
 | `recovery_card` | Card with "Gendan optagelse" buttons for interrupted recordings. | Shown on Home. |
 | `dictation_page` | Diktering: placeholder text plus the input test field. | |
-| `settings_page` | Indstillinger: read-only groups (appearance, data folder and database, log) and the buttons "Åbn logmappen" and "Afslut". | |
+| `settings_page` | Indstillinger as in Tauri (`app/settings/page.tsx`): fixed header with "Tilbage" (to Home) and the 30 px title, underline tabs, the active tab's panel in a scroll area (`SettingsView` holds the tab, the tab focus handles and the MCP select). `--page indstillinger` opens Generelt. | Settings. Each tab's content is its own method; Jobs 6 and 7 fill Optagelser, Transskription, Opsummering, Diktering and Beta. |
+| `tab_bar` | The settings tabs: 16 px icon and 14 px medium label, px 24 py 16, active in primary with a 2 px primary bar, others muted (foreground on hover), bottom border on the list; arrows, Home and End move between tabs. | Only on `settings_page`. The bar jumps instead of sliding (no layout animation in GPUI). |
+| `general_tab` | Generelt: Udseende (segmented, saved through core `appearance`), Notifikationer (disabled until recording is ported), Placering af data (`storage`), Aflevering af referat (`delivery_settings`), AI-værktøjer (`mcp_settings`), "Afslut Tingskriver" last. | |
+| `storage` | Placering af data: recordings folder with "Åbn mappen", Logfiler with "Åbn logmappe", "Gem nedbrudsfiler" on Windows, the data folder and database state. | Only on Generelt. |
+| `tab_column` | A tab's 672 px column (`max-w-2xl`), sections 40 px apart. | Every settings tab. |
+| `settings_section` | A Tauri settings section: title, 14 px muted description, controls; a top border and 32 px above all but the first. | Every block on a settings tab. |
+| `subheading` | 20 px semibold Literata title (Aflevering af referat, AI-værktøjer). | Settings sections whose Tauri title is `text-xl font-semibold`. |
+| `field_label` | A control's name in medium weight (`font-medium text-foreground`). | Above or beside a settings control. |
+| `switch_row` | Label and hint on the left, `switch` on the right (`justify-between`). | Boolean settings. |
+| `alert` | An error line in the destructive color with the alert role. | Failed saves on the settings page. |
+| `moves_later` | The muted line "Kommer i en senere version." for settings not ported yet. | Instead of controls that would do nothing. |
+| `delivery_settings` | Aflevering af referat as Tauri's `DeliverySettings.tsx`: Privatliv checkboxes, "Dine mål" with "Test mål" and "Fjern mål" (confirm dialog), the "Tilføj mål" form (Mappe, Webhook with masked address, SSH med SFTP) and "Afleveringskø" with "Prøv igen". Uses the host's queue (`Host::delivery`); without it, the "kunne ikke læses" line and "Opdatér". | Settings for sending approved meeting documents. |
+| `delivery_privacy` | "Privatliv": the "Kun lokal" and "Privat tilstand" checkboxes, 44 px rows. | Part of `delivery_settings`. |
+| `delivery_targets` | "Dine mål": one row per target with "Test mål" (off while blocked) and "Fjern mål". | Part of `delivery_settings`. |
+| `delivery_form` | "Tilføj mål": name, type select and the fields of the chosen type, 44 px controls, "Gem mål". | Part of `delivery_settings`. |
+| `delivery_queue` | "Afleveringskø": job line, error, next attempt and "Prøv igen". | Part of `delivery_settings`. |
+| `group_title` | 18 px semibold title inside a settings block (`text-lg font-semibold`). | "Dine mål", "Tilføj mål", "Afleveringskø". |
+| `labelled` | A label above its control (`label > span + input`). | Form fields in `delivery_form`. |
 | `about_page` | Om: build metadata, update status, copying diagnostics with progress and result feedback, and bundled legal documents. | Reuses the page frame, text helpers and gpui-component buttons. |
 | `database_error_page` | Full-window error: icon, summary, advice, technical error, paths, "Åbn logmappen" and "Prøv igen". | The model for any blocking error: say what happened, what to do, where the log is. |
 | `MeasurementView` | The view behind the Måling page (inputs, model choices, result). | |
@@ -185,8 +201,8 @@ Change a row when the experience changes.
 | See why a recording stopped | `home_page`, `interrupted_card` | After sleep or logoff, shows the interruption notice on resume or next launch until dismissed. Recording does not restart automatically. |
 | Test Danish input | `dictation_page`, `probe` | Manual Windows test 2 and 3 in [gpui.md](gpui.md). |
 | Compare transcription on own sample | `MeasurementView`, `Page` | See [measurement.md](measurement.md). |
-| See app settings | `settings_page`, `setting_group` | Read-only. |
-| Choose meeting and report languages | `settings_page`, `language_group` | Saved through core's language settings; reports default to Danish. |
+| Change app settings | `settings_page`, `tab_bar`, `general_tab`, `storage`, `delivery_settings`, `mcp_settings` | Udseende (system, light, dark) applies at once and is saved; folders open in the file manager; crash dumps on Windows; MCP access, data parts, test and log. Delivery targets, privacy and queue as in Tauri. Notifications say they are not ported yet. |
+| Choose meeting and report languages | `settings_page`, `language_section` | Saved through core's language settings; reports default to Danish. |
 | See app information and copy diagnostics | `about_page`, `about`, `page`, `paragraph`, `section_title` | Offline metadata and legal documents; diagnostics include only build information and catalogue-owned model names. Update status is a snapshot. |
 | Database cannot open | `database_error_page` | Replaces sidebar and page. |
 | Second launch, hidden start | `single_instance`, `args` | Shows the existing window, or dispatches CLI/URL commands while hidden; tray is the host's. |

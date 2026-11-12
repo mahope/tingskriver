@@ -17,7 +17,7 @@ use tingskriver_core::strings;
 use crate::assets;
 use crate::controls::{self, Variant};
 use crate::theme::{self, icon_size, layout, shadow, sidebar as size, space, typography};
-use crate::ui::{palette, Page, Shell};
+use crate::ui::{palette, Page, SettingsTab, Shell};
 
 /// Where a sidebar action takes the window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,7 +39,13 @@ impl Shell {
         });
         self.home_notice = None;
         match to {
-            Destination::Page(page) => self.page = page,
+            Destination::Page(page) => {
+                // Tauri opens Indstillinger on Generelt on every visit.
+                if page == Page::Settings && self.page != Page::Settings {
+                    self.settings.select_tab(SettingsTab::General);
+                }
+                self.page = page
+            }
             Destination::Record => {
                 self.page = Page::Home;
                 self.home_notice = Some(strings::MEETING_RECORDING_LATER);

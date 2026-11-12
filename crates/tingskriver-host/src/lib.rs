@@ -74,6 +74,9 @@ pub struct Host {
     tasks: Vec<JoinHandle<()>>,
     /// The Tauri app runs, so this one does not dictate.
     dictation_blocked: bool,
+    /// The delivery queue, once the MCP task has opened it. The settings
+    /// page uses the same instance, so the queue is opened once per process.
+    delivery: Arc<tokio::sync::OnceCell<tingskriver_core::delivery::Delivery>>,
     #[cfg(windows)]
     thread: Option<Arc<win::HostThread>>,
 }
@@ -104,6 +107,7 @@ impl Host {
             runtime: runtime.clone(),
             tasks: Vec::new(),
             dictation_blocked: false,
+            delivery: Arc::new(tokio::sync::OnceCell::new()),
             #[cfg(windows)]
             thread: None,
         };
@@ -150,6 +154,7 @@ impl Host {
         ensure_shortcut_file(&bridge);
         if !host.dictation_blocked {
             let mcp_host: HostHandle = bridge.clone();
+            let shared_delivery = host.delivery.clone();
             host.tasks.push(runtime.spawn(async move {
                 let Ok(dir) = mcp_host.app_data_dir() else {
                     return;
@@ -160,7 +165,10 @@ impl Host {
                 )
                 .await
                 {
-                    Ok(delivery) => delivery,
+                    Ok(delivery) => {
+                        let _ = shared_delivery.set(delivery.clone());
+                        delivery
+                    }
                     Err(_) => {
                         log::warn!("MCP could not open delivery storage");
                         return;
@@ -244,6 +252,12 @@ impl Host {
 
     pub fn bridge(&self) -> &Arc<Bridge> {
         &self.bridge
+    }
+
+    /// The delivery queue for the settings page. It stays empty while the
+    /// Tauri app runs (that app owns the queue then) or if it cannot open.
+    pub fn delivery(&self) -> Arc<tokio::sync::OnceCell<tingskriver_core::delivery::Delivery>> {
+        self.delivery.clone()
     }
 
     /// Save new shortcuts. They are registered within a second, without a

@@ -8,3 +8,4 @@ pub(crate) mod dictation;
 pub(crate) mod home;
 pub(crate) mod meeting;
 pub(crate) mod settings;
+pub(crate) mod settings_delivery;
