@@ -189,7 +189,7 @@ mod tests {
     /// loads, whether it comes from the defaults or from `ShellIcons`.
     #[test]
     fn design_icons_and_logo_mark_load() {
-        use gpui_kit_assets::{IconName, IconNamed};
+        use gpui_kit_assets::IconName;
         let icons = [
             IconName::AudioLines,
             IconName::FileText,

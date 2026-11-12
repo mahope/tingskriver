@@ -136,7 +136,8 @@ impl Segment {
 
 /// A segmented control (Udseende: Følg systemet / Lyst / Mørkt): a card with
 /// an `input` border and 2 px padding, 36 px items, the selected one filled
-/// with `primary`. `label` names the group for screen readers.
+/// with `primary`. `label` names the radio group for screen readers; each
+/// item is a radio button whose checked state follows `selected`.
 pub fn segmented(
     id: impl Into<ElementId>,
     label: impl Into<SharedString>,
@@ -166,6 +167,7 @@ pub fn segmented(
                 SharedString::from(index.to_string()),
             ))
             .label(segment.label)
+            .role(gpui::Role::RadioButton)
             .when_some(segment.icon, |this, icon| this.icon(icon))
             .when(active, |this| this.primary())
             .when(!active, |this| this.ghost())
