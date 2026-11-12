@@ -58,7 +58,10 @@ in memory. Windows shares the fixtures and appearance but uses real event-loop
 time for its capture smoke test. Besides one fixture per `Page`, `meetings`
 puts four synthetic meetings in the sidebar (UTC times, "today" fixed at
 2026-10-29, compare `docs/screenshots/moedeliste-*.png`) and
-`sidebar-collapsed` shows the 64 px sidebar. The settings and dictation pages
+`sidebar-collapsed` shows the 64 px sidebar. The `meeting-*` fixtures open a
+synthetic meeting document from that list: `meeting-summary`, `meeting-transcript`
+(scrolled to the open transcript), `meeting-no-summary`, `meeting-summary-error`
+and `meeting-proposals` (compare `docs/screenshots/moedeside-*.png`). The settings and dictation pages
 still contain the shell's current placeholders; new populated views need
 corresponding fixtures when they are implemented. This does not test interaction, keyboard input or UIA.
 The fixture version is `0.0.0-test`; ordinary release version bumps therefore

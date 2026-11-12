@@ -197,7 +197,9 @@ gpui-component's next release; the rest are fixable in the app.
 - The database error texts classify the sqlx error message. When issue #5
   adds `DbInitError` to core, the error page should map its variants and add
   "Åbn backup".
-- The pages are placeholders: no meeting list, settings or dictation yet.
+- Settings and dictation are still placeholders. The meeting document shows the
+  summary read-only; editing, making a summary, delivery and retranscription
+  are disabled with an explanation until they are ported.
 - `AppHost` is implemented by `tingskriver-host`'s bridge ([host.md](host.md));
   the pages do not subscribe to its events yet.
 
