@@ -18,6 +18,7 @@ pub mod controls;
 pub mod crash;
 mod measurement;
 mod meetings;
+mod onboarding;
 mod pages;
 pub mod probe;
 pub mod proposals;
@@ -172,6 +173,8 @@ pub fn run() {
         receiver
     });
     let bridge = host.as_ref().map(|h| h.bridge().clone());
+    // First start: onboarding fetches the models through core.
+    let onboarding_host = host.as_ref().map(|h| (h.handle(), h.bridge().subscribe()));
     let events = bridge.as_ref().map(|bridge| bridge.subscribe());
     // With a tray icon, closing the window hides the app to the tray.
     let keep_running = host.as_ref().is_some_and(Host::has_tray);
@@ -251,6 +254,7 @@ pub fn run() {
                 })
                 .detach();
             }
+            onboarding::init(model.clone(), onboarding_host, cx);
             ui::init(model, cx);
 
             if let Some(mut events) = events {

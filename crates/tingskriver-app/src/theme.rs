@@ -254,6 +254,45 @@ pub mod sidebar {
 
 // ---- end of Job 2 block ----
 
+// ---- Job 9 (onboarding, docs/design-paritet.md): added constants ----
+
+/// The first-start screens (`onboarding/OnboardingContainer.tsx`,
+/// `shared/ProgressIndicator.tsx`, `steps/*`).
+pub mod onboarding {
+    use gpui::{px, Pixels};
+
+    /// The column (`max-w-2xl`), with `px-6 py-8` around it.
+    pub const FRAME_MAX: Pixels = px(672.0);
+    /// The download cards and the note under them (`max-w-lg`).
+    pub const CARDS_MAX: Pixels = px(512.0);
+    /// The full-width "Kom i gang" / "Færdig" button (`max-w-xs`).
+    pub const BUTTON_MAX: Pixels = px(320.0);
+    /// One step of the progress indicator (`h-1.5 w-10`, `gap-1.5`).
+    pub const SEGMENT_WIDTH: Pixels = px(40.0);
+    pub const SEGMENT_HEIGHT: Pixels = px(6.0);
+    /// A download card (`rounded-xl p-5`).
+    pub const CARD_RADIUS: Pixels = px(12.0);
+    pub const CARD_PADDING: Pixels = px(20.0);
+    /// The round icon at the left of a card (`w-10 h-10`).
+    pub const ICON_CIRCLE: Pixels = px(40.0);
+    /// The check mark of a finished download (`w-6 h-6`).
+    pub const CHECK_CIRCLE: Pixels = px(24.0);
+    /// The download progress bar (`h-2`).
+    pub const BAR_HEIGHT: Pixels = px(8.0);
+    /// The check mark's `bg-success/15`.
+    pub const SUCCESS_TINT: f32 = 0.15;
+    /// The error box: `border-destructive/30` on a destructive tint. Tauri's
+    /// `bg-destructive/10` leaves the dark-mode text at 4.42:1; 8 % keeps it
+    /// above WCAG AA (as `sidebar::RECORDING_TINT`).
+    pub const ERROR_TINT: f32 = 0.08;
+    pub const ERROR_BORDER: f32 = 0.30;
+    /// A busy button: Tauri dims it to 60 %; gpui-component's loading
+    /// button is already at 80 %, and 0.8 × 0.75 = 0.6.
+    pub const BUSY_OPACITY: f32 = 0.75;
+}
+
+// ---- end of Job 9 block ----
+
 /// Tailwind's shadows (`shadow-sm`, `shadow`, `shadow-md`), the same in both
 /// modes as in the Tauri app.
 pub mod shadow {
@@ -509,6 +548,14 @@ mod tests {
                 p.recording,
                 over(p.recording, p.card, sidebar::RECORDING_TINT),
             ),
+            // Job 9: onboarding download cards and the note under them.
+            ("destructive text on card", p.destructive, p.card),
+            (
+                "destructive text on the error box",
+                p.destructive,
+                over(p.destructive, p.card, onboarding::ERROR_TINT),
+            ),
+            ("foreground on secondary", p.foreground, p.secondary),
         ]
     }
 

@@ -87,6 +87,8 @@ gpui_kit_assets::icon_assets!(
         CircleCheckBig,
         // Job 2: "Møder" in the collapsed sidebar.
         NotebookPen,
+        // Job 9: the note under the onboarding download cards.
+        Download,
     ]
 );
 

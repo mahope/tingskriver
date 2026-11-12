@@ -511,6 +511,10 @@ pub enum FixtureVariant {
     Meetings,
     /// The 64 px sidebar.
     SidebarCollapsed,
+    /// First start, step 1 (docs/screenshots/onboarding-*.png).
+    OnboardingWelcome,
+    /// First start, step 2: the transcription model has just started.
+    OnboardingModel,
 }
 
 pub struct Shell {
@@ -576,6 +580,15 @@ impl Shell {
             rerun_comparison: None,
             mcp_server: Some(std::path::PathBuf::from("/opt/tingskriver/tingskriver-mcp")),
         });
+        crate::onboarding::set_fixture(
+            match variant {
+                FixtureVariant::OnboardingWelcome => Some(crate::onboarding::Step::Welcome),
+                FixtureVariant::OnboardingModel => Some(crate::onboarding::Step::Download),
+                _ => None,
+            },
+            model.clone(),
+            cx,
+        );
         init(model, cx);
         let shell = cx.new(|cx| Shell::new(None, window, cx));
         shell.update(cx, |shell, cx| {
@@ -708,7 +721,11 @@ impl Render for Shell {
             DbState::Failed(failure) => Some(failure.clone()),
             _ => None,
         };
-        let content = if let Some(comparison) = &self.model.read(cx).rerun_comparison {
+        // First start replaces the sidebar and the page (Job 9).
+        let onboarding = crate::onboarding::shown(cx).filter(|_| failure.is_none());
+        let content = if let Some(onboarding) = &onboarding {
+            onboarding.clone().into_any_element()
+        } else if let Some(comparison) = &self.model.read(cx).rerun_comparison {
             let body = v_flex()
                 .gap(space::LG)
                 .child(paragraph(
@@ -754,7 +771,7 @@ impl Render for Shell {
                 (None, Page::Measurement) => self.measurement.clone().into_any_element(),
             }
         };
-        let sidebar = failure.is_none();
+        let sidebar = failure.is_none() && onboarding.is_none();
         h_flex()
             .track_focus(&self.focus_handle)
             .relative()

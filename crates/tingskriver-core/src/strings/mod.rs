@@ -401,6 +401,9 @@ pub fn measure_result_line(wer: &str, errors: &str, latency: &str, price: &str) 
         .replace("{price}", price)
 }
 
+/// Onboarding (docs/design-paritet.md, Job 9).
+pub mod onboarding;
+
 #[cfg(test)]
 mod tests {
     #[test]

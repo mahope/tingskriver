@@ -40,6 +40,19 @@ fn fixtures() -> Vec<(String, Page, DbState, FixtureVariant)> {
         DbState::NotCreated,
         FixtureVariant::SidebarCollapsed,
     ));
+    // First start (docs/screenshots/onboarding-*.png).
+    fixtures.push((
+        "onboarding-welcome".into(),
+        Page::Home,
+        DbState::NotCreated,
+        FixtureVariant::OnboardingWelcome,
+    ));
+    fixtures.push((
+        "onboarding-model".into(),
+        Page::Home,
+        DbState::NotCreated,
+        FixtureVariant::OnboardingModel,
+    ));
     fixtures.push((
         "loading".into(),
         Page::Home,

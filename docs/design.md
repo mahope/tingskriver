@@ -84,6 +84,7 @@ The first column is the exact identifier in the code; the script checks it.
 | `crash` | Panic hook that turns graphics failures into a log entry and a native error dialog. | Never a place for UI. |
 | `update` | Velopack installer hooks, background update check and download, applying an update at next start. | Update behaviour. The update screen is not built yet. |
 | `proposals` | Review of AI proposals for a meeting's notes and summary: the band "N ventende ændringer", a diff per proposal and Anvend / Afvis / Fortryd. Changes go only through `ProposalStore::apply/undo` on a click. Not mounted in `ui.rs` until the meeting document exists. | AI proposals. Never write notes or summary directly. |
+| `onboarding` | First start (Tauri `components/onboarding`): replaces sidebar and page until onboarding is done (status in `onboarding-status.json`, shared with Tauri). Step 1 welcome, step 2 fetches the transcription and summary models through `tingskriver_core::onboarding`, then sets up the database. | Only first start. Download, status and completion logic stay in core. |
 
 ### Controls (in `controls.rs`)
 
@@ -105,7 +106,7 @@ The first column is the exact identifier in the code; the script checks it.
 | `meeting_sharing` | MCP sharing of the open meeting, with loading/error states (`pages/meeting.rs`). | Choosing whether MCP may read this meeting. Moves into the meeting document header (Job 4). |
 | `meeting_page` | The open meeting until the document is ported: title, time and duration, job status, "Åbn lydmappe" and `meeting_sharing`. | Replaced by the meeting document (docs/design-paritet.md, Job 4). |
 | `home_page` | The idle home screen: hero "Klar til dit næste møde" and the floating "Start optagelse" pill (`shadow::md`), with the interruption card, recovery card and the "not ported yet" notice above it (`pages/home.rs`). | The default content. Recording itself is Job 3. |
-| `Shell` | The window content: sidebar plus the current page, or the database error page instead of both. Owns page selection, sidebar collapse, the home notice, appearance observer and the debounced window-position save. | The one root view. Do not add a second root. |
+| `Shell` | The window content: sidebar plus the current page, or the database error page instead of both; on first start `Onboarding` replaces both until it is done. Owns page selection, sidebar collapse, the home notice, appearance observer and the debounced window-position save. | The one root view. Do not add a second root. |
 | `Page` | What the content area shows: `Home` (or the open meeting), Diktering, Indstillinger, Om, and Måling (not in the sidebar, `--page måling`), with their `--page` names (`møder` opens Home). `Page::ALL` is the screenshot inventory. | Adding a page: add a variant, `from_arg`, the arm in `Shell::render`, a sidebar entry if it needs one, and goldens. |
 | `AppModel` | Shared state: database state (`DbState`: loading, not created, ready, failed), data folder, log path, runtime handle. | Reading state in a page. Core is only called on its runtime, never on the UI thread. |
 | `sidebar` | The Tauri sidebar (`sidebar.rs`): logo mark and wordmark (opens Om), "Ny optagelse" or "Optagelse i gang", the search field, `MeetingsView`, footer rows Diktering / Importér transskript / Importér lyd / Indstillinger and ⓘ (Om); collapses to 64 px icons with tooltips. Focus order: record, search, list, footer, collapse handle. | Navigation. Imports explain that they are not ported yet. |
@@ -136,6 +137,12 @@ The first column is the exact identifier in the code; the script checks it.
 | `MeasurementView` | The view behind the Måling page (inputs, model choices, result). | |
 | `ProposalReview` | The view behind `proposals`: pending proposals for one meeting with their diffs and buttons. | |
 | `card` | One proposal in `ProposalReview`: title, diff and the buttons for its state. | Only inside `ProposalReview`. |
+| `Onboarding` | The view behind `onboarding`: step, the two download cards' state (core's `Download`, moved by host events), "Kom i gang" and "Færdig". | Only first start. Shown by `Shell::render` via `onboarding::shown`. |
+| `progress` | "Trin 1 af 2" (14 px muted) and one 40×6 px segment per step, primary up to the current step. | Only in `Onboarding`. |
+| `welcome` | Step 1: the note and the full-width (max 320 px) primary "Kom i gang". | Only in `Onboarding`. |
+| `downloads` | Step 2: the two cards (max 512 px), the note while the summary model continues, and "Henter model…" / "Gør klar…" / "Færdig" (loading button dimmed to 60 % while not ready). | Only in `Onboarding`. |
+| `download_card` | One model card (`rounded-xl`, p 20): 40 px icon circle, Literata title, size, status (Venter… / spinner / check / Mislykkedes / Annulleret), progress bar with MB and percent, and the error box with "Prøv igen". | Only in `Onboarding`. |
+| `status_text` | The 14 px status word at the right of a card. | Only in `download_card`. |
 
 ### From gpui-component (use as they are)
 
@@ -173,6 +180,7 @@ Change a row when the experience changes.
 | Experience | Components | Notes |
 |---|---|---|
 | Start | `startup`, `Shell`, `home_page`, `loading` | First frame within 500 ms; the database opens in the background. |
+| First start | `Onboarding`, `progress`, `welcome`, `downloads`, `download_card` | Replaces sidebar and page until done; the transcription model must be on disk before "Færdig", the summary model may continue in the background. No macOS permissions step (Tauri has one on macOS only). |
 | Look at meetings | `sidebar`, `MeetingsView`, `meeting_page`, `loading` | The list is always in the sidebar; search by title and content; open a meeting (title, status, audio folder, MCP sharing), rename and delete in dialogs, restore interrupted audio from Home. Recording and import explain the pending ports. |
 | See why a recording stopped | `home_page`, `interrupted_card` | After sleep or logoff, shows the interruption notice on resume or next launch until dismissed. Recording does not restart automatically. |
 | Test Danish input | `dictation_page`, `probe` | Manual Windows test 2 and 3 in [gpui.md](gpui.md). |
