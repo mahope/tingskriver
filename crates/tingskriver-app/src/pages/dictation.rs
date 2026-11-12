@@ -28,8 +28,14 @@ use crate::probe;
 use crate::theme::{self, dictation as size, layout, space, typography};
 use crate::ui::{heading, muted, palette, Level, Page, Shell};
 
-/// How long a failed load waits before the page reads again.
+/// How long the first failed load waits before the page reads again; each
+/// further failure doubles the wait.
 const LOAD_RETRY: Duration = Duration::from_secs(3);
+/// Retries after a failed load before the page stops by itself (3 + 6 + 12
+/// + 24 + 48 s, enough for the service to start). Some failures last the
+/// whole session (the Tauri app owns dictation), so the page must not poll
+/// forever; opening the page again starts a new round.
+const LOAD_RETRIES: u32 = 5;
 
 /// What the status line knows about dictation (Tauri `DictationStatus`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,6 +64,8 @@ pub(crate) struct DictationPage {
     status: Option<Status>,
     /// Why the history could not be read (Tauri shows a toast).
     load_error: Option<String>,
+    /// Failed loads in a row since the last success or page visit.
+    load_failures: u32,
     /// "Ryd historik" was clicked once and asks for a second click.
     confirm_clear: bool,
     /// "Test tastatur" is unfolded.
@@ -89,17 +97,27 @@ impl DictationPage {
     }
 
     /// A load failed: keep what was shown (no false "Ingen dikteringer
-    /// endnu") and read again on the next draw. Returns whether a retry is
-    /// worth scheduling (fixtures never read from core).
-    fn load_failed(&mut self, error: String) -> bool {
+    /// endnu"). Returns how long to wait before reading again, or `None`
+    /// when the page should stop trying (fixtures never read from core).
+    fn load_failed(&mut self, error: String) -> Option<Duration> {
         self.load_error = Some(error);
-        !self.frozen
+        self.load_failures = self.load_failures.saturating_add(1);
+        if self.frozen || !self.retrying() {
+            return None;
+        }
+        Some(LOAD_RETRY * 2u32.pow(self.load_failures - 1))
+    }
+
+    /// Whether a failed load will be read again without the user's help.
+    fn retrying(&self) -> bool {
+        !self.frozen && self.load_failures <= LOAD_RETRIES
     }
 
     /// The page left the screen: read again on return (Tauri reloads on
     /// mount) and forget a half-done "Ryd historik".
     pub(crate) fn hide(&mut self) {
         self.stale = true;
+        self.load_failures = 0;
         self.confirm_clear = false;
     }
 
@@ -239,8 +257,11 @@ async fn fetch() -> Result<(Vec<HistoryEntry>, DictationSettings, Status), Strin
     use tingskriver_core::dictation::{secrets, service};
     let service = service::get()?;
     let history = service.store.history(HISTORY_LIMIT).await?;
-    // The Parakeet engine starts on first use; until then it is not known
-    // whether a model is installed, so the line does not claim there is none.
+    // Ok(false) also means "the Parakeet engine has not started". Tauri starts
+    // it at launch; GPUI only starts it with a meeting transcription, and
+    // until then local dictation cannot run either (warm::ensure_parakeet
+    // fails), so the warning matches what a dictation would do. Only a failed
+    // model scan is unknown, and the line does not claim there is no model.
     let local_model_available =
         tingskriver_core::parakeet_engine::commands::parakeet_has_available_models()
             .await
@@ -282,14 +303,20 @@ impl Shell {
                         state.settings = Some(settings);
                         state.status = Some(status);
                         state.load_error = None;
+                        state.load_failures = 0;
                     }
                     Err(error) => {
-                        log::warn!("Dictation history could not be read: {error}");
-                        // The service may not be ready yet (startup, or the
-                        // Tauri app still owns dictation): try again soon.
-                        if state.load_failed(error) {
+                        // Warn once per round; the retries say the same.
+                        if state.load_failures == 0 {
+                            log::warn!("Dictation history could not be read: {error}");
+                        } else {
+                            log::debug!("Dictation history could not be read: {error}");
+                        }
+                        // The service may not be ready yet (startup): try
+                        // again a few times with a growing wait.
+                        if let Some(wait) = state.load_failed(error) {
                             cx.spawn(async move |this, cx| {
-                                cx.background_executor().timer(LOAD_RETRY).await;
+                                cx.background_executor().timer(wait).await;
                                 let _ = this.update(cx, |shell, cx| shell.dictation_changed(cx));
                             })
                             .detach();
@@ -479,10 +506,16 @@ impl Shell {
         let shortcut = state.shortcut();
         let content = match &state.history {
             // Not read yet and the read failed: the status line says why,
-            // and the page tries again by itself.
-            None if state.load_error.is_some() => {
-                muted(strings::DICTATION_LOAD_RETRYING, cx).into_any_element()
-            }
+            // and the page tries again by itself or asks to be reopened.
+            None if state.load_error.is_some() => muted(
+                if state.retrying() {
+                    strings::DICTATION_LOAD_RETRYING
+                } else {
+                    strings::DICTATION_LOAD_GAVE_UP
+                },
+                cx,
+            )
+            .into_any_element(),
             None => v_flex()
                 .gap(space::MD)
                 .children((0..3).map(|_| {
@@ -792,7 +825,10 @@ mod tests {
     #[test]
     fn failed_load_keeps_the_history_unknown_and_retries() {
         let mut page = DictationPage::new();
-        assert!(page.load_failed("Diktering er ikke klar endnu".into()));
+        assert_eq!(
+            page.load_failed("Diktering er ikke klar endnu".into()),
+            Some(LOAD_RETRY)
+        );
         // No false empty history: the empty card needs Some(vec![]).
         assert!(page.history.is_none());
         assert!(page.load_error.is_some());
@@ -801,7 +837,28 @@ mod tests {
             frozen: true,
             ..Default::default()
         };
-        assert!(!fixture.load_failed("x".into()));
+        assert_eq!(fixture.load_failed("x".into()), None);
+    }
+
+    #[test]
+    fn failed_loads_back_off_and_stop_until_the_page_is_reopened() {
+        let mut page = DictationPage::new();
+        let waits: Vec<_> = (0..LOAD_RETRIES)
+            .map(|_| page.load_failed("x".into()).expect("retries"))
+            .collect();
+        assert_eq!(
+            waits,
+            [3, 6, 12, 24, 48].map(Duration::from_secs),
+            "the wait doubles"
+        );
+        assert!(page.retrying());
+        // A lasting failure (the Tauri app owns dictation) stops polling.
+        assert_eq!(page.load_failed("x".into()), None);
+        assert!(!page.retrying());
+        assert_eq!(page.load_failed("x".into()), None);
+        // Opening the page again starts a new round.
+        page.hide();
+        assert_eq!(page.load_failed("x".into()), Some(LOAD_RETRY));
     }
 
     #[test]
