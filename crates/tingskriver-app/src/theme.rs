@@ -299,6 +299,8 @@ pub mod document {
     pub const ERROR_TINT: f32 = 0.1;
     /// A one-pixel line (rule, tinted segment border).
     pub const HAIRLINE: Pixels = px(1.0);
+    /// The transcript toggle's focus border (Tauri `focus-visible:ring-2`).
+    pub const FOCUS_BORDER: Pixels = px(2.0);
     /// The proposals band above the summary scrolls inside this height.
     pub const PROPOSALS_MAX: Pixels = px(480.0);
 }

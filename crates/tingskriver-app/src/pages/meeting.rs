@@ -33,7 +33,7 @@ use tingskriver_core::{
 
 use crate::controls::{self, Variant};
 use crate::meetings::MeetingsView;
-use crate::proposals::ProposalReview;
+use crate::proposals::{ProposalReview, ProposalsApplied};
 use crate::startup::DbState;
 use crate::theme::{self, document as size, icon_size, layout, space, typography, Palette};
 use crate::ui::{heading, load_database, AppModel, Level, Shell};
@@ -81,6 +81,9 @@ pub(crate) struct MeetingView {
     /// Width of the content area, set by the shell each frame (the window
     /// minus the sidebar); drives the toolbar's label collapse.
     pub(crate) available: Pixels,
+    /// Show times in UTC instead of local time (screenshot fixtures, so
+    /// goldens do not depend on the machine's time zone).
+    utc: bool,
     load: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -109,12 +112,17 @@ impl MeetingView {
             }
             cx.notify();
         })];
+        let mut subscriptions = subscriptions;
         let proposals = match &model.read(cx).db {
             DbState::Ready(db) => {
                 let store = ProposalStore::new(db.pool().clone());
                 let runtime = model.read(cx).runtime.clone();
                 let id = meeting_id.clone();
                 let review = cx.new(|cx| ProposalReview::new(store, id, runtime, cx));
+                // An applied or undone proposal changed the summary: show it.
+                subscriptions.push(cx.subscribe(&review, |this, _, _: &ProposalsApplied, cx| {
+                    this.load(false, cx)
+                }));
                 Some(review)
             }
             _ => None,
@@ -131,6 +139,7 @@ impl MeetingView {
             scroll: ScrollHandle::new(),
             proposals,
             available: layout::DOCUMENT_MAX,
+            utc: false,
             load: None,
             _subscriptions: subscriptions,
         };
@@ -161,6 +170,7 @@ impl MeetingView {
             scroll: ScrollHandle::new(),
             proposals,
             available: layout::DOCUMENT_MAX,
+            utc: true,
             load: None,
             _subscriptions: Vec::new(),
         };
@@ -173,11 +183,21 @@ impl MeetingView {
     }
 
     fn set_loaded(&mut self, loaded: Loaded) {
-        self.transcript.reset(loaded.document.transcript.len());
+        // Keep the reading position when only the summary changed.
+        let unchanged = matches!(&self.state, DocState::Ready(old)
+            if old.document.transcript == loaded.document.transcript);
+        if !unchanged {
+            self.transcript.reset(loaded.document.transcript.len());
+        }
         self.state = DocState::Ready(Rc::new(loaded));
     }
 
     fn reload(&mut self, cx: &mut Context<Self>) {
+        self.load(true, cx);
+    }
+
+    /// Read the document again, and the proposals too when `proposals`.
+    fn load(&mut self, proposals: bool, cx: &mut Context<Self>) {
         let DbState::Ready(db) = &self.model.read(cx).db else {
             return;
         };
@@ -201,8 +221,8 @@ impl MeetingView {
                     }
                     Err(_) => view.state = DocState::Failed,
                 }
-                if let Some(proposals) = &view.proposals {
-                    proposals.update(cx, |review, cx| review.reload(cx));
+                if let Some(review) = view.proposals.as_ref().filter(|_| proposals) {
+                    review.update(cx, |review, cx| review.reload(cx));
                 }
                 cx.notify();
             });
@@ -254,12 +274,36 @@ impl MeetingView {
                         .mt(space::SM)
                         .text_size(typography::SM)
                         .text_color(palette.muted_foreground)
-                        .child(meeting_document::date_line(
-                            loaded.document.created_at,
-                            &chrono::Local,
-                        )),
+                        .child(if self.utc {
+                            meeting_document::date_line(loaded.document.created_at, &chrono::Utc)
+                        } else {
+                            meeting_document::date_line(loaded.document.created_at, &chrono::Local)
+                        }),
                 )
             })
+            .when_some(
+                loaded.and_then(|loaded| self.header_status(loaded)),
+                |header, status| {
+                    let failed = status == meeting_list::Status::Failed;
+                    header.child(
+                        div()
+                            .id("meeting-job-status")
+                            .role(if failed {
+                                gpui::Role::Alert
+                            } else {
+                                gpui::Role::Status
+                            })
+                            .mt(space::XS)
+                            .text_size(typography::SM)
+                            .text_color(if failed {
+                                palette.destructive
+                            } else {
+                                palette.muted_foreground
+                            })
+                            .child(status.text()),
+                    )
+                },
+            )
             .child(self.sharing(cx));
         if let Some(loaded) = loaded {
             header = header.child(div().mt(space::LG).child(self.toolbar(loaded, cx)));
@@ -275,6 +319,22 @@ impl MeetingView {
             );
         }
         header.into_any_element()
+    }
+
+    /// The meeting's job status from the sidebar when it is in progress or
+    /// went wrong (the old page's status line). Not while the summary panel
+    /// already says it: writing, or the summary's own error.
+    fn job_status(&self) -> Option<meeting_list::Status> {
+        self.status.filter(|status| status.short().is_some())
+    }
+
+    fn header_status(&self, loaded: &Loaded) -> Option<meeting_list::Status> {
+        let summary = loaded.document.summary.status;
+        self.job_status().filter(|status| match status {
+            meeting_list::Status::Summarizing => false,
+            meeting_list::Status::Failed => summary != SummaryStatus::Failed,
+            _ => true,
+        })
     }
 
     /// "Må deles med AI-værktøjer" (Tauri `MeetingSharing`): the meeting's
@@ -618,13 +678,17 @@ impl MeetingView {
             .aria_expanded(open)
             .w_full()
             .min_h(layout::CONTROL_HEIGHT)
-            .px(space::XS)
+            // The 2 px focus border is always there (transparent) and taken
+            // from the padding, so focus does not move the row.
+            .px(space::XS - size::FOCUS_BORDER)
+            .border(size::FOCUS_BORDER)
+            .border_color(gpui::transparent_black())
             .flex()
             .items_center()
             .rounded(theme::RADIUS)
             .hover(|this| this.bg(palette.accent.opacity(theme::LIST_HOVER_ALPHA)))
             .when(self.toggle_focus.is_focused(window), |this| {
-                this.border_2().border_color(palette.ring)
+                this.border_color(palette.ring)
             })
             .child(
                 h_flex()
@@ -781,6 +845,20 @@ impl MeetingView {
     fn transcript_lines(&self, loaded: &Rc<Loaded>, cx: &mut Context<Self>) -> AnyElement {
         let palette = Self::palette(cx);
         if loaded.document.transcript.is_empty() {
+            // Still being transcribed, or the transcription failed: say that
+            // rather than "no speech was recognised".
+            let (title, help) = match self.job_status() {
+                Some(
+                    status @ (meeting_list::Status::Recording
+                    | meeting_list::Status::Pending
+                    | meeting_list::Status::Transcribing
+                    | meeting_list::Status::Failed),
+                ) => (status.short().unwrap_or_default(), status.text()),
+                _ => (
+                    strings::DOC_TRANSCRIPT_EMPTY,
+                    strings::DOC_TRANSCRIPT_EMPTY_HELP,
+                ),
+            };
             return v_flex()
                 .flex_1()
                 .items_center()
@@ -789,14 +867,14 @@ impl MeetingView {
                     div()
                         .font_weight(FontWeight::MEDIUM)
                         .text_size(typography::MD)
-                        .child(strings::DOC_TRANSCRIPT_EMPTY),
+                        .child(title),
                 )
                 .child(
                     div()
                         .mt(space::XS)
                         .text_size(typography::SM)
                         .text_color(palette.muted_foreground)
-                        .child(strings::DOC_TRANSCRIPT_EMPTY_HELP),
+                        .child(help),
                 )
                 .into_any_element();
         }
@@ -885,8 +963,8 @@ impl Render for MeetingView {
                     article = article.child(band);
                 }
                 article = article.child(div().mt(space::XL).child(self.summary(loaded, cx)));
-                // Tauri puts `DeliveryApproval` above the summary; until
-                // delivery is ported it is one note, so it sits below.
+                // Below the summary, as Tauri's `DeliveryApproval`. A note
+                // until delivery (queue worker, targets) runs in this app.
                 if summary.has_content() && summary.status != SummaryStatus::Running {
                     article = article.child(self.delivery(cx));
                 }

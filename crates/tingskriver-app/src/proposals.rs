@@ -32,6 +32,12 @@ pub enum ReviewState {
     Loaded(Vec<Proposal>),
 }
 
+/// Emitted after a proposal was applied or undone: the meeting's notes or
+/// summary changed, so the page showing them reloads.
+pub struct ProposalsApplied;
+
+impl gpui::EventEmitter<ProposalsApplied> for ProposalReview {}
+
 pub struct ProposalReview {
     store: Option<ProposalStore>,
     meeting_id: String,
@@ -145,8 +151,10 @@ impl ProposalReview {
                 .unwrap_or_else(|_| Err(ProposalError::Storage("task ended".into())));
             let _ = view.update(cx, |view, cx| {
                 view.busy = false;
-                if let Err(error) = result {
-                    view.message = Some(error.user_message());
+                match result {
+                    Err(error) => view.message = Some(error.user_message()),
+                    Ok(_) if !matches!(action, Action::Reject) => cx.emit(ProposalsApplied),
+                    Ok(_) => {}
                 }
                 view.reload(cx);
                 cx.notify();
