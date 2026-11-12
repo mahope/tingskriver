@@ -23,8 +23,8 @@ use crate::ui::{palette, Page, Shell};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Destination {
     Page(Page),
-    /// "Ny optagelse": the home screen, whose pill explains that recording
-    /// has not moved to this app yet.
+    /// "Ny optagelse": the home screen, with a notice while recording has
+    /// not moved to this app yet.
     Record,
     /// "Importér transskript" / "Importér lyd": not in this app yet.
     Import,
@@ -40,8 +40,14 @@ impl Shell {
         self.home_notice = None;
         match to {
             Destination::Page(page) => self.page = page,
-            // The home pill says why recording cannot start here yet.
-            Destination::Record => self.page = Page::Home,
+            // Say why recording cannot start here yet, so the click
+            // visibly does something even on the home screen.
+            Destination::Record => {
+                self.page = Page::Home;
+                if !self.home.can_record {
+                    self.home_notice = Some(strings::RECORDING_NOT_IN_APP);
+                }
+            }
             Destination::Import => {
                 self.page = Page::Home;
                 self.home_notice = Some(strings::IMPORT_LATER);

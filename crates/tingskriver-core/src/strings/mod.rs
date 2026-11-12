@@ -43,7 +43,6 @@ catalogue! {
     MEETING_SCAN_FAILED = "Efterladte optagelser kunne ikke undersøges. Prøv at opdatere listen. Dine lydfiler er ikke ændret.";
     MEETING_LOAD_FAILED = "Møder eller efterladte optagelser kunne ikke indlæses. Prøv at opdatere listen.";
     MEETING_DOCUMENT_LATER = "Mødedokumentet er endnu ikke flyttet til denne app. Du kan åbne lydmappen her eller læse teksten i den nuværende app.";
-    MEETING_RECORDING_LATER = "Optageskærmen er endnu ikke flyttet hertil. Start din optagelse i den nuværende app.";
     MEETING_FOLDER = "Åbn lydmappe";
     // The sidebar, copied from the Tauri app (frontend/src/components/Sidebar/index.tsx).
     SIDEBAR_LABEL = "Hovedmenu";
@@ -309,11 +308,15 @@ catalogue! {
     PROMPT_KEYS_HINT = "Ctrl+Alt+Enter vælger den første knap, Ctrl+Alt+Esc lukker, og Ctrl+Alt+P flytter fokus til vinduet. Så virker Tab, Enter og Esc.";
     PROMPT_QUIET_MARK = "Stille tilstand: spørgsmål udsat";
     PROMPT_WINDOW_NAME = "Tingskriver spørger";
-    // Job 3 (docs/design-paritet.md): the home and recording screen, verbatim
-    // from Tauri RecordingControls.tsx, RecordingStatusBar.tsx,
-    // TranscriptPanel.tsx, VirtualizedTranscriptView.tsx, StatusOverlays.tsx
-    // and RecordingStateContext.tsx.
+    // Job 3 (docs/design-paritet.md): the home and recording screen. GPUI
+    // only: why recording cannot start here yet, and the name of the
+    // transcript list. The rest is verbatim from Tauri RecordingControls.tsx,
+    // RecordingStatusBar.tsx, TranscriptPanel.tsx,
+    // VirtualizedTranscriptView.tsx, StatusOverlays.tsx and
+    // RecordingStateContext.tsx.
     RECORDING_NOT_IN_APP = "Optagelse er endnu ikke flyttet til denne app. Start din optagelse i den nuværende app.";
+    RECORDING_TRANSCRIPT_LABEL = "Transskription";
+    RECORDING_STATUS_LABEL = "{state} {clock}, Mikrofon: {microphone}, Systemlyd: {system}";
     RECORDING_PAUSE = "Pause";
     RECORDING_RESUME = "Genoptag";
     RECORDING_STOP = "Stop og gem";
@@ -406,6 +409,15 @@ pub fn proposal_title(field: &str, status: &str) -> String {
     PROPOSAL_TITLE
         .replace("{field}", field)
         .replace("{status}", status)
+}
+
+/// The status bar of a recording as a screen reader reads it.
+pub fn recording_status_label(state: &str, clock: &str, microphone: &str, system: &str) -> String {
+    RECORDING_STATUS_LABEL
+        .replace("{state}", state)
+        .replace("{clock}", clock)
+        .replace("{microphone}", microphone)
+        .replace("{system}", system)
 }
 
 pub fn mcp_action(action: &str) -> String {

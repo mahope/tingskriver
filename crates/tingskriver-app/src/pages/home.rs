@@ -78,18 +78,17 @@ impl Shell {
                         .text_color(palette.muted_foreground)
                         .child(strings::HOME_LEAD),
                 )
-                .child(
-                    div()
-                        .mt(space::SM)
-                        .text_size(typography::SM)
-                        .text_color(palette.muted_foreground)
-                        // "Tryk på \"Start optagelse\"" only while it can.
-                        .child(if self.home.can_record {
-                            strings::HOME_HINT
-                        } else {
-                            strings::RECORDING_NOT_IN_APP
-                        }),
-                );
+                // "Tryk på \"Start optagelse\"" only while it can; otherwise
+                // why not, unless the notice above already says so.
+                .when_some(self.home_hint(), |this, hint| {
+                    this.child(
+                        div()
+                            .mt(space::SM)
+                            .text_size(typography::SM)
+                            .text_color(palette.muted_foreground)
+                            .child(hint),
+                    )
+                });
             v_flex()
                 .id("home")
                 .size_full()
@@ -138,6 +137,25 @@ impl Shell {
                     .child(self.recording_pill(cx)),
             )
             .into_any_element()
+    }
+}
+
+impl Shell {
+    /// The line under the hero's lead.
+    pub(crate) fn home_hint(&self) -> Option<&'static str> {
+        hero_hint(self.home.can_record, self.home_notice)
+    }
+}
+
+/// "Tryk på \"Start optagelse\"" while recording can start; otherwise why
+/// not, unless the notice above the hero already says so.
+fn hero_hint(can_record: bool, notice: Option<&str>) -> Option<&'static str> {
+    if can_record {
+        Some(strings::HOME_HINT)
+    } else if notice == Some(strings::RECORDING_NOT_IN_APP) {
+        None
+    } else {
+        Some(strings::RECORDING_NOT_IN_APP)
     }
 }
 
@@ -192,4 +210,21 @@ pub(crate) fn interrupted_card(notice: &InterruptNotice, cx: &App) -> AnyElement
             ),
         )
         .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hero_explains_recording_once() {
+        assert_eq!(hero_hint(true, None), Some(strings::HOME_HINT));
+        assert_eq!(hero_hint(false, None), Some(strings::RECORDING_NOT_IN_APP));
+        assert_eq!(
+            hero_hint(false, Some(strings::IMPORT_LATER)),
+            Some(strings::RECORDING_NOT_IN_APP)
+        );
+        // "Ny optagelse" put the explanation in the notice above.
+        assert_eq!(hero_hint(false, Some(strings::RECORDING_NOT_IN_APP)), None);
+    }
 }

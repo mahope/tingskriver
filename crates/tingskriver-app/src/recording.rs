@@ -211,7 +211,6 @@ impl Shell {
                                     .icon(Icon::from(ComponentIcon::Copy).size(icon_size::SM))
                                     .label(strings::RECORDING_COPY)
                                     .tooltip(strings::RECORDING_COPY_TITLE)
-                                    .self_end()
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         cx.write_to_clipboard(ClipboardItem::new_string(
                                             copy_text(&this.home.lines),
@@ -232,7 +231,7 @@ impl Shell {
                             .id("recording-lines")
                             .pt(space::LG)
                             .role(gpui::Role::Log)
-                            .aria_label(SharedString::from(strings::RECORDING_COPY_TITLE))
+                            .aria_label(SharedString::from(strings::RECORDING_TRANSCRIPT_LABEL))
                             .children(lines),
                     )
                     .when(live == Some(true) && !state.lines.is_empty(), |this| {
@@ -273,7 +272,12 @@ impl Shell {
         let status = h_flex()
             .id("recording-status")
             .role(gpui::Role::Status)
-            .aria_label(SharedString::from(format!("{} {}", state, clock)))
+            .aria_label(SharedString::from(strings::recording_status_label(
+                state,
+                &clock,
+                &microphone,
+                &system,
+            )))
             .flex_wrap()
             .gap_x(space::LG)
             .gap_y(space::XS)
@@ -290,15 +294,39 @@ impl Shell {
                     )
                     .child(div().text_color(palette.muted_foreground).child(clock)),
             )
+            // One line; long device names are cut with an ellipsis
+            // (Tauri `min-w-0 truncate`).
             .child(
                 h_flex()
                     .min_w_0()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
                     .text_color(palette.muted_foreground)
-                    .child(format!("{} ", strings::RECORDING_MICROPHONE))
-                    .child(div().text_color(palette.foreground).child(microphone))
-                    .child("  ·  ")
-                    .child(format!("{} ", strings::RECORDING_SYSTEM))
-                    .child(div().text_color(palette.foreground).child(system)),
+                    .child(
+                        div()
+                            .flex_none()
+                            .child(format!("{} ", strings::RECORDING_MICROPHONE)),
+                    )
+                    .child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .text_color(palette.foreground)
+                            .child(microphone),
+                    )
+                    .child(div().flex_none().child("  ·  "))
+                    .child(
+                        div()
+                            .flex_none()
+                            .child(format!("{} ", strings::RECORDING_SYSTEM)),
+                    )
+                    .child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .text_color(palette.foreground)
+                            .child(system),
+                    ),
             );
         v_flex()
             .mb(space::MD)
@@ -387,10 +415,13 @@ impl Shell {
             } else {
                 (ComponentIcon::Pause, strings::RECORDING_PAUSE)
             };
+            // Not wired to core yet (module docs): disabled like "Start
+            // optagelse" until it is.
             pill.child(
                 controls::pill_button("recording-pause", Pill::Pause, cx)
                     .icon(Icon::from(icon).size(icon_size::SM))
-                    .label(label),
+                    .label(label)
+                    .disabled(!state.can_record),
             )
             .child(
                 controls::pill_button("recording-stop", Pill::Stop, cx)
@@ -401,7 +432,8 @@ impl Shell {
                             .rounded(size::STOP_SQUARE_RADIUS)
                             .bg(palette.background),
                     )
-                    .child(strings::RECORDING_STOP),
+                    .child(strings::RECORDING_STOP)
+                    .disabled(!state.can_record),
             )
             .child(level_bars(recording, cx))
         } else {
@@ -708,6 +740,10 @@ pub(crate) fn fixture_recording(paused: bool, notice: Option<DeviceNotice>) -> R
 pub(crate) fn fixture(variant: crate::ui::FixtureVariant) -> HomeState {
     use crate::ui::FixtureVariant as V;
     let mut state = HomeState::default();
+    // The recording fixtures show what the app looks like once recording is
+    // wired to core; a start error or a running recording cannot happen
+    // while it cannot record.
+    state.can_record = !matches!(variant, V::Plain | V::Meetings | V::SidebarCollapsed);
     match variant {
         V::Plain | V::Meetings | V::SidebarCollapsed => {}
         V::Recording => state.recording = Some(fixture_recording(false, None)),
