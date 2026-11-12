@@ -42,9 +42,7 @@ catalogue! {
     MEETING_ACTION_FAILED = "Handlingen kunne ikke gennemføres. Prøv igen.";
     MEETING_SCAN_FAILED = "Efterladte optagelser kunne ikke undersøges. Prøv at opdatere listen. Dine lydfiler er ikke ændret.";
     MEETING_LOAD_FAILED = "Møder eller efterladte optagelser kunne ikke indlæses. Prøv at opdatere listen.";
-    MEETING_DOCUMENT_LATER = "Mødedokumentet er endnu ikke flyttet til denne app. Du kan åbne lydmappen her eller læse teksten i den nuværende app.";
     MEETING_RECORDING_LATER = "Optageskærmen er endnu ikke flyttet hertil. Start din optagelse i den nuværende app.";
-    MEETING_FOLDER = "Åbn lydmappe";
     // The sidebar, copied from the Tauri app (frontend/src/components/Sidebar/index.tsx).
     SIDEBAR_LABEL = "Hovedmenu";
     SIDEBAR_COLLAPSE = "Fold sidepanelet sammen";
@@ -335,6 +333,7 @@ catalogue! {
     DOC_SUMMARY_RUNNING_HELP = "Det kan tage et par minutter for lange møder.";
     DOC_SUMMARY_FAILED = "Referatet kunne ikke laves. Mødet og transskriptet er gemt.";
     DOC_SUMMARY_RETRY = "Lav referat igen";
+    DOC_SUMMARY_INVALID = "Det gemte referat mangler eller kan ikke læses. Lav referatet igen.";
     DOC_DELIVERY_TITLE = "Aflever referatet til";
     DOC_DELIVERY_LATER = "Aflevering af referatet er endnu ikke flyttet til denne app.";
     DOC_TRANSCRIPT = "Transskript";

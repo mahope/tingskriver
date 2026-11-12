@@ -121,11 +121,188 @@ pub fn summary_status(stored: &str) -> SummaryStatus {
     }
 }
 
-/// The `markdown` field of a stored summary result, if it has text.
+/// The Markdown of a stored summary result, read as the Tauri app reads it
+/// (`api_get_summary` and `summary-content.ts`): reasoning removed, then the
+/// `markdown` field, else the BlockNote blocks in `summary_json`, else the
+/// old section format. `None` when nothing renderable is stored, also when
+/// a reasoning marker is left over.
 pub fn summary_markdown(result: Option<&str>) -> Option<String> {
     let value: serde_json::Value = serde_json::from_str(result?).ok()?;
-    let markdown = value.get("markdown")?.as_str()?;
-    (!markdown.trim().is_empty()).then(|| markdown.to_string())
+    let value = crate::summary::commands::redact_flagged_reasoning(value);
+    if !crate::summary::commands::summary_is_renderable(&value) {
+        return None;
+    }
+    let object = value.as_object()?;
+    let markdown = if let Some(markdown) = object.get("markdown") {
+        markdown.as_str()?.to_string()
+    } else if let Some(blocks) = object.get("summary_json") {
+        let mut out = Vec::new();
+        blocknote_markdown(blocks, 0, &mut out);
+        out.join("\n")
+    } else {
+        legacy_markdown(object)
+    };
+    (!markdown.trim().is_empty()).then_some(markdown)
+}
+
+/// The summary from the stored process: like the Tauri app, a "completed"
+/// process without renderable text counts as failed.
+fn summary_from_process(status: &str, result: Option<&str>, error: Option<String>) -> Summary {
+    let mut summary = Summary {
+        status: summary_status(status),
+        markdown: summary_markdown(result),
+        error: error.filter(|e| !e.trim().is_empty()),
+    };
+    if summary.status == SummaryStatus::Completed && summary.markdown.is_none() {
+        summary.status = SummaryStatus::Failed;
+        summary.error = Some(crate::strings::DOC_SUMMARY_INVALID.to_string());
+    }
+    summary
+}
+
+/// BlockNote blocks as Markdown lines, nested blocks indented.
+fn blocknote_markdown(value: &serde_json::Value, depth: usize, out: &mut Vec<String>) {
+    let Some(blocks) = value.as_array() else {
+        return;
+    };
+    let mut number = 0;
+    for block in blocks {
+        let kind = block.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        let props = block.get("props");
+        let text = block
+            .get("content")
+            .map(blocknote_inline)
+            .unwrap_or_default();
+        number = if kind == "numberedListItem" {
+            number + 1
+        } else {
+            0
+        };
+        let indent = "  ".repeat(depth);
+        let line = match kind {
+            "heading" => {
+                let level = props
+                    .and_then(|p| p.get("level"))
+                    .and_then(|l| l.as_u64())
+                    .unwrap_or(1)
+                    .clamp(1, 6) as usize;
+                format!("{} {text}", "#".repeat(level))
+            }
+            "bulletListItem" => format!("{indent}- {text}"),
+            "numberedListItem" => format!("{indent}{number}. {text}"),
+            "checkListItem" => {
+                let checked = props
+                    .and_then(|p| p.get("checked"))
+                    .and_then(|c| c.as_bool())
+                    .unwrap_or(false);
+                format!("{indent}- [{}] {text}", if checked { 'x' } else { ' ' })
+            }
+            "quote" => format!("> {text}"),
+            _ => text,
+        };
+        if !line.trim().is_empty() {
+            out.push(line);
+        }
+        if let Some(children) = block.get("children") {
+            blocknote_markdown(children, depth + 1, out);
+        }
+    }
+}
+
+/// The inline content of a BlockNote block with bold, italic and code kept.
+fn blocknote_inline(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(text) => text.clone(),
+        serde_json::Value::Array(items) => items.iter().map(blocknote_inline).collect(),
+        serde_json::Value::Object(object) => {
+            if let Some(text) = object.get("text").and_then(|t| t.as_str()) {
+                let style = |name: &str| {
+                    object
+                        .get("styles")
+                        .and_then(|s| s.get(name))
+                        .and_then(|v| v.as_bool())
+                        == Some(true)
+                };
+                let mut text = text.to_string();
+                if text.trim().is_empty() {
+                    return text;
+                }
+                if style("code") {
+                    text = format!("`{text}`");
+                }
+                if style("italic") {
+                    text = format!("*{text}*");
+                }
+                if style("bold") {
+                    text = format!("**{text}**");
+                }
+                text
+            } else if let Some(content) = object.get("content") {
+                blocknote_inline(content)
+            } else if let Some(rows) = object.get("rows") {
+                // A table: one line of cells per row.
+                rows.as_array()
+                    .map(|rows| {
+                        rows.iter()
+                            .map(|row| {
+                                row.get("cells")
+                                    .and_then(|c| c.as_array())
+                                    .map(|cells| {
+                                        cells
+                                            .iter()
+                                            .map(blocknote_inline)
+                                            .collect::<Vec<_>>()
+                                            .join(" | ")
+                                    })
+                                    .unwrap_or_default()
+                            })
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    })
+                    .unwrap_or_default()
+            } else {
+                String::new()
+            }
+        }
+        _ => String::new(),
+    }
+}
+
+/// The old section format as the Tauri "Kopiér" button converts it
+/// (`useCopyOperations.ts`): `## title` and one bullet per block, in
+/// `_section_order` when it is stored.
+fn legacy_markdown(object: &serde_json::Map<String, serde_json::Value>) -> String {
+    let skip = |key: &str| {
+        matches!(
+            key,
+            "markdown" | "summary_json" | "_section_order" | "MeetingName"
+        )
+    };
+    let mut keys: Vec<&str> = object
+        .get("_section_order")
+        .and_then(|o| o.as_array())
+        .map(|order| order.iter().filter_map(|k| k.as_str()).collect())
+        .unwrap_or_default();
+    for key in object.keys() {
+        if !skip(key) && !keys.contains(&key.as_str()) {
+            keys.push(key);
+        }
+    }
+    keys.into_iter()
+        .filter_map(|key| {
+            let section = object.get(key)?;
+            let title = section.get("title")?.as_str()?;
+            let blocks = section.get("blocks")?.as_array()?;
+            let lines: Vec<String> = blocks
+                .iter()
+                .filter_map(|b| b.get("content")?.as_str())
+                .filter(|c| !c.trim().is_empty())
+                .map(|c| format!("- {c}"))
+                .collect();
+            (!lines.is_empty()).then(|| format!("## {title}\n\n{}", lines.join("\n")))
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 /// Read one meeting with its summary and transcript. `Ok(None)` when the
@@ -137,11 +314,9 @@ pub async fn load(pool: &SqlitePool, id: &str) -> anyhow::Result<Option<Document
     let (rows, _) =
         MeetingsRepository::get_meeting_transcripts_paginated(pool, id, i64::MAX, 0).await?;
     let summary = match SummaryProcessesRepository::get_summary_data(pool, id).await? {
-        Some(process) => Summary {
-            status: summary_status(&process.status),
-            markdown: summary_markdown(process.result.as_deref()),
-            error: process.error.filter(|e| !e.trim().is_empty()),
-        },
+        Some(process) => {
+            summary_from_process(&process.status, process.result.as_deref(), process.error)
+        }
         None => Summary::none(),
     };
     Ok(Some(Document {
@@ -429,7 +604,10 @@ fn inline(text: &str) -> Vec<Span> {
             }
         } else if c == '*' {
             let opens = chars.get(i + 1).is_some_and(|n| !n.is_whitespace());
-            if italic || (opens && closes(i + 1, &['*'])) {
+            // A lone `*` closes; the halves of a `**` do not.
+            let lone_star =
+                |j: usize| chars[j] == '*' && chars.get(j + 1) != Some(&'*') && chars[j - 1] != '*';
+            if italic || (opens && (i + 1..chars.len()).any(lone_star)) {
                 push(&mut spans, &mut current, bold, italic, false);
                 italic = !italic;
                 i += 1;
@@ -523,6 +701,40 @@ mod tests {
             summary_blocks(r"\*ikke kursiv\*")[0].text(),
             "*ikke kursiv*"
         );
+        // The first half of a `**` does not close an italic.
+        assert_eq!(
+            summary_blocks("*a **b** c*")[0].spans,
+            vec![
+                Span {
+                    text: "a ".into(),
+                    italic: true,
+                    ..Span::default()
+                },
+                Span {
+                    text: "b".into(),
+                    bold: true,
+                    italic: true,
+                    ..Span::default()
+                },
+                Span {
+                    text: " c".into(),
+                    italic: true,
+                    ..Span::default()
+                },
+            ]
+        );
+        assert_eq!(
+            summary_blocks("*a **b** c")[0].spans,
+            vec![
+                plain("*a "),
+                Span {
+                    text: "b".into(),
+                    bold: true,
+                    ..Span::default()
+                },
+                plain(" c"),
+            ]
+        );
     }
 
     #[test]
@@ -564,6 +776,62 @@ mod tests {
         assert_eq!(summary_markdown(Some(r#"{"markdown":"  "}"#)), None);
         assert_eq!(summary_markdown(Some("ikke json")), None);
         assert_eq!(summary_markdown(None), None);
+    }
+
+    #[test]
+    fn summary_markdown_reads_every_stored_format() {
+        // Reasoning is removed before the text is shown.
+        assert_eq!(
+            summary_markdown(Some(
+                r#"{"markdown":"<think>overvejer</think>\n- Lancering tirsdag"}"#
+            ))
+            .as_deref(),
+            Some("- Lancering tirsdag")
+        );
+        // An unterminated reasoning marker is never shown.
+        assert_eq!(
+            summary_markdown(Some(r#"{"markdown":"<think>halvt svar"}"#)),
+            None
+        );
+        // Only BlockNote blocks: an edit whose Markdown conversion failed.
+        let blocknote = r#"{"summary_json":[
+            {"type":"heading","props":{"level":2},"content":[{"type":"text","text":"Beslutninger","styles":{}}],"children":[]},
+            {"type":"bulletListItem","props":{},"content":[{"type":"text","text":"Lancering","styles":{"bold":true}},{"type":"text","text":" tirsdag","styles":{}}],
+             "children":[{"type":"bulletListItem","props":{},"content":[{"type":"text","text":"Test først","styles":{}}],"children":[]}]},
+            {"type":"numberedListItem","props":{},"content":[{"type":"text","text":"Første","styles":{}}],"children":[]},
+            {"type":"numberedListItem","props":{},"content":[{"type":"text","text":"Anden","styles":{}}],"children":[]},
+            {"type":"checkListItem","props":{"checked":true},"content":[{"type":"text","text":"Book lokale","styles":{}}],"children":[]},
+            {"type":"paragraph","props":{},"content":[{"type":"link","href":"https://example.invalid","content":[{"type":"text","text":"Se noten","styles":{"italic":true}}]}],"children":[]}
+        ]}"#;
+        assert_eq!(
+            summary_markdown(Some(blocknote)).as_deref(),
+            Some("## Beslutninger\n- **Lancering** tirsdag\n  - Test først\n1. Første\n2. Anden\n- [x] Book lokale\n*Se noten*")
+        );
+        // The old section format, in the stored section order.
+        let legacy = r#"{"MeetingName":"Møde","_section_order":["b","a"],
+            "a":{"title":"Handlepunkter","blocks":[{"content":"Send adgang"}]},
+            "b":{"title":"Kort fortalt","blocks":[{"content":"Status"},{"content":" "}]}}"#;
+        assert_eq!(
+            summary_markdown(Some(legacy)).as_deref(),
+            Some("## Kort fortalt\n\n- Status\n\n## Handlepunkter\n\n- Send adgang")
+        );
+    }
+
+    #[test]
+    fn completed_without_renderable_text_counts_as_failed() {
+        let summary = summary_from_process("completed", Some(r#"{"markdown":""}"#), None);
+        assert_eq!(summary.status, SummaryStatus::Failed);
+        assert_eq!(
+            summary.error.as_deref(),
+            Some(crate::strings::DOC_SUMMARY_INVALID)
+        );
+        assert!(!summary.has_content());
+        let running = summary_from_process("processing", None, Some(" ".into()));
+        assert_eq!(running.status, SummaryStatus::Running);
+        assert_eq!(running.error, None);
+        let done = summary_from_process("completed", Some(r#"{"markdown":"Tekst"}"#), None);
+        assert_eq!(done.status, SummaryStatus::Completed);
+        assert_eq!(done.markdown.as_deref(), Some("Tekst"));
     }
 
     #[tokio::test]
