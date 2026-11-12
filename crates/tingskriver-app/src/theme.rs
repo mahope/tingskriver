@@ -109,19 +109,28 @@ impl Palette {
     }
 }
 
-/// Spacing scale (4 px steps, as Tailwind's 1, 2, 3, 4, 6, 8).
+/// Spacing scale: Tailwind's 4 px grid (0.5, 1, 1.5, 2, 3, 4, 5, 6, 8, 10).
 pub mod space {
     use gpui::{px, Pixels};
 
+    /// `gap-0.5`, the padding of a segmented control.
+    pub const XXS: Pixels = px(2.0);
     pub const XS: Pixels = px(4.0);
+    /// `py-1.5` / `mt-1.5`.
+    pub const XS2: Pixels = px(6.0);
     pub const SM: Pixels = px(8.0);
     pub const MD: Pixels = px(12.0);
     pub const LG: Pixels = px(16.0);
+    /// `px-5`, the recording pill buttons.
+    pub const XL2: Pixels = px(20.0);
     pub const XL: Pixels = px(24.0);
     pub const XXL: Pixels = px(32.0);
+    /// `pt-10`, the top of the meeting document.
+    pub const XXXL: Pixels = px(40.0);
 }
 
-/// Type families and sizes. The body text is 15 px with 1.55 line height.
+/// Type families and sizes, the Tailwind steps the Tauri app uses. The body
+/// text is 15 px with 1.55 line height; `MD` is Tailwind's `text-base` (16).
 pub mod typography {
     use gpui::{px, Pixels};
 
@@ -130,53 +139,152 @@ pub mod typography {
     /// Headings and notes (Literata, bundled).
     pub const SERIF: &str = "Literata";
 
+    /// `text-xs`.
     pub const XS: Pixels = px(12.0);
-    pub const SM: Pixels = px(13.0);
+    /// `text-sm`: buttons, inputs, help text.
+    pub const SM: Pixels = px(14.0);
+    /// Body text (`body { font-size: 15px }`).
     pub const BASE: Pixels = px(15.0);
-    pub const LG: Pixels = px(17.0);
+    /// `text-base`.
+    pub const MD: Pixels = px(16.0);
+    /// `text-lg`: block titles (h3).
+    pub const LG: Pixels = px(18.0);
+    /// `text-xl`: the wordmark, sub-section titles.
     pub const XL: Pixels = px(20.0);
-    pub const XXL: Pixels = px(26.0);
+    /// `text-2xl`: settings section titles.
+    pub const XXL: Pixels = px(24.0);
+    /// `text-3xl`: page titles.
+    pub const XXXL: Pixels = px(30.0);
+    /// `text-4xl`: the meeting title.
+    pub const DISPLAY: Pixels = px(36.0);
     pub const LINE_HEIGHT: f32 = 1.55;
+    /// Headings (Tailwind's `leading-tight`).
+    pub const LINE_HEIGHT_TIGHT: f32 = 1.25;
 }
 
-/// Layout sizes of the shell.
+/// Layout sizes of the shell, the controls and each page's content column.
 pub mod layout {
     use gpui::{px, Pixels};
 
     pub const SIDEBAR_WIDTH: Pixels = px(256.0);
-    pub const CONTENT_MAX_WIDTH: Pixels = px(760.0);
+    /// The collapsed sidebar (`w-16`).
+    pub const SIDEBAR_COLLAPSED_WIDTH: Pixels = px(64.0);
     pub const DEFAULT_WINDOW_WIDTH: Pixels = px(1100.0);
-    pub const DEFAULT_WINDOW_HEIGHT: Pixels = px(720.0);
+    /// As the Tauri window (`tauri.conf.json`).
+    pub const DEFAULT_WINDOW_HEIGHT: Pixels = px(700.0);
     pub const MIN_WINDOW_WIDTH: Pixels = px(640.0);
     pub const MIN_WINDOW_HEIGHT: Pixels = px(420.0);
-    /// Error pages (database failure).
-    pub const NOTICE_MAX_WIDTH: Pixels = px(600.0);
+
+    /// Default button (`h-11`), also the minimum touch target.
+    pub const CONTROL_HEIGHT: Pixels = px(44.0);
+    /// Small button (`size="sm"`, `h-8`).
+    pub const CONTROL_HEIGHT_SM: Pixels = px(32.0);
+    /// Icon button (`size="icon"`, `h-9 w-9`).
+    pub const ICON_BUTTON: Pixels = px(36.0);
+    /// Icon button in list rows (`h-8 w-8`).
+    pub const ICON_BUTTON_SM: Pixels = px(32.0);
+    /// Text input (`h-9`) and segmented control items (`min-h-[36px]`).
+    pub const INPUT_HEIGHT: Pixels = px(36.0);
+
+    /// Home transcript (`max-w-[44rem]`).
+    pub const TRANSCRIPT_MAX: Pixels = px(704.0);
+    /// Meeting document (`max-w-[46rem]`).
+    pub const DOCUMENT_MAX: Pixels = px(736.0);
+    /// Settings frame (`max-w-6xl`).
+    pub const SETTINGS_MAX: Pixels = px(1152.0);
+    /// A settings section (`max-w-2xl`).
+    pub const SETTINGS_SECTION_MAX: Pixels = px(672.0);
+    /// The Diktering page (`max-w-3xl`).
+    pub const DICTATION_MAX: Pixels = px(768.0);
+    /// Onboarding and home hero text (`max-w-md`).
+    pub const ONBOARDING_TEXT_MAX: Pixels = px(448.0);
+    /// Error pages, such as the database failure (`max-w-xl`).
+    pub const NOTICE_MAX: Pixels = px(576.0);
     /// Running text inside an empty state.
     pub const EMPTY_TEXT_MAX_WIDTH: Pixels = px(420.0);
 }
 
-/// Icon sizes beyond the component defaults.
+/// Icon sizes beyond the component defaults (lucide icons, as in Tauri).
 pub mod icon_size {
     use gpui::{px, Pixels};
 
+    /// Icons in buttons and rows (`[&_svg]:size-4`).
+    pub const SM: Pixels = px(16.0);
+    /// Icons in the collapsed sidebar and the settings "Tilbage" link.
+    pub const MD: Pixels = px(20.0);
     pub const EMPTY_STATE: Pixels = px(28.0);
     pub const ERROR: Pixels = px(32.0);
 }
 
-/// Corner radius of controls (`calc(var(--radius) - 2px)`) and cards (`--radius`).
+/// Tailwind's shadows (`shadow-sm`, `shadow`, `shadow-md`), the same in both
+/// modes as in the Tauri app.
+pub mod shadow {
+    use gpui::{hsla, px, BoxShadow};
+
+    fn black(alpha: f32) -> gpui::Hsla {
+        hsla(0.0, 0.0, 0.0, alpha)
+    }
+
+    /// `shadow-sm`: outline and secondary buttons, inputs.
+    pub fn sm() -> Vec<BoxShadow> {
+        vec![BoxShadow::new(px(0.0), px(1.0), black(0.05)).blur_radius(px(2.0))]
+    }
+
+    /// `shadow`: the primary button.
+    pub fn base() -> Vec<BoxShadow> {
+        vec![
+            BoxShadow::new(px(0.0), px(1.0), black(0.1)).blur_radius(px(3.0)),
+            BoxShadow::new(px(0.0), px(1.0), black(0.1))
+                .blur_radius(px(2.0))
+                .spread_radius(px(-1.0)),
+        ]
+    }
+
+    /// `shadow-md`: the recording pill and status toasts.
+    pub fn md() -> Vec<BoxShadow> {
+        vec![
+            BoxShadow::new(px(0.0), px(4.0), black(0.1))
+                .blur_radius(px(6.0))
+                .spread_radius(px(-1.0)),
+            BoxShadow::new(px(0.0), px(2.0), black(0.1))
+                .blur_radius(px(4.0))
+                .spread_radius(px(-2.0)),
+        ]
+    }
+}
+
+/// Corner radii: `rounded-sm` (kbd chips), `rounded-md` (controls,
+/// `calc(var(--radius) - 2px)`), `rounded-lg` (cards, `--radius`) and
+/// `rounded-full` (pills, switches, dots).
+pub const RADIUS_SM: Pixels = px(4.0);
 pub const RADIUS: Pixels = px(6.0);
 pub const RADIUS_LG: Pixels = px(8.0);
+pub const RADIUS_FULL: Pixels = px(9999.0);
 
-/// A slightly stronger version of `color` for hover (`step` 1) and pressed
-/// (`step` 2) states: darker on light surfaces, lighter on dark ones.
-pub fn emphasize(color: Hsla, dark: bool, step: u8) -> Hsla {
-    let delta = 0.05 * f32::from(step);
-    let l = if dark {
-        (color.l + delta).min(1.0)
-    } else {
-        (color.l - delta).max(0.0)
-    };
-    Hsla { l, ..color }
+/// Hover and pressed strengths, as the Tauri classes: `bg-primary/90`
+/// (hover) and a pressed step at 80 %; secondary hovers at `/80`.
+pub const HOVER_ALPHA: f32 = 0.9;
+pub const PRESSED_ALPHA: f32 = 0.8;
+/// Destructive buttons stop at the hover strength when pressed: at 0.8 the
+/// dark-mode text would fall to 3.9:1, below WCAG AA.
+pub const DANGER_PRESSED_ALPHA: f32 = 0.9;
+pub const SECONDARY_HOVER_ALPHA: f32 = 0.8;
+pub const SECONDARY_PRESSED_ALPHA: f32 = 0.7;
+/// List rows hover at `bg-accent/60`.
+pub const LIST_HOVER_ALPHA: f32 = 0.6;
+
+/// `color` at `alpha` painted on `surface`, as CSS draws `bg-primary/90`
+/// (blended in sRGB). The result is opaque.
+pub fn over(color: Hsla, surface: Hsla, alpha: f32) -> Hsla {
+    let a = alpha.clamp(0.0, 1.0);
+    let (c, s) = (gpui::Rgba::from(color), gpui::Rgba::from(surface));
+    let mix = |x: f32, y: f32| x * a + y * (1.0 - a);
+    Hsla::from(gpui::Rgba {
+        r: mix(c.r, s.r),
+        g: mix(c.g, s.g),
+        b: mix(c.b, s.b),
+        a: 1.0,
+    })
 }
 
 /// `TINGSKRIVER_APPEARANCE=light` or `dark` pins the appearance instead of
@@ -203,13 +311,15 @@ pub fn mode_for(appearance: WindowAppearance) -> ThemeMode {
 pub fn apply(mode: ThemeMode, cx: &mut App) {
     Theme::change(mode, None, cx);
     let p = *Palette::for_mode(mode);
-    let dark = mode.is_dark();
+    let bg = p.background;
+    let hover = |color: Hsla| over(color, bg, HOVER_ALPHA);
+    let pressed = |color: Hsla| over(color, bg, PRESSED_ALPHA);
     Theme::update(cx, |theme| {
         theme.font_family = typography::SANS.into();
         theme.font_size = typography::BASE;
         theme.radius = RADIUS;
         theme.radius_lg = RADIUS_LG;
-        theme.shadow = false;
+        theme.shadow = true;
 
         let c = &mut theme.colors;
         c.background = p.background;
@@ -218,7 +328,7 @@ pub fn apply(mode: ThemeMode, cx: &mut App) {
         c.input = p.input;
         c.ring = p.ring;
         c.caret = p.foreground;
-        c.selection = p.primary.opacity(0.25);
+        c.selection = p.primary.opacity(0.22);
         c.accent = p.accent;
         c.accent_foreground = p.accent_foreground;
         c.muted = p.muted;
@@ -231,36 +341,62 @@ pub fn apply(mode: ThemeMode, cx: &mut App) {
 
         c.primary = p.primary;
         c.primary_foreground = p.primary_foreground;
-        c.primary_hover = emphasize(p.primary, dark, 1);
-        c.primary_active = emphasize(p.primary, dark, 2);
+        c.primary_hover = hover(p.primary);
+        c.primary_active = pressed(p.primary);
         c.secondary = p.secondary;
         c.secondary_foreground = p.secondary_foreground;
-        c.secondary_hover = emphasize(p.secondary, dark, 1);
-        c.secondary_active = emphasize(p.secondary, dark, 2);
+        c.secondary_hover = over(p.secondary, bg, SECONDARY_HOVER_ALPHA);
+        c.secondary_active = over(p.secondary, bg, SECONDARY_PRESSED_ALPHA);
         c.danger = p.destructive;
         c.danger_foreground = p.destructive_foreground;
-        c.danger_hover = emphasize(p.destructive, dark, 1);
-        c.danger_active = emphasize(p.destructive, dark, 2);
+        c.danger_hover = hover(p.destructive);
+        c.danger_active = over(p.destructive, bg, DANGER_PRESSED_ALPHA);
         c.success = p.success;
         c.success_foreground = p.success_foreground;
-        c.success_hover = emphasize(p.success, dark, 1);
-        c.success_active = emphasize(p.success, dark, 2);
+        c.success_hover = hover(p.success);
+        c.success_active = pressed(p.success);
         c.warning = p.warning;
         c.warning_foreground = p.warning_foreground;
-        c.warning_hover = emphasize(p.warning, dark, 1);
-        c.warning_active = emphasize(p.warning, dark, 2);
+        c.warning_hover = hover(p.warning);
+        c.warning_active = pressed(p.warning);
         c.info = p.primary;
         c.info_foreground = p.primary_foreground;
-        c.info_hover = emphasize(p.primary, dark, 1);
-        c.info_active = emphasize(p.primary, dark, 2);
+        c.info_hover = hover(p.primary);
+        c.info_active = pressed(p.primary);
         c.link = p.primary;
-        c.link_hover = emphasize(p.primary, dark, 1);
-        c.link_active = emphasize(p.primary, dark, 2);
+        c.link_hover = hover(p.primary);
+        c.link_active = pressed(p.primary);
 
+        // gpui-component's default button is Tauri's `outline` variant:
+        // `input` border, background fill, hover `bg-accent`.
+        c.button = p.background;
+        c.button_foreground = p.foreground;
+        c.button_hover = p.accent;
+        c.button_active = p.accent;
         c.button_primary = p.primary;
         c.button_primary_foreground = p.primary_foreground;
-        c.button_primary_hover = emphasize(p.primary, dark, 1);
-        c.button_primary_active = emphasize(p.primary, dark, 2);
+        c.button_primary_hover = hover(p.primary);
+        c.button_primary_active = pressed(p.primary);
+        c.button_secondary = p.secondary;
+        c.button_secondary_foreground = p.secondary_foreground;
+        c.button_secondary_hover = over(p.secondary, bg, SECONDARY_HOVER_ALPHA);
+        c.button_secondary_active = over(p.secondary, bg, SECONDARY_PRESSED_ALPHA);
+        c.button_danger = p.destructive;
+        c.button_danger_foreground = p.destructive_foreground;
+        c.button_danger_hover = hover(p.destructive);
+        c.button_danger_active = over(p.destructive, bg, DANGER_PRESSED_ALPHA);
+        c.button_success = p.success;
+        c.button_success_foreground = p.success_foreground;
+        c.button_success_hover = hover(p.success);
+        c.button_success_active = pressed(p.success);
+        c.button_warning = p.warning;
+        c.button_warning_foreground = p.warning_foreground;
+        c.button_warning_hover = hover(p.warning);
+        c.button_warning_active = pressed(p.warning);
+
+        // Switch: `primary` when on, `muted` when off, thumb in the background color.
+        c.switch = p.muted;
+        c.switch_thumb = p.background;
 
         c.sidebar = p.card;
         c.sidebar_foreground = p.card_foreground;
@@ -272,9 +408,10 @@ pub fn apply(mode: ThemeMode, cx: &mut App) {
         c.title_bar = p.card;
         c.title_bar_border = p.border;
         c.list = p.background;
-        c.list_hover = p.accent;
+        c.list_hover = over(p.accent, p.background, LIST_HOVER_ALPHA);
         c.list_active = p.accent;
-        c.list_active_border = p.ring;
+        // The active meeting row is `bg-accent` without a border.
+        c.list_active_border = p.accent;
         c.scrollbar_thumb = p.scrollbar;
         c.scrollbar_thumb_hover = p.muted_foreground;
     });
@@ -337,26 +474,84 @@ mod tests {
         }
     }
 
+    /// Every filled button keeps AA text contrast while hovered and pressed.
     #[test]
     fn hover_states_stay_readable() {
-        for (dark, p) in [(false, &Palette::LIGHT), (true, &Palette::DARK)] {
-            for step in [1, 2] {
-                let hover = emphasize(p.primary, dark, step);
-                assert!(
-                    contrast(p.primary_foreground, hover) >= 4.5,
-                    "dark={dark} step={step}"
-                );
+        for (mode, p) in [("lys", &Palette::LIGHT), ("mørk", &Palette::DARK)] {
+            let fills = [
+                ("primary", p.primary_foreground, p.primary, HOVER_ALPHA),
+                (
+                    "destructive",
+                    p.destructive_foreground,
+                    p.destructive,
+                    HOVER_ALPHA,
+                ),
+                ("success", p.success_foreground, p.success, HOVER_ALPHA),
+                ("warning", p.warning_foreground, p.warning, HOVER_ALPHA),
+                (
+                    "secondary",
+                    p.secondary_foreground,
+                    p.secondary,
+                    SECONDARY_HOVER_ALPHA,
+                ),
+            ];
+            for (name, fg, fill, hover) in fills {
+                let pressed = match name {
+                    "secondary" => SECONDARY_PRESSED_ALPHA,
+                    "destructive" => DANGER_PRESSED_ALPHA,
+                    _ => PRESSED_ALPHA,
+                };
+                for alpha in [hover, pressed] {
+                    let ratio = contrast(fg, over(fill, p.background, alpha));
+                    assert!(
+                        ratio >= 4.5,
+                        "{mode}: {name} at {alpha} has contrast {ratio:.2}, below 4.5"
+                    );
+                }
+            }
+            // Outline and ghost buttons hover on `accent`, list rows on accent/60.
+            let list_hover = over(p.accent, p.background, LIST_HOVER_ALPHA);
+            for (name, bg) in [("accent", p.accent), ("list hover", list_hover)] {
+                let ratio = contrast(p.foreground, bg);
+                assert!(ratio >= 4.5, "{mode}: text on {name} has {ratio:.2}");
             }
         }
     }
 
     #[test]
-    fn emphasize_moves_away_from_the_surface() {
-        let base = Palette::LIGHT.primary;
-        assert!(emphasize(base, false, 1).l < base.l);
-        assert!(emphasize(base, true, 1).l > base.l);
-        assert!(emphasize(hsl(0.0, 0.0, 99.0), true, 2).l <= 1.0);
-        assert!(emphasize(hsl(0.0, 0.0, 2.0), false, 2).l >= 0.0);
+    fn over_blends_onto_the_surface() {
+        let color = Palette::LIGHT.primary;
+        let surface = Palette::LIGHT.background;
+        let rgb = |c: Hsla| gpui::Rgba::from(c);
+        let close = |a: Hsla, b: Hsla| {
+            let (a, b) = (rgb(a), rgb(b));
+            (a.r - b.r).abs() < 1e-3 && (a.g - b.g).abs() < 1e-3 && (a.b - b.b).abs() < 1e-3
+        };
+        assert!(close(over(color, surface, 1.0), color));
+        assert!(close(over(color, surface, 0.0), surface));
+        // Half way, each channel is the mean (CSS composites in sRGB).
+        let half = rgb(over(color, surface, 0.5));
+        let (c, s) = (rgb(color), rgb(surface));
+        assert!((half.r - (c.r + s.r) / 2.0).abs() < 1e-3);
+        assert!((half.b - (c.b + s.b) / 2.0).abs() < 1e-3);
+        assert_eq!(half.a, 1.0);
+        // Hover moves a dark fill towards a light surface and a light fill
+        // towards a dark one, so it never disappears into the surface.
+        assert!(over(color, surface, HOVER_ALPHA).l > color.l);
+        let dark = Palette::DARK;
+        assert!(over(dark.primary, dark.background, HOVER_ALPHA).l < dark.primary.l);
+        // Out-of-range alphas are clamped.
+        assert!(close(over(color, surface, 2.0), color));
+    }
+
+    #[test]
+    fn type_scale_follows_tailwind() {
+        use typography::*;
+        let sizes = [XS, SM, BASE, MD, LG, XL, XXL, XXXL, DISPLAY].map(f32::from);
+        assert_eq!(
+            sizes,
+            [12.0, 14.0, 15.0, 16.0, 18.0, 20.0, 24.0, 30.0, 36.0]
+        );
     }
 
     #[test]
