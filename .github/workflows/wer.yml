@@ -46,7 +46,7 @@ jobs:
       # shared by every branch and by a second runner on the same machine.
       - name: Build folder
         run: echo "CARGO_TARGET_DIR=$RUNNER_TEMP/wer-target" >> "$GITHUB_ENV"
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.99.1
       - name: System libraries
         run: |
           sudo apt-get update

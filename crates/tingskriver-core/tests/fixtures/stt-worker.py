@@ -19,6 +19,8 @@ def fault(phase):
     if kind == 'hang':
         time.sleep(3600)
     if kind == 'reject': return True
+    sys.stderr.write(f'fake worker: {kind} at {phase}\n')
+    sys.stderr.flush()
     os.kill(os.getpid(), signal.SIGABRT if kind == 'abort' else signal.SIGSEGV)
 fault('init')
 count = 0

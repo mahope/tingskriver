@@ -27,7 +27,7 @@ jobs:
       WGPU_BACKEND: vulkan
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.99.1
       - name: Install headless rendering libraries
         run: |
           sudo apt-get update
@@ -57,7 +57,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.99.1
       - uses: swatinem/rust-cache@v2
         with:
           prefix-key: gpui-screenshots-windows-v1

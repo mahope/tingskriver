@@ -1,0 +1,6 @@
+# Pinned because Rust 1.100 (12/11-26) moved build and test output directories:
+# ort-sys 2.0.0-rc.10's build script and the WER Unicode contract break on it.
+# Bump together with the `dtolnay/rust-toolchain@<version>` lines in .github/workflows.
+[toolchain]
+channel = "1.99.1"
+components = ["rustfmt", "clippy"]

@@ -20,7 +20,7 @@ jobs:
       CARGO_INCREMENTAL: 0
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.99.1
       - name: Install system libraries
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev cmake clang ffmpeg
       - uses: swatinem/rust-cache@v2

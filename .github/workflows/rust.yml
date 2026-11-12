@@ -88,8 +88,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust 1.99.1
+        uses: dtolnay/rust-toolchain@1.99.1
         with:
           components: rustfmt, clippy
 
@@ -145,8 +145,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust 1.99.1
+        uses: dtolnay/rust-toolchain@1.99.1
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
@@ -224,8 +224,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust 1.99.1
+        uses: dtolnay/rust-toolchain@1.99.1
 
       - name: Install system libraries
         run: |
@@ -314,8 +314,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust 1.99.1
+        uses: dtolnay/rust-toolchain@1.99.1
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
@@ -385,8 +385,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust 1.99.1
+        uses: dtolnay/rust-toolchain@1.99.1
         with:
           targets: x86_64-pc-windows-msvc
 

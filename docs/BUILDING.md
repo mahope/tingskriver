@@ -472,7 +472,11 @@ cargo test --locked -p tingskriver-core --test stt_process
 pipes carry bounded, length-prefixed frames with request IDs and little-endian
 f32 PCM (16 kHz mono for transcription). Model instances remain warm in the
 worker; a broken pipe discards that worker, fails the current call in Danish,
-and reloads the model on the next call. Parakeet retains its two-instance pool;
+and reloads the model on the next call. The log (and a failing unit test's
+output) gives the worker's exit status and the last 4 KB of its stderr, or the
+path it could not start. Unit tests find the worker in `target/<profile>/`
+from both Cargo test layouts (`deps/` and Cargo 1.100's `build/<pkg>/<hash>/out/`),
+so build it first as above. Parakeet retains its two-instance pool;
 Whisper starts a second worker only when the first is busy. Dropping a client
 kills and reaps its worker; Windows also uses a kill-on-close Job Object.
 

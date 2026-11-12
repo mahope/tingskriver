@@ -1,11 +1,12 @@
 use super::ipc::{read_frame, write_frame, Frame};
+use std::collections::VecDeque;
 use std::ffi::OsString;
-use std::io::{self, BufReader, BufWriter};
-use std::path::PathBuf;
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::io::{self, BufReader, BufWriter, Read};
+use std::path::{Path, PathBuf};
+use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex, Once};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[cfg(windows)]
 #[path = "../summary/summary_engine/sidecar_job.rs"]
@@ -136,11 +137,67 @@ fn keep_vulkan_layers() -> bool {
     std::env::var_os(KEEP_VULKAN_LAYERS_ENV).is_some_and(|v| v == "1")
 }
 
+/// How many of the worker's last stderr bytes are kept for the log.
+const STDERR_TAIL_BYTES: usize = 4096;
+
+/// The end of the worker's stderr (a panic message, an abort from ONNX
+/// Runtime), kept so a crash can say what happened. A thread drains the pipe,
+/// so the worker never blocks on a full stderr pipe.
+struct StderrTail {
+    bytes: Arc<Mutex<VecDeque<u8>>>,
+    /// Disconnects when the reader thread ends (the worker closed stderr).
+    finished: Option<mpsc::Receiver<()>>,
+}
+
+impl StderrTail {
+    fn capture(stderr: Option<ChildStderr>) -> Self {
+        let bytes = Arc::new(Mutex::new(VecDeque::new()));
+        let (done, finished) = mpsc::channel::<()>();
+        let sink = bytes.clone();
+        let spawned = stderr.map(|mut stderr| {
+            std::thread::Builder::new()
+                .name("stt-stderr".into())
+                .spawn(move || {
+                    let _done = done;
+                    let mut buffer = [0u8; 1024];
+                    while let Ok(read) = stderr.read(&mut buffer) {
+                        if read == 0 {
+                            break;
+                        }
+                        if let Ok(mut tail) = sink.lock() {
+                            tail.extend(&buffer[..read]);
+                            let excess = tail.len().saturating_sub(STDERR_TAIL_BYTES);
+                            tail.drain(..excess);
+                        }
+                    }
+                })
+        });
+        Self {
+            bytes,
+            finished: matches!(spawned, Some(Ok(_))).then_some(finished),
+        }
+    }
+
+    /// The captured text, after waiting up to `wait` for the worker to close stderr.
+    fn text(&self, wait: Duration) -> String {
+        if let Some(finished) = &self.finished {
+            let _ = finished.recv_timeout(wait);
+        }
+        let bytes: Vec<u8> = self
+            .bytes
+            .lock()
+            .map(|tail| tail.iter().copied().collect())
+            .unwrap_or_default();
+        String::from_utf8_lossy(&bytes).trim().to_string()
+    }
+}
+
 struct Process {
     child: Arc<Mutex<Child>>,
     pid: u32,
     input: BufWriter<ChildStdin>,
     output: BufReader<ChildStdout>,
+    stderr: StderrTail,
 }
 
 impl Process {
@@ -149,6 +206,77 @@ impl Process {
             let _ = child.kill();
         }
     }
+
+    /// Reaps a worker that broke the pipe and says how it ended: its exit
+    /// status and the end of its stderr. A worker still running after a short
+    /// grace period is killed.
+    fn post_mortem(&self) -> String {
+        let status = match self.child.lock() {
+            Ok(mut child) => {
+                let grace = Instant::now() + Duration::from_millis(500);
+                loop {
+                    match child.try_wait() {
+                        Ok(Some(status)) => break status.to_string(),
+                        Ok(None) if Instant::now() < grace => {
+                            std::thread::sleep(Duration::from_millis(10))
+                        }
+                        Ok(None) => {
+                            let _ = child.kill();
+                            break match child.wait() {
+                                Ok(status) => format!("{status} (killed, it had closed its pipe)"),
+                                Err(error) => format!("unknown exit status ({error})"),
+                            };
+                        }
+                        Err(error) => break format!("unknown exit status ({error})"),
+                    }
+                }
+            }
+            Err(_) => "unknown exit status".to_string(),
+        };
+        let stderr = self.stderr.text(Duration::from_millis(500));
+        if stderr.is_empty() {
+            format!("{status}; stderr was empty")
+        } else {
+            format!("{status}; stderr:\n{stderr}")
+        }
+    }
+}
+
+/// Logs why a worker could not start or stopped. Test builds also print it,
+/// so a failing test shows the cause next to the Danish user message.
+fn report(message: &str) {
+    log::warn!("STT: {message}");
+    // eprintln!, not io::stderr(): only the macro goes to the test's captured output.
+    #[cfg(test)]
+    eprintln!("STT: {message}");
+}
+
+/// Where the worker binary is, given the running executable. The app ships it
+/// next to its own executable. Cargo test executables live in
+/// `target/<profile>/deps/` (Cargo before 1.100) or in
+/// `target/<profile>/build/<package>/<hash>/out/` (the build-dir layout of
+/// Cargo 1.100), while Cargo puts the worker binary in `target/<profile>/`.
+fn worker_path(exe: &Path, name: &str, is_file: impl Fn(&Path) -> bool) -> PathBuf {
+    let beside = exe.with_file_name(name);
+    if is_file(&beside) {
+        return beside;
+    }
+    let named = |dir: &Path, wanted: &str| dir.file_name().is_some_and(|n| n == wanted);
+    let directory = exe.parent();
+    let old_layout = directory
+        .filter(|dir| named(dir, "deps"))
+        .and_then(Path::parent);
+    let build_dir_layout = directory
+        .filter(|dir| named(dir, "out"))
+        .and_then(|out| out.ancestors().nth(3))
+        .filter(|build| named(build, "build"))
+        .and_then(Path::parent);
+    [old_layout, build_dir_layout]
+        .into_iter()
+        .flatten()
+        .map(|profile| profile.join(name))
+        .find(|candidate| is_file(candidate))
+        .unwrap_or(beside)
 }
 
 impl Drop for Process {
@@ -250,17 +378,7 @@ impl Client {
         } else {
             "tingskriver-stt"
         };
-        let mut program = exe.with_file_name(name);
-        // Cargo test executables live in target/{profile}/deps.
-        if !program.is_file()
-            && exe
-                .parent()
-                .and_then(|p| p.file_name())
-                .is_some_and(|p| p == "deps")
-        {
-            program = exe.parent().unwrap().parent().unwrap().join(name);
-        }
-        Ok(program)
+        Ok(worker_path(&exe, name, Path::is_file))
     }
 
     fn unstarted(program: PathBuf, init: Vec<u8>, policy: DevicePolicy) -> Self {
@@ -315,7 +433,7 @@ impl Client {
         command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .env(DEVICE_ENV, device.as_str());
         for (key, value) in &self.extra_env {
             command.env(key, value);
@@ -371,7 +489,13 @@ impl Client {
 
     fn start(&mut self) -> Result<(), Failure> {
         let mut command = self.command(self.device);
-        let mut child = command.spawn().map_err(|_| Failure::Spawn)?;
+        let mut child = command.spawn().map_err(|error| {
+            report(&format!(
+                "could not start the worker {}: {error}",
+                self.program.display()
+            ));
+            Failure::Spawn
+        })?;
         #[cfg(windows)]
         if job::assign(child.id()).is_err() {
             let _ = child.kill();
@@ -381,11 +505,13 @@ impl Client {
         let pid = child.id();
         let input = BufWriter::new(child.stdin.take().unwrap());
         let output = BufReader::new(child.stdout.take().unwrap());
+        let stderr = StderrTail::capture(child.stderr.take());
         self.process = Some(Process {
             child: Arc::new(Mutex::new(child)),
             pid,
             input,
             output,
+            stderr,
         });
         let init = self.init.clone();
         let limit = self.limits(self.device).limit(None);
@@ -433,8 +559,12 @@ impl Client {
                 process.kill();
                 Err(Failure::Protocol)
             }
-            _ => {
-                process.kill();
+            Err(error) => {
+                let ending = process.post_mortem();
+                report(&format!(
+                    "worker {} stopped ({error}): {ending}",
+                    process.pid
+                ));
                 Err(Failure::Crash)
             }
         }
@@ -686,6 +816,56 @@ mod tests {
             Some(CRASH_ERROR)
         );
         assert!(!gpu_unavailable());
+    }
+
+    #[test]
+    fn crashed_worker_reports_its_exit_status_and_stderr() {
+        let mut f = Fixture::faulty(Some("segv@run"), DevicePolicy::Cpu, false).unwrap();
+        let limit = Duration::from_secs(5);
+        assert!(matches!(
+            f.client.exchange(b"echo", &[0.5], limit),
+            Err(Failure::Crash)
+        ));
+        let ending = f.client.process.as_ref().unwrap().post_mortem();
+        assert!(ending.contains("SIGSEGV"), "{ending}");
+        assert!(ending.contains("fake worker: segv at run"), "{ending}");
+    }
+
+    #[test]
+    fn worker_is_found_in_both_cargo_test_layouts() {
+        let worker = PathBuf::from("/t/debug/tingskriver-stt");
+        let exists = |path: &Path| path == worker;
+        // Cargo before 1.100: target/debug/deps/<test>.
+        assert_eq!(
+            worker_path(Path::new("/t/debug/deps/core-1"), "tingskriver-stt", exists),
+            worker
+        );
+        // Cargo 1.100: target/debug/build/<package>/<hash>/out/<test>.
+        assert_eq!(
+            worker_path(
+                Path::new("/t/debug/build/tingskriver-core/0a1b/out/core-1"),
+                "tingskriver-stt",
+                exists
+            ),
+            worker
+        );
+        // The app: the worker sits next to the executable, nothing else is searched.
+        let app = PathBuf::from("/app/tingskriver-stt");
+        assert_eq!(
+            worker_path(Path::new("/app/tingskriver-app"), "tingskriver-stt", |p| {
+                p == app || p == worker
+            }),
+            app
+        );
+        // A missing worker resolves next to the executable, so the spawn error names it.
+        assert_eq!(
+            worker_path(
+                Path::new("/x/build/p/h/out/core-1"),
+                "tingskriver-stt",
+                |_| false
+            ),
+            PathBuf::from("/x/build/p/h/out/tingskriver-stt")
+        );
     }
 
     #[test]
