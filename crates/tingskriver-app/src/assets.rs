@@ -2,7 +2,8 @@
 //!
 //! The fonts are static instances of the variable fonts the Tauri UI uses
 //! (see `assets/fonts/OFL.txt`); GPUI loads TTF, not woff2. Icons come from
-//! gpui-kit-assets: the component defaults plus the few the shell names.
+//! gpui-kit-assets: the component defaults plus the lucide icons of the
+//! Tauri UI that the defaults lack, and the Tingskriver logo mark.
 
 use std::borrow::Cow;
 
@@ -69,14 +70,37 @@ gpui_kit_assets::icon_assets!(
         RotateCcw,
         LoaderCircle,
         Inbox,
+        // Lucide icons of the Tauri UI that gpui-component's defaults lack
+        // (docs/design-paritet.md, Job 1). Lucide 1.x calls trash-2 `Trash`.
+        AudioLines,
+        Upload,
+        X,
+        Pencil,
+        Trash,
+        Sparkles,
+        Sparkle,
+        Languages,
+        Database,
+        FlaskConical,
+        Monitor,
+        Keyboard,
+        CircleCheckBig,
     ]
 );
+
+/// The Tingskriver logo mark (the quill with a writing line from
+/// `frontend/public/tingskriver-mark.svg`), drawn in the text color.
+pub const LOGO_MARK: &str = "icons/tingskriver-mark.svg";
+const LOGO_MARK_SVG: &[u8] = include_bytes!("../assets/icons/tingskriver-mark.svg");
 
 /// The icons of the shell plus gpui-component's default icons.
 pub struct Assets;
 
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> gpui::Result<Option<Cow<'static, [u8]>>> {
+        if path == LOGO_MARK {
+            return Ok(Some(Cow::Borrowed(LOGO_MARK_SVG)));
+        }
         if let Some(data) = ShellIcons.load(path)? {
             return Ok(Some(data));
         }
@@ -85,6 +109,9 @@ impl AssetSource for Assets {
 
     fn list(&self, path: &str) -> gpui::Result<Vec<SharedString>> {
         let mut paths = ShellIcons.list(path)?;
+        if LOGO_MARK.starts_with(path) {
+            paths.push(LOGO_MARK.into());
+        }
         paths.extend(gpui_kit_assets::Assets.list(path)?);
         paths.sort();
         paths.dedup();
@@ -156,5 +183,52 @@ mod tests {
         assert!(Assets.load(&icon).unwrap().is_some());
         let default_icon = gpui_component::IconName::Check.path();
         assert!(Assets.load(&default_icon).unwrap().is_some());
+    }
+
+    /// Every icon the design port needs (docs/design-paritet.md, Job 1)
+    /// loads, whether it comes from the defaults or from `ShellIcons`.
+    #[test]
+    fn design_icons_and_logo_mark_load() {
+        use gpui_kit_assets::IconName;
+        let icons = [
+            IconName::AudioLines,
+            IconName::FileText,
+            IconName::Upload,
+            IconName::Search,
+            IconName::X,
+            IconName::ChevronLeft,
+            IconName::ChevronRight,
+            IconName::Pencil,
+            IconName::Trash,
+            IconName::Copy,
+            IconName::FolderOpen,
+            IconName::RefreshCw,
+            IconName::Sparkles,
+            IconName::Sparkle,
+            IconName::Languages,
+            IconName::Square,
+            IconName::Pause,
+            IconName::ArrowLeft,
+            IconName::Settings2,
+            IconName::Database,
+            IconName::FlaskConical,
+            IconName::Monitor,
+            IconName::Sun,
+            IconName::Moon,
+            IconName::Keyboard,
+            IconName::Info,
+            IconName::CircleCheckBig,
+        ];
+        for icon in icons {
+            let path = icon.path();
+            assert!(Assets.load(&path).unwrap().is_some(), "{path} is missing");
+        }
+        let mark = Assets.load(LOGO_MARK).unwrap().expect("logo mark");
+        assert!(std::str::from_utf8(&mark).unwrap().contains("currentColor"));
+        assert!(Assets
+            .list("icons/")
+            .unwrap()
+            .iter()
+            .any(|p| p == LOGO_MARK));
     }
 }

@@ -1,12 +1,12 @@
 //! Import and compare a user's sample, without using provider fallback chains.
 use crate::{
-    theme::space,
+    controls::{self, Variant},
+    theme::{layout, space},
     ui::{page, paragraph, section_title},
 };
 use gpui::{prelude::*, Context, Entity, Window};
 use gpui_component::{
-    button::{Button, ButtonVariants},
-    input::{Input, InputState, Textarea, TextareaState},
+    input::{InputState, Textarea, TextareaState},
     v_flex, Disableable, Selectable,
 };
 use std::{path::PathBuf, sync::Arc};
@@ -227,13 +227,13 @@ impl Render for MeasurementView {
             .gap(space::LG)
             .child(paragraph(strings::MEASURE_HELP, cx))
             .child(section_title(strings::MEASURE_PATH))
-            .child(Input::new(&self.path).disabled(self.running))
+            .child(controls::input(&self.path).disabled(self.running))
             .child(section_title(strings::MEASURE_REFERENCE))
             .child(Textarea::new(&self.reference).disabled(self.running))
             .child(section_title(strings::MEASURE_MODELS))
             .child(paragraph(strings::MEASURE_PRIVACY, cx))
             .child(
-                Button::new("reload-measurement")
+                controls::button("reload-measurement", Variant::Outline)
                     .label(strings::MEASURE_RELOAD)
                     .disabled(self.running)
                     .on_click(cx.listener(|view, _, window, cx| view.reload(window, cx))),
@@ -243,7 +243,7 @@ impl Render for MeasurementView {
                 v_flex()
                     .gap(space::SM)
                     .child(
-                        Button::new(("measure-choice", index))
+                        controls::button(("measure-choice", index), Variant::Outline)
                             .label(format!(
                                 "{} {}",
                                 if choice.selected {
@@ -261,13 +261,12 @@ impl Render for MeasurementView {
                             })),
                     )
                     .child(paragraph(strings::MEASURE_RATE, cx))
-                    .child(Input::new(&choice.rate).disabled(self.running)),
+                    .child(controls::input(&choice.rate).disabled(self.running)),
             );
         }
         body = body
             .child(
-                Button::new("start-measurement")
-                    .primary()
+                controls::button("start-measurement", Variant::Primary)
                     .label(strings::MEASURE_START)
                     .disabled(self.running)
                     .on_click(cx.listener(|view, _, _, cx| view.start(cx))),
@@ -313,7 +312,7 @@ impl Render for MeasurementView {
         body = body.child(paragraph(strings::MEASURE_HISTORY, cx));
         let dir = self.dir.clone();
         body = body.child(
-            Button::new("open-measurements")
+            controls::button("open-measurements", Variant::Outline)
                 .label(strings::MEASURE_OPEN)
                 .on_click(move |_, _, _| {
                     if let Some(dir) = &dir {
@@ -325,6 +324,7 @@ impl Render for MeasurementView {
             strings::MEASURE_TITLE,
             None,
             false,
+            layout::SETTINGS_SECTION_MAX,
             body.into_any_element(),
             cx,
         )

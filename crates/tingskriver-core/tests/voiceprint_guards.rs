@@ -205,7 +205,7 @@ const ALLOWED: &[&str] = &[
     "crates/tingskriver-core/src/strings/mod.rs",
     "crates/tingskriver-core/src/install/mod.rs",
     "crates/tingskriver-core/migrations/20261105130000_add_voiceprint_consent.sql",
-    "crates/tingskriver-app/src/ui.rs",
+    "crates/tingskriver-app/src/pages/settings.rs",
     "crates/tingskriver-app/src/lib.rs",
 ];
 
@@ -281,7 +281,8 @@ fn uninstalling_with_delete_data_also_removes_voiceprints() {
 
 #[test]
 fn the_settings_page_explains_voiceprints_in_both_languages() {
-    let ui = fs::read_to_string(repo_root().join("crates/tingskriver-app/src/ui.rs")).unwrap();
+    let ui = fs::read_to_string(repo_root().join("crates/tingskriver-app/src/pages/settings.rs"))
+        .unwrap();
     for needle in [
         "strings::VOICEPRINT_TITLE",
         "strings::VOICEPRINT_STATUS_OFF",

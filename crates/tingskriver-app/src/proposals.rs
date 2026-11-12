@@ -7,14 +7,12 @@
 //! that page exists on `main` it is not mounted in `ui.rs`.
 
 use crate::{
+    controls::{self, Variant},
     theme::{self, space, typography, Palette},
     ui::section_title,
 };
 use gpui::{div, prelude::*, AnyElement, Context, ElementId, FontWeight, Window};
-use gpui_component::{
-    button::{Button, ButtonVariants},
-    h_flex, v_flex, ActiveTheme,
-};
+use gpui_component::{h_flex, v_flex, ActiveTheme};
 use tingskriver_core::{
     proposals::{
         DiffKind, DiffLine, Proposal, ProposalError, ProposalStatus, ProposalStore, UserConfirmed,
@@ -226,30 +224,42 @@ impl ProposalReview {
                     let (apply_id, reject_id) = (id.clone(), id.clone());
                     buttons = buttons
                         .child(
-                            Button::new((ElementId::from("proposal-apply"), id.clone()))
-                                .primary()
-                                .label(strings::PROPOSAL_APPLY)
-                                .on_click(cx.listener(move |view, _, _, cx| {
+                            controls::button(
+                                (ElementId::from("proposal-apply"), id.clone()),
+                                Variant::Primary,
+                            )
+                            .label(strings::PROPOSAL_APPLY)
+                            .on_click(cx.listener(
+                                move |view, _, _, cx| {
                                     let confirmed = UserConfirmed::from_ui_click();
                                     view.run(Action::Apply(confirmed), apply_id.clone(), cx)
-                                })),
+                                },
+                            )),
                         )
                         .child(
-                            Button::new((ElementId::from("proposal-reject"), id.clone()))
-                                .label(strings::PROPOSAL_REJECT)
-                                .on_click(cx.listener(move |view, _, _, cx| {
+                            controls::button(
+                                (ElementId::from("proposal-reject"), id.clone()),
+                                Variant::Outline,
+                            )
+                            .label(strings::PROPOSAL_REJECT)
+                            .on_click(cx.listener(
+                                move |view, _, _, cx| {
                                     view.run(Action::Reject, reject_id.clone(), cx)
-                                })),
+                                },
+                            )),
                         );
                 } else {
                     let undo_id = id.clone();
                     buttons = buttons.child(
-                        Button::new((ElementId::from("proposal-undo"), id.clone()))
-                            .label(strings::PROPOSAL_UNDO)
-                            .on_click(cx.listener(move |view, _, _, cx| {
-                                let confirmed = UserConfirmed::from_ui_click();
-                                view.run(Action::Undo(confirmed), undo_id.clone(), cx)
-                            })),
+                        controls::button(
+                            (ElementId::from("proposal-undo"), id.clone()),
+                            Variant::Outline,
+                        )
+                        .label(strings::PROPOSAL_UNDO)
+                        .on_click(cx.listener(move |view, _, _, cx| {
+                            let confirmed = UserConfirmed::from_ui_click();
+                            view.run(Action::Undo(confirmed), undo_id.clone(), cx)
+                        })),
                     );
                 }
                 card.child(buttons)
@@ -288,7 +298,7 @@ impl Render for ProposalReview {
                             .child(strings::PROPOSALS_LOAD_FAILED),
                     )
                     .child(
-                        Button::new("proposals-retry")
+                        controls::button("proposals-retry", Variant::Outline)
                             .label(strings::RETRY)
                             .on_click(cx.listener(|view, _, _, cx| {
                                 view.state = ReviewState::Loading;

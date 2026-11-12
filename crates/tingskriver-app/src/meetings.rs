@@ -1,19 +1,15 @@
 //! Presentation of core's meeting list; disk and database work stays on Tokio.
 use crate::{
+    controls::{self, Variant},
     startup::DbState,
-    theme::space,
+    theme::{layout, space},
     ui::{self, AppModel},
 };
 use gpui::{
     div, list as virtual_list, prelude::*, Context, Entity, ListAlignment, ListState, Subscription,
     Window,
 };
-use gpui_component::{
-    button::{Button, ButtonVariants},
-    h_flex,
-    input::{Input, InputState},
-    v_flex, ActiveTheme, Disableable,
-};
+use gpui_component::{h_flex, input::InputState, v_flex, ActiveTheme, Disableable};
 use gpui_kit_assets::IconName;
 use std::{rc::Rc, time::Duration};
 use tingskriver_core::{
@@ -222,7 +218,7 @@ impl MeetingsView {
                 h_flex()
                     .gap(space::SM)
                     .child(
-                        Button::new(("open", index))
+                        controls::button(("open", index), Variant::Outline)
                             .label(strings::MEETING_OPEN)
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.rename = None;
@@ -232,7 +228,7 @@ impl MeetingsView {
                             })),
                     )
                     .child(
-                        Button::new(("rename", index))
+                        controls::button(("rename", index), Variant::Outline)
                             .label(strings::MEETING_RENAME)
                             .disabled(self.busy)
                             .on_click(cx.listener(move |this, _, window, cx| {
@@ -248,7 +244,7 @@ impl MeetingsView {
                             })),
                     )
                     .child(
-                        Button::new(("delete", index))
+                        controls::button(("delete", index), Variant::Outline)
                             .label(strings::MEETING_DELETE)
                             .disabled(self.busy || !can_delete)
                             .on_click(cx.listener(move |this, _, _, cx| {
@@ -268,8 +264,7 @@ impl Render for MeetingsView {
             h_flex()
                 .gap(space::SM)
                 .child(
-                    Button::new("new-recording")
-                        .primary()
+                    controls::button("new-recording", Variant::Primary)
                         .label(strings::MEETING_NEW)
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.notice = Some(strings::MEETING_RECORDING_LATER);
@@ -277,7 +272,7 @@ impl Render for MeetingsView {
                         })),
                 )
                 .child(
-                    Button::new("refresh-meetings")
+                    controls::button("refresh-meetings", Variant::Outline)
                         .label(strings::MEETING_REFRESH)
                         .disabled(self.busy)
                         .on_click(cx.listener(|this, _, _, cx| {
@@ -305,7 +300,7 @@ impl Render for MeetingsView {
             for (index, recording) in self.recovery.iter().enumerate() {
                 let id = recording.id.clone();
                 body = body.child(
-                    Button::new(("recover", index))
+                    controls::button(("recover", index), Variant::Outline)
                         .label(strings::meeting_restore(&recording.id))
                         .disabled(self.busy)
                         .on_click(cx.listener(move |this, _, _, cx| {
@@ -317,11 +312,11 @@ impl Render for MeetingsView {
         if let Some((id, input)) = &self.rename {
             let id = id.clone();
             let input = input.clone();
-            body = body.child(Input::new(&input)).child(
+            body = body.child(controls::input(&input)).child(
                 h_flex()
                     .gap(space::SM)
                     .child(
-                        Button::new("save-title")
+                        controls::button("save-title", Variant::Outline)
                             .label(strings::MEETING_SAVE)
                             .disabled(self.busy)
                             .on_click(cx.listener(move |this, _, _, cx| {
@@ -332,7 +327,7 @@ impl Render for MeetingsView {
                             })),
                     )
                     .child(
-                        Button::new("cancel-rename")
+                        controls::button("cancel-rename", Variant::Outline)
                             .label(strings::MEETING_CANCEL)
                             .disabled(self.busy)
                             .on_click(cx.listener(|this, _, _, cx| {
@@ -360,8 +355,7 @@ impl Render for MeetingsView {
                     h_flex()
                         .gap(space::SM)
                         .child(
-                            Button::new("confirm-delete")
-                                .danger()
+                            controls::button("confirm-delete", Variant::Danger)
                                 .label(strings::MEETING_DELETE)
                                 .disabled(self.busy)
                                 .on_click(cx.listener(move |this, _, _, cx| {
@@ -369,7 +363,7 @@ impl Render for MeetingsView {
                                 })),
                         )
                         .child(
-                            Button::new("cancel-delete")
+                            controls::button("cancel-delete", Variant::Outline)
                                 .label(strings::MEETING_CANCEL)
                                 .disabled(self.busy)
                                 .on_click(cx.listener(|this, _, _, cx| {
@@ -390,13 +384,13 @@ impl Render for MeetingsView {
                 if let Some(folder) = &meeting.data.folder_path {
                     let folder = std::path::PathBuf::from(folder);
                     body = body.child(
-                        Button::new("open-meeting-folder")
+                        controls::button("open-meeting-folder", Variant::Outline)
                             .label(strings::MEETING_FOLDER)
                             .on_click(move |_, _, _| crate::startup::open_folder(&folder)),
                     );
                 }
                 body = body.child(
-                    Button::new("back-to-meetings")
+                    controls::button("back-to-meetings", Variant::Outline)
                         .label(strings::MEETING_BACK)
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.selected = None;
@@ -437,6 +431,7 @@ impl Render for MeetingsView {
             strings::MEETINGS,
             None,
             true,
+            layout::DOCUMENT_MAX,
             div().flex_1().min_h_0().child(body).into_any_element(),
             cx,
         )
