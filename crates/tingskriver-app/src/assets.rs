@@ -87,6 +87,10 @@ gpui_kit_assets::icon_assets!(
         CircleCheckBig,
         // Job 2: "Møder" in the collapsed sidebar.
         NotebookPen,
+        // Job 4: the meeting document (Gem, empty summary, task items).
+        Save,
+        FileQuestionMark,
+        SquareCheck,
     ]
 );
 

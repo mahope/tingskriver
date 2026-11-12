@@ -11,7 +11,7 @@ pub mod native;
 use std::path::PathBuf;
 use tingskriver_app::{
     startup::{DbFailure, DbState},
-    ui::{FixtureVariant, Page},
+    ui::{FixtureMeeting, FixtureVariant, Page},
 };
 
 fn fixtures() -> Vec<(String, Page, DbState, FixtureVariant)> {
@@ -40,6 +40,21 @@ fn fixtures() -> Vec<(String, Page, DbState, FixtureVariant)> {
         DbState::NotCreated,
         FixtureVariant::SidebarCollapsed,
     ));
+    // The meeting document (docs/screenshots/moedeside-*.png).
+    for (name, kind) in [
+        ("meeting-summary", FixtureMeeting::Summary),
+        ("meeting-transcript", FixtureMeeting::Transcript),
+        ("meeting-no-summary", FixtureMeeting::NoSummary),
+        ("meeting-summary-error", FixtureMeeting::SummaryFailed),
+        ("meeting-proposals", FixtureMeeting::Proposals),
+    ] {
+        fixtures.push((
+            name.into(),
+            Page::Home,
+            DbState::NotCreated,
+            FixtureVariant::Meeting(kind),
+        ));
+    }
     fixtures.push((
         "loading".into(),
         Page::Home,

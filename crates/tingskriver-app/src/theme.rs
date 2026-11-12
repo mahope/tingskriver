@@ -254,6 +254,55 @@ pub mod sidebar {
 
 // ---- end of Job 2 block ----
 
+// ---- Job 4 (meeting document, docs/design-paritet.md): added constants ----
+
+/// The meeting document (`MeetingDocument.tsx`, `SummaryPanel.tsx`,
+/// BlockNote's default styles and `VirtualizedTranscriptView.tsx`).
+pub mod document {
+    use gpui::{px, Pixels};
+
+    /// Article padding below the content (`pb-28`).
+    pub const BOTTOM_SPACE: Pixels = px(112.0);
+    /// Space above the transcript section (`mt-12`).
+    pub const TRANSCRIPT_GAP: Pixels = px(48.0);
+    /// The summary text column; BlockNote wraps about here in the
+    /// reference images (`docs/screenshots/moedeside-lys.png`).
+    pub const SUMMARY_TEXT_MAX: Pixels = px(560.0);
+    /// BlockNote's line height for summary text (16 px over 28 px lines).
+    pub const SUMMARY_LINE_HEIGHT: f32 = 1.75;
+    /// Space between summary blocks.
+    pub const BLOCK_GAP: Pixels = px(10.0);
+    /// Extra space above a summary heading.
+    pub const HEADING_GAP: Pixels = px(36.0);
+    /// Bullet and number column, also the indent per nesting level.
+    pub const LIST_INDENT: Pixels = px(24.0);
+    /// The bullet square.
+    pub const BULLET: Pixels = px(5.0);
+    /// The empty-state icon (`w-16 h-16`).
+    pub const EMPTY_ICON: Pixels = px(64.0);
+    /// The transcript panel takes this share of the window height (`h-[70vh]`).
+    pub const TRANSCRIPT_PANEL_SHARE: f32 = 0.7;
+    /// Time column of a transcript line (`min-w-[3.5rem]`).
+    pub const TIME_COLUMN: Pixels = px(56.0);
+    /// Transcript text line height (`leading-[1.65]`).
+    pub const TRANSCRIPT_LINE_HEIGHT: f32 = 1.65;
+    /// Toolbar labels collapse to icons below these container widths
+    /// (Tailwind `@[34rem]`, `@[40rem]` and `@[22rem]`).
+    pub const LABELS_MIN: Pixels = px(544.0);
+    pub const LANGUAGE_LABEL_MIN: Pixels = px(640.0);
+    pub const TRANSCRIPT_LABELS_MIN: Pixels = px(352.0);
+    /// The "Lav om" segment's border tint (`border-primary/40`).
+    pub const GENERATE_BORDER_ALPHA: f32 = 0.4;
+    /// The summary error box (`bg-destructive/10`).
+    pub const ERROR_TINT: f32 = 0.1;
+    /// A one-pixel line (rule, tinted segment border).
+    pub const HAIRLINE: Pixels = px(1.0);
+    /// The proposals band above the summary scrolls inside this height.
+    pub const PROPOSALS_MAX: Pixels = px(480.0);
+}
+
+// ---- end of Job 4 block ----
+
 /// Tailwind's shadows (`shadow-sm`, `shadow`, `shadow-md`), the same in both
 /// modes as in the Tauri app.
 pub mod shadow {

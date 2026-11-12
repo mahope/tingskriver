@@ -309,6 +309,55 @@ catalogue! {
     PROMPT_KEYS_HINT = "Ctrl+Alt+Enter vælger den første knap, Ctrl+Alt+Esc lukker, og Ctrl+Alt+P flytter fokus til vinduet. Så virker Tab, Enter og Esc.";
     PROMPT_QUIET_MARK = "Stille tilstand: spørgsmål udsat";
     PROMPT_WINDOW_NAME = "Tingskriver spørger";
+    // ---- Job 4: the meeting document (frontend/src/components/MeetingDetails) ----
+    DOC_LOADING = "Henter mødet …";
+    DOC_LOAD_FAILED = "Mødet kunne ikke indlæses. Prøv at åbne det igen.";
+    DOC_RENAME = "Omdøb mødet";
+    DOC_SHARED = "Må deles med AI-værktøjer";
+    DOC_SHARING_LOAD_FAILED = "Deling kunne ikke læses. Åbn mødet igen for at prøve igen.";
+    DOC_SHARING_SAVE_FAILED = "Deling kunne ikke gemmes. Prøv igen.";
+    DOC_REGENERATE = "Lav om";
+    DOC_GENERATE = "Lav opsummering";
+    DOC_LANGUAGE_AUTO = "Automatisk";
+    DOC_LANGUAGE_LABEL = "Vælg opsummeringssprog";
+    DOC_MODEL = "AI-model";
+    DOC_TEMPLATE = "Skabelon";
+    DOC_SAVE = "Gem";
+    DOC_COPY = "Kopiér";
+    DOC_COPY_SUMMARY = "Kopiér opsummeringen";
+    DOC_SUMMARY_COPIED = "Opsummeringen er kopieret";
+    DOC_NO_SUMMARY_TO_COPY = "Der er ingen opsummering at kopiere";
+    DOC_SUMMARY_LATER = "Opsummeringer laves og ændres endnu i den nuværende app.";
+    DOC_EDIT_LATER = "Referatet kan endnu ikke redigeres i denne app.";
+    DOC_EMPTY_TITLE = "Ingen opsummering endnu";
+    DOC_EMPTY_TEXT = "Lad AI lave en opsummering af mødets transskript med hovedpunkter, handlepunkter og beslutninger.";
+    DOC_SUMMARY_RUNNING = "Skriver opsummeringen…";
+    DOC_SUMMARY_RUNNING_HELP = "Det kan tage et par minutter for lange møder.";
+    DOC_SUMMARY_FAILED = "Referatet kunne ikke laves. Mødet og transskriptet er gemt.";
+    DOC_SUMMARY_RETRY = "Lav referat igen";
+    DOC_DELIVERY_TITLE = "Aflever referatet til";
+    DOC_DELIVERY_LATER = "Aflevering af referatet er endnu ikke flyttet til denne app.";
+    DOC_TRANSCRIPT = "Transskript";
+    DOC_LINES_NONE = "Ingen linjer";
+    DOC_LINES_ONE = "1 linje";
+    DOC_LINES_MANY = "{value} linjer";
+    DOC_SHOW = "Vis";
+    DOC_HIDE = "Skjul";
+    DOC_COPY_TRANSCRIPT = "Kopiér transskriptet";
+    DOC_NO_TRANSCRIPT_TO_COPY = "Der er intet transskript at kopiere";
+    DOC_TRANSCRIPT_COPIED = "Transskriptet er kopieret";
+    DOC_RECORDING = "Optagelse";
+    DOC_OPEN_RECORDING = "Åbn mappen med optagelsen";
+    DOC_NO_AUDIO = "Mødet har ingen lyd, kun et importeret transskript.";
+    DOC_IMPROVE = "Forbedr";
+    DOC_IMPROVE_LATER = "Ny transskription af optagelsen er endnu ikke flyttet til denne app.";
+    DOC_TRANSCRIPT_EMPTY = "Ingen transskription";
+    DOC_TRANSCRIPT_EMPTY_HELP = "Der blev ikke genkendt tale i denne optagelse.";
+    DOC_NUMBERED = "{value}.";
+    DOC_ACTIONS = "Handlinger for opsummeringen";
+    DOC_SUMMARY_ACTIONS = "Gem og kopiér";
+    DOC_TRANSCRIPT_ACTIONS = "Handlinger for transskriptet";
+    // ---- end of Job 4 block ----
 }
 
 macro_rules! parameterized {
@@ -359,6 +408,20 @@ pub fn proposals_banner(count: usize) -> String {
         PROPOSALS_ONE.to_string()
     } else {
         proposals_many(&count.to_string())
+    }
+}
+
+/// The number of a numbered summary item: "1.".
+pub fn numbered_item(number: u32) -> String {
+    DOC_NUMBERED.replace("{value}", &number.to_string())
+}
+
+/// "Ingen linjer", "1 linje", "1.234 linjer" (Tauri `MeetingDocument`).
+pub fn transcript_lines(count: usize) -> String {
+    match count {
+        0 => DOC_LINES_NONE.to_string(),
+        1 => DOC_LINES_ONE.to_string(),
+        n => DOC_LINES_MANY.replace("{value}", &crate::format_da::integer(n as i64)),
     }
 }
 
@@ -413,5 +476,13 @@ mod tests {
     fn proposal_banner_uses_singular_and_plural() {
         assert_eq!(super::proposals_banner(1), "1 ventende ændring");
         assert_eq!(super::proposals_banner(3), "3 ventende ændringer");
+    }
+
+    #[test]
+    fn transcript_line_count_uses_singular_plural_and_grouping() {
+        assert_eq!(super::transcript_lines(0), "Ingen linjer");
+        assert_eq!(super::transcript_lines(1), "1 linje");
+        assert_eq!(super::transcript_lines(10), "10 linjer");
+        assert_eq!(super::transcript_lines(1234), "1.234 linjer");
     }
 }

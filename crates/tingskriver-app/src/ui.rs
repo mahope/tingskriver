@@ -502,6 +502,9 @@ impl Page {
     }
 }
 
+#[cfg(feature = "screenshot-tests")]
+pub use crate::pages::meeting::FixtureMeeting;
+
 /// Extra state of a screenshot fixture.
 #[cfg(feature = "screenshot-tests")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -511,6 +514,8 @@ pub enum FixtureVariant {
     Meetings,
     /// The 64 px sidebar.
     SidebarCollapsed,
+    /// An open meeting document (Job 4).
+    Meeting(FixtureMeeting),
 }
 
 pub struct Shell {
@@ -522,6 +527,8 @@ pub struct Shell {
     pub(crate) page: Page,
     measurement: Entity<crate::measurement::MeasurementView>,
     pub(crate) meetings: Entity<crate::meetings::MeetingsView>,
+    /// The open meeting's document, replaced when another meeting opens.
+    pub(crate) meeting_view: Option<Entity<crate::pages::meeting::MeetingView>>,
     pub(crate) sidebar_collapsed: bool,
     /// Why "Ny optagelse" or an import did not open a screen (not ported).
     pub(crate) home_notice: Option<&'static str>,
@@ -586,11 +593,18 @@ impl Shell {
                     cx,
                 )
             });
-            let list = (variant == FixtureVariant::Meetings).then(crate::meetings::fixture_list);
+            let list = matches!(
+                variant,
+                FixtureVariant::Meetings | FixtureVariant::Meeting(_)
+            )
+            .then(crate::meetings::fixture_list);
             shell
                 .meetings
                 .update(cx, |meetings, _| meetings.freeze(list));
             shell.sidebar_collapsed = variant == FixtureVariant::SidebarCollapsed;
+            if let FixtureVariant::Meeting(kind) = variant {
+                shell.open_fixture_meeting(kind, cx);
+            }
             shell.probe_line.update(cx, |input, cx| {
                 input.set_value("æøå ÆØÅ é ü @ €", window, cx)
             });
@@ -670,6 +684,7 @@ impl Shell {
             page,
             measurement,
             meetings,
+            meeting_view: None,
             sidebar_collapsed: false,
             home_notice: None,
             probe_line,
@@ -702,7 +717,7 @@ impl Shell {
 }
 
 impl Render for Shell {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = palette(cx);
         let failure = match &self.model.read(cx).db {
             DbState::Failed(failure) => Some(failure.clone()),
@@ -746,7 +761,7 @@ impl Render for Shell {
                 (_, Page::About) => self.about_page(cx),
                 (Some(failure), _) => self.database_error_page(failure, cx),
                 (None, Page::Home) => match self.meetings.read(cx).selected_meeting().is_some() {
-                    true => self.meeting_page(cx),
+                    true => self.meeting_page(window, cx),
                     false => self.home_page(cx),
                 },
                 (None, Page::Dictation) => self.dictation_page(cx),
