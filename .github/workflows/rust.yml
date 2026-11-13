@@ -101,6 +101,8 @@ jobs:
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-bin: 'false'
           prefix-key: tingskriver-linux-lint-v1
 
       - name: rustfmt on changed files
@@ -151,6 +153,8 @@ jobs:
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-bin: 'false'
           prefix-key: tingskriver-windows-test-v1
 
       - name: Cache FFmpeg binary
@@ -235,6 +239,8 @@ jobs:
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-bin: 'false'
           prefix-key: tingskriver-linux-core-v1
 
       # tingskriver-core must stay free of UI crates (docs/arkitektur.md).
@@ -320,6 +326,8 @@ jobs:
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-bin: 'false'
           prefix-key: tingskriver-windows-gpui-release-v1
 
       - name: Build tingskriver-app (release)
@@ -411,6 +419,8 @@ jobs:
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-bin: 'false'
           prefix-key: tingskriver-xwin-v1
 
       - name: cargo xwin check

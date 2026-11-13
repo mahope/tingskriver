@@ -93,6 +93,8 @@ jobs:
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-bin: 'false'
           workspaces: ". -> target"
           prefix-key: tingskriver-windows-v1
           key: windows-x64-vulkan

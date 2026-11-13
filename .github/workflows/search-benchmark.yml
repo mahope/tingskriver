@@ -29,6 +29,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends libasound2-dev cmake clang
       - uses: swatinem/rust-cache@v2
         with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-bin: 'false'
           prefix-key: tingskriver-search-release-v1
       - name: Test FTS5 and benchmark release search
         run: .github/scripts/annotate-errors.sh cargo test --locked --release -p tingskriver-core --test search_fts5 -- --nocapture
