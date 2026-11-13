@@ -747,6 +747,8 @@ pub fn measure_result_line(wer: &str, errors: &str, latency: &str, price: &str) 
 
 /// The Diktering settings tab (docs/design-paritet.md, Job 7).
 pub mod dictation_settings;
+/// Model management under Indstillinger > Transskription (#174).
+pub mod models;
 /// Onboarding (docs/design-paritet.md, Job 9).
 pub mod onboarding;
 /// The settings tabs Optagelser, Transskription, Opsummering and Beta

@@ -689,6 +689,21 @@ pub async fn verify_installed(
     Ok(())
 }
 
+/// Check every file of an installed model against the manifest, as the
+/// engines do before they load it. `Some(true)` when all match, `Some(false)`
+/// when a file is missing or differs, `None` when the manifest does not know
+/// the model (nothing to check against).
+pub async fn verify_installed_model(dir: &Path, engine: &str, id: &str) -> Option<bool> {
+    let entry = entry(engine, id)?;
+    let cancel = CancellationToken::new();
+    for file in &entry.files {
+        if verify_installed(dir, file, &cancel).await.is_err() {
+            return Some(false);
+        }
+    }
+    Some(true)
+}
+
 /// Remove the partial download and verification marker next to a model file.
 pub async fn remove_sidecars(dir: &Path, name: &str) {
     remove_quietly(&part_path(dir, name)).await;
@@ -1330,6 +1345,20 @@ mod tests {
             "{error}"
         );
         assert!(!part_path(dir.path(), "model.bin").exists());
+    }
+
+    #[tokio::test]
+    async fn installed_model_check_knows_unknown_and_missing_models() {
+        let dir = tempdir().unwrap();
+        assert_eq!(
+            verify_installed_model(dir.path(), "whisper", "finnes-ikke").await,
+            None
+        );
+        // A model in the manifest whose files are not there does not match.
+        assert_eq!(
+            verify_installed_model(dir.path(), "whisper", "tiny").await,
+            Some(false)
+        );
     }
 
     #[tokio::test]

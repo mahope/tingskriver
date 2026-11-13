@@ -34,10 +34,6 @@ catalogue! {
     TRANSCRIPTION_MODEL_PLACEHOLDER = "Vælg model";
     // GPUI: the saved setting could not be read from the database.
     SAVED_SETTING_UNREADABLE = "Kunne ikke læses";
-    // GPUI: the saved model next to the read-only engine.
-    TRANSCRIPTION_MODEL_CURRENT = "Valgt model: {value}";
-    // GPUI: why the engine and the models cannot be chosen here.
-    TRANSCRIPTION_ENGINE_LATER = "Valg af motor og modeller er endnu ikke flyttet til denne app. Skift motor eller hent modeller i den nuværende app.";
     // GPUI: the language group (#209) as a switch instead of a button.
     LANGUAGE_SUMMARY_SWITCH = "Skriv altid referat på hovedsproget";
     LANGUAGE_SUMMARY_SWITCH_HINT = "Slået fra følger referatet det mest talte af de valgte sprog.";
@@ -84,11 +80,6 @@ catalogue! {
     BETA_IMPORT_LATER = "Import er endnu ikke flyttet til denne app. Slå funktionen til eller fra i den nuværende app. Kontakten viser standardværdien, ikke din gemte indstilling.";
 }
 
-/// "Valgt model: …" under the read-only engine select.
-pub fn transcription_model_current(model: &str) -> String {
-    TRANSCRIPTION_MODEL_CURRENT.replace("{value}", model)
-}
-
 /// Tauri's name for a summary provider id (`ModelSettingsModal.tsx:878-884`);
 /// an unknown id is shown as it is.
 pub fn summary_provider(id: &str) -> &str {
@@ -124,9 +115,5 @@ mod tests {
         assert_eq!(summary_provider("ny-udbyder"), "ny-udbyder");
         assert_eq!(transcription_engine("localWhisper"), TRANSCRIPTION_WHISPER);
         assert_eq!(transcription_engine("deepgram"), "deepgram");
-        assert_eq!(
-            transcription_model_current("large-v3"),
-            "Valgt model: large-v3"
-        );
     }
 }

@@ -11,7 +11,7 @@ pub mod native;
 use std::path::PathBuf;
 use tingskriver_app::{
     startup::{DbFailure, DbState},
-    ui::{FixtureMeeting, FixtureVariant, Page, SettingsTab},
+    ui::{FixtureMeeting, FixtureVariant, ModelsFixture, Page, SettingsTab},
 };
 
 fn fixtures() -> Vec<(String, Page, DbState, FixtureVariant)> {
@@ -118,6 +118,20 @@ fn fixtures() -> Vec<(String, Page, DbState, FixtureVariant)> {
         DbState::NotCreated,
         FixtureVariant::DictationProbe,
     ));
+    // Model management (#174). The empty state is `settings-transcription`.
+    for (name, kind) in [
+        ("models-installed", ModelsFixture::Installed),
+        ("models-downloading", ModelsFixture::Downloading),
+        ("models-cancelled", ModelsFixture::Cancelled),
+        ("models-error", ModelsFixture::Failed),
+    ] {
+        fixtures.push((
+            name.into(),
+            Page::Settings,
+            DbState::NotCreated,
+            FixtureVariant::Models(kind),
+        ));
+    }
     // The update dialog over the home screen (UpdateDialog.tsx); "about"
     // (Page::About) is the About dialog over the home screen.
     fixtures.push((
