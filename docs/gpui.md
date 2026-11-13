@@ -206,6 +206,18 @@ the same time; both use the same database with the same migrations.
     "Gendan afbrudte møder" opens with the recording (length, "Lyd findes").
     "Gendan" saves the meeting, transcribes it and opens it. Repeat and use
     "Slet" (it asks first): the dialog closes and the card on Home is gone.
+14. **Modeller.** Indstillinger, Transskription. Opening the tab must not
+    download anything (watch the network, or the models folder staying
+    empty). "Hent" on Kompakt: the bar moves, "Annullér" stops it and the card
+    offers "Hent" again; "Hent" once more resumes from the partial file and
+    ends in "Klar" and "Kontrolsum (SHA-256) bekræftet". "Vælg" on it moves
+    the "Valgt" badge; restart the app: the choice is still there (the same
+    row Tauri reads). "Kontrollér" on an old model says whether the checksum
+    matches. Pull the network cable during a download: a Danish error and
+    "Prøv igen". Start a recording and open the tab: "Slet" is disabled with
+    the reason under the card. Stop it: "Slet" asks first, then removes the
+    model. Switch to Whisper: the same cards. Light and dark, Tab and Enter
+    reach every button, Accessibility Insights names them ("Slet Kompakt").
 
 Write the results here:
 
@@ -224,6 +236,7 @@ Write the results here:
 | 11. Tray start and stop | | |
 | 12. Microphone errors | | |
 | 13. Gendan afbrudte møder | | |
+| 14. Modeller | | |
 
 **No-go** if text input (2, 3) or the UIA tree (4) fails without a fix in
 gpui-component's next release; the rest are fixable in the app.
