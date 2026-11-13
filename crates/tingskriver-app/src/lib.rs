@@ -17,6 +17,7 @@ pub mod assets;
 pub mod console;
 pub mod controls;
 pub mod crash;
+mod import;
 mod measurement;
 mod meetings;
 mod onboarding;
@@ -144,6 +145,7 @@ pub fn run() {
         }
     };
     let command_host = host.as_ref().map(Host::handle);
+    let import_host = command_host.clone();
     let messages = messages.map(|mut messages| {
         let (show, receiver) = tokio::sync::mpsc::unbounded_channel();
         runtime.spawn(async move {
@@ -214,6 +216,7 @@ pub fn run() {
                     model.start_page = page;
                 }
                 model.recorder = recorder.clone();
+                model.host = import_host.clone();
                 model
             });
             if let Some(mut notices) = recorder.as_ref().and_then(|r| r.take_notices()) {
@@ -297,6 +300,11 @@ pub fn run() {
                             }
                         } else if event.name == tingskriver_core::dictation::HISTORY_CHANGED_EVENT {
                             cx.update(ui::dictation_history_changed);
+                        } else if matches!(
+                            event.name.as_str(),
+                            "import-progress" | "import-complete" | "import-error"
+                        ) {
+                            cx.update(|cx| ui::import_event(&event.name, &event.payload_json, cx));
                         }
                     }
                 })

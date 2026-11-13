@@ -25,13 +25,27 @@ pub(crate) enum Destination {
     Page(Page),
     /// "Ny optagelse": the home screen, where the recording starts.
     Record,
-    /// "Importér transskript" / "Importér lyd": not in this app yet.
-    Import,
+    /// "Importér transskript": a file picker, then the import (`import`).
+    ImportTranscript,
+    /// "Importér lyd": the import dialog (`import`).
+    ImportAudio,
 }
 
 impl Shell {
     /// Go somewhere from the sidebar. Leaves the open meeting.
-    pub(crate) fn navigate(&mut self, to: Destination, cx: &mut Context<Self>) {
+    pub(crate) fn navigate(
+        &mut self,
+        to: Destination,
+        window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Tauri imports from wherever the user is: no page change, and the
+        // open meeting stays open.
+        match to {
+            Destination::ImportTranscript => return self.import_transcript(None, window, cx),
+            Destination::ImportAudio => return self.open_import_audio(None, window, cx),
+            _ => {}
+        }
         self.meetings.update(cx, |meetings, cx| {
             meetings.selected = None;
             cx.notify();
@@ -55,10 +69,7 @@ impl Shell {
                     self.home_notice = Some(strings::RECORDING_UNAVAILABLE);
                 }
             }
-            Destination::Import => {
-                self.page = Page::Home;
-                self.home_notice = Some(strings::IMPORT_LATER);
-            }
+            Destination::ImportTranscript | Destination::ImportAudio => {}
         }
         cx.notify();
     }
@@ -69,8 +80,8 @@ impl Shell {
         cx: &mut Context<Self>,
     ) -> impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static {
         let shell = cx.entity().downgrade();
-        move |_, _, cx| {
-            let _ = shell.update(cx, |this, cx| this.navigate(to, cx));
+        move |_, window, cx| {
+            let _ = shell.update(cx, |this, cx| this.navigate(to, window, cx));
         }
     }
 
@@ -288,6 +299,7 @@ impl Shell {
         let palette = palette(cx);
         let page = self.page;
         let on_page = |p: Page| page == p;
+        let audio_import = self.import.read(cx).audio_enabled();
         v_flex()
             .flex_none()
             .border_t_1()
@@ -308,22 +320,22 @@ impl Shell {
                     IconName::FileText,
                     strings::IMPORT_TRANSCRIPT,
                     false,
-                    Destination::Import,
+                    Destination::ImportTranscript,
                     cx,
                 )
-                .tooltip(strings::IMPORT_LATER),
+                .tooltip(strings::import::IMPORT_TRANSCRIPT_HINT),
             )
-            .child(
-                self.footer_row(
+            // Tauri hides the audio import when the Beta switch is off.
+            .when(audio_import, |this| {
+                this.child(self.footer_row(
                     "sidebar-import-audio",
                     IconName::Upload,
                     strings::IMPORT_AUDIO,
                     false,
-                    Destination::Import,
+                    Destination::ImportAudio,
                     cx,
-                )
-                .tooltip(strings::IMPORT_LATER),
-            )
+                ))
+            })
             .child(
                 h_flex()
                     .gap(space::XS)
@@ -450,18 +462,20 @@ impl Shell {
                     cx,
                 )
                 .accessibility_label(strings::IMPORT_TRANSCRIPT)
-                .on_click(self.on_nav(Destination::Import, cx)),
+                .on_click(self.on_nav(Destination::ImportTranscript, cx)),
             )
-            .child(
-                self.collapsed_item(
-                    "collapsed-import-audio",
-                    IconName::Upload,
-                    strings::IMPORT_AUDIO,
-                    false,
-                    cx,
+            .when(self.import.read(cx).audio_enabled(), |this| {
+                this.child(
+                    self.collapsed_item(
+                        "collapsed-import-audio",
+                        IconName::Upload,
+                        strings::IMPORT_AUDIO,
+                        false,
+                        cx,
+                    )
+                    .on_click(self.on_nav(Destination::ImportAudio, cx)),
                 )
-                .on_click(self.on_nav(Destination::Import, cx)),
-            )
+            })
             .child(
                 self.collapsed_item(
                     "collapsed-dictation",

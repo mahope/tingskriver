@@ -92,7 +92,6 @@ catalogue! {
     IMPORT_TRANSCRIPT = "Importér transskript";
     IMPORT_TRANSCRIPT_TOOLTIP = "Importér transskript (.vtt, .srt)";
     IMPORT_AUDIO = "Importér lyd";
-    IMPORT_LATER = "Import er endnu ikke flyttet til denne app. Importér lyd eller transskript i den nuværende app.";
     MEETING_RENAME_TITLE = "Omdøb møde";
     MEETING_RENAME_LABEL = "Omdøb mødet {value}";
     MEETING_DELETE_LABEL = "Slet mødet {value}";
@@ -747,6 +746,8 @@ pub fn measure_result_line(wer: &str, errors: &str, latency: &str, price: &str) 
 
 /// The Diktering settings tab (docs/design-paritet.md, Job 7).
 pub mod dictation_settings;
+/// Import of audio and transcripts.
+pub mod import;
 /// Onboarding (docs/design-paritet.md, Job 9).
 pub mod onboarding;
 /// The settings tabs Optagelser, Transskription, Opsummering and Beta

@@ -232,6 +232,32 @@ the same time; both use the same database with the same migrations.
     and the log has `[DEVICE_FOLLOW]` with a gap of at most 1000 ms
     ([enheder.md](enheder.md), test A).
 
+16. **Import.** Keep a short `.m4a` or `.mp3` (a few minutes), and a `.vtt` or
+    `.srt` from Teams. (a) Click "Importér lyd" in the sidebar: the dialog
+    opens with "Vælg lydfil". Pick the file: name, length, size and format
+    show, the title is the file name. Open "Flere valg" and check language and
+    model. "Importér": the bar moves, "Annullér" is the only button and the
+    dialog cannot be closed with Esc or a click outside. When it finishes the
+    dialog closes, a toast says how many sections were made and the meeting
+    is open in the list with its transcript. (b) Import again and press
+    "Annullér": a toast says it was cancelled and no meeting appears. (c) Pick
+    a damaged file (rename a `.txt` to `.mp3`): the dialog shows the error
+    with "Prøv igen". (d) "Importér transskript": pick the subtitle file, a
+    toast says it was imported and the meeting opens; import the same file
+    again and the existing meeting opens ("allerede importeret"). Pick a
+    `.txt`: "Kun .vtt- og .srt-filer kan importeres". (e) Drag an audio file
+    and a subtitle file onto the window: the window gets a blue frame and the
+    dialog or the transcript import starts. (f) Indstillinger > Beta: switch
+    "Importér lyd og transskribér igen" off: "Importér lyd" is gone from the
+    sidebar (expanded and collapsed) and a dropped audio file says the Beta
+    function is off. Restart the app: the switch is still off.
+
+    Known difference from Tauri: Tauri applies the pinned summary language
+    to an imported meeting (`applyPinnedSummaryLanguageToMeeting`). That
+    default lives in the Tauri webview's localStorage and the summary tab
+    here does not port it, so an imported meeting keeps the detected
+    language, and no summary is started after an import.
+
 Write the results here:
 
 | Test | Result | Date, machine |
@@ -252,6 +278,7 @@ Write the results here:
 | 14. Move from the Tauri app | | |
 | 14. Sleep and logoff | | |
 | 15. Meeting program on another device | | |
+| 16. Importér lyd og transskript | | |
 
 **No-go** if text input (2, 3) or the UIA tree (4) fails without a fix in
 gpui-component's next release; the rest are fixable in the app.

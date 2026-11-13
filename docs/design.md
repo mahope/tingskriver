@@ -74,6 +74,7 @@ The first column is the exact identifier in the code; the script checks it.
 | `meetings` | Virtual meeting list backed by the core list model, inline rename/delete confirmation, the interrupted recordings found on disk (`recovery()`) and navigation handoffs. | Only meeting-list presentation; data, status mapping and mutations live in core. |
 | `measurement` | The Måling sub-page (`MeasurementView`, `measurement_page`): compare a user's sample against a reference text, per model; Tauri section style, one checkbox row per provider and model with the tariff inline, results as a card. | Only this page. |
 | `about` | Offline build metadata, an update-status snapshot, allowlisted diagnostics and bundled legal documents. | The About dialog and copying diagnostics. Opening it never starts an update check. |
+| `import` | Import of audio files and `.vtt`/`.srt` transcripts (Tauri `ImportAudioDialog.tsx`, `ImportDialogContext.tsx`, `useImportAudio.ts`): the file picker, drop target, import dialog with progress and errors, and the Beta switch behind "Importér lyd". Logic stays in core (`audio::import`, `subtitle::import`). | "Importér lyd" and "Importér transskript" in the sidebar, files dropped on the window, Beta > Importér lyd. |
 | `about_dialog` | "Om Tingskriver" as a dialog over the current screen (Tauri `Info.tsx`, `About.tsx`), the update dialog (`UpdateDialog.tsx`) and the "Opdatering klar" notification (`UpdateNotification.tsx`). | ⓘ, the logo, `--page om` and the tray open it; `Page::About` is not a page. Not for other dialogs. |
 | `probe` | Describes what the keyboard produced (code points, uncomposed dead keys) for the test field on the Diktering page. | Manual input tests. |
 | `assets` | Embedded fonts and icons (`Assets`). | Adding a font or an icon. |
@@ -203,6 +204,10 @@ The first column is the exact identifier in the code; the script checks it.
 | `delivery_queue` | "Afleveringskø": job line, error, next attempt and "Prøv igen". | Part of `delivery_settings`. |
 | `group_title` | 18 px semibold title inside a settings block (`text-lg font-semibold`). | "Dine mål", "Tilføj mål", "Afleveringskø". |
 | `labelled` | A label above its control (`label > span + input`). | Form fields in `delivery_form`. |
+| `ImportView` | The import dialog (500 px): file card or dashed empty box, title field, collapsible "Flere valg" (language, model), 12 px progress bar with stage and percentage, error box and the footer buttons. Cannot be closed while importing. | Only inside the dialog `import::show_dialog` opens. |
+| `empty_card` | The dashed box with the file icon, "Vælg lydfil" and the accepted formats. | Only in `ImportView`. |
+| `file_card` | The checked file: name, length, size, format, "Mødetitel" and "Vælg en anden fil". | Only in `ImportView`. |
+| `more_options` | "Flere valg": a 44 px disclosure with the language select (or the Parakeet note) and the model select. | Only in `ImportView`. |
 | `AboutView` | The About dialog's content: the Tauri layout (`hero`, `features`, `footer`) and, collapsed below it, the build details and the legal documents. Scrolls beyond 80 % of the window height. | Only inside the dialog `about_dialog::open_about` opens. |
 | `hero` | Logo mark (56 px), "Tingskriver" 20 px semibold serif, version, tagline, the outline 44 px button "Søg efter opdateringer" and "Opdatering klar: version x". | Only in `AboutView`. |
 | `features` | "Det adskiller Tingskriver": 16 px semibold serif title and four term/description pairs (14 px medium / muted). | Only in `AboutView`. |

@@ -223,7 +223,7 @@ mod tests {
         assert_eq!(hero_hint(true, None), Some(strings::HOME_HINT));
         assert_eq!(hero_hint(false, None), Some(strings::RECORDING_UNAVAILABLE));
         assert_eq!(
-            hero_hint(false, Some(strings::IMPORT_LATER)),
+            hero_hint(false, Some(strings::HOME_HINT)),
             Some(strings::RECORDING_UNAVAILABLE)
         );
         // "Ny optagelse" put the explanation in the notice above.

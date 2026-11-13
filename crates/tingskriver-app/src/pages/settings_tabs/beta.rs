@@ -3,9 +3,9 @@
 //! feature and the info box. The GPUI voiceprint explanation is a second
 //! card (docs/design-paritet.md 2.5: an off-by-default experiment).
 //!
-//! Import is not in this app yet (`strings::IMPORT_LATER`), so its switch is
-//! disabled with the reason and shows Tauri's default (on). Voiceprints have
-//! no switch yet; the card says they are off.
+//! The import switch is Tauri's `importAndRetranscribe` (on by default). It
+//! hides and shows "Importér lyd" (`import`). Voiceprints have no switch
+//! yet; the card says they are off.
 
 use gpui::{div, prelude::*, AnyElement, App, Context, FontWeight};
 use gpui_component::{h_flex, v_flex, Disableable};
@@ -21,6 +21,9 @@ use crate::ui::{muted, palette, Shell};
 impl Shell {
     pub(crate) fn beta_settings_tab(&self, cx: &mut Context<Self>) -> AnyElement {
         let palette = palette(cx);
+        let import_on = self.import.read(cx).audio_enabled();
+        let import_view = self.import.downgrade();
+        let can_save = self.model.read(cx).host.is_some();
 
         let banner = tinted_box(
             "beta-banner",
@@ -39,36 +42,30 @@ impl Shell {
 
         let import = settings_card(
             "beta-import",
-            vec![
-                h_flex()
-                    .justify_between()
-                    .gap(space::XL)
-                    .child(
-                        v_flex()
-                            .flex_1()
-                            .min_w_0()
-                            .gap(space::SM)
-                            .child(feature_title(text::BETA_IMPORT, cx))
-                            .child(muted(text::BETA_IMPORT_HELP, cx)),
-                    )
-                    .child(
-                        div().flex_none().child(
-                            // Tauri's default is on (types/betaFeatures.ts:26);
-                            // the switch is set in the current app.
-                            controls::switch("beta-import-switch")
-                                .checked(true)
-                                .disabled(true)
-                                .accessibility_label(text::BETA_IMPORT),
-                        ),
-                    )
-                    .into_any_element(),
-                div()
-                    .id("beta-import-later")
-                    .role(gpui::Role::Note)
-                    .mt(space::MD)
-                    .child(muted(text::BETA_IMPORT_LATER, cx))
-                    .into_any_element(),
-            ],
+            vec![h_flex()
+                .justify_between()
+                .gap(space::XL)
+                .child(
+                    v_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .gap(space::SM)
+                        .child(feature_title(text::BETA_IMPORT, cx))
+                        .child(muted(text::BETA_IMPORT_HELP, cx)),
+                )
+                .child(
+                    div().flex_none().child(
+                        controls::switch("beta-import-switch")
+                            .checked(import_on)
+                            .disabled(!can_save)
+                            .accessibility_label(text::BETA_IMPORT)
+                            .on_click(move |value, _, cx| {
+                                let on = *value;
+                                let _ = import_view.update(cx, |view, cx| view.save_beta(on, cx));
+                            }),
+                    ),
+                )
+                .into_any_element()],
             cx,
         );
 

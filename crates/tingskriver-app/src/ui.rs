@@ -63,6 +63,9 @@ pub struct AppModel {
     /// The meeting recorder of the host; `None` without one (no data folder,
     /// screenshot fixtures).
     pub recorder: Option<std::sync::Arc<tingskriver_host::Recorder>>,
+    /// The host core talks to (settings, events); `None` without one. The
+    /// import needs it.
+    pub host: Option<tingskriver_core::host::HostHandle>,
 }
 
 /// The MCP server program ships next to the app executable.
@@ -114,6 +117,7 @@ impl AppModel {
             languages: Default::default(),
             language_error: None,
             recorder: None,
+            host: None,
         }
         .with_languages_loaded()
     }
@@ -463,6 +467,27 @@ pub(crate) fn notify_main_window(
     }
 }
 
+/// Close the dialog of the main window, if one is open (the import dialog
+/// when core says the import is done).
+pub(crate) fn close_main_dialog(cx: &mut App) {
+    if let Some(handle) = cx.global::<Globals>().main_window {
+        let _ = handle.update(cx, |_, window, cx| window.close_dialog(cx));
+    }
+}
+
+/// Core's `import-*` events go to the import dialog of the main window.
+pub(crate) fn import_event(name: &str, payload: &str, cx: &mut App) {
+    let shell = cx
+        .global::<Globals>()
+        .shell
+        .as_ref()
+        .and_then(|s| s.upgrade());
+    if let Some(shell) = shell {
+        let view = shell.read(cx).import.clone();
+        view.update(cx, |view, cx| view.on_event(name, payload, cx));
+    }
+}
+
 /// A meeting was saved elsewhere (a recording): read the list again.
 pub(crate) fn meetings_changed(cx: &mut App) {
     let shell = cx
@@ -629,6 +654,12 @@ pub enum FixtureVariant {
     UpdateAvailable,
     /// "Gendan afbrudte møder" with two synthetic interrupted recordings.
     RecoveryDialog,
+    /// The import dialog with a checked file and "Flere valg" open.
+    ImportFile,
+    /// The import dialog while importing (42 %).
+    ImportRunning,
+    /// The import dialog after a failed import.
+    ImportFailed,
 }
 
 pub use crate::pages::settings::SettingsTab;
@@ -637,6 +668,8 @@ pub struct Shell {
     focus_handle: gpui::FocusHandle,
     /// "Om Tingskriver", shown as a dialog (`about_dialog`).
     about: Entity<crate::about_dialog::AboutView>,
+    /// The audio import dialog and the transcript import (`import`).
+    pub(crate) import: Entity<crate::import::ImportView>,
     pub(crate) model: Entity<AppModel>,
     pub(crate) page: Page,
     pub(crate) measurement: Entity<crate::measurement::MeasurementView>,
@@ -709,6 +742,7 @@ impl Shell {
                 ..Default::default()
             },
             recorder: None,
+            host: None,
         });
         crate::onboarding::set_fixture(
             match variant {
@@ -762,6 +796,18 @@ impl Shell {
                     crate::recovery::open_fixture(model, window, cx)
                 });
             }
+            let import_step = match variant {
+                FixtureVariant::ImportFile => Some(crate::import::FixtureImport::File),
+                FixtureVariant::ImportRunning => Some(crate::import::FixtureImport::Running),
+                FixtureVariant::ImportFailed => Some(crate::import::FixtureImport::Failed),
+                _ => None,
+            };
+            if let Some(step) = import_step {
+                let view = shell.import.clone();
+                window.defer(cx, move |window, cx| {
+                    view.update(cx, |view, cx| view.fixture(step, window, cx))
+                });
+            }
             if variant == FixtureVariant::UpdateAvailable {
                 // After this update, once the window's Root exists.
                 window.defer(cx, |window, cx| {
@@ -799,7 +845,7 @@ impl Shell {
                 .placeholder(strings::PROBE_TEXT)
                 .rows(4)
         });
-        let subscriptions = vec![
+        let mut subscriptions = vec![
             cx.observe(&model, |_, _, cx| cx.notify()),
             cx.observe_window_appearance(window, |_, window, cx| {
                 theme::sync_with_window(window, cx);
@@ -818,19 +864,15 @@ impl Shell {
             )
         });
         let meetings = cx.new(|cx| crate::meetings::MeetingsView::new(model.clone(), window, cx));
-        let subscriptions = {
-            let mut subscriptions = subscriptions;
-            subscriptions.push(cx.subscribe(
-                &meetings,
-                |this, _, _: &crate::meetings::MeetingsEvent, cx| {
-                    // A row was opened (or the open meeting deleted).
-                    this.page = Page::Home;
-                    this.home_notice = None;
-                    cx.notify();
-                },
-            ));
-            subscriptions
-        };
+        subscriptions.push(cx.subscribe(
+            &meetings,
+            |this, _, _: &crate::meetings::MeetingsEvent, cx| {
+                // A row was opened (or the open meeting deleted).
+                this.page = Page::Home;
+                this.home_notice = None;
+                cx.notify();
+            },
+        ));
         let save_path = state_path.clone();
         window.on_window_should_close(cx, move |window, _| {
             if let Some(path) = &save_path {
@@ -844,9 +886,13 @@ impl Shell {
         let page = model.read(cx).start_page;
         let settings = crate::pages::settings::SettingsView::new(&model, window, cx);
         let about = cx.new(|cx| crate::about_dialog::AboutView::new(model.clone(), cx));
+        let import = cx.new(|cx| crate::import::ImportView::new(model.clone(), window, cx));
+        // The sidebar follows the Beta switch.
+        subscriptions.push(cx.observe(&import, |_, _, cx| cx.notify()));
         let mut shell = Shell {
             focus_handle,
             about,
+            import,
             model,
             page,
             measurement,
@@ -978,6 +1024,16 @@ impl Render for Shell {
             .font_family(typography::SANS)
             .text_size(typography::BASE)
             .line_height(relative(typography::LINE_HEIGHT))
+            // Files dropped anywhere in the window are imported
+            // (`ImportDropOverlay`): a primary frame shows where they land.
+            .drag_over::<gpui::ExternalPaths>(move |style, _, _, _| {
+                style.border_2().border_color(palette.primary)
+            })
+            .on_drop(
+                cx.listener(|this, paths: &gpui::ExternalPaths, window, cx| {
+                    this.drop_files(paths, window, cx)
+                }),
+            )
             .when(sidebar, |this| this.child(self.sidebar(cx)))
             .child(div().flex_1().h_full().min_w_0().child(content))
             // Last, so the handle draws over the sidebar border and the page.

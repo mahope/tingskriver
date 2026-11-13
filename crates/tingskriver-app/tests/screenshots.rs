@@ -126,6 +126,14 @@ fn fixtures() -> Vec<(String, Page, DbState, FixtureVariant)> {
         DbState::NotCreated,
         FixtureVariant::UpdateAvailable,
     ));
+    // The import dialog (ImportAudioDialog.tsx) with a file, importing, failed.
+    for (name, variant) in [
+        ("import-file", FixtureVariant::ImportFile),
+        ("import-running", FixtureVariant::ImportRunning),
+        ("import-failed", FixtureVariant::ImportFailed),
+    ] {
+        fixtures.push((name.into(), Page::Home, DbState::NotCreated, variant));
+    }
     fixtures.push((
         "loading".into(),
         Page::Home,

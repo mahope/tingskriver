@@ -96,6 +96,9 @@ gpui_kit_assets::icon_assets!(
         SquareCheck,
         // Job 6: "Systemlyd" on the Optagelser settings tab.
         Speaker,
+        // The import dialog (`import`): the file card.
+        FileMusic,
+        Clock,
     ]
 );
 
@@ -231,6 +234,8 @@ mod tests {
             IconName::CircleCheckBig,
             IconName::Download,
             IconName::Speaker,
+            IconName::FileMusic,
+            IconName::Clock,
         ];
         for icon in icons {
             let path = icon.path();

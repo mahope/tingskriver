@@ -79,9 +79,6 @@ catalogue! {
     BETA_IMPORT = "Importér lyd og transskribér igen";
     BETA_IMPORT_HELP = "Importér lydfiler for at transskribere dem, eller transskribér eksisterende møder igen med andre sprogindstillinger.";
     BETA_INFO = "Når en betafunktion er slået fra, skjules den. Dine eksisterende møder berøres ikke.";
-    // GPUI: import is not in this app yet (strings::IMPORT_LATER says the
-    // same on the home screen).
-    BETA_IMPORT_LATER = "Import er endnu ikke flyttet til denne app. Slå funktionen til eller fra i den nuværende app. Kontakten viser standardværdien, ikke din gemte indstilling.";
 }
 
 /// "Valgt model: …" under the read-only engine select.
