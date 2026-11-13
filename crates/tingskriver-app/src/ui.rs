@@ -417,18 +417,53 @@ pub fn show_about(cx: &mut App) {
     with_shell(cx, |shell, window, cx| shell.open_about(window, cx));
 }
 
-/// "Opdatering klar" for an update the background updater downloaded.
+/// A version the updater had ready while no window was open (a `--hidden`
+/// start, or the window closed to the tray). Shown when the next one opens.
+static UPDATE_READY_PENDING: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// "Opdatering klar" for an update the background updater downloaded. With no
+/// window open, the notice waits for the next window instead of being lost.
 pub(crate) fn show_update_ready(version: String, cx: &mut App) {
-    let Some(handle) = cx.global::<Globals>().main_window else {
-        return;
+    let shown = match cx.global::<Globals>().main_window {
+        Some(handle) => {
+            let current = model(cx).read(cx).display_version;
+            let version = version.clone();
+            handle
+                .update(cx, |_, window, cx| {
+                    window.push_notification(
+                        crate::about_dialog::ready_notification(version, current),
+                        cx,
+                    );
+                })
+                .is_ok()
+        }
+        None => false,
     };
-    let current = model(cx).read(cx).display_version;
-    let _ = handle.update(cx, |_, window, cx| {
+    if !shown {
+        remember_update_ready(version);
+    }
+}
+
+fn remember_update_ready(version: String) {
+    *UPDATE_READY_PENDING.lock().unwrap_or_else(|e| e.into_inner()) = Some(version);
+}
+
+fn take_pending_update_ready() -> Option<String> {
+    UPDATE_READY_PENDING
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .take()
+}
+
+/// Show an "Opdatering klar" notice that arrived while no window was open.
+fn show_pending_update_ready(window: &mut Window, cx: &mut App) {
+    if let Some(version) = take_pending_update_ready() {
+        let current = model(cx).read(cx).display_version;
         window.push_notification(
             crate::about_dialog::ready_notification(version, current),
             cx,
         );
-    });
+    }
 }
 
 /// Show the main window, opening it if needed.
@@ -547,7 +582,9 @@ fn open_main_window(cx: &mut App) -> anyhow::Result<WindowHandle<Root>> {
             })
             .detach();
             let model = model(cx);
-            window.on_next_frame(move |_, cx| {
+            window.on_next_frame(move |window, cx| {
+                // The Root exists now, so notifications can be pushed.
+                show_pending_update_ready(window, cx);
                 model.update(cx, |m, _| {
                     if m.report_first_frame {
                         m.report_first_frame = false;
@@ -1101,6 +1138,14 @@ pub(crate) fn loading(text: &str, cx: &App) -> AnyElement {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_update_ready_while_hidden_is_kept_for_the_next_window() {
+        assert_eq!(take_pending_update_ready(), None);
+        remember_update_ready("1.2.3".into());
+        assert_eq!(take_pending_update_ready().as_deref(), Some("1.2.3"));
+        assert_eq!(take_pending_update_ready(), None, "shown only once");
+    }
 
     #[test]
     fn every_page_is_in_the_inventory_once() {
