@@ -29,7 +29,7 @@ permissions:
 # is part of the group so the push run of the newest commit is never
 # cancelled by its pull request run.
 concurrency:
-  group: wer-${{ github.event_name }}-${{ github.head_ref || github.ref_name }}
+  group: wer-${{ github.event_name }}-${{ github.ref == 'refs/heads/main' && github.sha || github.head_ref || github.ref_name }}
   cancel-in-progress: ${{ github.ref_name != 'main' }}
 
 env:

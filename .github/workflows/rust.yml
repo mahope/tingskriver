@@ -18,10 +18,10 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: rust-${{ github.ref }}
-  # main queues, so every merge gets a finished result. On other branches only
-  # the tip matters, so a newer push cancels the older run instead of waiting
-  # behind it for scarce Windows runners.
+  # Every main commit gets its own group, so merges in a row run side by side
+  # instead of waiting (or, from the third one, being dropped from the queue).
+  # On other branches only the tip matters, so a newer push cancels the older run.
+  group: rust-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
@@ -133,9 +133,9 @@ jobs:
 
   windows:
     name: Windows workspace build and tests
-    # Wait for format and clippy (a few minutes on Linux), so a lint error does
-    # not hold two Windows runners for 25 minutes. Skipped when lint fails.
-    needs: [scope, lint]
+    # Starts with lint, not after it: the Windows jobs are the longest path to a
+    # green main and a release. See docs/ci.md for the runner-queue trade-off.
+    needs: scope
     if: ${{ needs.scope.outputs.rust == 'true' }}
     runs-on: windows-latest
     timeout-minutes: 90
@@ -307,9 +307,9 @@ jobs:
   # docs/gpui.md (text input, IME, UI Automation, DPI, start time, no GPU).
   windows-gpui-app:
     name: GPUI app artifact (Windows release)
-    # Wait for format and clippy (a few minutes on Linux), so a lint error does
-    # not hold two Windows runners for 25 minutes. Skipped when lint fails.
-    needs: [scope, lint]
+    # Starts with lint, not after it: the Windows jobs are the longest path to a
+    # green main and a release. See docs/ci.md for the runner-queue trade-off.
+    needs: scope
     if: ${{ needs.scope.outputs.rust == 'true' }}
     runs-on: windows-latest
     timeout-minutes: 90
