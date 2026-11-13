@@ -137,6 +137,9 @@ pub struct DbFailure {
     /// The technical error, shown small and in the log.
     pub detail: String,
     pub database_path: PathBuf,
+    /// The folder with the copy taken before the failure, when core made
+    /// one (Tauri's "Kopi af databasen").
+    pub backup_path: Option<PathBuf>,
 }
 
 impl DbFailure {
@@ -189,7 +192,15 @@ impl DbFailure {
             advice: advice.to_string(),
             detail: detail.to_string(),
             database_path,
+            backup_path: None,
         }
+    }
+
+    /// As [`DbFailure::from_error`], with what core knows about the failure.
+    pub fn from_init_error(error: &tingskriver_core::database::init::DbInitError) -> Self {
+        let mut failure = Self::from_error(&error.to_string(), error.database_path().to_path_buf());
+        failure.backup_path = error.backup_path().map(PathBuf::from);
+        failure
     }
 }
 
@@ -224,7 +235,7 @@ pub async fn open_database(app_data_dir: PathBuf) -> DbState {
                 "Database at {} failed to open: {error}",
                 database_path.display()
             );
-            DbState::Failed(DbFailure::from_error(&error.to_string(), database_path))
+            DbState::Failed(DbFailure::from_init_error(&error))
         }
     }
 }
@@ -329,6 +340,23 @@ mod tests {
             );
             assert_eq!(failure.detail, detail);
         }
+    }
+
+    #[test]
+    fn the_failure_page_gets_the_backup_core_took() {
+        use tingskriver_core::database::init::{DbFailureInfo, DbInitError};
+        let info = |backup_path| DbFailureInfo {
+            detail: "file is not a database".into(),
+            database_path: PathBuf::from("data/meeting_minutes.sqlite"),
+            backup_path,
+            log_path: None,
+        };
+        let with = DbFailure::from_init_error(&DbInitError::Corrupt(info(Some("data/backup".into()))));
+        assert_eq!(with.backup_path, Some(PathBuf::from("data/backup")));
+        assert_eq!(with.database_path, PathBuf::from("data/meeting_minutes.sqlite"));
+        assert!(with.summary.contains("beskadiget"));
+        let without = DbFailure::from_init_error(&DbInitError::Corrupt(info(None)));
+        assert_eq!(without.backup_path, None);
     }
 
     #[tokio::test]

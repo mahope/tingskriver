@@ -393,6 +393,11 @@ catalogue! {
     MODEL_INSTALLED_MISMATCH = "Modelfilen {value} har ikke den forventede kontrolsum (SHA-256) og indlæses ikke. Slet modellen, og hent den igen.";
     MODEL_DOWNLOAD_FAILED = "Modelfilen {value} kunne ikke hentes. Tjek forbindelsen, og prøv igen.";
     DATABASE_FAILED = "Tingskriver kunne ikke åbne dine møder";
+    DATABASE_FILE_LABEL = "Databasefil";
+    DATABASE_BACKUP_LABEL = "Kopi af databasen";
+    DATABASE_LOG_LABEL = "Logfil";
+    DATABASE_TECHNICAL_LABEL = "Teknisk fejl";
+    DATABASE_OPEN_BACKUP = "Åbn backup";
     RETRY = "Prøv igen";
     PROPOSALS_TITLE = "Ventende ændringer";
     PROPOSALS_ONE = "1 ventende ændring";

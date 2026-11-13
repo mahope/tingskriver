@@ -304,11 +304,11 @@ impl Render for MeasurementView {
             .child(
                 div()
                     .id("measure-status")
-                    // The live region stays in the tree so the first
-                    // message is announced; only a message gets a label.
-                    .role(gpui::Role::Status)
+                    // No message: no role and no label, so a screen reader
+                    // does not find an empty status.
                     .when(!self.message.is_empty(), |this| {
-                        this.aria_label(SharedString::from(self.message.clone()))
+                        this.role(gpui::Role::Status)
+                            .aria_label(SharedString::from(self.message.clone()))
                             .child(paragraph(&self.message, cx))
                     }),
             );

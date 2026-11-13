@@ -179,7 +179,7 @@ Tauri route `/` (`app/page.tsx:184-251`, `_components/TranscriptPanel.tsx`, `Rec
 - Errors: destructive alert under the pill with title and bullet text, close X (`RecordingControls.tsx:416-431`); titles "Mikrofonen er ikke tilgængelig", "Systemlyd er ikke tilgængelig", "Tilladelse mangler", "Optagelsen kunne ikke starte" (`:120-136`).
 - Recovery dialog "Gendan afbrudte møder" (two panes: list + excerpt) (`TranscriptRecovery/TranscriptRecovery.tsx:121-177`).
 
-GPUI (before the recording port): no home screen and no recording UI; "Ny optagelse" on the Møder page only explained that recording came later. Since the recording port, Home records through `tingskriver_host::Recorder` (see `docs/gpui.md`, manual tests 10 to 13). `interrupted_card` (sleep/logoff notice) and startup recovery live on the Møder page. Recording itself is a functional port tracked elsewhere; the parity job builds the screen and states with the existing core API where available and a disabled/explaining state otherwise.
+GPUI: Home (`pages/home.rs`, `recording.rs`) records through `tingskriver_host::Recorder` and has the idle hero, recording, paused, device-notice, saving and error states, with the "Gendan afbrudte møder" dialog (`recovery.rs`) and the sleep/logoff notice for meetings that ended early (see `docs/gpui.md`, manual tests 10 to 13). What remains differing is listed under Deliberate deviations in `docs/design.md`.
 
 ### 2.3 Meeting list (Restyle -> move)
 
