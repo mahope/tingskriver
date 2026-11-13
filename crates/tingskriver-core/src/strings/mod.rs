@@ -747,6 +747,8 @@ pub fn measure_result_line(wer: &str, errors: &str, latency: &str, price: &str) 
 
 /// The Diktering settings tab (docs/design-paritet.md, Job 7).
 pub mod dictation_settings;
+/// Making, stopping and editing a summary; the Opsummering tab's fields.
+pub mod meeting_summary;
 /// Onboarding (docs/design-paritet.md, Job 9).
 pub mod onboarding;
 /// The settings tabs Optagelser, Transskription, Opsummering and Beta
