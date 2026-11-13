@@ -96,6 +96,7 @@ catalogue! {
     SUMMARY_CUSTOM_MODEL = "Modelnavn";
     SUMMARY_CUSTOM_SAVE = "Gem serveren";
     SUMMARY_CUSTOM_REQUIRED = "Adressen og modelnavnet skal udfyldes.";
+    SUMMARY_CUSTOM_SCHEME = "Adressen skal starte med http:// eller https://.";
     SUMMARY_BUILTIN_NOT_DOWNLOADED = "Ikke hentet";
     SUMMARY_BUILTIN_DOWNLOADING = "Henter";
     SUMMARY_BUILTIN_HELP = "Vælg en model, der er hentet. Nye modeller hentes i den nuværende app.";

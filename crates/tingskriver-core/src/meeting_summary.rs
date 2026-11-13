@@ -375,6 +375,10 @@ pub async fn save_custom_server(
     if endpoint.trim().is_empty() || model.trim().is_empty() {
         return Err(text::SUMMARY_CUSTOM_REQUIRED.to_string());
     }
+    let endpoint = endpoint.trim();
+    if !endpoint.starts_with("http://") && !endpoint.starts_with("https://") {
+        return Err(text::SUMMARY_CUSTOM_SCHEME.to_string());
+    }
     let existing = SettingsRepository::get_custom_openai_config(pool)
         .await
         .map_err(|error| error.to_string())?;
@@ -386,16 +390,13 @@ pub async fn save_custom_server(
         .map(|c| (c.max_tokens, c.temperature, c.top_p))
         .unwrap_or_default();
     let config = crate::summary::CustomOpenAIConfig {
-        endpoint: endpoint.trim().to_string(),
+        endpoint: endpoint.to_string(),
         api_key,
         model: model.trim().to_string(),
         max_tokens,
         temperature,
         top_p,
     };
-    if !config.endpoint.starts_with("http://") && !config.endpoint.starts_with("https://") {
-        return Err(text::SUMMARY_CUSTOM_REQUIRED.to_string());
-    }
     SettingsRepository::save_custom_openai_config(pool, &config)
         .await
         .map_err(|error| error.to_string())
@@ -846,8 +847,10 @@ pub enum Stopped {
 }
 
 /// Stop the running summary of a meeting (`api_cancel_summary`). The run is
-/// named by the start time stored with it, so a run started before the app
-/// was reopened can be stopped too.
+/// named by the start time stored with it. Only a run of this app session can
+/// be cancelled (the registry of running tasks is in memory): a row still
+/// "running" from before a restart answers [`Stopped::AlmostDone`], and is
+/// cleaned up the next time the app starts.
 pub async fn stop(db: &DatabaseManager, meeting_id: &str) -> Result<Stopped, String> {
     let pool = db.pool();
     let process = SummaryProcessesRepository::get_summary_data(pool, meeting_id)
@@ -939,6 +942,29 @@ pub async fn has_summary_process(pool: &SqlitePool, meeting_id: &str) -> Result<
     )
 }
 
+/// Meetings whose automatic summary is being started right now.
+static AUTO_IN_FLIGHT: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+struct AutoClaim(String);
+
+impl AutoClaim {
+    fn take(meeting_id: &str) -> Option<Self> {
+        let mut claimed = AUTO_IN_FLIGHT.lock().unwrap_or_else(|e| e.into_inner());
+        if claimed.iter().any(|id| id == meeting_id) {
+            return None;
+        }
+        claimed.push(meeting_id.to_string());
+        Some(Self(meeting_id.to_string()))
+    }
+}
+
+impl Drop for AutoClaim {
+    fn drop(&mut self) {
+        let mut claimed = AUTO_IN_FLIGHT.lock().unwrap_or_else(|e| e.into_inner());
+        claimed.retain(|id| id != &self.0);
+    }
+}
+
 /// What the automatic summary did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Auto {
@@ -955,6 +981,11 @@ pub enum Auto {
 /// meeting first, and with no model saved but gemma3:1b in Ollama, that is
 /// saved as the model, as Tauri does.
 pub async fn auto_start(host: HostHandle, db: &DatabaseManager, meeting_id: &str) -> Auto {
+    // Two "completed" events for one meeting close together must not both
+    // pass the "no summary yet" check below.
+    let Some(_claim) = AutoClaim::take(meeting_id) else {
+        return Auto::Skipped;
+    };
     let pool = db.pool();
     let Ok(dir) = host.app_data_dir() else {
         return Auto::Skipped;

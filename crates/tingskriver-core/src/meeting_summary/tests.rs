@@ -421,3 +421,12 @@ async fn the_automatic_summary_follows_the_setting() {
     std::fs::write(dir.path().join(PREFERENCES_FILE), "{").unwrap();
     assert_eq!(auto_start(host, &db, "m2").await, Auto::Skipped);
 }
+
+#[test]
+fn a_second_automatic_start_for_the_same_meeting_is_refused_until_the_first_is_done() {
+    let first = AutoClaim::take("claim-m1").expect("first claim");
+    assert!(AutoClaim::take("claim-m1").is_none());
+    assert!(AutoClaim::take("claim-m2").is_some());
+    drop(first);
+    assert!(AutoClaim::take("claim-m1").is_some());
+}
