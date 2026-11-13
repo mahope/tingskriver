@@ -6,7 +6,7 @@
 #   .github/scripts/annotate-errors.sh cargo test --workspace --locked
 #
 # A block starts at a rustc/cargo `error` line, a C/C++ or CMake error, a
-# test panic or a failed test's captured output, and runs until the next
+# test panic or a failed test's captured output (cargo test or nextest), and runs until the next
 # blank line (max 40 lines).
 # At most 8 blocks are annotated plus the last 40 output lines (GitHub keeps
 # 10 error annotations per step).
@@ -24,7 +24,9 @@ import re
 import sys
 
 start = re.compile(
-    r"^(error(\[\w+\])?:|error: |thread '.*' panicked|---- .* stdout ----|failures:$)"
+    r"^(error(\[\w+\])?:|error: |thread '.*'( \(\d+\))? panicked|---- .* stdout ----|failures:$)"
+    # cargo-nextest prints a failed test's output under these headers
+    r"|^\s*--- STD(OUT|ERR): .* ---"
     # C/C++ compiler and CMake errors from build scripts (indented by cargo)
     r"|^\s*\S+(\(\d+,\d+\)|:\d+:\d+): (fatal )?error|^\s*CMake Error"
 )
