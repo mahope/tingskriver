@@ -23,6 +23,7 @@ The meeting-list port and its verification limits are described in
 | Two monitors with different DPI | **Manual on Windows, pending** |
 | First frame within 500 ms on the reference machine | **Manual on Windows, pending** |
 | Machine without usable GPU (VM) | **Manual on Windows, pending** |
+| Meeting recording: start, pause, stop, save, transcribe, recovery | Built; recorder and screen states tested on Linux with a fake core; **manual on Windows, pending** (tests 10 to 13) |
 
 Go/no-go is decided when the pending rows are filled in below.
 
@@ -174,6 +175,37 @@ the same time; both use the same database with the same migrations.
    start the app. Expected: it runs in software rendering and the log says
    `Using GPU: Microsoft Basic Render Driver`. If it cannot render at all,
    the error dialog with log path appears. Note which happened.
+10. **Record a meeting.** Indstillinger: choose the microphone and the
+    system audio device (or keep the defaults). Play a video with speech in
+    the browser and talk into the microphone. Press "Start optagelse": the
+    pill shows "Gør klar…", then "Pause", "Stop og gem" and three bars that
+    move with your voice and with the video; the status bar shows "Optager",
+    a running clock and the device names; the sidebar says "Optagelse i
+    gang", and the tray icon shows the recording. After about 2 minutes press
+    "Pause": the clock stops, the bars become dots, the tray shows paused;
+    "Genoptag" continues. Press "Stop og gem": "Gemmer optagelsen…", "Gemmer
+    mødet…", "Gør transskriptionen færdig…", then "Optagelsen er gemt", and
+    the meeting opens with its transcript of both voices. It is listed in the
+    sidebar under "I dag". The recording folder holds `audio.mp4`.
+11. **Other ways in.** With the window closed to the tray, start a
+    recording from the tray menu ("Ny optagelse") or its shortcut: the
+    window opens and shows the running recording. Stop it from the tray: the
+    window follows through saving to the finished meeting. Record again and
+    stop; while "Gør transskriptionen færdig…" shows, choose "Ny optagelse"
+    in the tray: the new recording takes over the screen, and the first
+    meeting is transcribed in the background and stays in the sidebar. The
+    card "En optagelse blev afbrudt" must not appear after any of these stops.
+12. **Errors.** Disable the microphone in Windows (Indstillinger, Lyd,
+    Inputenheder) and start: either the recording runs on system audio with
+    "Ingen mikrofon tilgængelig. Der optages kun systemlyd.", or the red
+    alert "Mikrofonen er ikke tilgængelig" appears under the pill. Unplug a
+    USB headset during a recording: a notice in the status bar says what
+    happened, and the recording continues.
+13. **Gendan afbrudte møder.** Start a recording, talk for 30 s and end the
+    app in Task Manager (Afslut opgave). Start it again: the dialog
+    "Gendan afbrudte møder" opens with the recording (length, "Lyd findes").
+    "Gendan" saves the meeting, transcribes it and opens it. Repeat and use
+    "Slet" (it asks first): the dialog closes and the card on Home is gone.
 
 Write the results here:
 
@@ -188,6 +220,10 @@ Write the results here:
 | 7. Single instance, `--hidden` | | |
 | 8. Database error page | | |
 | 9. No GPU (VM) | | |
+| 10. Record 2 min, mic and system audio, stop, meeting and transcript | | |
+| 11. Tray start and stop | | |
+| 12. Microphone errors | | |
+| 13. Gendan afbrudte møder | | |
 
 **No-go** if text input (2, 3) or the UIA tree (4) fails without a fix in
 gpui-component's next release; the rest are fixable in the app.

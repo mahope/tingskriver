@@ -940,6 +940,54 @@ pub async fn get_recording_state() -> serde_json::Value {
     }
 }
 
+/// What a UI needs to draw a running recording, read in one go: at startup
+/// (the app may open while a recording runs) and about five times a second
+/// while it runs. Levels are the highest peak since the last call (0 to 1).
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct RecordingSnapshot {
+    pub is_recording: bool,
+    /// The stop has begun: the audio is being written to disk.
+    pub is_stopping: bool,
+    pub is_paused: bool,
+    /// Recorded time without pauses, in seconds.
+    pub active_seconds: f64,
+    pub microphone: Option<String>,
+    pub system: Option<String>,
+    pub microphone_level: f32,
+    pub system_level: f32,
+    /// "Lyden gemmes ikke: disken er fuld" and the like.
+    pub storage_error: Option<String>,
+    pub meeting_name: Option<String>,
+}
+
+/// The current recording, for UIs (see [`RecordingSnapshot`]).
+pub fn recording_snapshot() -> RecordingSnapshot {
+    let is_recording = IS_RECORDING.load(Ordering::SeqCst);
+    let is_stopping = IS_RECORDING_STOPPING.load(Ordering::SeqCst);
+    let guard = RECORDING_MANAGER.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(manager) = guard.as_ref() else {
+        return RecordingSnapshot {
+            is_recording,
+            is_stopping,
+            ..Default::default()
+        };
+    };
+    let state = manager.get_state();
+    let (microphone_level, system_level) = state.take_peaks();
+    RecordingSnapshot {
+        is_recording,
+        is_stopping,
+        is_paused: manager.is_paused(),
+        active_seconds: manager.get_active_recording_duration().unwrap_or(0.0),
+        microphone: state.get_microphone_device().map(|d| d.name.clone()),
+        system: state.get_system_device().map(|d| d.name.clone()),
+        microphone_level,
+        system_level,
+        storage_error: manager.storage_error(),
+        meeting_name: manager.get_meeting_name(),
+    }
+}
+
 /// The storage error of the current recording ("Lyden gemmes ikke: disken
 /// er fuld"), for UIs and the recording indicator. `None` while the audio is
 /// being saved normally or when nothing is recording.

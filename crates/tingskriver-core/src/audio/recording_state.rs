@@ -152,6 +152,10 @@ pub struct RecordingState {
     // is merely logged.
     mic_last_frame_ms: AtomicU64,
     mic_last_sound_ms: AtomicU64,
+    // Highest input peak per track since the UI last read it (`f32` bits;
+    // non-negative floats order like their bits). Only the level bars read it.
+    mic_peak_bits: AtomicU32,
+    system_peak_bits: AtomicU32,
     // Device names whose capture stream reported an error, per stream kind,
     // until the device follower takes them.
     mic_stream_error: Mutex<Option<String>>,
@@ -255,6 +259,8 @@ impl RecordingState {
             total_pause_duration: Mutex::new(std::time::Duration::ZERO),
             mic_last_frame_ms: AtomicU64::new(0),
             mic_last_sound_ms: AtomicU64::new(0),
+            mic_peak_bits: AtomicU32::new(0),
+            system_peak_bits: AtomicU32::new(0),
             mic_stream_error: Mutex::new(None),
             system_stream_error: Mutex::new(None),
         })
@@ -270,6 +276,12 @@ impl RecordingState {
     /// Called from the capture worker for every non-empty buffer, with its
     /// peak level.
     pub fn note_input_buffer(&self, device_type: &DeviceType, peak: f32) {
+        let level = if peak.is_finite() { peak.abs() } else { 0.0 };
+        let bits = match device_type {
+            DeviceType::Microphone => &self.mic_peak_bits,
+            DeviceType::System => &self.system_peak_bits,
+        };
+        bits.fetch_max(level.to_bits(), Ordering::Relaxed);
         if *device_type != DeviceType::Microphone {
             return;
         }
@@ -280,6 +292,13 @@ impl RecordingState {
         {
             self.mic_last_sound_ms.store(now, Ordering::Relaxed);
         }
+    }
+
+    /// The highest peak (0 to 1) of the microphone and the system track since
+    /// the last call, for the level bars. Reading resets them.
+    pub fn take_peaks(&self) -> (f32, f32) {
+        let take = |bits: &AtomicU32| f32::from_bits(bits.swap(0, Ordering::Relaxed)).min(1.0);
+        (take(&self.mic_peak_bits), take(&self.system_peak_bits))
     }
 
     /// A new microphone stream was opened: forget the old stream's frames.
@@ -790,6 +809,8 @@ impl Default for RecordingState {
             total_pause_duration: Mutex::new(std::time::Duration::ZERO),
             mic_last_frame_ms: AtomicU64::new(0),
             mic_last_sound_ms: AtomicU64::new(0),
+            mic_peak_bits: AtomicU32::new(0),
+            system_peak_bits: AtomicU32::new(0),
             mic_stream_error: Mutex::new(None),
             system_stream_error: Mutex::new(None),
         }
@@ -811,6 +832,20 @@ impl Clone for RecordingStats {
 #[allow(clippy::disallowed_methods)] // Synchronous tests read the WAV files directly.
 mod poisoning_tests {
     use super::*;
+
+    #[test]
+    fn peaks_are_kept_per_track_until_read() {
+        let state = RecordingState::default();
+        assert_eq!(state.take_peaks(), (0.0, 0.0));
+        state.note_input_buffer(&DeviceType::Microphone, 0.25);
+        state.note_input_buffer(&DeviceType::Microphone, 0.5);
+        state.note_input_buffer(&DeviceType::Microphone, 0.125);
+        state.note_input_buffer(&DeviceType::System, 1.5);
+        state.note_input_buffer(&DeviceType::System, f32::NAN);
+        // The highest peak since the last read, clamped to 1.
+        assert_eq!(state.take_peaks(), (0.5, 1.0));
+        assert_eq!(state.take_peaks(), (0.0, 0.0));
+    }
 
     #[test]
     fn replacement_trims_queued_audio_before_activation() {

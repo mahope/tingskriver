@@ -64,7 +64,7 @@ starting or stopping (`watch::tests::recording_changes_reach_the_tray_within_200
 
 | Menu | Does |
 |---|---|
-| Ny optagelse / Stop optagelse | Stop stops the recording through core. Start asks the app; until the GPUI meeting page exists it opens the window. |
+| Ny optagelse / Stop optagelse | Stop stops the recording through core. Start asks the app, which opens the window and starts the recording through the host's `Recorder` (`recorder.rs`). |
 | Diktér | Starts hands-free dictation. Click into the field and press the dictation shortcut once to insert. Disabled while listening (the menu would insert into its own window) and when dictation is off. |
 | Spørg (kommer senere) | Disabled until the assistant exists. |
 | Åbn Tingskriver | Shows the main window. A left click on the icon does the same. |
@@ -273,9 +273,8 @@ the tray says so.
 ### Sleep, lock and logoff during a recording (#179)
 
 Needs a build where a recording can be started in the process that runs the
-host. The GPUI shell has no "Ny optagelse" yet (the tray entry only opens the
-window), so the steps with a recording wait for the meeting page; steps 8 and 9
-work today. Use a copy of the data (`TINGSKRIVER_DATA_DIR`) and a short test
+host. The GPUI app records since the recording port ("Start optagelse" on
+Home, "Ny optagelse" in the tray), so every step can be run in it. Use a copy of the data (`TINGSKRIVER_DATA_DIR`) and a short test
 meeting. After each step, read the `power:` lines in `tingskriver-app.log`.
 
 8. **Lock and unlock, idle.** Win+L, unlock. Log: `WTS_SESSION_LOCK` and

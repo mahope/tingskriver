@@ -363,3 +363,25 @@ fn scan_continues_after_unreadable_directory_entry() {
         .chain(std::fs::read_dir(root.path()).unwrap());
     assert_eq!(scan_entries(entries).unwrap()[0].id, "readable");
 }
+
+#[tokio::test]
+async fn discard_removes_only_the_raw_tracks_of_one_recording() {
+    let root = tempfile::tempdir().unwrap();
+    let folder = fixture(root.path(), "afbrudt", false);
+    std::fs::write(folder.join("metadata.json"), b"{}").unwrap();
+    let other = fixture(root.path(), "andet", false);
+    assert!(discard(root.path(), "../andet").await.is_err());
+    assert!(discard(root.path(), "afbrudt/.checkpoints").await.is_err());
+    assert!(discard(root.path(), "findes-ikke").await.is_err());
+    discard(root.path(), "afbrudt").await.unwrap();
+    assert!(!folder.join(RAW_DIR).exists());
+    assert!(folder.join("metadata.json").is_file());
+    assert!(other.join(RAW_DIR).is_dir());
+    let found = scan(root.path()).unwrap();
+    assert_eq!(
+        found.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+        ["andet"]
+    );
+    // A second "Slet" has nothing left to delete.
+    assert!(discard(root.path(), "afbrudt").await.is_err());
+}

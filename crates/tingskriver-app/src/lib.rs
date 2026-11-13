@@ -24,6 +24,7 @@ mod pages;
 pub mod probe;
 pub mod proposals;
 pub mod recording;
+mod recovery;
 mod sidebar;
 pub mod single_instance;
 pub mod startup;
@@ -175,6 +176,8 @@ pub fn run() {
         receiver
     });
     let bridge = host.as_ref().map(|h| h.bridge().clone());
+    // The meeting recorder: the recording screen draws its state.
+    let recorder = host.as_ref().map(Host::recorder);
     let delivery = host.as_ref().map(Host::delivery);
     // First start: onboarding fetches the models through core.
     let onboarding_host = host.as_ref().map(|h| (h.handle(), h.bridge().subscribe()));
@@ -210,8 +213,17 @@ pub fn run() {
                 if let Some(page) = start_page {
                     model.start_page = page;
                 }
+                model.recorder = recorder.clone();
                 model
             });
+            if let Some(mut notices) = recorder.as_ref().and_then(|r| r.take_notices()) {
+                cx.spawn(async move |cx| {
+                    while let Some(notice) = notices.recv().await {
+                        cx.update(|cx| recording::show_notice(notice, cx));
+                    }
+                })
+                .detach();
+            }
             if let Some(delivery) = delivery {
                 pages::settings_delivery::start(model.clone(), delivery, cx);
             }
@@ -306,12 +318,18 @@ pub fn run() {
                         match request {
                             Request::ShowAbout => cx.update(ui::show_about),
                             Request::ShowWindow => cx.update(ui::show_main_window),
-                            // Meetings and the assistant have no GPUI page
-                            // yet; open the window where they will be.
-                            Request::NewRecording | Request::Ask => {
-                                log::info!(
-                                    "{request:?} from the tray or a shortcut: opening the window"
-                                );
+                            // "Ny optagelse" from the tray or a shortcut
+                            // starts the recording; the window shows it.
+                            Request::NewRecording => {
+                                cx.update(ui::show_main_window);
+                                if let Some(recorder) = &recorder {
+                                    recorder.start_recording();
+                                }
+                            }
+                            // The assistant has no GPUI page yet; open the
+                            // window where it will be.
+                            Request::Ask => {
+                                log::info!("Ask from the tray or a shortcut: opening the window");
                                 cx.update(ui::show_main_window);
                             }
                             Request::Quit => cx.update(|cx| cx.quit()),

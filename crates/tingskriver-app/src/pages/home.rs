@@ -24,11 +24,12 @@ impl Shell {
             // Sleep or logoff ended a recording (#179): shown until dismissed.
             notices.push(interrupted_card(&interrupted, cx));
         }
-        if let Some(recovery) = self
-            .meetings
-            .update(cx, |meetings, cx| meetings.recovery_card(cx))
-        {
-            notices.push(recovery);
+        // Not while a recording runs or is saved: its folder looks
+        // interrupted until the final audio is written.
+        if !self.home.is_busy() {
+            if let Some(recovery) = self.recovery_card(cx) {
+                notices.push(recovery);
+            }
         }
         if let Some(notice) = self.home_notice {
             notices.push(
@@ -148,14 +149,15 @@ impl Shell {
 }
 
 /// "Tryk på \"Start optagelse\"" while recording can start; otherwise why
-/// not, unless the notice above the hero already says so.
+/// not (no data folder, so no recorder), unless the notice above the hero
+/// already says so.
 fn hero_hint(can_record: bool, notice: Option<&str>) -> Option<&'static str> {
     if can_record {
         Some(strings::HOME_HINT)
-    } else if notice == Some(strings::RECORDING_NOT_IN_APP) {
+    } else if notice == Some(strings::RECORDING_UNAVAILABLE) {
         None
     } else {
-        Some(strings::RECORDING_NOT_IN_APP)
+        Some(strings::RECORDING_UNAVAILABLE)
     }
 }
 
@@ -219,12 +221,12 @@ mod tests {
     #[test]
     fn hero_explains_recording_once() {
         assert_eq!(hero_hint(true, None), Some(strings::HOME_HINT));
-        assert_eq!(hero_hint(false, None), Some(strings::RECORDING_NOT_IN_APP));
+        assert_eq!(hero_hint(false, None), Some(strings::RECORDING_UNAVAILABLE));
         assert_eq!(
             hero_hint(false, Some(strings::IMPORT_LATER)),
-            Some(strings::RECORDING_NOT_IN_APP)
+            Some(strings::RECORDING_UNAVAILABLE)
         );
         // "Ny optagelse" put the explanation in the notice above.
-        assert_eq!(hero_hint(false, Some(strings::RECORDING_NOT_IN_APP)), None);
+        assert_eq!(hero_hint(false, Some(strings::RECORDING_UNAVAILABLE)), None);
     }
 }

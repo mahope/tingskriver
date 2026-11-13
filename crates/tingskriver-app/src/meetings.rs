@@ -40,7 +40,6 @@ const SEARCH_DEBOUNCE: Duration = Duration::from_millis(200);
 enum Action {
     Rename(String, String),
     Delete(String),
-    Recover(String),
 }
 
 /// What the list tells the shell.
@@ -64,6 +63,11 @@ pub struct MeetingsView {
     shown: Rc<Vec<usize>>,
     viewport: ListState,
     recovery: Vec<recover::Recording>,
+    /// Bumped by [`MeetingsView::forget_recovery`]: a scan started before it
+    /// may have seen a recording that was still being written.
+    recovery_epoch: u64,
+    /// A reload was asked for while a read was under way.
+    reload_pending: bool,
     error: Option<String>,
     /// The open meeting (the active row).
     pub(crate) selected: Option<String>,
@@ -130,6 +134,8 @@ impl MeetingsView {
             shown: Rc::new(Vec::new()),
             viewport: ListState::new(0, ListAlignment::Top, space::XXL),
             recovery: vec![],
+            recovery_epoch: 0,
+            reload_pending: false,
             error: None,
             selected: None,
             busy: false,
@@ -173,6 +179,7 @@ impl MeetingsView {
             _ => return,
         };
         let jobs = model.meeting_jobs.clone();
+        let epoch = self.recovery_epoch;
         let task = model.runtime.spawn(async move {
             let list = match db {
                 Some(db) => meeting_list::load_with_jobs(db.pool(), &jobs).await,
@@ -216,11 +223,16 @@ impl MeetingsView {
                             Err(_) => this.error = Some(strings::MEETING_LOAD_FAILED.into()),
                         }
                         match recovery {
+                            // Older than `forget_recovery`: read again below.
+                            _ if epoch != this.recovery_epoch => {}
                             Ok(Ok(recovery)) => this.recovery = recovery,
                             _ => this.error = Some(strings::MEETING_SCAN_FAILED.into()),
                         }
                     }
                     Err(_) => this.error = Some(strings::MEETING_LOAD_FAILED.into()),
+                }
+                if std::mem::take(&mut this.reload_pending) || epoch != this.recovery_epoch {
+                    this.refresh(cx);
                 }
                 cx.notify();
             });
@@ -339,12 +351,10 @@ impl MeetingsView {
             return;
         }
         let model = self.model.read(cx);
-        let db = match &model.db {
-            DbState::Ready(db) => Some(db.clone()),
-            DbState::NotCreated if matches!(&action, Action::Recover(_)) => None,
-            _ => return,
+        let DbState::Ready(db) = &model.db else {
+            return;
         };
-        let data_dir = model.app_data_dir.clone();
+        let db = db.clone();
         let jobs = model.meeting_jobs.clone();
         let (done, failed): (Option<&'static str>, &'static str) = match &action {
             Action::Rename(..) => (
@@ -355,33 +365,19 @@ impl MeetingsView {
                 Some(strings::MEETING_DELETED),
                 strings::MEETING_DELETE_FAILED,
             ),
-            Action::Recover(_) => (None, strings::MEETING_ACTION_FAILED),
         };
         let deleted = match &action {
             Action::Delete(id) => Some(id.clone()),
             _ => None,
         };
         let task = model.runtime.spawn(async move {
-            let db = match db {
-                Some(db) => db,
-                None => tingskriver_core::database::manager::DatabaseManager::new_from_app_data_dir(
-                    &data_dir.ok_or_else(|| anyhow::anyhow!(strings::MEASURE_NO_FOLDER))?
-                ).await?,
-            };
-            let mut notice = None;
             match action {
                 Action::Rename(id, value) => meeting_list::rename(db.pool(), &id, &value).await?,
-                Action::Delete(id) => meeting_list::delete_with_jobs(db.pool(), &id, true, &jobs).await?,
-                Action::Recover(id) => {
-                    let root = tingskriver_core::audio::recording_preferences::get_default_recordings_folder();
-                    let ffmpeg = tokio::task::spawn_blocking(tingskriver_core::audio::ffmpeg::find_ffmpeg_path).await?;
-                    let restored = recover::restore(&root, &id, db.pool(), ffmpeg.as_deref()).await?;
-                    notice = Some(if restored.audio.status == tingskriver_core::audio::finalize::AudioSaveStatus::Partial {
-                        strings::MEETING_RECOVERED_PARTIAL
-                    } else { strings::MEETING_RECOVERED });
+                Action::Delete(id) => {
+                    meeting_list::delete_with_jobs(db.pool(), &id, true, &jobs).await?
                 }
             }
-            Ok::<_, anyhow::Error>((db, notice))
+            Ok::<_, anyhow::Error>(db)
         });
         self.busy = true;
         self.error = None;
@@ -391,12 +387,12 @@ impl MeetingsView {
             let _ = view.update_in(cx, |this, window, cx| {
                 this.busy = false;
                 match result {
-                    Ok(Ok((db, notice))) => {
+                    Ok(Ok(db)) => {
                         this.model.update(cx, |model, cx| {
                             model.db = DbState::Ready(db);
                             cx.notify();
                         });
-                        if let Some(text) = notice.or(done) {
+                        if let Some(text) = done {
                             window.push_notification(Notification::success(text), cx);
                         }
                         if deleted.is_some() && deleted == this.selected {
@@ -417,7 +413,8 @@ impl MeetingsView {
         .detach();
     }
 
-    fn open(&mut self, id: String, cx: &mut Context<Self>) {
+    /// Open a meeting (a row, or a recording that has just been saved).
+    pub(crate) fn open(&mut self, id: String, cx: &mut Context<Self>) {
         self.selected = Some(id);
         cx.emit(MeetingsEvent::Opened);
         cx.notify();
@@ -567,34 +564,29 @@ impl MeetingsView {
         })
     }
 
-    /// Interrupted recordings that can be restored, shown on the home
-    /// screen (Tauri shows a recovery dialog there).
-    pub(crate) fn recovery_card(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if self.recovery.is_empty() {
-            return None;
+    /// Interrupted recordings that can be restored (the last scan), for the
+    /// card on the home screen and "Gendan afbrudte møder" (`recovery`).
+    pub(crate) fn recovery(&self) -> &[recover::Recording] {
+        &self.recovery
+    }
+
+    /// Read the list and scan for interrupted recordings again now (after
+    /// the read under way, if there is one).
+    pub(crate) fn reload(&mut self, cx: &mut Context<Self>) {
+        if self.busy {
+            self.reload_pending = true;
         }
-        let palette = ui::palette(cx);
-        let mut card = v_flex()
-            .id("meeting-recovery")
-            .gap(space::SM)
-            .p(space::LG)
-            .rounded(theme::RADIUS_LG)
-            .border_1()
-            .border_color(palette.border)
-            .bg(palette.card)
-            .child(ui::section_title(strings::MEETING_RECOVERY));
-        for (index, recording) in self.recovery.iter().enumerate() {
-            let id = recording.id.clone();
-            card = card.child(
-                controls::button(("recover", index), Variant::Outline)
-                    .label(strings::meeting_restore(&recording.id))
-                    .disabled(self.busy)
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.act(Action::Recover(id.clone()), window, cx);
-                    })),
-            );
-        }
-        Some(card.into_any_element())
+        self.refresh(cx);
+    }
+
+    /// A recording has just been saved: scans made while it was written saw
+    /// its raw tracks and list it as interrupted. Forget them and scan again,
+    /// so the recovery card and dialog never offer the meeting just saved.
+    pub(crate) fn forget_recovery(&mut self, cx: &mut Context<Self>) {
+        self.recovery_epoch += 1;
+        self.recovery.clear();
+        self.reload(cx);
+        cx.notify();
     }
 
     fn meeting_row(

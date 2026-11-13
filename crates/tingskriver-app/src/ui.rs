@@ -60,6 +60,9 @@ pub struct AppModel {
     pub mcp_server: Option<std::path::PathBuf>,
     /// Indstillinger: recordings folder, Udseende and crash dump state.
     pub(crate) settings: crate::pages::settings::SettingsModel,
+    /// The meeting recorder of the host; `None` without one (no data folder,
+    /// screenshot fixtures).
+    pub recorder: Option<std::sync::Arc<tingskriver_host::Recorder>>,
 }
 
 /// The MCP server program ships next to the app executable.
@@ -110,6 +113,7 @@ impl AppModel {
             settings: crate::pages::settings::SettingsModel::load(),
             languages: Default::default(),
             language_error: None,
+            recorder: None,
         }
         .with_languages_loaded()
     }
@@ -447,6 +451,44 @@ pub fn show_main_window(cx: &mut App) {
     }
 }
 
+/// A notification in the main window, if it is open.
+pub(crate) fn notify_main_window(
+    notification: gpui_component::notification::Notification,
+    cx: &mut App,
+) {
+    if let Some(handle) = cx.global::<Globals>().main_window {
+        let _ = handle.update(cx, |_, window, cx| {
+            window.push_notification(notification, cx)
+        });
+    }
+}
+
+/// A meeting was saved elsewhere (a recording): read the list again.
+pub(crate) fn meetings_changed(cx: &mut App) {
+    let shell = cx
+        .global::<Globals>()
+        .shell
+        .as_ref()
+        .and_then(|s| s.upgrade());
+    if let Some(shell) = shell {
+        let meetings = shell.read(cx).meetings.clone();
+        meetings.update(cx, |meetings, cx| meetings.reload(cx));
+    }
+}
+
+/// Open a meeting in the main window, if it is open (a finished recording).
+pub(crate) fn open_meeting(id: String, cx: &mut App) {
+    let shell = cx
+        .global::<Globals>()
+        .shell
+        .as_ref()
+        .and_then(|s| s.upgrade());
+    if let Some(shell) = shell {
+        let meetings = shell.read(cx).meetings.clone();
+        meetings.update(cx, |meetings, cx| meetings.open(id, cx));
+    }
+}
+
 pub fn show_mcp_action(action: String, cx: &mut App) {
     show_main_window(cx);
     if let Some(handle) = cx.global::<Globals>().main_window {
@@ -585,6 +627,8 @@ pub enum FixtureVariant {
     DictationProbe,
     /// The update dialog with a downloaded update over the home screen.
     UpdateAvailable,
+    /// "Gendan afbrudte møder" with two synthetic interrupted recordings.
+    RecoveryDialog,
 }
 
 pub use crate::pages::settings::SettingsTab;
@@ -605,6 +649,9 @@ pub struct Shell {
     pub(crate) home_notice: Option<&'static str>,
     /// The home page's recording state (`recording`).
     pub(crate) home: crate::recording::HomeState,
+    /// "Gendan afbrudte møder" opened by itself once this session (Tauri
+    /// shows it once per session).
+    pub(crate) recovery_offered: bool,
     pub(crate) probe_line: Entity<InputState>,
     pub(crate) probe_text: Entity<TextareaState>,
     pub(crate) dictation: crate::pages::dictation::DictationPage,
@@ -661,6 +708,7 @@ impl Shell {
                 delivery: crate::pages::settings_delivery::DeliveryModel::fixture(),
                 ..Default::default()
             },
+            recorder: None,
         });
         crate::onboarding::set_fixture(
             match variant {
@@ -707,6 +755,12 @@ impl Shell {
                 shell.open_fixture_meeting(kind, cx);
             }
             shell.dictation = crate::pages::dictation::DictationPage::fixture(variant);
+            if variant == FixtureVariant::RecoveryDialog {
+                let model = shell.model.clone();
+                window.defer(cx, move |window, cx| {
+                    crate::recovery::open_fixture(model, window, cx)
+                });
+            }
             if variant == FixtureVariant::UpdateAvailable {
                 // After this update, once the window's Root exists.
                 window.defer(cx, |window, cx| {
@@ -789,7 +843,7 @@ impl Shell {
         let page = model.read(cx).start_page;
         let settings = crate::pages::settings::SettingsView::new(&model, window, cx);
         let about = cx.new(|cx| crate::about_dialog::AboutView::new(model.clone(), cx));
-        Shell {
+        let mut shell = Shell {
             focus_handle,
             about,
             model,
@@ -801,6 +855,7 @@ impl Shell {
             settings,
             home_notice: None,
             home: crate::recording::HomeState::default(),
+            recovery_offered: false,
             probe_line,
             probe_text,
             dictation: crate::pages::dictation::DictationPage::new(),
@@ -808,7 +863,9 @@ impl Shell {
             last_saved: None,
             pending_save: None,
             _subscriptions: subscriptions,
-        }
+        };
+        shell.follow_recorder(cx);
+        shell
     }
 
     /// Open "Om Tingskriver" over the current screen (ⓘ, the logo).
@@ -906,6 +963,9 @@ impl Render for Shell {
             }
         };
         let sidebar = failure.is_none() && onboarding.is_none();
+        if sidebar && self.page == Page::Home {
+            self.offer_recovery(window, cx);
+        }
         h_flex()
             .track_focus(&self.focus_handle)
             .relative()

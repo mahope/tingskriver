@@ -23,8 +23,7 @@ use crate::ui::{palette, Page, SettingsTab, Shell};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Destination {
     Page(Page),
-    /// "Ny optagelse": the home screen, with a notice while recording has
-    /// not moved to this app yet.
+    /// "Ny optagelse": the home screen, where the recording starts.
     Record,
     /// "Importér transskript" / "Importér lyd": not in this app yet.
     Import,
@@ -46,12 +45,14 @@ impl Shell {
                 }
                 self.page = page
             }
-            // Say why recording cannot start here yet, so the click
-            // visibly does something even on the home screen.
+            // Tauri starts the recording on the home screen; without a
+            // recorder, say why, so the click visibly does something.
             Destination::Record => {
                 self.page = Page::Home;
-                if !self.home.can_record {
-                    self.home_notice = Some(strings::RECORDING_NOT_IN_APP);
+                if self.home.can_record {
+                    self.start_recording(cx);
+                } else {
+                    self.home_notice = Some(strings::RECORDING_UNAVAILABLE);
                 }
             }
             Destination::Import => {

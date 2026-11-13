@@ -181,6 +181,32 @@ pub async fn restore(
     Ok(Restored { meeting_id, audio })
 }
 
+/// Delete the raw tracks of an interrupted recording the user chose not to
+/// restore ("Slet" in "Gendan afbrudte møder"). Only the raw folder of a
+/// recording directly in `root` goes, never a folder a recording still
+/// writes to; finished files (`audio.mp4`, a saved meeting's audio) stay.
+pub async fn discard(root: &Path, id: &str) -> anyhow::Result<()> {
+    let mut components = Path::new(id).components();
+    anyhow::ensure!(
+        matches!(components.next(), Some(Component::Normal(_))) && components.next().is_none(),
+        "Invalid recording ID"
+    );
+    let root = root.canonicalize()?;
+    let folder = root.join(id).canonicalize()?;
+    anyhow::ensure!(
+        folder.parent() == Some(root.as_path()),
+        "Recording outside recordings folder"
+    );
+    let raw = folder.join(RAW_DIR);
+    anyhow::ensure!(raw.is_dir(), "No interrupted recording in {id}");
+    anyhow::ensure!(
+        !crate::audio::recording_writer::has_live_writer(&raw),
+        "The recording is still being written"
+    );
+    tokio::fs::remove_dir_all(&raw).await?;
+    Ok(())
+}
+
 /// User-triggered recovery follows the normal saved-file transcription path.
 /// A transcription failure leaves the meeting and audio available for retry.
 pub async fn restore_and_transcribe(

@@ -4,12 +4,16 @@
 //! `docs/screenshots/optagelse-*.png`): the status bar, the transcript lines,
 //! the floating pill and the saving overlays.
 //!
-//! The pieces draw a [`HomeState`]. Starting, pausing and stopping a meeting
-//! recording is not wired to core in this app yet: core's recording commands
-//! only save the audio, and turning a stopped recording into a meeting is
-//! still done by the Tauri frontend (`useRecordingStop.ts`). Until that moves
-//! to core, [`HomeState::can_record`] is false, "Start optagelse" is disabled
-//! and says why, and nothing fills `recording`. Screenshot fixtures fill it.
+//! The pieces draw a [`HomeState`], which [`HomeState::from_recorder`] makes
+//! from the state of `tingskriver_host::Recorder`. The recorder reads core
+//! (a snapshot at startup, core's events, time and levels while recording),
+//! so a recording started from the tray, MCP or before the window opened
+//! shows here too. The buttons ask the recorder; nothing here assumes that a
+//! click worked until core says so.
+//!
+//! No transcript is made while recording (the audio is saved first and
+//! transcribed after "Stop og gem"), so a running recording shows what is
+//! happening instead of transcript lines.
 
 use gpui::{
     div, prelude::*, relative, AnyElement, App, ClipboardItem, Context, FontWeight, Hsla,
@@ -22,6 +26,11 @@ use gpui_component::{
 use gpui_kit_assets::IconName;
 use tingskriver_core::strings;
 
+use std::sync::Arc;
+
+use tingskriver_host::recorder::{self as host, Notice, Phase, RecorderState};
+use tingskriver_host::Recorder;
+
 use crate::controls::{self, Pill, Variant};
 use crate::theme::{self, icon_size, layout, recording as size, shadow, space, typography};
 use crate::ui::{palette, Shell};
@@ -29,9 +38,10 @@ use crate::ui::{palette, Shell};
 /// What the home page shows besides the idle hero.
 #[derive(Debug, Clone, Default)]
 pub struct HomeState {
-    /// This app can start a meeting recording. False until recording is
-    /// wired to core (module docs).
+    /// This app can record (the host and its recorder run).
     pub can_record: bool,
+    /// "Start optagelse" was pressed and core is getting ready.
+    pub starting: bool,
     /// A recording runs or is paused.
     pub recording: Option<Recording>,
     /// The recording has stopped and is being saved.
@@ -52,6 +62,58 @@ impl HomeState {
     pub fn is_recording(&self) -> bool {
         self.recording.is_some()
     }
+
+    /// A recording runs or the last one is still being saved: nothing else
+    /// may start one, and interrupted recordings are not offered (Tauri skips
+    /// its recovery check then).
+    pub fn is_busy(&self) -> bool {
+        self.starting || self.recording.is_some() || self.saving.is_some()
+    }
+
+    /// Going from `self` to `next`, the last recording has been saved and
+    /// nothing records now: its raw tracks are gone, so the scan for
+    /// interrupted recordings is due again.
+    pub fn becomes_free(&self, next: &HomeState) -> bool {
+        self.is_busy() && !next.is_busy()
+    }
+
+    /// The screen for the recorder's state.
+    pub fn from_recorder(state: &RecorderState) -> HomeState {
+        let recording = state.phase.is_recording().then(|| Recording {
+            paused: state.phase == Phase::Paused,
+            seconds: state.seconds,
+            microphone: state.microphone.clone(),
+            system: state.system.clone(),
+            notice: state.notice.as_ref().map(|notice| match notice {
+                host::DeviceNotice::Switched(device) => DeviceNotice::Switched(device.clone()),
+                host::DeviceNotice::SwitchFailed(device) => {
+                    DeviceNotice::SwitchFailed(device.clone())
+                }
+                host::DeviceNotice::Lost(device) => DeviceNotice::Lost(device.clone()),
+            }),
+            storage_error: state.storage_error.clone(),
+            levels: state.levels,
+        });
+        let saving = match state.phase {
+            Phase::Stopping => Some(Saving::Stopping),
+            Phase::SavingMeeting => Some(Saving::SavingMeeting),
+            Phase::Finishing => Some(Saving::Finishing),
+            _ => None,
+        };
+        HomeState {
+            can_record: true,
+            starting: state.phase == Phase::Starting,
+            recording,
+            saving,
+            lines: Vec::new(),
+            start_error: state.start_error.map(|error| match error {
+                host::StartError::Microphone => StartError::Microphone,
+                host::StartError::System => StartError::System,
+                host::StartError::Permission => StartError::Permission,
+                host::StartError::Other => StartError::Other,
+            }),
+        }
+    }
 }
 
 /// A running recording, as the status bar and the pill show it.
@@ -65,7 +127,9 @@ pub struct Recording {
     /// The system audio device; `None` is the system default.
     pub system: Option<String>,
     pub notice: Option<DeviceNotice>,
-    /// Input level per bar, 0 to 1 (three bars).
+    /// The audio is not being saved ("Lyden gemmes ikke: disken er fuld").
+    pub storage_error: Option<String>,
+    /// Level per bar, 0 to 1: microphone, both, system audio.
     pub levels: [f32; 3],
 }
 
@@ -177,6 +241,50 @@ pub fn copy_text(lines: &[Line]) -> String {
 }
 
 impl Shell {
+    /// The recorder, when the host runs (not in screenshot fixtures).
+    pub(crate) fn recorder(&self, cx: &App) -> Option<Arc<Recorder>> {
+        self.model.read(cx).recorder.clone()
+    }
+
+    /// "Start optagelse", "Ny optagelse", the tray and the shortcut. The
+    /// recorder ignores it while a recording runs or is being saved.
+    pub(crate) fn start_recording(&mut self, cx: &mut Context<Self>) {
+        if let Some(recorder) = self.recorder(cx) {
+            recorder.start_recording();
+        }
+    }
+
+    /// Draw the recorder's state from now on: the current state at once,
+    /// then every change. Ends with the shell.
+    pub(crate) fn follow_recorder(&mut self, cx: &mut Context<Self>) {
+        let Some(recorder) = self.recorder(cx) else {
+            return;
+        };
+        let mut states = recorder.subscribe();
+        self.home = HomeState::from_recorder(&states.borrow_and_update());
+        cx.spawn(async move |shell, cx| {
+            while states.changed().await.is_ok() {
+                let home = HomeState::from_recorder(&states.borrow_and_update());
+                let updated = shell.update(cx, |shell, cx| {
+                    if shell.home.becomes_free(&home) {
+                        // Scans while recording or saving list the meeting's
+                        // raw tracks as interrupted (finalize deletes them
+                        // only when the audio is saved): scan again first.
+                        shell
+                            .meetings
+                            .update(cx, |meetings, cx| meetings.forget_recovery(cx));
+                    }
+                    shell.home = home;
+                    cx.notify();
+                });
+                if updated.is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
     /// The transcript column: "Kopiér", the status bar and the lines.
     pub(crate) fn transcript_view(&self, cx: &mut Context<Self>) -> AnyElement {
         let palette = palette(cx);
@@ -342,6 +450,9 @@ impl Shell {
             .border_color(palette.border)
             .bg(palette.background)
             .child(status)
+            .when_some(recording.storage_error.as_ref(), |this, error| {
+                this.child(storage_notice(error, cx))
+            })
             .when_some(recording.notice.as_ref(), |this, notice| {
                 this.child(device_notice(notice, cx))
             })
@@ -420,13 +531,16 @@ impl Shell {
             } else {
                 (ComponentIcon::Pause, strings::RECORDING_PAUSE)
             };
-            // Not wired to core yet (module docs): disabled like "Start
-            // optagelse" until it is.
             pill.child(
                 controls::pill_button("recording-pause", Pill::Pause, cx)
                     .icon(Icon::from(icon).size(icon_size::SM))
                     .label(label)
-                    .disabled(!state.can_record),
+                    .disabled(!state.can_record)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        if let Some(recorder) = this.recorder(cx) {
+                            recorder.toggle_pause();
+                        }
+                    })),
             )
             .child(
                 controls::pill_button("recording-stop", Pill::Stop, cx)
@@ -438,21 +552,33 @@ impl Shell {
                             .bg(palette.background),
                     )
                     .child(strings::RECORDING_STOP)
-                    .disabled(!state.can_record),
+                    .disabled(!state.can_record)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        if let Some(recorder) = this.recorder(cx) {
+                            recorder.stop_recording();
+                        }
+                    })),
             )
             .child(level_bars(recording, cx))
+        } else if state.starting {
+            // "Gør klar…" until core says the recording runs or failed.
+            pill.child(
+                controls::pill_button("home-start", Pill::Start, cx)
+                    .label(strings::RECORDING_STARTING)
+                    .loading(true)
+                    .disabled(true),
+            )
         } else {
             pill.child(
                 controls::pill_button("home-start", Pill::Start, cx)
                     .icon(Icon::from(IconName::Mic).size(icon_size::SM))
                     .label(strings::START_RECORDING)
-                    // Not wired to core yet: disabled, and the hero says why
-                    // (module docs).
-                    .disabled(!state.can_record),
+                    // Without the host (no data folder) nothing can record,
+                    // and the hero says why (`pages::home`).
+                    .disabled(!state.can_record)
+                    .on_click(cx.listener(|this, _, _, cx| this.start_recording(cx))),
             )
         };
-        // While recording cannot start here, the hero says why instead of
-        // "Tryk på \"Start optagelse\"" (`pages::home`).
         v_flex()
             .items_center()
             .gap(space::SM)
@@ -532,6 +658,9 @@ impl Shell {
                     .text_color(palette.destructive)
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.home.start_error = None;
+                        if let Some(recorder) = this.recorder(cx) {
+                            recorder.dismiss_start_error();
+                        }
                         cx.notify();
                     })),
                 ),
@@ -549,8 +678,10 @@ fn dot(diameter: gpui::Pixels, color: Hsla) -> impl IntoElement {
         .bg(color)
 }
 
-/// A recording without lines yet (Tauri `VirtualizedTranscriptView.tsx`
-/// empty state): a dot, what is happening and what to do.
+/// A recording without lines (Tauri `VirtualizedTranscriptView.tsx` empty
+/// state): a dot, what is happening and what to do. Tauri says "Lytter efter
+/// tale …", but no transcript is made while recording, so this says that the
+/// audio is saved and transcribed after "Stop og gem".
 fn empty_transcript(paused: bool, cx: &App) -> AnyElement {
     let palette = palette(cx);
     let (color, title, hint) = if paused {
@@ -562,8 +693,8 @@ fn empty_transcript(paused: bool, cx: &App) -> AnyElement {
     } else {
         (
             palette.primary,
-            strings::RECORDING_EMPTY_LISTENING,
-            strings::RECORDING_EMPTY_LISTENING_HINT,
+            strings::RECORDING_EMPTY_RECORDING,
+            strings::RECORDING_EMPTY_RECORDING_HINT,
         )
     };
     v_flex()
@@ -675,6 +806,9 @@ fn device_notice(notice: &DeviceNotice, cx: &mut Context<Shell>) -> AnyElement {
                     if let Some(recording) = this.home.recording.as_mut() {
                         recording.notice = None;
                     }
+                    if let Some(recorder) = this.recorder(cx) {
+                        recorder.dismiss_notice();
+                    }
                     cx.notify();
                 })),
             ),
@@ -682,9 +816,48 @@ fn device_notice(notice: &DeviceNotice, cx: &mut Context<Shell>) -> AnyElement {
         .into_any_element()
 }
 
-/// Three level bars: `recording` while recording, 4 px `warning` dots at
-/// 60 % when paused. The heights follow the input level and never animate
-/// on their own, so they are calm with reduced motion too.
+/// "Lyden gemmes ikke: disken er fuld" inside the status bar, as a warning
+/// that stays while it is true (Tauri shows a toast that stays).
+fn storage_notice(message: &str, cx: &App) -> AnyElement {
+    let palette = palette(cx);
+    h_flex()
+        .id("recording-storage-notice")
+        .role(gpui::Role::Alert)
+        .aria_label(SharedString::from(message.to_string()))
+        .mt(space::MD)
+        .items_start()
+        .gap(space::SM)
+        .px(space::MD)
+        .py(space::SM)
+        .rounded(theme::RADIUS)
+        .border_1()
+        .border_color(theme::over(
+            palette.destructive,
+            palette.background,
+            size::ALERT_BORDER,
+        ))
+        .bg(theme::over(
+            palette.destructive,
+            palette.background,
+            size::NOTICE_TINT,
+        ))
+        .text_size(typography::SM)
+        .text_color(palette.foreground)
+        .child(
+            div().flex_none().mt(space::XXS).child(
+                Icon::from(IconName::CircleAlert)
+                    .size(icon_size::SM)
+                    .text_color(palette.destructive),
+            ),
+        )
+        .child(div().flex_1().min_w_0().child(message.to_string()))
+        .into_any_element()
+}
+
+/// Three level bars (microphone, both, system audio): `recording` while
+/// recording, 4 px `warning` dots at 60 % when paused. The heights follow
+/// core's measured peaks (Tauri draws random heights) and never animate on
+/// their own, so they are calm with reduced motion too.
 fn level_bars(recording: &Recording, cx: &App) -> AnyElement {
     let palette = palette(cx);
     h_flex()
@@ -714,42 +887,38 @@ fn level_bars(recording: &Recording, cx: &App) -> AnyElement {
         .into_any_element()
 }
 
-/// Synthetic content for the screenshot fixtures (the lines of
-/// `docs/screenshots/optagelse-i-gang-*.png`; no meeting data).
-#[cfg(feature = "screenshot-tests")]
-pub(crate) fn fixture_lines() -> Vec<Line> {
-    let line = |seconds, text: &str, low_confidence| Line {
-        seconds,
-        text: text.into(),
-        low_confidence,
+/// Show a message from the recorder: a notification in the main window, a
+/// fresh meeting list, or the finished meeting.
+pub(crate) fn show_notice(notice: Notice, cx: &mut App) {
+    let notification = match notice {
+        Notice::Error {
+            title,
+            text,
+            sticky,
+        } => {
+            log::info!("Recording notice: {title}");
+            Some(
+                match text {
+                    Some(text) => Notification::error(text).title(title),
+                    None => Notification::error(title),
+                }
+                .autohide(!sticky),
+            )
+        }
+        Notice::Warning { text, sticky } => Some(Notification::warning(text).autohide(!sticky)),
+        Notice::Success(text) => Some(Notification::success(text)),
+        Notice::MeetingSaved(_) => {
+            crate::ui::meetings_changed(cx);
+            None
+        }
+        Notice::OpenMeeting(id) => {
+            crate::ui::open_meeting(id, cx);
+            None
+        }
     };
-    vec![
-        line(
-            3,
-            "Godmorgen alle sammen, så går vi i gang med ugens status.",
-            false,
-        ),
-        line(
-            22,
-            "Jeg starter med bookingsiden. Vi er tæt på, men testen er ikke helt færdig.",
-            false,
-        ),
-        line(
-            41,
-            "Kan vi nå det til fredag, eller skal vi rykke lanceringen?",
-            false,
-        ),
-        line(
-            60,
-            "Jeg tror, det bliver tirsdag, hvis vi vil være sikre på mobilvisningen.",
-            false,
-        ),
-        line(
-            79,
-            "Det er fint for mig. Kunden har alligevel ikke travlt før næste uge.",
-            true,
-        ),
-    ]
+    if let Some(notification) = notification {
+        crate::ui::notify_main_window(notification, cx);
+    }
 }
 
 #[cfg(feature = "screenshot-tests")]
@@ -764,43 +933,21 @@ pub(crate) fn fixture_recording(paused: bool, notice: Option<DeviceNotice>) -> R
         microphone,
         system: None,
         notice,
+        storage_error: None,
         levels: [0.58, 0.76, 0.58],
     }
 }
 
-/// The home state of a screenshot fixture.
+/// The home state of a screenshot fixture: what the recorder reports in
+/// each stage (no transcript lines: none are made while recording).
 #[cfg(feature = "screenshot-tests")]
 pub(crate) fn fixture(variant: crate::ui::FixtureVariant) -> HomeState {
     use crate::ui::FixtureVariant as V;
-    let mut state = HomeState::default();
-    // The recording fixtures show what the app looks like once recording is
-    // wired to core; a start error or a running recording cannot happen
-    // while it cannot record.
-    let idle = matches!(
-        variant,
-        V::Plain
-            | V::Meetings
-            | V::SidebarCollapsed
-            | V::Settings(_)
-            | V::OnboardingWelcome
-            | V::OnboardingModel
-            | V::Meeting(_)
-            | V::DictationEmpty
-            | V::DictationProbe
-            | V::UpdateAvailable
-    );
-    state.can_record = !idle;
+    let mut state = HomeState {
+        can_record: true,
+        ..HomeState::default()
+    };
     match variant {
-        V::Plain
-        | V::Meetings
-        | V::SidebarCollapsed
-        | V::Settings(_)
-        | V::OnboardingWelcome
-        | V::OnboardingModel
-        | V::Meeting(_)
-        | V::DictationEmpty
-        | V::DictationProbe
-        | V::UpdateAvailable => {}
         V::Recording => state.recording = Some(fixture_recording(false, None)),
         V::RecordingPaused => state.recording = Some(fixture_recording(true, None)),
         V::RecordingDeviceSwitched => {
@@ -812,9 +959,7 @@ pub(crate) fn fixture(variant: crate::ui::FixtureVariant) -> HomeState {
         V::RecordingSaving => state.saving = Some(Saving::Stopping),
         V::RecordingFinishing => state.saving = Some(Saving::Finishing),
         V::RecordingStartError => state.start_error = Some(StartError::Microphone),
-    }
-    if state.shows_transcript() {
-        state.lines = fixture_lines();
+        _ => {}
     }
     state
 }
@@ -860,10 +1005,90 @@ mod tests {
     }
 
     #[test]
-    fn idle_state_cannot_record_yet() {
+    fn idle_state_without_a_host_cannot_record() {
         let state = HomeState::default();
         assert!(!state.can_record);
         assert!(!state.shows_transcript());
         assert!(!state.is_recording());
+        assert!(!state.is_busy());
+    }
+
+    fn recorder(phase: Phase) -> RecorderState {
+        RecorderState {
+            phase,
+            seconds: 754,
+            levels: [0.5, 0.75, 0.25],
+            microphone: Some("Headset (USB)".into()),
+            system: Some("Højttalere".into()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn the_recovery_scan_is_redone_when_the_recorder_becomes_free() {
+        let home = |phase| HomeState::from_recorder(&recorder(phase));
+        assert!(home(Phase::Finishing).becomes_free(&home(Phase::Idle)));
+        assert!(home(Phase::SavingMeeting).becomes_free(&home(Phase::Idle)));
+        assert!(home(Phase::Starting).becomes_free(&home(Phase::Idle)));
+        assert!(!home(Phase::Idle).becomes_free(&home(Phase::Idle)));
+        assert!(!home(Phase::Finishing).becomes_free(&home(Phase::Starting)));
+        assert!(!home(Phase::Recording).becomes_free(&home(Phase::Paused)));
+    }
+
+    #[test]
+    fn the_screen_follows_the_recorder_through_a_meeting() {
+        let idle = HomeState::from_recorder(&RecorderState::default());
+        assert!(idle.can_record && !idle.is_busy() && !idle.shows_transcript());
+
+        let starting = HomeState::from_recorder(&recorder(Phase::Starting));
+        assert!(starting.starting && starting.is_busy() && !starting.shows_transcript());
+
+        let running = HomeState::from_recorder(&recorder(Phase::Recording));
+        let recording = running.recording.as_ref().unwrap();
+        assert!(!recording.paused);
+        assert_eq!(clock(recording.seconds), "12:34");
+        assert_eq!(recording.levels, [0.5, 0.75, 0.25]);
+        assert_eq!(recording.microphone.as_deref(), Some("Headset (USB)"));
+        assert!(running.is_recording() && running.shows_transcript());
+
+        let paused = HomeState::from_recorder(&recorder(Phase::Paused));
+        assert!(paused.recording.unwrap().paused);
+
+        for (phase, saving) in [
+            (Phase::Stopping, Saving::Stopping),
+            (Phase::SavingMeeting, Saving::SavingMeeting),
+            (Phase::Finishing, Saving::Finishing),
+        ] {
+            let state = HomeState::from_recorder(&recorder(phase));
+            assert_eq!(state.saving, Some(saving));
+            assert!(state.recording.is_none() && state.is_busy());
+        }
+    }
+
+    #[test]
+    fn errors_and_notices_from_the_recorder_use_the_tauri_texts() {
+        let state = HomeState::from_recorder(&RecorderState {
+            start_error: Some(host::StartError::Permission),
+            ..Default::default()
+        });
+        assert_eq!(
+            state.start_error.unwrap().texts(),
+            ("Tilladelse mangler", strings::RECORDING_ERROR_PERMISSION)
+        );
+        let state = HomeState::from_recorder(&RecorderState {
+            phase: Phase::Recording,
+            notice: Some(host::DeviceNotice::Lost("Headset (USB)".into())),
+            storage_error: Some("Lyden gemmes ikke: disken er fuld".into()),
+            ..Default::default()
+        });
+        let recording = state.recording.unwrap();
+        assert_eq!(
+            recording.notice,
+            Some(DeviceNotice::Lost("Headset (USB)".into()))
+        );
+        assert_eq!(
+            recording.storage_error.as_deref(),
+            Some("Lyden gemmes ikke: disken er fuld")
+        );
     }
 }

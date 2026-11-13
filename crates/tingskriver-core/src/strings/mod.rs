@@ -69,12 +69,8 @@ catalogue! {
     MEETING_DELETE = "Slet";
     MEETING_NEW = "Ny optagelse";
     MEETING_REFRESH = "Opdater";
-    MEETING_RECOVERED = "Lyden er gendannet og mødet er gemt. Åbn det i den nuværende app for at transskribere.";
-    MEETING_RECOVERED_PARTIAL = "Mødet er gemt, men noget lyd mangler. Originalfilerne er bevaret. Åbn lydmappen for at se dem.";
     MEETING_RECOVERY = "En optagelse blev afbrudt. Gendan den gemte lyd her.";
-    MEETING_RESTORE = "Gendan optagelse: {value}";
     MEETING_DELETE_CONFIRM = "Vil du slette mødet og dets tekst? Dette kan ikke fortrydes. Lydfilerne beholdes på disken.";
-    MEETING_ACTION_FAILED = "Handlingen kunne ikke gennemføres. Prøv igen.";
     MEETING_SCAN_FAILED = "Efterladte optagelser kunne ikke undersøges. Prøv at opdatere listen. Dine lydfiler er ikke ændret.";
     MEETING_LOAD_FAILED = "Møder eller efterladte optagelser kunne ikke indlæses. Prøv at opdatere listen.";
     // The sidebar, copied from the Tauri app (frontend/src/components/Sidebar/index.tsx).
@@ -113,7 +109,7 @@ catalogue! {
     // The idle home screen (frontend/src/app/_components/TranscriptPanel.tsx).
     HOME_TITLE = "Klar til dit næste møde";
     HOME_LEAD = "Tingskriver optager og skriver referat på din computer. Lyden bliver her, og du kan læse noterne bagefter.";
-    HOME_HINT = "Tryk på \"Start optagelse\" nedenfor. Transskriptionen vises her, mens du optager.";
+    HOME_HINT = "Tryk på \"Start optagelse\" nedenfor. Transskriptionen laves, når du stopper og gemmer optagelsen.";
     START_RECORDING = "Start optagelse";
     MEETINGS = "Møder";
     TRANSCRIPT_TRUNCATED = "Den nye transskription er væsentligt kortere end den forrige og er ikke gjort aktuel. Den er gemt som version, og den forrige er stadig i brug.";
@@ -462,7 +458,7 @@ catalogue! {
     // RecordingStatusBar.tsx, TranscriptPanel.tsx,
     // VirtualizedTranscriptView.tsx, StatusOverlays.tsx and
     // RecordingStateContext.tsx.
-    RECORDING_NOT_IN_APP = "Optagelse er endnu ikke flyttet til denne app. Start din optagelse i den nuværende app.";
+    RECORDING_UNAVAILABLE = "Der kan ikke optages, fordi Tingskriver ikke fandt sin datamappe. Genstart appen, og prøv igen.";
     RECORDING_TRANSCRIPT_LABEL = "Transskription";
     RECORDING_STATUS_LABEL = "{state} {clock}, Mikrofon: {microphone}, Systemlyd: {system}";
     RECORDING_PAUSE = "Pause";
@@ -500,6 +496,53 @@ catalogue! {
     RECORDING_ERROR_PERMISSION = "Tingskriver skal have adgang til at optage. Giv adgang til mikrofonen i Windows-indstillingerne, og genstart derefter Tingskriver.";
     RECORDING_ERROR_START_TITLE = "Optagelsen kunne ikke starte";
     RECORDING_ERROR_START = "Tjek lydenhederne under Indstillinger, og prøv igen.";
+    // ---- Recording in the GPUI app (RecordingControls.tsx, useRecordingStart.ts,
+    // useRecordingStop.ts, RecordingStateContext.tsx) ----
+    RECORDING_STARTING = "Gør klar…";
+    RECORDING_PAUSE_FAILED = "Optagelsen kunne ikke sættes på pause";
+    RECORDING_PAUSE_FAILED_HELP = "Prøv igen. Optagelsen kører stadig.";
+    RECORDING_RESUME_FAILED = "Optagelsen kunne ikke genoptages";
+    RECORDING_RESUME_FAILED_HELP = "Prøv igen, eller stop og gem optagelsen.";
+    RECORDING_STOP_FAILED = "Optagelsen kunne ikke stoppes";
+    RECORDING_STOP_FAILED_HELP = "Optagelsen kører stadig. Prøv igen.";
+    RECORDING_START_WHILE_SAVING = "Den forrige optagelse gemmes stadig. Prøv igen om et øjeblik.";
+    RECORDING_MIC_UNAVAILABLE = "Ingen mikrofon tilgængelig. Der optages kun systemlyd.";
+    RECORDING_SAVED = "Optagelsen er gemt";
+    RECORDING_SAVE_FAILED = "Mødet kunne ikke gemmes";
+    RECORDING_TRANSCRIBE_FAILED = "Mødet er gemt, men lyden kunne ikke transskriberes";
+    RECORDING_DEFAULT_TITLE = "Møde {date} {time}";
+    RECORDING_STOPPED_BY_ERROR = "Optagelsen stoppede på grund af en fejl i lydenheden. Lyden indtil da er gemt.";
+    // No transcript is made while recording (the audio is saved first), so
+    // the empty transcript says what happens instead of "Lytter efter tale".
+    RECORDING_EMPTY_RECORDING = "Optager mødet …";
+    RECORDING_EMPTY_RECORDING_HINT = "Lyden gemmes løbende. Transskriptionen laves, når du vælger Stop og gem.";
+    // ---- Gendan afbrudte møder (TranscriptRecovery.tsx, useTranscriptRecovery.ts) ----
+    RECOVERY_TITLE = "Gendan afbrudte møder";
+    RECOVERY_FOUND_ONE = "Vi fandt 1 afbrudt møde. Vælg et møde for at se et uddrag og gendanne det.";
+    RECOVERY_FOUND_MANY = "Vi fandt {value} afbrudte møder. Vælg et møde for at se et uddrag og gendanne det.";
+    RECOVERY_LIST = "Afbrudte møder";
+    RECOVERY_PREVIEW = "Uddrag";
+    RECOVERY_SELECT = "Vælg et møde for at se et uddrag";
+    RECOVERY_LAST_WRITTEN = "Sidst gemt {value}";
+    RECOVERY_DURATION = "{value} lyd";
+    RECOVERY_HAS_AUDIO = "Lyd findes";
+    RECOVERY_TRACKS_BOTH = "Mikrofon og systemlyd";
+    RECOVERY_TRACKS_MICROPHONE = "Kun mikrofon";
+    RECOVERY_TRACKS_SYSTEM = "Kun systemlyd";
+    RECOVERY_NO_TRANSCRIPT = "Der er intet transskript at vise. Lyden transskriberes, når mødet er gendannet.";
+    RECOVERY_CANCEL = "Annullér";
+    RECOVERY_DELETE = "Slet";
+    RECOVERY_DELETING = "Sletter…";
+    RECOVERY_RESTORE = "Gendan";
+    RECOVERY_RESTORING = "Gendanner…";
+    RECOVERY_OPEN = "Gendan afbrudte møder…";
+    RECOVERY_CONFIRM_DELETE = "Vil du slette dette møde? Det kan ikke fortrydes.";
+    RECOVERY_RESTORED = "Mødet er gendannet";
+    RECOVERY_RESTORED_AUDIO = "Lyden er gendannet og gemt i mødets mappe.";
+    RECOVERY_RESTORED_PARTIAL = "Lyden er delvist gendannet. Dele af optagelsen kunne ikke reddes.";
+    RECOVERY_RESTORE_FAILED = "Mødet kunne ikke gendannes. Prøv igen, og genstart appen hvis det fortsætter.";
+    RECOVERY_DELETE_FAILED = "Mødet kunne ikke slettes. Prøv igen.";
+    RECOVERY_DELETED = "Mødet er slettet";
     // ---- Job 4: the meeting document (frontend/src/components/MeetingDetails) ----
     DOC_LOADING = "Henter mødet …";
     DOC_LOAD_FAILED = "Mødet kunne ikke indlæses. Prøv at åbne det igen.";
@@ -558,9 +601,10 @@ macro_rules! parameterized {
     };
 }
 parameterized! {
+    recovery_last_written => RECOVERY_LAST_WRITTEN;
+    recovery_duration => RECOVERY_DURATION;
     mcp_claude_command => MCP_CLAUDE_COMMAND;
     mcp_codex_config => MCP_CODEX_CONFIG;
-    meeting_restore => MEETING_RESTORE;
     meeting_rename_label => MEETING_RENAME_LABEL;
     meeting_delete_label => MEETING_DELETE_LABEL;
     search_no_match => SEARCH_NO_MATCH;
@@ -646,6 +690,28 @@ pub fn recording_status_label(state: &str, clock: &str, microphone: &str, system
         .replace("{system}", system)
 }
 
+/// The name a new recording gets: "Møde 29. okt. 2026 20.31" (Tauri
+/// `defaultMeetingTitle`).
+pub fn recording_default_title(at: chrono::NaiveDateTime) -> String {
+    RECORDING_DEFAULT_TITLE
+        .replace("{date}", &crate::format_da::short_date(at.date()))
+        .replace("{time}", &crate::format_da::clock(at.time()))
+}
+
+/// The name of a recording that starts now.
+pub fn recording_title_now() -> String {
+    recording_default_title(chrono::Local::now().naive_local())
+}
+
+/// "Vi fandt 1 afbrudt møde …" / "Vi fandt N afbrudte møder …".
+pub fn recovery_found(count: usize) -> String {
+    if count == 1 {
+        RECOVERY_FOUND_ONE.to_string()
+    } else {
+        RECOVERY_FOUND_MANY.replace("{value}", &count.to_string())
+    }
+}
+
 pub fn mcp_action(action: &str) -> String {
     let label = match action {
         "start_recording" => MCP_START_RECORDING,
@@ -688,6 +754,20 @@ mod tests {
     fn templates_replace_only_the_parameter() {
         assert_eq!(super::version("1.2.3"), "Version 1.2.3");
         assert_eq!(super::database("{value}"), "Database: {value}");
+    }
+
+    #[test]
+    fn recording_titles_match_tauri() {
+        let at = chrono::NaiveDate::from_ymd_opt(2026, 10, 29)
+            .unwrap()
+            .and_hms_opt(20, 31, 5)
+            .unwrap();
+        assert_eq!(
+            super::recording_default_title(at),
+            "Møde 29. okt. 2026 20.31"
+        );
+        assert!(super::recovery_found(1).starts_with("Vi fandt 1 afbrudt møde."));
+        assert!(super::recovery_found(3).starts_with("Vi fandt 3 afbrudte møder."));
     }
 
     #[test]

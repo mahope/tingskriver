@@ -64,6 +64,13 @@ fn fixtures() -> Vec<(String, Page, DbState, FixtureVariant)> {
     ] {
         fixtures.push((name.into(), Page::Home, DbState::NotCreated, variant));
     }
+    // "Gendan afbrudte møder" (TranscriptRecovery.tsx) over the home screen.
+    fixtures.push((
+        "recovery-dialog".into(),
+        Page::Home,
+        DbState::NotCreated,
+        FixtureVariant::RecoveryDialog,
+    ));
     // First start (docs/screenshots/onboarding-*.png).
     fixtures.push((
         "onboarding-welcome".into(),

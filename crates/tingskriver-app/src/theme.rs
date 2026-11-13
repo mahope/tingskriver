@@ -313,6 +313,12 @@ pub mod recording {
     pub const DISMISS: Pixels = px(32.0);
     /// The saving overlays sit 16 px above the window edge (`bottom-4`).
     pub const OVERLAY_BOTTOM: Pixels = px(16.0);
+    /// "Gendan afbrudte møder": `max-w-4xl`, `h-[80vh]`, the list `w-1/3`.
+    pub const RECOVERY_WIDTH: Pixels = px(896.0);
+    pub const RECOVERY_HEIGHT_FRACTION: f32 = 0.8;
+    /// The dialog body stays below the window when the window is tall.
+    pub const RECOVERY_HEIGHT_MAX: Pixels = px(560.0);
+    pub const RECOVERY_LIST_FRACTION: f32 = 1.0 / 3.0;
 }
 
 // ---- end of Job 3 block ----

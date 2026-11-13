@@ -10,7 +10,10 @@
 //! - one host thread with a Win32 message loop (`win`): the tray icon and
 //!   menu (`tray-icon`) and the `RegisterHotKey` shortcuts;
 //! - two tasks on the core runtime (`watch`) that keep the tray in step with
-//!   the recording and re-register shortcuts when the settings change.
+//!   the recording and re-register shortcuts when the settings change;
+//! - the meeting recorder ([`recorder`]): start, pause and stop through core,
+//!   the state the recording screen draws, and saving and transcribing the
+//!   meeting after stop.
 //!
 //! The app gets [`Request`]s for what needs the UI (show the window, quit)
 //! and talks to core through [`Host::handle`], an `AppHost` ([`bridge`]).
@@ -24,6 +27,7 @@ pub mod bridge;
 pub mod hotkeys;
 pub mod icon;
 pub mod power;
+pub mod recorder;
 pub mod status;
 pub mod watch;
 #[cfg(windows)]
@@ -40,6 +44,7 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinHandle;
 
 pub use bridge::{Bridge, Event};
+pub use recorder::Recorder;
 pub use status::{Dictation, MenuEntry, Recording, TrayStatus};
 use watch::{Probe, Shared, Wanted};
 
@@ -77,6 +82,7 @@ pub struct Host {
     /// The delivery queue, once the MCP task has opened it. The settings
     /// page uses the same instance, so the queue is opened once per process.
     delivery: Arc<tokio::sync::OnceCell<tingskriver_core::delivery::Delivery>>,
+    recorder: Arc<Recorder>,
     #[cfg(windows)]
     thread: Option<Arc<win::HostThread>>,
 }
@@ -100,6 +106,12 @@ impl Host {
             bridge.on_status_change(Box::new(move || shared.wake.notify_one()));
         }
         let (requests, receiver) = unbounded_channel();
+        let (recorder, recorder_task) = Recorder::start(
+            bridge.clone(),
+            runtime.clone(),
+            Arc::new(recorder::CoreRecorder),
+            bridge.subscribe(),
+        );
 
         let mut host = Host {
             bridge: bridge.clone(),
@@ -108,9 +120,11 @@ impl Host {
             tasks: Vec::new(),
             dictation_blocked: false,
             delivery: Arc::new(tokio::sync::OnceCell::new()),
+            recorder,
             #[cfg(windows)]
             thread: None,
         };
+        host.tasks.push(recorder_task);
 
         let handle: HostHandle = bridge.clone();
         let on_trigger = {
@@ -248,6 +262,11 @@ impl Host {
     /// The `AppHost` core functions take.
     pub fn handle(&self) -> HostHandle {
         self.bridge.clone()
+    }
+
+    /// The meeting recorder the recording screen uses.
+    pub fn recorder(&self) -> Arc<Recorder> {
+        self.recorder.clone()
     }
 
     pub fn bridge(&self) -> &Arc<Bridge> {
