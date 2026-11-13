@@ -153,7 +153,9 @@ fn language_choices() -> Vec<SharedString> {
         .chain(
             tingskriver_core::meeting_language::CHOICES
                 .iter()
-                .map(|(code, _)| SharedString::from(tingskriver_core::meeting_language::label(code))),
+                .map(|(code, _)| {
+                    SharedString::from(tingskriver_core::meeting_language::label(code))
+                }),
         )
         .collect()
 }
@@ -180,7 +182,8 @@ impl MeetingView {
         let _ = folder;
         self.improve.stage = Stage::Choosing;
         self.improve.window = Some(window.window_handle());
-        let select = cx.new(|cx| SelectState::new(language_choices(), Some(Default::default()), window, cx));
+        let select =
+            cx.new(|cx| SelectState::new(language_choices(), Some(Default::default()), window, cx));
         self.improve.language = Some(select);
         self.read_transcription_model(cx);
         self.show_improve(window, cx);
@@ -192,9 +195,11 @@ impl MeetingView {
             return;
         };
         let pool = db.pool().clone();
-        let task = self.model.read(cx).runtime.spawn(async move {
-            SettingsRepository::get_transcript_config(&pool).await
-        });
+        let task = self
+            .model
+            .read(cx)
+            .runtime
+            .spawn(async move { SettingsRepository::get_transcript_config(&pool).await });
         cx.spawn(async move |view, cx| {
             let saved = match task.await {
                 Ok(Ok(saved)) => saved,
@@ -250,20 +255,24 @@ impl MeetingView {
         let id = self.meeting_id.clone();
         // Listen before starting, so the first message is not missed.
         let (tx, mut rx) = unbounded_channel::<Event>();
-        let ids = ["retranscription-progress", "retranscription-complete", "retranscription-error"]
-            .into_iter()
-            .map(|name| {
-                let (tx, id) = (tx.clone(), id.clone());
-                host.listen(
-                    name,
-                    Box::new(move |payload| {
-                        if let Some(event) = parse_event(name, payload, &id) {
-                            let _ = tx.send(event);
-                        }
-                    }),
-                )
-            })
-            .collect();
+        let ids = [
+            "retranscription-progress",
+            "retranscription-complete",
+            "retranscription-error",
+        ]
+        .into_iter()
+        .map(|name| {
+            let (tx, id) = (tx.clone(), id.clone());
+            host.listen(
+                name,
+                Box::new(move |payload| {
+                    if let Some(event) = parse_event(name, payload, &id) {
+                        let _ = tx.send(event);
+                    }
+                }),
+            )
+        })
+        .collect();
         self.improve.listening = Some(Listening {
             host: Arc::clone(&host),
             ids,
@@ -324,7 +333,7 @@ impl MeetingView {
         if self.improve.is_running() {
             self.improve.listening = None;
             self.improve.stage = Stage::Idle;
-            let _ = self.model.read(cx).runtime.spawn(async {
+            self.model.read(cx).runtime.spawn(async {
                 if let Err(error) = retranscription::cancel_retranscription_command().await {
                     log::warn!("Could not cancel the retranscription: {error}");
                 }
@@ -364,7 +373,10 @@ impl MeetingView {
                 (
                     this.improve.stage.clone(),
                     this.improve.language.clone(),
-                    this.improve.model.as_ref().map(|(engine, _)| engine.clone()),
+                    this.improve
+                        .model
+                        .as_ref()
+                        .map(|(engine, _)| engine.clone()),
                 )
             };
             let palette = crate::ui::palette(cx);
@@ -398,14 +410,14 @@ impl MeetingView {
             let body = match &stage {
                 Stage::Choosing => {
                     let language = if engine.as_deref() == Some("parakeet") {
-                        v_flex().gap(space::SM).child(note(text::IMPROVE_PARAKEET_NOTE))
+                        v_flex()
+                            .gap(space::SM)
+                            .child(note(text::IMPROVE_PARAKEET_NOTE))
                     } else {
                         v_flex()
                             .gap(space::SM)
                             .when_some(select, |this, select| {
-                                this.child(
-                                    Select::new(&select).h(layout::CONTROL_HEIGHT),
-                                )
+                                this.child(Select::new(&select).h(layout::CONTROL_HEIGHT))
                             })
                             .child(note(text::IMPROVE_LANGUAGE_HELP))
                     };
@@ -447,13 +459,9 @@ impl MeetingView {
                             .w_full()
                             .rounded_full()
                             .bg(palette.muted)
-                            .child(
-                                div()
-                                    .h_full()
-                                    .rounded_full()
-                                    .bg(palette.primary)
-                                    .w(gpui::relative(f32::from(percent.unwrap_or(0) as u16) / 100.0)),
-                            ),
+                            .child(div().h_full().rounded_full().bg(palette.primary).w(
+                                gpui::relative(f32::from(percent.unwrap_or(0) as u16) / 100.0),
+                            )),
                     )
                     .when_some(*percent, |this, percent| {
                         this.child(note(&format!("{percent} %")))
@@ -473,14 +481,16 @@ impl MeetingView {
                                 controls::button("improve-cancel", Variant::Secondary)
                                     .label(text::IMPROVE_CANCEL)
                                     .on_click(move |_, _, cx| {
-                                        let _ = close_view.update(cx, |this, cx| this.cancel_improve(cx));
+                                        let _ = close_view
+                                            .update(cx, |this, cx| this.cancel_improve(cx));
                                     }),
                             )
                             .child(
                                 controls::button("improve-start", Variant::Primary)
                                     .label(text::IMPROVE_START)
                                     .on_click(move |_, _, cx| {
-                                        let _ = start_view.update(cx, |this, cx| this.start_improve(cx));
+                                        let _ = start_view
+                                            .update(cx, |this, cx| this.start_improve(cx));
                                     }),
                             );
                     }
@@ -489,7 +499,8 @@ impl MeetingView {
                             controls::button("improve-stop", Variant::Secondary)
                                 .label(text::IMPROVE_CANCEL)
                                 .on_click(move |_, _, cx| {
-                                    let _ = cancel_view.update(cx, |this, cx| this.cancel_improve(cx));
+                                    let _ =
+                                        cancel_view.update(cx, |this, cx| this.cancel_improve(cx));
                                 }),
                         );
                     }
@@ -499,7 +510,8 @@ impl MeetingView {
                                 controls::button("improve-close", Variant::Secondary)
                                     .label(text::IMPROVE_CLOSE)
                                     .on_click(move |_, _, cx| {
-                                        let _ = close_view.update(cx, |this, cx| this.cancel_improve(cx));
+                                        let _ = close_view
+                                            .update(cx, |this, cx| this.cancel_improve(cx));
                                     }),
                             )
                             .child(
@@ -616,7 +628,8 @@ mod tests {
 
     #[test]
     fn only_events_for_this_meeting_are_read() {
-        let progress = r#"{"meeting_id":"m1","stage":"vad","progress_percentage":20,"message":"Finder tale"}"#;
+        let progress =
+            r#"{"meeting_id":"m1","stage":"vad","progress_percentage":20,"message":"Finder tale"}"#;
         assert_eq!(
             parse_event("retranscription-progress", progress, "m1"),
             Some(Event::Progress {
@@ -624,7 +637,10 @@ mod tests {
                 percent: 20
             })
         );
-        assert_eq!(parse_event("retranscription-progress", progress, "m2"), None);
+        assert_eq!(
+            parse_event("retranscription-progress", progress, "m2"),
+            None
+        );
         assert_eq!(
             parse_event(
                 "retranscription-complete",
@@ -641,7 +657,10 @@ mod tests {
             ),
             Some(Event::Error("Ingen lyd".into()))
         );
-        assert_eq!(parse_event("retranscription-progress", "ikke json", "m1"), None);
+        assert_eq!(
+            parse_event("retranscription-progress", "ikke json", "m1"),
+            None
+        );
     }
 
     #[test]
@@ -649,6 +668,9 @@ mod tests {
         assert_eq!(language_code(None), None);
         assert_eq!(language_code(Some(0)), None, "row 0 is automatic");
         assert_eq!(language_code(Some(1)).as_deref(), Some("da"));
-        assert_eq!(language_choices().len(), 1 + tingskriver_core::meeting_language::CHOICES.len());
+        assert_eq!(
+            language_choices().len(),
+            1 + tingskriver_core::meeting_language::CHOICES.len()
+        );
     }
 }

@@ -80,7 +80,6 @@ impl Choices {
             ..Choices::with_template("standard")
         }
     }
-
 }
 
 impl MeetingView {
@@ -147,7 +146,9 @@ impl MeetingView {
         }
         cx.notify();
         let Some((db, host)) = self.db_and_host(cx) else {
-            let toasts = self.run.start_failed(text::SUMMARY_START_FAILED.to_string());
+            let toasts = self
+                .run
+                .start_failed(text::SUMMARY_START_FAILED.to_string());
             Self::show(toasts, cx);
             return;
         };
@@ -163,7 +164,9 @@ impl MeetingView {
                 let toasts = match result {
                     Ok(Ok(started)) => view.run.started(&started),
                     Ok(Err(message)) => view.run.start_failed(message),
-                    Err(_) => view.run.start_failed(text::SUMMARY_START_FAILED.to_string()),
+                    Err(_) => view
+                        .run
+                        .start_failed(text::SUMMARY_START_FAILED.to_string()),
                 };
                 Self::show(toasts, cx);
                 // A read that began before the run existed would show the
@@ -222,7 +225,9 @@ impl MeetingView {
         }
         let markdown = summary.markdown.clone().unwrap_or_default();
         let input = cx.new(|cx| TextareaState::new(window, cx).rows(EDITOR_ROWS));
-        input.update(cx, |input, cx| input.set_value(markdown.clone(), window, cx));
+        input.update(cx, |input, cx| {
+            input.set_value(markdown.clone(), window, cx)
+        });
         let subscription = cx.subscribe(&input, |_, _, event: &InputEvent, cx| {
             if matches!(event, InputEvent::Change) {
                 cx.notify();
@@ -398,9 +403,7 @@ impl MeetingView {
             Ok::<_, String>((saved, recents))
         });
         cx.spawn(async move |view, cx| {
-            let result = task
-                .await
-                .unwrap_or_else(|error| Err(error.to_string()));
+            let result = task.await.unwrap_or_else(|error| Err(error.to_string()));
             let _ = view.update(cx, |view, cx| {
                 match result {
                     Ok((saved, recents)) => {

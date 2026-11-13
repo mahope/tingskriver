@@ -27,8 +27,8 @@ pub mod recording;
 mod recovery;
 mod sidebar;
 pub mod single_instance;
-mod summary_run;
 pub mod startup;
+mod summary_run;
 pub mod theme;
 pub mod ui;
 pub mod update;
@@ -262,7 +262,9 @@ pub fn run() {
                                 // "Automatisk opsummering" (Opsummering settings).
                                 if let Some(meeting_id) = finished {
                                     let model = event_model.clone();
-                                    cx.update(|cx| summary_run::auto_summary(model, meeting_id, cx));
+                                    cx.update(|cx| {
+                                        summary_run::auto_summary(model, meeting_id, cx)
+                                    });
                                 }
                             }
                         }

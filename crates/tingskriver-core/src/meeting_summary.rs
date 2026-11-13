@@ -141,6 +141,7 @@ pub struct Preferences {
 impl Preferences {
     /// Read the file. A missing file is the defaults; a file that cannot be
     /// read is an error, so a broken file is never mistaken for "off".
+    #[allow(clippy::disallowed_methods)] // Synchronous disk worker.
     pub fn load(dir: &Path) -> Result<Preferences, String> {
         let path = dir.join(PREFERENCES_FILE);
         let bytes = match std::fs::read(&path) {
@@ -158,6 +159,7 @@ impl Preferences {
 
     /// Write the file through a temporary file, so a crash never leaves half
     /// a file behind.
+    #[allow(clippy::disallowed_methods)] // Synchronous disk worker.
     pub fn save(&self, dir: &Path) -> Result<(), String> {
         let mut clean = self.clone();
         clean.clean();
@@ -1014,4 +1016,5 @@ pub async fn auto_start(host: HostHandle, db: &DatabaseManager, meeting_id: &str
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests;

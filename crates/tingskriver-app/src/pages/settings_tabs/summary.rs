@@ -121,7 +121,9 @@ impl SummaryTab {
         let custom_model = input(None, false);
         let custom_key = input(Some(mtext::SUMMARY_KEY_PLACEHOLDER), true);
         let provider = cx.new(|cx| SelectState::new(provider_labels(), None, window, cx));
-        let model = cx.new(|cx| SelectState::new(Vec::<SharedString>::new(), None, window, cx).searchable(true));
+        let model = cx.new(|cx| {
+            SelectState::new(Vec::<SharedString>::new(), None, window, cx).searchable(true)
+        });
         let fields = Fields {
             provider,
             model,
@@ -462,7 +464,8 @@ impl Shell {
         cx.spawn(async move |this, cx| {
             let result = task.await;
             let _ = this.update(cx, |shell, cx| {
-                if let (Some(data), Ok(Ok(has_key))) = (shell.settings.summary.data.as_mut(), result)
+                if let (Some(data), Ok(Ok(has_key))) =
+                    (shell.settings.summary.data.as_mut(), result)
                 {
                     data.has_key = has_key;
                 }
@@ -499,14 +502,10 @@ impl Shell {
         cx: &mut Context<Shell>,
     ) {
         let _ = window;
-        let task = self
-            .model
-            .read(cx)
-            .runtime
-            .spawn({
-                let next = next.clone();
-                async move { next.save_async(dir).await }
-            });
+        let task = self.model.read(cx).runtime.spawn({
+            let next = next.clone();
+            async move { next.save_async(dir).await }
+        });
         let handle = self.settings.summary.window;
         cx.spawn(async move |this, cx| {
             let result = task.await.unwrap_or_else(|error| Err(error.to_string()));
@@ -742,7 +741,10 @@ impl Shell {
             .child(div().flex_none().child(auto_switch))
             .into_any_element()];
         if unreadable {
-            auto_children.push(note("summary-auto-unreadable", mtext::SUMMARY_AUTO_UNREADABLE));
+            auto_children.push(note(
+                "summary-auto-unreadable",
+                mtext::SUMMARY_AUTO_UNREADABLE,
+            ));
         }
         let auto = settings_card("summary-auto", auto_children, cx);
 
@@ -757,9 +759,13 @@ impl Shell {
         let recents = preferences.language_recents.clone();
         let add = controls::small_button("summary-language-add", Variant::Outline)
             .label(format!("＋ {}", mtext::SUMMARY_ADD_LANGUAGE))
-            .disabled(preferences.language_recents.len() >= core::MAX_RECENT_LANGUAGES || unreadable)
+            .disabled(
+                preferences.language_recents.len() >= core::MAX_RECENT_LANGUAGES || unreadable,
+            )
             .dropdown_menu(move |menu, _, _| {
-                let mut menu = menu.max_h(crate::theme::document::MENU_MAX).scrollable(true);
+                let mut menu = menu
+                    .max_h(crate::theme::document::MENU_MAX)
+                    .scrollable(true);
                 for (code, label) in core::LANGUAGES {
                     if recents.iter().any(|recent| recent == code) {
                         continue;
@@ -917,7 +923,8 @@ impl Shell {
             if builtin {
                 body = body.child(muted(mtext::SUMMARY_BUILTIN_HELP, cx));
             }
-            if let (Some(label), Models::Failed(_) | Models::Idle) = (tab.model_label(), &tab.models)
+            if let (Some(label), Models::Failed(_) | Models::Idle) =
+                (tab.model_label(), &tab.models)
             {
                 body = body.child(muted(&text::transcription_model_current(&label), cx));
             }
@@ -931,10 +938,7 @@ impl Shell {
                         .font_weight(FontWeight::MEDIUM)
                         .child(mtext::SUMMARY_OLLAMA_ENDPOINT),
                 )
-                .child(
-                    controls::input(&f.endpoint)
-                        .aria_label(mtext::SUMMARY_OLLAMA_ENDPOINT),
-                )
+                .child(controls::input(&f.endpoint).aria_label(mtext::SUMMARY_OLLAMA_ENDPOINT))
                 .child(muted(mtext::SUMMARY_OLLAMA_ENDPOINT_HELP, cx));
         }
         if keyed {
@@ -958,11 +962,16 @@ impl Shell {
                     cx,
                 ))
                 .child(
-                    save_button("summary-key-save", mtext::SUMMARY_KEY_SAVE, Variant::Outline, ready)
-                        .on_click(move |_, window, cx| {
-                            let _ = save_shell
-                                .update(cx, |shell, cx| shell.save_summary_key(window, cx));
-                        }),
+                    save_button(
+                        "summary-key-save",
+                        mtext::SUMMARY_KEY_SAVE,
+                        Variant::Outline,
+                        ready,
+                    )
+                    .on_click(move |_, window, cx| {
+                        let _ =
+                            save_shell.update(cx, |shell, cx| shell.save_summary_key(window, cx));
+                    }),
                 );
         }
         let can_save = tab.can_save(cx);
@@ -993,7 +1002,9 @@ impl Shell {
 }
 
 fn save_button(id: &'static str, label: &'static str, variant: Variant, enabled: bool) -> Button {
-    controls::button(id, variant).label(label).disabled(!enabled)
+    controls::button(id, variant)
+        .label(label)
+        .disabled(!enabled)
 }
 
 fn alert_text(text: &str, cx: &App) -> impl IntoElement {
@@ -1030,25 +1041,32 @@ fn language_chip(
             palette.secondary
         })
         .child(
-            controls::small_button(SharedString::from(format!("summary-pin-{code}")), Variant::Ghost)
-                .icon(if is_pinned { IconName::Check } else { IconName::Plus })
-                .label(label.clone())
-                .accessibility_label(if is_pinned {
-                    mtext::language_unuse(&label)
-                } else {
-                    mtext::language_use(&label)
-                })
-                .tooltip(if is_pinned {
-                    mtext::language_unuse(&label)
-                } else {
-                    mtext::language_use(&label)
-                })
-                .on_click(move |_, window, cx| {
-                    let code = pin_code.clone();
-                    let _ = pin_shell.update(cx, |shell, cx| {
-                        shell.change_languages(|p| p.toggle_pinned(&code), window, cx)
-                    });
-                }),
+            controls::small_button(
+                SharedString::from(format!("summary-pin-{code}")),
+                Variant::Ghost,
+            )
+            .icon(if is_pinned {
+                IconName::Check
+            } else {
+                IconName::Plus
+            })
+            .label(label.clone())
+            .accessibility_label(if is_pinned {
+                mtext::language_unuse(&label)
+            } else {
+                mtext::language_use(&label)
+            })
+            .tooltip(if is_pinned {
+                mtext::language_unuse(&label)
+            } else {
+                mtext::language_use(&label)
+            })
+            .on_click(move |_, window, cx| {
+                let code = pin_code.clone();
+                let _ = pin_shell.update(cx, |shell, cx| {
+                    shell.change_languages(|p| p.toggle_pinned(&code), window, cx)
+                });
+            }),
         )
         .child(
             controls::small_icon_button(

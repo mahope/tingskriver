@@ -774,7 +774,7 @@ impl Shell {
             }
             shell.home = crate::recording::fixture(variant);
             if let FixtureVariant::Meeting(kind) = variant {
-                shell.open_fixture_meeting(kind, cx);
+                shell.open_fixture_meeting(kind, window, cx);
             }
             shell.dictation = crate::pages::dictation::DictationPage::fixture(variant);
             crate::pages::settings_tabs::dictation::DictationTab::freeze_fixture(shell, window, cx);

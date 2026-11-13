@@ -710,11 +710,13 @@ impl MeetingView {
                 .child(
                     controls::button("summary-empty-generate", Variant::Primary)
                         .icon(Icon::from(IconName::Sparkles).size(icon_size::SM))
-                        .label(if summary.status == SummaryStatus::Failed || self.run.error.is_some() {
-                            strings::DOC_SUMMARY_RETRY
-                        } else {
-                            strings::DOC_GENERATE
-                        })
+                        .label(
+                            if summary.status == SummaryStatus::Failed || self.run.error.is_some() {
+                                strings::DOC_SUMMARY_RETRY
+                            } else {
+                                strings::DOC_GENERATE
+                            },
+                        )
                         .disabled(loaded.document.transcript.is_empty())
                         .on_click(cx.listener(|this, _, _, cx| this.generate(cx)))
                         .self_center(),
@@ -1118,7 +1120,10 @@ impl Render for MeetingView {
                 article = article.child(div().mt(space::XL).child(self.summary(loaded, cx)));
                 // Below the summary, as Tauri's `DeliveryApproval`. A note
                 // until delivery (queue worker, targets) runs in this app.
-                if summary.has_content() && summary.status != SummaryStatus::Running && !self.run.is_active() {
+                if summary.has_content()
+                    && summary.status != SummaryStatus::Running
+                    && !self.run.is_active()
+                {
                     article = article.child(self.delivery(cx));
                 }
                 article = article.child(self.transcript_section(loaded, window, cx));
@@ -1426,7 +1431,12 @@ impl Shell {
 
     /// A fixed meeting document for the screenshot fixtures.
     #[cfg(feature = "screenshot-tests")]
-    pub(crate) fn open_fixture_meeting(&mut self, kind: FixtureMeeting, cx: &mut Context<Self>) {
+    pub(crate) fn open_fixture_meeting(
+        &mut self,
+        kind: FixtureMeeting,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let document = fixture_document(kind);
         let id = document.id.clone();
         self.meetings
@@ -1451,8 +1461,26 @@ impl Shell {
         });
         let (model, meetings) = (self.model.clone(), self.meetings.clone());
         let open = kind == FixtureMeeting::Transcript;
-        self.meeting_view =
-            Some(cx.new(|cx| MeetingView::fixture(model, meetings, document, proposals, open, cx)));
+        let view =
+            cx.new(|cx| MeetingView::fixture(model, meetings, document, proposals, open, cx));
+        view.update(cx, |view, cx| match kind {
+            // The summary text field, as after "Rediger".
+            FixtureMeeting::Editing => view.begin_edit(window, cx),
+            // A run found in the database: "Stop" instead of "Lav om".
+            FixtureMeeting::Generating => {
+                if let Some(loaded) = view.loaded().cloned() {
+                    let _ = view.run.observe(&loaded.document.summary);
+                }
+            }
+            _ => {}
+        });
+        if kind == FixtureMeeting::Improving {
+            let dialog = view.clone();
+            window.defer(cx, move |window, cx| {
+                dialog.update(cx, |view, cx| view.open_improve(window, cx))
+            });
+        }
+        self.meeting_view = Some(view);
     }
 }
 
@@ -1471,6 +1499,13 @@ pub enum FixtureMeeting {
     SummaryFailed,
     /// The summary with a pending AI proposal above it.
     Proposals,
+    /// The summary text field open (`meeting-editing`).
+    Editing,
+    /// The summary being rewritten, with "Stop" (`meeting-generating`).
+    Generating,
+    /// The "Transskribér mødet igen" dialog over the summary
+    /// (`meeting-improve`).
+    Improving,
 }
 
 #[cfg(feature = "screenshot-tests")]
@@ -1516,6 +1551,16 @@ fn fixture_document(kind: FixtureMeeting) -> Document {
             "Kickoff med Havnens Bageri",
             "2026-10-29T13:05:00Z",
             Summary::none(),
+        ),
+        FixtureMeeting::Generating => (
+            "fixture-1",
+            "Ugentligt statusmøde",
+            "2026-10-29T09:30:00Z",
+            Summary {
+                status: SummaryStatus::Running,
+                markdown: Some(markdown.into()),
+                error: None,
+            },
         ),
         FixtureMeeting::SummaryFailed => (
             "fixture-2",

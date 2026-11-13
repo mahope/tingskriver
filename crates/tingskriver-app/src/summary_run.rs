@@ -50,7 +50,7 @@ impl Toast {
 
     pub(crate) fn notification(&self) -> Notification {
         let body = self.help.clone().unwrap_or_default();
-        let notification = match (self.kind, self.help.is_some()) {
+        match (self.kind, self.help.is_some()) {
             (Kind::Info, true) => Notification::info(body).title(self.title.clone()),
             (Kind::Success, true) => Notification::success(body).title(self.title.clone()),
             (Kind::Warning, true) => Notification::warning(body).title(self.title.clone()),
@@ -59,8 +59,7 @@ impl Toast {
             (Kind::Success, false) => Notification::success(self.title.clone()),
             (Kind::Warning, false) => Notification::warning(self.title.clone()),
             (Kind::Error, false) => Notification::error(self.title.clone()),
-        };
-        notification
+        }
     }
 }
 
@@ -273,9 +272,7 @@ pub(crate) fn auto_summary(model: Entity<AppModel>, meeting_id: String, cx: &mut
                         &text::summary_using(&started.provider, &started.model),
                     )
                 }
-                Err(message) => {
-                    Toast::with_help(Kind::Error, text::SUMMARY_FAILED_NEW, &message)
-                }
+                Err(message) => Toast::with_help(Kind::Error, text::SUMMARY_FAILED_NEW, &message),
             };
             crate::ui::notify_main_window(toast.notification(), cx);
         });
@@ -327,15 +324,25 @@ mod tests {
     fn a_first_run_goes_from_starting_to_running_to_done() {
         let mut run = Run::default();
         assert!(run.begin(false));
-        assert!(!run.begin(false), "a second press while starting does nothing");
+        assert!(
+            !run.begin(false),
+            "a second press while starting does nothing"
+        );
         let toasts = run.started(&started());
-        assert_eq!(run.phase, Phase::Running { regeneration: false });
+        assert_eq!(
+            run.phase,
+            Phase::Running {
+                regeneration: false
+            }
+        );
         assert_eq!(toasts[0].title, text::SUMMARY_MAKING);
         assert_eq!(toasts[0].help.as_deref(), Some("Bruger ollama/gemma3:1b"));
         assert_eq!(toasts[1].kind, Kind::Warning);
         assert_eq!(toasts[1].title, text::SUMMARY_BILINGUAL);
 
-        assert!(run.observe(&summary(SummaryStatus::Running, None, None)).is_empty());
+        assert!(run
+            .observe(&summary(SummaryStatus::Running, None, None))
+            .is_empty());
         let done = run.observe(&summary(SummaryStatus::Completed, Some("# A"), None));
         assert_eq!(done[0].kind, Kind::Success);
         assert_eq!(done[0].title, text::SUMMARY_READY);
@@ -400,12 +407,16 @@ mod tests {
     #[test]
     fn a_run_that_was_going_when_the_page_opened_is_picked_up() {
         let mut run = Run::default();
-        assert!(run.observe(&summary(SummaryStatus::Running, Some("# Gammelt"), None)).is_empty());
+        assert!(run
+            .observe(&summary(SummaryStatus::Running, Some("# Gammelt"), None))
+            .is_empty());
         assert_eq!(run.phase, Phase::Running { regeneration: true });
         assert!(run.is_running());
         // Nothing is said about a finished run the page never saw start.
         let mut idle = Run::default();
-        assert!(idle.observe(&summary(SummaryStatus::Completed, Some("# A"), None)).is_empty());
+        assert!(idle
+            .observe(&summary(SummaryStatus::Completed, Some("# A"), None))
+            .is_empty());
     }
 
     #[test]
@@ -418,7 +429,10 @@ mod tests {
         assert!(!run.stop_pressed(), "pressed twice");
         let toasts = run.stopped(Ok(Stopped::AlmostDone));
         assert_eq!(toasts[0].title, text::SUMMARY_ALMOST_DONE);
-        assert!(run.is_running(), "it carries on until the database says otherwise");
+        assert!(
+            run.is_running(),
+            "it carries on until the database says otherwise"
+        );
         assert!(run.stop_pressed());
         let toasts = run.stopped(Ok(Stopped::Cancelled));
         assert_eq!(toasts[0].title, text::SUMMARY_STOPPED);
@@ -443,7 +457,9 @@ mod tests {
         let mut run = Run::default();
         run.begin(false);
         run.started(&started());
-        assert!(run.observe(&summary(SummaryStatus::Idle, None, None)).is_empty());
+        assert!(run
+            .observe(&summary(SummaryStatus::Idle, None, None))
+            .is_empty());
         assert!(!run.is_active());
     }
 }
