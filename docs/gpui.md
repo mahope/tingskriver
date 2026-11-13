@@ -207,6 +207,17 @@ the same time; both use the same database with the same migrations.
     "Gendan" saves the meeting, transcribes it and opens it. Repeat and use
     "Slet" (it asks first): the dialog closes and the card on Home is gone.
 
+14. Move from the Tauri app (#282; needs a clean Windows VM, steps in
+    `installer/README.md`, "Testing the move"). Install the Tauri build
+    with the move, start it, make two meetings with a transcript, change a
+    setting and download one model. Wait a minute. Expected: the GPUI app
+    starts, `%LOCALAPPDATA%\Tingskriver` is gone, Settings, Apps lists only
+    the GPUI app, and the same two meetings, the setting and the model are
+    there. In `%LOCALAPPDATA%\dk.mahoje.tingskriver\logs\tingskriver.log`:
+    `move to GPUI: data folder has N files`, `Tauri app uninstalled` and
+    `the data folder is intact`; `%TEMP%\tingskriver-move-
+    database-backup\database-<id>` holds the database from before the move. Repeat with a
+    recording running: nothing happens until it is stopped and encoded.
 14. **Sleep and logoff (#179).** Record 1 minute, close the lid (or Sleep)
     and wake the machine. No recording runs and nothing starts by itself;
     Home shows the card "Et møde blev afsluttet af systemet" with cause
@@ -238,6 +249,7 @@ Write the results here:
 | 11. Tray start and stop | | |
 | 12. Microphone errors | | |
 | 13. Gendan afbrudte møder | | |
+| 14. Move from the Tauri app | | |
 | 14. Sleep and logoff | | |
 | 15. Meeting program on another device | | |
 

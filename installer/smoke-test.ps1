@@ -148,6 +148,8 @@ try {
   Write-Host "Uninstall entry: $($entry.DisplayName) $($entry.DisplayVersion)"
   # Velopack writes the Windows uninstall entry without the pre-release part
   # (0.5.3-dev.1 shows as 0.5.3), so compare that entry with the base version.
+  # Predecessors from before the pipeline wrote the full version (0.5.0-dev.3
+  # registers 0.5.0) compare the same way.
   # The exact pre-release suffix is not checked here; the update step below only
   # proves the predecessor is older than the new version.
   $expectedDisplayVersion = $ExpectedInstalledVersion -replace '-.*$', ''

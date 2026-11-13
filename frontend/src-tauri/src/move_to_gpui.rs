@@ -295,7 +295,7 @@ mod platform {
     use std::time::{Duration, Instant};
 
     use tingskriver_core::audio::recording_commands::{self, unblock_recordings};
-    use tingskriver_core::install::{autostart, uninstall_entry_exists};
+    use tingskriver_core::install::{autostart, tauri_data, uninstall_entry_exists};
 
     use super::*;
 
@@ -308,6 +308,14 @@ mod platform {
 
     fn work_dir() -> PathBuf {
         std::env::temp_dir().join("tingskriver-move")
+    }
+
+    /// Where the database copy goes: outside the data folder (an uninstaller
+    /// that wipes `%APPDATA%\dk.mahoje.tingskriver` would take a copy inside
+    /// it along) and outside `work_dir`, which is removed when the move ends.
+    /// It stays as a safety copy.
+    fn database_backup_dir() -> PathBuf {
+        std::env::temp_dir().join("tingskriver-move-database-backup")
     }
 
     fn setup_path() -> PathBuf {
@@ -527,6 +535,32 @@ mod platform {
             return;
         };
 
+        // The data folder is shared and must come through the uninstall
+        // untouched. Note what is in it and keep a copy of the database.
+        let data_dir = tingskriver_core::paths::app_data_dir();
+        let before = data_dir.as_deref().and_then(|dir| {
+            match tauri_data::prepare(dir, &database_backup_dir()) {
+                Ok(prepared) => {
+                    log::info!(
+                        "move to GPUI: data folder has {} files ({} bytes); database backup: {}",
+                        prepared.inventory.len(),
+                        prepared.inventory.bytes(),
+                        prepared
+                            .backup
+                            .as_deref()
+                            .map_or("none".to_string(), |p| p.display().to_string())
+                    );
+                    Some(prepared)
+                }
+                // Without a backup the uninstall still goes ahead: it does not
+                // touch the data folder, and staying on Tauri for good is worse.
+                Err(e) => {
+                    log::error!("move to GPUI: could not back up the data folder: {e}");
+                    None
+                }
+            }
+        });
+
         let uninstalled = match uninstall_tauri(&paths) {
             Ok(()) => {
                 log::info!("move to GPUI: Tauri app uninstalled");
@@ -542,6 +576,10 @@ mod platform {
             start_first_of(&paths, apps_to_start(false, true, paths.gpui_exe.exists()));
             remove_work_dir_later();
             return;
+        }
+
+        if let (Some(dir), Some(prepared)) = (data_dir.as_deref(), before.as_ref()) {
+            verify_data(dir, prepared);
         }
 
         let missing = paths.missing_shortcuts(|path| path.exists());
@@ -609,6 +647,35 @@ mod platform {
             }
         }
         log::error!("move to GPUI: no app could be started");
+    }
+
+    /// After the uninstall: everything noted before must still be there. A
+    /// deleted database is put back from the backup; anything else is logged.
+    fn verify_data(dir: &Path, prepared: &tauri_data::Prepared) {
+        match tauri_data::check(dir, &prepared.inventory) {
+            Ok(report) if report.is_intact() => {
+                log::info!("move to GPUI: the data folder is intact");
+            }
+            Ok(report) => {
+                log::error!(
+                    "move to GPUI: data folder changed by the uninstall: missing {:?}, cut {:?}",
+                    report.missing,
+                    report.shrunk
+                );
+                if let (true, Some(backup)) =
+                    (report.database_missing(), prepared.backup.as_deref())
+                {
+                    match tauri_data::restore_database(dir, backup) {
+                        Ok(true) => {
+                            log::warn!("move to GPUI: database restored from {}", backup.display())
+                        }
+                        Ok(false) => {}
+                        Err(e) => log::error!("move to GPUI: could not restore the database: {e}"),
+                    }
+                }
+            }
+            Err(e) => log::error!("move to GPUI: could not check the data folder: {e}"),
+        }
     }
 
     fn uninstall_tauri(paths: &MovePaths) -> Result<(), String> {

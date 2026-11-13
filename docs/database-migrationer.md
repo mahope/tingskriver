@@ -68,3 +68,15 @@ ikke kender). Skriv ikke en additiv migration uden mærke, hvis du er i tvivl.
   en ny migration kræver kun, at testen stadig er grøn. Kræver migrationen
   data i nye tabeller, så udvid `seeded_database_before_search_and_note_blocks_keeps_everything`
   (eller tilføj en tilsvarende test) med rækker, der viser, at de bevares.
+
+## Flytning fra Tauri-appen (#282)
+
+Tauri-appen og GPUI-appen bruger samme datamappe, så flytningen kopierer intet.
+Hjælperen i `frontend/src-tauri/src/move_to_gpui.rs` tager først en oversigt
+over mappen og en kopi af databasen (`backups/database-<id>`), kører så NSIS-
+afinstalleren og sammenligner bagefter (`install/tauri_data.rs`). Mangler eller
+er noget blevet kortere, logges det, og en slettet database lægges tilbage fra
+kopien. GPUI-appen opgraderer skemaet ved første start som beskrevet ovenfor.
+`crates/tingskriver-core/tests/tauri_move.rs` kører forløbet på en seed fra en
+Tauri-installation (database før søgeindekset, indstillinger, modeller og en
+optagelse) og på en afinstaller, der sletter databasen og modellerne.

@@ -10,6 +10,7 @@
 pub mod autostart;
 pub mod legacy;
 pub mod protocol;
+pub mod tauri_data;
 pub mod user_data;
 #[cfg(windows)]
 mod win;
