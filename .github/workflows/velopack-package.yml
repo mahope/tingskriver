@@ -80,7 +80,9 @@ jobs:
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-bin: 'false'
-          prefix-key: tingskriver-windows-velopack-v1
+          # Shared with the GPUI release job in rust.yml, which saves it on every main push.
+          prefix-key: tingskriver-windows-gpui-release-v2
+          shared-key: windows-gpui-release
 
       - name: Build tingskriver-app (release)
         shell: bash

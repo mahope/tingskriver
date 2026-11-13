@@ -323,12 +323,22 @@ jobs:
       - name: Install Rust 1.99.1
         uses: dtolnay/rust-toolchain@1.99.1
 
+      # Same portable CPU baseline and cache as velopack-package.yml, so this
+      # job builds what ships and keeps the release build's cache warm on main.
+      - name: Configure portable build
+        shell: pwsh
+        run: |
+          $cmakeHook = (Join-Path $env:GITHUB_WORKSPACE ".github/force-portable-ggml.cmake").Replace('\', '/')
+          "CMAKE_PROJECT_INCLUDE=$cmakeHook" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "RUSTFLAGS=-C target-cpu=x86-64-v2" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-bin: 'false'
-          prefix-key: tingskriver-windows-gpui-release-v1
+          prefix-key: tingskriver-windows-gpui-release-v2
+          shared-key: windows-gpui-release
 
       - name: Build tingskriver-app (release)
         shell: bash
