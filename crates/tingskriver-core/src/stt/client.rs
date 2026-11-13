@@ -650,9 +650,18 @@ mod tests {
             let mut f = Self::unstarted();
             f.client.policy = policy;
             f.client.gpu_capable = gpu_capable;
+            // Only a phase the fault hangs in gets the short deadline. A crash or
+            // rejection must surface as itself even when a busy CI runner needs
+            // more than 800 ms to start the Python fixture.
+            let deadline = |phase: &str| match fault {
+                Some(fault) if fault.starts_with(&format!("hang@{phase}")) => {
+                    Duration::from_millis(800)
+                }
+                _ => Duration::from_secs(30),
+            };
             f.client.deadlines = Some(Deadlines {
-                load_floor: Duration::from_millis(800),
-                run_floor: Duration::from_millis(800),
+                load_floor: deadline("load"),
+                run_floor: deadline("run"),
                 factor: 0.0,
             });
             if let Some(fault) = fault {
@@ -778,6 +787,8 @@ mod tests {
     #[test]
     fn hang_at_run_times_out_in_danish_and_next_call_starts_a_new_process() {
         let mut f = Fixture::faulty(None, DevicePolicy::Cpu, false).unwrap();
+        // The hang comes from the call itself, not from a fault, so shorten the run deadline here.
+        f.client.deadlines.as_mut().unwrap().run_floor = Duration::from_millis(800);
         let old = pid(&f);
         let start = Instant::now();
         let error = f.client.call(b"hang", &[0.1; 160]).err();
