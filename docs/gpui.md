@@ -206,6 +206,16 @@ the same time; both use the same database with the same migrations.
     "Gendan afbrudte møder" opens with the recording (length, "Lyd findes").
     "Gendan" saves the meeting, transcribes it and opens it. Repeat and use
     "Slet" (it asks first): the dialog closes and the card on Home is gone.
+14. **Aflevering af referat.** Indstillinger, Generelt, Aflevering af referat:
+    add a "Mappe" target with a full path to an empty folder and press "Gem
+    mål" (nothing is sent). With "Kun lokal" ticked, "Test mål" is off; untick
+    "Kun lokal" and press "Test mål": a "Afleveret" line appears in the queue
+    and four files in a new subfolder. Open a meeting with a summary: below
+    it, "Aflever referatet til" lists the target. The button is off until the
+    consent box is ticked; "Godkend og aflever referat" queues the meeting
+    ("Referatet er godkendt og lagt i afleveringskøen") and the queue shows
+    it. Tick "Privat tilstand": the meeting page says delivery is blocked and
+    the button is off. Use Tab and Space only for the whole flow.
 
 Write the results here:
 
@@ -224,6 +234,7 @@ Write the results here:
 | 11. Tray start and stop | | |
 | 12. Microphone errors | | |
 | 13. Gendan afbrudte møder | | |
+| 14. Aflevering af referat | | |
 
 **No-go** if text input (2, 3) or the UIA tree (4) fails without a fix in
 gpui-component's next release; the rest are fixable in the app.
@@ -234,8 +245,10 @@ gpui-component's next release; the rest are fixable in the app.
   adds `DbInitError` to core, the error page should map its variants and add
   "Åbn backup".
 - Settings and dictation are still placeholders. The meeting document shows the
-  summary read-only; editing, making a summary, delivery and retranscription
-  are disabled with an explanation until they are ported.
+  summary read-only; editing, making a summary and retranscription are
+  disabled with an explanation until they are ported. Delivery works
+  ("Godkend og aflever referat"), and edits must be saved before approval
+  once editing exists (`DeliveryApproval::set_unsaved`).
 - `AppHost` is implemented by `tingskriver-host`'s bridge ([host.md](host.md));
   the pages do not subscribe to its events yet.
 

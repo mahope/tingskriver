@@ -5,7 +5,16 @@ create a target, then disable **Kun lokal** to enable delivery. **Test mål** qu
 synthetic content, never a meeting. The queue shows attempts, retries, failures
 and completed deliveries. Saving a target sends nothing. On the meeting page,
 save edits, choose a target, confirm consent and click **Godkend og aflever
-referat**. These controls are in Tauri; GPUI's meeting/settings port is separate.
+referat**. The GPUI app has the same controls: Indstillinger → Generelt →
+Aflevering af referat (targets, test, queue, retry) and, below the summary on
+the meeting page, the target choice, the consent checkbox and **Godkend og
+aflever referat** (`crates/tingskriver-app/src/pages/meeting_delivery.rs`). It
+uses the host's one delivery service, so the app and its MCP task share one
+queue and one `run_due()` timer. An approval for a meeting that an MCP client
+already asked to approve answers that request instead of queueing a second
+job. Status texts are fixed strings: no target, address, path or meeting
+content is shown in the UI. While the Tauri app runs it owns the queue and the
+GPUI settings page says the queue could not be read.
 
 **Kun lokal** and **Privat tilstand** block every delivery, including folders
 (which might be network drives), tests and retries. Existing jobs stay paused

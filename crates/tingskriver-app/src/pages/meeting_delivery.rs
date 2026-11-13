@@ -9,7 +9,7 @@
 
 use std::time::Duration;
 
-use gpui::{div, prelude::*, AnyElement, Context, Entity, SharedString, Task, Window};
+use gpui::{div, prelude::*, Context, Entity, SharedString, Task, Window};
 use gpui_component::{
     checkbox::Checkbox,
     h_flex,
@@ -280,12 +280,10 @@ impl DeliveryApproval {
         })
         .detach();
     }
+}
 
-    pub(crate) fn render_block(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+impl Render for DeliveryApproval {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = palette(cx);
         let frame = || {
             v_flex()
@@ -384,12 +382,6 @@ impl DeliveryApproval {
                 )
             })
             .into_any_element()
-    }
-}
-
-impl Render for DeliveryApproval {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.render_block(window, cx)
     }
 }
 
