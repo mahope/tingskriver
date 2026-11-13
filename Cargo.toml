@@ -12,7 +12,7 @@ members = [
 
 # Shared workspace settings
 [workspace.package]
-version = "0.5.3-dev.1"
+version = "0.5.3-dev.2"
 edition = "2021"
 rust-version = "1.89"
 license = "MIT"
