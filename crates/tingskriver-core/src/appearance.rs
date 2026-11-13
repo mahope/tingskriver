@@ -39,11 +39,11 @@ impl Appearance {
         let text = match std::fs::read_to_string(data_dir.join(FILE)) {
             Ok(text) => text,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
-            Err(e) => return Err(format!("Kunne ikke læse udseendet: {e}")),
+            Err(e) => return Err(crate::strings::appearance_file_read_failed(&e.to_string())),
         };
         serde_json::from_str::<Stored>(&text)
             .map(|stored| stored.appearance)
-            .map_err(|e| format!("Udseendet er ugyldigt: {e}"))
+            .map_err(|e| crate::strings::appearance_file_invalid(&e.to_string()))
     }
 
     /// Writes the choice (temp file, then rename). Saves in the same process
@@ -51,7 +51,7 @@ impl Appearance {
     #[allow(clippy::disallowed_methods)] // Called on a blocking worker.
     pub fn save(self, data_dir: &Path) -> Result<(), String> {
         let _saving = SAVING.lock().unwrap_or_else(|e| e.into_inner());
-        let fail = |e: std::io::Error| format!("Kunne ikke gemme udseendet: {e}");
+        let fail = |e: std::io::Error| crate::strings::appearance_file_write_failed(&e.to_string());
         let json = serde_json::to_string_pretty(&Stored { appearance: self })
             .map_err(|e| e.to_string())?;
         std::fs::create_dir_all(data_dir).map_err(fail)?;

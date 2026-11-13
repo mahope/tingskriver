@@ -20,7 +20,11 @@ use gpui::{
     Window,
 };
 use gpui_component::{
-    dialog::DialogFooter, h_flex, notification::Notification, v_flex, Icon, WindowExt,
+    dialog::DialogFooter,
+    h_flex,
+    notification::Notification,
+    scroll::{ScrollableElement as _, Scrollbar},
+    v_flex, Icon, WindowExt,
 };
 use gpui_kit_assets::IconName;
 use tingskriver_core::strings;
@@ -391,10 +395,16 @@ impl AboutView {
                             .gap(space::XS)
                             .child(div().font_weight(FontWeight::MEDIUM).child(*title))
                             .child(
+                                // The scrollbar sits over the box, so the
+                                // long texts show that they scroll.
                                 div()
-                                    .id(("about-document", index))
+                                    .relative()
                                     .h(size::DOCUMENT_HEIGHT)
                                     .flex_shrink_0()
+                                    .child(
+                                div()
+                                    .id(("about-document", index))
+                                    .size_full()
                                     .p(space::MD)
                                     .rounded(theme::RADIUS)
                                     .border_1()
@@ -430,6 +440,8 @@ impl AboutView {
                                     .role(Role::Document)
                                     .aria_label(*title)
                                     .child(text.to_string()),
+                                    )
+                                    .child(Scrollbar::vertical(&self.document_scroll[index])),
                             )
                     }),
             )
@@ -467,7 +479,7 @@ impl Render for AboutView {
             .aria_label(SharedString::from(strings::ABOUT_APP))
             .w_full()
             .max_h(max_height)
-            .overflow_y_scroll()
+            .overflow_y_scrollbar()
             .p(space::LG)
             .gap(space::XL)
             .font_family(typography::SANS)

@@ -138,6 +138,9 @@ catalogue! {
     APPEARANCE_DARK = "Mørkt";
     APPEARANCE_SAVE_FAILED = "Udseendet kunne ikke gemmes: {value}";
     APPEARANCE_LOAD_FAILED = "Det gemte udseende kunne ikke læses: {value}";
+    APPEARANCE_FILE_READ_FAILED = "Kunne ikke læse udseendet: {value}";
+    APPEARANCE_FILE_INVALID = "Udseendet er ugyldigt: {value}";
+    APPEARANCE_FILE_WRITE_FAILED = "Kunne ikke gemme udseendet: {value}";
     NOTIFICATIONS_TITLE = "Notifikationer";
     NOTIFICATIONS_HELP = "Få en besked, når en optagelse starter og stopper.";
     NOTIFICATIONS_LABEL = "Notifikationer om start og slut";
@@ -617,6 +620,9 @@ parameterized! {
     special_characters => SPECIAL;
     appearance_save_failed => APPEARANCE_SAVE_FAILED;
     appearance_load_failed => APPEARANCE_LOAD_FAILED;
+    appearance_file_read_failed => APPEARANCE_FILE_READ_FAILED;
+    appearance_file_invalid => APPEARANCE_FILE_INVALID;
+    appearance_file_write_failed => APPEARANCE_FILE_WRITE_FAILED;
     delivery_remove_confirm => DELIVERY_REMOVE_CONFIRM;
     delivery_next_attempt => DELIVERY_NEXT_ATTEMPT;
     mcp_setup_label => MCP_SETUP_LABEL;
