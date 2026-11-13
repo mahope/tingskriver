@@ -555,6 +555,14 @@ impl MeetingsView {
         )
     }
 
+    /// Whether the meeting `id` is in the list.
+    pub(crate) fn contains(&self, id: &str) -> bool {
+        self.list
+            .rows()
+            .iter()
+            .any(|row| matches!(row, Row::Meeting(m) if m.data.id == id))
+    }
+
     /// The open meeting's row, for the content area.
     pub(crate) fn selected_meeting(&self) -> Option<&meeting_list::Meeting> {
         let id = self.selected.as_deref()?;

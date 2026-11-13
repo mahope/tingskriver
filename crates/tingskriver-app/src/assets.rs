@@ -94,6 +94,8 @@ gpui_kit_assets::icon_assets!(
         Save,
         FileQuestionMark,
         SquareCheck,
+        // Job 6: "Systemlyd" on the Optagelser settings tab.
+        Speaker,
     ]
 );
 
@@ -228,6 +230,7 @@ mod tests {
             IconName::Info,
             IconName::CircleCheckBig,
             IconName::Download,
+            IconName::Speaker,
         ];
         for icon in icons {
             let path = icon.path();

@@ -20,7 +20,13 @@ fn fixtures() -> Vec<(String, Page, DbState, FixtureVariant)> {
         .into_iter()
         .map(|page| {
             (
-                format!("{page:?}").to_lowercase(),
+                // Indstillinger opens on Generelt: one golden per tab
+                // (docs/design-paritet.md, Job 5), so the page fixture is
+                // `settings-general`.
+                match page {
+                    Page::Settings => "settings-general".to_string(),
+                    _ => format!("{page:?}").to_lowercase(),
+                },
                 page,
                 DbState::NotCreated,
                 FixtureVariant::Plain,
@@ -40,7 +46,7 @@ fn fixtures() -> Vec<(String, Page, DbState, FixtureVariant)> {
         DbState::NotCreated,
         FixtureVariant::SidebarCollapsed,
     ));
-    // One per settings tab; `settings` above is Generelt
+    // One per settings tab; `settings-general` above is Generelt
     // (docs/screenshots/indstillinger-*.png).
     for tab in SettingsTab::ALL.into_iter().skip(1) {
         fixtures.push((

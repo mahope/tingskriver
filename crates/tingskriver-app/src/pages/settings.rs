@@ -1,9 +1,9 @@
 //! The Indstillinger page as in the Tauri app (`app/settings/page.tsx`): a
 //! header with "Tilbage" and the title, underline tabs, and the Generelt tab
 //! (`PreferenceSettings.tsx`, `delivery/DeliverySettings.tsx`,
-//! `mcp/McpSettings.tsx`). The other tabs hold what the GPUI app has today
-//! (languages, voiceprint) until their jobs build them
-//! (docs/design-paritet.md, Jobs 6 and 7).
+//! `mcp/McpSettings.tsx`). Optagelser, Transskription, Opsummering and Beta
+//! are in `settings_tabs` (docs/design-paritet.md, Job 6); Diktering is
+//! Job 7.
 
 use std::path::PathBuf;
 
@@ -99,6 +99,8 @@ pub(crate) struct SettingsModel {
     pub(crate) appearance_saves: u64,
     /// Aflevering af referat (`settings_delivery`).
     pub(crate) delivery: super::settings_delivery::DeliveryModel,
+    /// The saved engine and summary model (Job 6, `settings_tabs`).
+    pub(crate) saved_models: super::settings_tabs::SavedModels,
     /// Whether Windows keeps crash dumps; `None` outside Windows.
     pub(crate) crash_dumps: Option<bool>,
     pub(crate) crash_dumps_pending: bool,
@@ -132,6 +134,43 @@ pub(crate) fn load_appearance(model: &Entity<AppModel>, cx: &mut App) {
     }
 }
 
+/// Note the page being shown, so "Tilbage" in Indstillinger returns to it.
+/// Called on every draw of the shell; Indstillinger, its sub-page Måling and
+/// the About dialog are not places to return to.
+pub(crate) fn remember_return(shell: &mut Shell, cx: &App) {
+    let meeting = shell.meetings.read(cx).selected.clone();
+    if let Some(back) = return_point(shell.page, meeting) {
+        shell.settings.back = Some(back);
+    }
+}
+
+/// The place "Tilbage" returns to when `page` is shown with `meeting` open,
+/// or `None` when `page` is not a place to return to.
+fn return_point(page: Page, meeting: Option<String>) -> Option<(Page, Option<String>)> {
+    returns_here(page).then_some((page, meeting))
+}
+
+/// Where "Tilbage" goes from the remembered `back`: Home if nothing was
+/// remembered, and no meeting if the remembered one no longer exists (it
+/// was deleted while Indstillinger was open).
+fn back_target(
+    back: Option<(Page, Option<String>)>,
+    exists: impl Fn(&str) -> bool,
+) -> (Page, Option<String>) {
+    let (page, meeting) = back.unwrap_or((Page::Home, None));
+    (page, meeting.filter(|id| exists(id)))
+}
+
+/// "Tilbage" from Måling, a sub-page of Indstillinger: the settings page on
+/// the Transskription tab, where Måling is opened.
+pub(crate) const MEASUREMENT_BACK: (Page, SettingsTab) =
+    (Page::Settings, SettingsTab::Transcription);
+
+/// Whether "Tilbage" may return to `page`.
+fn returns_here(page: Page) -> bool {
+    !matches!(page, Page::Settings | Page::Measurement | Page::About)
+}
+
 /// The MCP access levels in the order of Tauri's select.
 const ACCESS: [(Access, &str); 4] = [
     (Access::Marked, strings::MCP_MARKED),
@@ -157,6 +196,9 @@ pub(crate) struct SettingsView {
     access: Entity<AccessSelect>,
     /// The add-target form of Aflevering af referat.
     pub(crate) delivery: super::settings_delivery::DeliveryForm,
+    /// Where "Tilbage" goes: the last page shown before Indstillinger and
+    /// the meeting open on it (`remember_return`).
+    pub(crate) back: Option<(Page, Option<String>)>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -210,6 +252,7 @@ impl SettingsView {
                 .collect(),
             access,
             delivery: super::settings_delivery::DeliveryForm::new(window, cx),
+            back: None,
             _subscriptions: subscriptions,
         }
     }
@@ -227,63 +270,22 @@ impl SettingsView {
 
 impl Shell {
     pub(crate) fn settings_page(&self, cx: &mut Context<Self>) -> AnyElement {
-        let palette = palette(cx);
-        // Tauri: sticky header with a bottom border, px 32 py 24.
-        let header = div()
-            .w_full()
-            .flex_none()
-            .border_b_1()
-            .border_color(palette.border)
-            .bg(palette.background)
-            .child(
-                h_flex()
-                    .w_full()
-                    .max_w(layout::SETTINGS_MAX)
-                    .px(space::XXL)
-                    .py(space::XL)
-                    .gap(space::LG)
-                    .child(
-                        controls::button("settings-back", Variant::Ghost)
-                            .label(strings::SETTINGS_BACK)
-                            .icon(Icon::new(IconName::ArrowLeft).size(icon_size::MD))
-                            .px(space::SM)
-                            .text_size(typography::BASE)
-                            .font_weight(FontWeight::NORMAL)
-                            .text_color(palette.muted_foreground)
-                            .self_center()
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.page = Page::Home;
-                                cx.notify();
-                            })),
-                    )
-                    .child(heading(strings::SETTINGS, Level::Page)),
-            );
+        let header = self.sub_page_header(
+            "settings-back",
+            strings::SETTINGS,
+            |this, cx| this.leave_settings(cx),
+            cx,
+        );
         let tab = self.settings.tab;
         let panel = match tab {
             SettingsTab::General => self.general_tab(cx),
-            SettingsTab::Transcription => tab_column(vec![
-                self.language_section(cx).into_any_element(),
-                moves_later(cx),
+            SettingsTab::Recording => self.recording_settings_tab(cx),
+            SettingsTab::Transcription => self.transcription_settings_tab(cx),
+            SettingsTab::Summary => self.summary_settings_tab(cx),
+            SettingsTab::Beta => self.beta_settings_tab(cx),
+            SettingsTab::Dictation => tab_column(vec![
+                muted(strings::SETTINGS_MOVES_LATER, cx).into_any_element()
             ]),
-            SettingsTab::Beta => tab_column(vec![
-                settings_section(
-                    "settings-voiceprint",
-                    Some(heading(strings::VOICEPRINT_TITLE, Level::Section).into_any_element()),
-                    None,
-                    v_flex()
-                        .gap(space::SM)
-                        .children(voiceprint_lines().iter().map(|line| muted(line, cx)))
-                        .into_any_element(),
-                    true,
-                    cx,
-                ),
-                moves_later(cx),
-            ]),
-            SettingsTab::Recording | SettingsTab::Summary | SettingsTab::Dictation => {
-                tab_column(vec![
-                    muted(strings::SETTINGS_MOVES_LATER, cx).into_any_element()
-                ])
-            }
         };
         let body = v_flex()
             .id("settings-scroll")
@@ -314,6 +316,60 @@ impl Shell {
             .child(header)
             .child(body)
             .into_any_element()
+    }
+
+    /// The Tauri settings header: sticky, bottom border, px 32 py 24, a muted
+    /// "Tilbage" and the 30 px title. Indstillinger and its sub-page Måling
+    /// (Job 6) share it.
+    pub(crate) fn sub_page_header(
+        &self,
+        back_id: &'static str,
+        title: &str,
+        on_back: fn(&mut Shell, &mut Context<Shell>),
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let palette = palette(cx);
+        div()
+            .w_full()
+            .flex_none()
+            .border_b_1()
+            .border_color(palette.border)
+            .bg(palette.background)
+            .child(
+                h_flex()
+                    .w_full()
+                    .max_w(layout::SETTINGS_MAX)
+                    .px(space::XXL)
+                    .py(space::XL)
+                    .gap(space::LG)
+                    .child(
+                        controls::button(back_id, Variant::Ghost)
+                            .label(strings::SETTINGS_BACK)
+                            .icon(Icon::new(IconName::ArrowLeft).size(icon_size::MD))
+                            .px(space::SM)
+                            .text_size(typography::BASE)
+                            .font_weight(FontWeight::NORMAL)
+                            .text_color(palette.muted_foreground)
+                            .self_center()
+                            .on_click(cx.listener(move |this, _, _, cx| on_back(this, cx))),
+                    )
+                    .child(heading(title, Level::Page)),
+            )
+    }
+
+    /// "Tilbage" from Indstillinger: the page it was opened from, with the
+    /// meeting that was open (Tauri: `router.back()`). Home if unknown.
+    fn leave_settings(&mut self, cx: &mut Context<Self>) {
+        let meetings = self.meetings.read(cx);
+        let (page, meeting) = back_target(self.settings.back.clone(), |id| meetings.contains(id));
+        self.page = page;
+        if meeting.is_some() {
+            self.meetings.update(cx, |meetings, cx| {
+                meetings.selected = meeting;
+                cx.notify();
+            });
+        }
+        cx.notify();
     }
 
     /// Underline tabs: 16 px icon and label, the active one in primary with a
@@ -557,15 +613,7 @@ impl Shell {
                     .disabled(recordings.is_none())
                     .on_click(move |_, _, _| {
                         if let Some(dir) = recordings.clone() {
-                            // The folder appears with the first recording;
-                            // create it so the file manager has something
-                            // to open.
-                            runtime.spawn_blocking(move || {
-                                if let Err(error) = std::fs::create_dir_all(&dir) {
-                                    log::warn!("Could not create the recordings folder: {error}");
-                                }
-                                startup::open_folder(&dir);
-                            });
+                            open_recordings_folder(&runtime, dir);
                         }
                     }),
             )
@@ -906,7 +954,7 @@ impl Shell {
     }
 
     /// Meeting and report languages (#209), on the Transskription tab.
-    fn language_section(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(super) fn language_section(&self, cx: &mut Context<Self>) -> impl IntoElement {
         use tingskriver_core::meeting_language::{label, CHOICES};
         let model = self.model.read(cx);
         let languages = model.languages.clone();
@@ -914,9 +962,11 @@ impl Shell {
         let primary_buttons = CHOICES.iter().enumerate().map(|(at, (code, _))| {
             let code = *code;
             let model = self.model.clone();
-            controls::button(("language-primary", at), Variant::Outline)
+            let selected = languages.primary == code;
+            controls::small_button(("language-primary", at), Variant::Outline)
                 .label(label(code))
-                .selected(languages.primary == code)
+                .selected(selected)
+                .when(selected, |b| b.icon(IconName::Check))
                 .on_click(move |_, _, cx| {
                     model.update(cx, |m, cx| {
                         m.change_languages(cx, |l| l.with_primary(code));
@@ -931,9 +981,11 @@ impl Shell {
             .map(|(at, (code, _))| {
                 let code = *code;
                 let model = self.model.clone();
-                controls::button(("language-extra", at), Variant::Outline)
+                let selected = languages.extra.iter().any(|c| c == code);
+                controls::small_button(("language-extra", at), Variant::Outline)
                     .label(label(code))
-                    .selected(languages.extra.iter().any(|c| c == code))
+                    .selected(selected)
+                    .when(selected, |b| b.icon(IconName::Check))
                     .on_click(move |_, _, cx| {
                         model.update(cx, |m, cx| {
                             m.change_languages(cx, |l| l.with_extra_toggled(code));
@@ -942,13 +994,10 @@ impl Shell {
                     })
             });
         let summary_model = self.model.clone();
-        let summary_button = controls::button("language-summary-primary", Variant::Outline)
-            .label(if languages.summary_in_primary {
-                strings::LANGUAGE_SUMMARY_ON
-            } else {
-                strings::LANGUAGE_SUMMARY_OFF
-            })
-            .selected(languages.summary_in_primary)
+        // Job 6: a switch row, as Tauri shows on/off settings.
+        let summary_button = controls::switch("language-summary-primary")
+            .checked(languages.summary_in_primary)
+            .accessibility_label(strings::settings_tabs::LANGUAGE_SUMMARY_SWITCH)
             .on_click(move |_, _, cx| {
                 summary_model.update(cx, |m, cx| {
                     m.change_languages(cx, |mut l| {
@@ -991,7 +1040,13 @@ impl Shell {
             )
             .child(muted(strings::LANGUAGE_EXTRA_HELP, cx))
             .child(h_flex().gap(space::SM).flex_wrap().children(extra_buttons))
-            .child(h_flex().mt(space::SM).child(summary_button))
+            .child(div().mt(space::SM).child(switch_row(
+                "language-summary",
+                strings::settings_tabs::LANGUAGE_SUMMARY_SWITCH,
+                Some(strings::settings_tabs::LANGUAGE_SUMMARY_SWITCH_HINT),
+                summary_button,
+                cx,
+            )))
             .child(muted(strings::LANGUAGE_PROVIDERS, cx))
             .child(muted(strings::LANGUAGE_NEW_MEETINGS, cx))
             .children(error.map(|e| alert("language-error", &e, cx)));
@@ -1000,14 +1055,26 @@ impl Shell {
             Some(heading(strings::LANGUAGES, Level::Section).into_any_element()),
             None,
             body.into_any_element(),
-            true,
+            false,
             cx,
         )
     }
 }
 
 /// The column of a tab: 672 px (`max-w-2xl`), sections 40 px apart.
-fn tab_column(children: Vec<AnyElement>) -> AnyElement {
+/// Open the recordings folder in the file manager (Generelt and Optagelser).
+/// The folder appears with the first recording, so create it first to give
+/// the file manager something to open.
+pub(super) fn open_recordings_folder(runtime: &tokio::runtime::Handle, dir: PathBuf) {
+    runtime.spawn_blocking(move || {
+        if let Err(error) = std::fs::create_dir_all(&dir) {
+            log::warn!("Could not create the recordings folder: {error}");
+        }
+        startup::open_folder(&dir);
+    });
+}
+
+pub(super) fn tab_column(children: Vec<AnyElement>) -> AnyElement {
     v_flex()
         .w_full()
         .max_w(layout::SETTINGS_SECTION_MAX)
@@ -1016,14 +1083,9 @@ fn tab_column(children: Vec<AnyElement>) -> AnyElement {
         .into_any_element()
 }
 
-/// The muted line for controls that are not in this app yet.
-fn moves_later(cx: &App) -> AnyElement {
-    muted(strings::SETTINGS_MOVES_LATER, cx).into_any_element()
-}
-
 /// A Tauri settings section: title, 14 px muted description and the
 /// controls; every section but the first has a top border and 32 px above.
-fn settings_section(
+pub(super) fn settings_section(
     id: &'static str,
     title: Option<AnyElement>,
     help: Option<&str>,
@@ -1060,7 +1122,7 @@ fn subheading(text: &str) -> AnyElement {
 }
 
 /// A control's name: body size, medium (`font-medium text-foreground`).
-pub(super) fn field_label(text: &str) -> impl IntoElement {
+pub(crate) fn field_label(text: &str) -> impl IntoElement {
     div()
         .font_weight(FontWeight::MEDIUM)
         .child(text.to_string())
@@ -1079,7 +1141,7 @@ pub(super) fn alert(id: &'static str, text: &str, cx: &App) -> AnyElement {
 }
 
 /// Label and hint on the left, the switch on the right.
-fn switch_row(
+pub(super) fn switch_row(
     id: impl Into<gpui::ElementId>,
     label: &str,
     hint: Option<&str>,
@@ -1163,20 +1225,6 @@ fn set_crash_dumps(model: Entity<AppModel>, enabled: bool, cx: &mut App) {
         });
     })
     .detach();
-}
-
-/// The voiceprint explanation, Danish first and English below on the same
-/// page. Voiceprints are off by default and there is no switch yet, so the
-/// status line says off.
-fn voiceprint_lines() -> Vec<String> {
-    use tingskriver_core::voiceprint::texts;
-    let paragraphs = texts::explanation();
-    let mut lines = vec![strings::VOICEPRINT_STATUS_OFF.to_string()];
-    lines.extend(paragraphs.iter().map(|p| p.da.to_string()));
-    lines.push(texts::EN_TITLE.to_string());
-    lines.push(texts::EN_STATUS_OFF.to_string());
-    lines.extend(paragraphs.iter().map(|p| p.en.to_string()));
-    lines
 }
 
 fn save_access(model: Entity<AppModel>, access: Access, cx: &mut App) {
@@ -1304,6 +1352,47 @@ mod tests {
             assert_eq!(tab.index(), index);
         }
         assert_eq!(SettingsTab::default(), SettingsTab::General);
+    }
+
+    #[test]
+    fn back_returns_to_pages_but_not_to_settings_or_its_sub_page() {
+        assert!(returns_here(Page::Home));
+        assert!(returns_here(Page::Dictation));
+        assert!(!returns_here(Page::Settings));
+        assert!(!returns_here(Page::Measurement));
+        assert!(!returns_here(Page::About));
+    }
+
+    #[test]
+    fn back_restores_the_page_and_meeting_it_came_from() {
+        let meeting = Some("m1".to_string());
+        let back = return_point(Page::Home, meeting.clone());
+        assert_eq!(back, Some((Page::Home, meeting.clone())));
+        // Opening Måling or the About dialog from Indstillinger keeps it.
+        assert_eq!(return_point(Page::Measurement, None), None);
+        assert_eq!(return_point(Page::Settings, None), None);
+        assert_eq!(back_target(back, |_| true), (Page::Home, meeting));
+        let dictation = return_point(Page::Dictation, None);
+        assert_eq!(back_target(dictation, |_| true), (Page::Dictation, None));
+    }
+
+    #[test]
+    fn back_goes_home_when_nothing_was_remembered() {
+        assert_eq!(back_target(None, |_| true), (Page::Home, None));
+    }
+
+    #[test]
+    fn back_drops_a_meeting_deleted_while_settings_was_open() {
+        let back = Some((Page::Home, Some("gone".to_string())));
+        assert_eq!(back_target(back, |id| id != "gone"), (Page::Home, None));
+    }
+
+    #[test]
+    fn back_from_measurement_opens_the_transcription_tab() {
+        assert_eq!(
+            MEASUREMENT_BACK,
+            (Page::Settings, SettingsTab::Transcription)
+        );
     }
 
     #[test]

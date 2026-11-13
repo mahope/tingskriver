@@ -458,6 +458,35 @@ pub mod about_dialog {
 
 // ---- end of Job 8 block ----
 
+// ---- Job 6 (settings tabs Optagelser, Transskription, Opsummering, Beta;
+// docs/design-paritet.md): added constants ----
+
+/// The settings tabs of Job 6 (`RecordingSettings.tsx`,
+/// `TranscriptSettings.tsx`, `SummaryModelSettings.tsx`,
+/// `SummaryLanguageSettings.tsx`, `BetaSettings.tsx`) and the Måling
+/// sub-page.
+pub mod settings_tabs {
+    use gpui::{px, Pixels};
+
+    /// The Beta banner and info box: `bg-warning/10`, `bg-primary/10`.
+    pub const TINT: f32 = 0.1;
+    /// Their borders: `border-warning/30`, `border-primary/30`.
+    pub const TINT_BORDER: f32 = 0.3;
+    /// The "Beta" badge: `bg-warning/15`.
+    pub const BADGE_TINT: f32 = 0.15;
+    /// The badge's padding (`px-2 py-0.5`).
+    pub const BADGE_PADDING_Y: Pixels = px(2.0);
+    /// The icon in a card title (`h-5 w-5`, `size={18}` for the globe).
+    pub const CARD_ICON: Pixels = px(20.0);
+    /// A control this app cannot use yet: `disabled:opacity-50`.
+    pub const DISABLED_OPACITY: f32 = 0.5;
+    /// Måling: the tariff input at the end of a provider row, wide enough
+    /// for its placeholder.
+    pub const RATE_INPUT_WIDTH: Pixels = px(248.0);
+}
+
+// ---- end of Job 6 block ----
+
 /// Tailwind's shadows (`shadow-sm`, `shadow`, `shadow-md`), the same in both
 /// modes as in the Tauri app.
 pub mod shadow {
@@ -810,6 +839,23 @@ mod tests {
             ),
             ("warning text on card", p.warning, p.card),
             ("shortcut chip", p.foreground, p.muted),
+            // Job 6: the Beta banner and info box and the "Beta" badge in a
+            // card.
+            (
+                "warning text on the warning tint over background",
+                p.warning,
+                over(p.warning, p.background, settings_tabs::TINT),
+            ),
+            (
+                "primary text on the primary tint over background",
+                p.primary,
+                over(p.primary, p.background, settings_tabs::TINT),
+            ),
+            (
+                "warning text on the badge tint over card",
+                p.warning,
+                over(p.warning, p.card, settings_tabs::BADGE_TINT),
+            ),
             // Job 8: the error box of the update dialog.
             (
                 "destructive text on the destructive tint over background",

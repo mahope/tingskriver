@@ -356,6 +356,8 @@ catalogue! {
     SETTINGS_LATER = "Indstillingerne flytter hertil i en senere version. Her kan du se, hvordan appen kører.";
     VOICEPRINT_TITLE = "Stemmeaftryk";
     VOICEPRINT_STATUS_OFF = "Slået fra. Tingskriver husker ingen stemmer.";
+    // Beta tab (Job 6): there is no switch to turn voiceprints on yet.
+    VOICEPRINT_NO_SWITCH = "Der er endnu ingen kontakt til at slå stemmeaftryk til.";
     VOICEPRINT_STATUS_ON = "Slået til. Tingskriver husker kun stemmer for personer, du har samtykke fra.";
     VOICEPRINT_WHAT = "Et stemmeaftryk er en række tal, der beskriver, hvordan en bestemt stemme lyder. Med et aftryk kan Tingskriver foreslå navnet på en deltager, der går igen, så du ikke skal skrive det hver gang.";
     VOICEPRINT_LAW = "Et stemmeaftryk kan genkende en person og er derfor biometriske oplysninger. De har særlig stærk beskyttelse i GDPR (artikel 9), så du må kun gemme dem med personens samtykke.";
@@ -372,8 +374,6 @@ catalogue! {
     LANGUAGE_PRIMARY_HELP = "Bruges til referat og chat og er altid med som transskriptionssprog. Standard er dansk.";
     LANGUAGE_EXTRA = "Ekstra talesprog";
     LANGUAGE_EXTRA_HELP = "Sprog, der også tales i møderne, fx engelsk. De giver transskriptionen kontekst.";
-    LANGUAGE_SUMMARY_ON = "Skriv altid referat på hovedsproget: til";
-    LANGUAGE_SUMMARY_OFF = "Skriv altid referat på hovedsproget: fra (referatet følger det mest talte af de valgte sprog)";
     LANGUAGE_PROVIDERS = "Hovedsproget og de ekstra talesprog sendes til Syv.ai og andre netudbydere som sprog og kontekst. Den lokale model bruger kun hovedsproget.";
     LANGUAGE_NEW_MEETINGS = "Ændringer gælder nye optagelser og nye referater. Et eksisterende transskript oversættes ikke. Vil du have et referat på det nye sprog, så lav referatet om.";
     LANGUAGE_SAVE_FAILED = "Sprogvalget kunne ikke gemmes: {value}";
@@ -747,6 +747,9 @@ pub fn measure_result_line(wer: &str, errors: &str, latency: &str, price: &str) 
 
 /// Onboarding (docs/design-paritet.md, Job 9).
 pub mod onboarding;
+/// The settings tabs Optagelser, Transskription, Opsummering and Beta
+/// (docs/design-paritet.md, Job 6).
+pub mod settings_tabs;
 
 #[cfg(test)]
 mod tests {

@@ -561,8 +561,8 @@ pub enum Page {
     /// screen (`--page om`, the tray). The shell opens the dialog and shows
     /// Home underneath.
     About,
-    /// Not in the sidebar: reachable with `--page måling` until Settings
-    /// links it (docs/design-paritet.md, Job 6).
+    /// Not in the sidebar: a sub-page of Indstillinger > Transskription
+    /// (docs/design-paritet.md, Job 6), also `--page måling`.
     Measurement,
 }
 
@@ -639,7 +639,7 @@ pub struct Shell {
     about: Entity<crate::about_dialog::AboutView>,
     pub(crate) model: Entity<AppModel>,
     pub(crate) page: Page,
-    measurement: Entity<crate::measurement::MeasurementView>,
+    pub(crate) measurement: Entity<crate::measurement::MeasurementView>,
     pub(crate) meetings: Entity<crate::meetings::MeetingsView>,
     /// The open meeting's document, replaced when another meeting opens.
     pub(crate) meeting_view: Option<Entity<crate::pages::meeting::MeetingView>>,
@@ -903,6 +903,8 @@ impl Render for Shell {
                 let _ = shell.update(cx, |shell, cx| shell.open_about(window, cx));
             });
         }
+        // Where "Tilbage" in Indstillinger returns to (Job 6).
+        crate::pages::settings::remember_return(self, cx);
         let palette = palette(cx);
         if self.page != Page::Dictation {
             self.dictation.hide();
@@ -959,7 +961,7 @@ impl Render for Shell {
                 }
                 (None, Page::Dictation) => self.dictation_page(cx),
                 (None, Page::Settings) => self.settings_page(cx),
-                (None, Page::Measurement) => self.measurement.clone().into_any_element(),
+                (None, Page::Measurement) => self.measurement_page(cx),
             }
         };
         let sidebar = failure.is_none() && onboarding.is_none();

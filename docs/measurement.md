@@ -1,6 +1,8 @@
 # Compare transcription providers
 
-Open **Måling** in the GPUI app (`tingskriver-app --page measurement`).
+Open **Måling** in the GPUI app from **Indstillinger > Transskription >
+Sammenlign modeller på din egen stemme** ("Tilbage" returns to that tab), or
+start it directly with `tingskriver-app --page measurement`.
 Import a roughly 60-second recording as a mono 16 kHz PCM16 WAV file (maximum
 90 seconds), then type the exact reference transcript. You can export a recording
 from your audio editor to this format. The page does not record from a microphone.

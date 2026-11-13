@@ -332,7 +332,8 @@ impl Shell {
                         "sidebar-settings",
                         IconName::Settings,
                         strings::SETTINGS,
-                        on_page(Page::Settings),
+                        // Måling is a sub-page of Indstillinger (Job 6).
+                        on_page(Page::Settings) || on_page(Page::Measurement),
                         Destination::Page(Page::Settings),
                         cx,
                     )))
@@ -476,7 +477,7 @@ impl Shell {
                     "collapsed-settings",
                     IconName::Settings,
                     strings::SETTINGS,
-                    page == Page::Settings,
+                    matches!(page, Page::Settings | Page::Measurement),
                     cx,
                 )
                 .on_click(self.on_nav(Destination::Page(Page::Settings), cx)),

@@ -1,14 +1,23 @@
 //! Import and compare a user's sample, without using provider fallback chains.
+//!
+//! Måling is a sub-page of Indstillinger > Transskription with the settings
+//! header ("Tilbage" returns to the tab), Tauri section style, a checkbox
+//! row per provider and model with the tariff inline, and the results as a
+//! card (docs/design-paritet.md 2.10, Job 6).
 use crate::{
     controls::{self, Variant},
-    theme::{layout, space},
-    ui::{page, paragraph, section_title},
+    pages::settings::field_label,
+    theme::{self, layout, settings as settings_size, settings_tabs as size, shadow, space},
+    ui::{heading, muted, palette, paragraph, Level, Shell},
 };
-use gpui::{prelude::*, Context, Entity, Window};
+use gpui::{div, prelude::*, AnyElement, Context, Entity, SharedString, Window};
 use gpui_component::{
+    checkbox::Checkbox,
+    h_flex,
     input::{InputState, Textarea, TextareaState},
-    v_flex, Disableable, Selectable,
+    v_flex, Disableable,
 };
+use gpui_kit_assets::IconName;
 use std::{path::PathBuf, sync::Arc};
 use tingskriver_core::{
     measurement::{self, Rate, Report, Sample, Selection},
@@ -223,58 +232,90 @@ impl MeasurementView {
 
 impl Render for MeasurementView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut body = v_flex()
+        let palette = palette(cx);
+        let sample = v_flex()
             .gap(space::LG)
-            .child(paragraph(strings::MEASURE_HELP, cx))
-            .child(section_title(strings::MEASURE_PATH))
-            .child(controls::input(&self.path).disabled(self.running))
-            .child(section_title(strings::MEASURE_REFERENCE))
-            .child(Textarea::new(&self.reference).disabled(self.running))
-            .child(section_title(strings::MEASURE_MODELS))
-            .child(paragraph(strings::MEASURE_PRIVACY, cx))
+            .child(muted(strings::MEASURE_HELP, cx))
             .child(
-                controls::button("reload-measurement", Variant::Outline)
-                    .label(strings::MEASURE_RELOAD)
-                    .disabled(self.running)
-                    .on_click(cx.listener(|view, _, window, cx| view.reload(window, cx))),
-            );
-        for (index, choice) in self.choices.iter().enumerate() {
-            body = body.child(
                 v_flex()
                     .gap(space::SM)
-                    .child(
-                        controls::button(("measure-choice", index), Variant::Outline)
-                            .label(format!(
-                                "{} {}",
-                                if choice.selected {
-                                    strings::MEASURE_SELECTED
-                                } else {
-                                    strings::MEASURE_SELECT
-                                },
-                                choice.label
-                            ))
-                            .selected(choice.selected)
+                    .child(field_label(strings::MEASURE_PATH))
+                    .child(controls::input(&self.path).disabled(self.running)),
+            )
+            .child(
+                v_flex()
+                    .gap(space::SM)
+                    .child(field_label(strings::MEASURE_REFERENCE))
+                    .child(Textarea::new(&self.reference).disabled(self.running)),
+            );
+
+        // One checkbox row per provider and model, the tariff inline.
+        let rows = self.choices.iter().enumerate().map(|(index, choice)| {
+            h_flex()
+                .id(("measure-row", index))
+                .w_full()
+                .min_h(layout::CONTROL_HEIGHT)
+                .py(space::SM)
+                .gap(space::LG)
+                .justify_between()
+                .border_b_1()
+                .border_color(palette.border)
+                .child(
+                    div().flex_1().min_w_0().child(
+                        Checkbox::new(("measure-choice", index))
+                            .label(choice.label.clone())
+                            .checked(choice.selected)
                             .disabled(self.running)
-                            .on_click(cx.listener(move |view, _, _, cx| {
-                                view.choices[index].selected = !view.choices[index].selected;
+                            .on_click(cx.listener(move |view, checked: &bool, _, cx| {
+                                view.choices[index].selected = *checked;
                                 cx.notify();
                             })),
-                    )
-                    .child(paragraph(strings::MEASURE_RATE, cx))
-                    .child(controls::input(&choice.rate).disabled(self.running)),
-            );
-        }
-        body = body
+                    ),
+                )
+                .child(
+                    div()
+                        .flex_none()
+                        .w(size::RATE_INPUT_WIDTH)
+                        .child(controls::input(&choice.rate).disabled(self.running)),
+                )
+        });
+        let models = v_flex()
+            .gap(space::LG)
+            .child(muted(strings::MEASURE_PRIVACY, cx))
+            .child(muted(strings::MEASURE_RATE, cx))
+            .child(v_flex().children(rows))
             .child(
-                controls::button("start-measurement", Variant::Primary)
-                    .label(strings::MEASURE_START)
-                    .disabled(self.running)
-                    .on_click(cx.listener(|view, _, _, cx| view.start(cx))),
+                h_flex()
+                    .gap(space::SM)
+                    .child(
+                        controls::button("start-measurement", Variant::Primary)
+                            .label(strings::MEASURE_START)
+                            .disabled(self.running)
+                            .on_click(cx.listener(|view, _, _, cx| view.start(cx))),
+                    )
+                    .child(
+                        controls::button("reload-measurement", Variant::Outline)
+                            .label(strings::MEASURE_RELOAD)
+                            .icon(IconName::RefreshCw)
+                            .disabled(self.running)
+                            .on_click(cx.listener(|view, _, window, cx| view.reload(window, cx))),
+                    ),
             )
-            .child(paragraph(&self.message, cx));
+            .child(
+                div()
+                    .id("measure-status")
+                    // The live region stays in the tree so the first
+                    // message is announced; only a message gets a label.
+                    .role(gpui::Role::Status)
+                    .when(!self.message.is_empty(), |this| {
+                        this.aria_label(SharedString::from(self.message.clone()))
+                            .child(paragraph(&self.message, cx))
+                    }),
+            );
+
+        let mut results = v_flex().gap(space::LG);
         if let Some(report) = &self.report {
-            body = body.child(section_title(strings::MEASURE_RESULTS));
-            for row in &report.results {
+            let rows = report.results.iter().enumerate().map(|(index, row)| {
                 let score = row
                     .score
                     .map(|s| strings::measure_errors(&s.errors().to_string()))
@@ -297,36 +338,120 @@ impl Render for MeasurementView {
                         )
                     })
                     .unwrap_or_else(|| strings::MEASURE_PRICE_UNKNOWN.into());
-                body = body.child(
-                    v_flex()
-                        .gap(space::SM)
-                        .child(section_title(&format!("{}: {}", row.provider, row.model)))
-                        .child(paragraph(&row.message, cx))
-                        .child(paragraph(
-                            &strings::measure_result_line(&wer, &score, &latency, &price),
-                            cx,
-                        )),
-                );
-            }
+                v_flex()
+                    .px(space::LG)
+                    .py(space::MD)
+                    .gap(space::XS)
+                    .when(index > 0, |this| {
+                        this.border_t_1().border_color(palette.border)
+                    })
+                    .child(field_label(&format!("{}: {}", row.provider, row.model)))
+                    .child(paragraph(
+                        &strings::measure_result_line(&wer, &score, &latency, &price),
+                        cx,
+                    ))
+                    .when(!row.message.is_empty(), |this| {
+                        this.child(muted(&row.message, cx))
+                    })
+            });
+            results = results.child(
+                v_flex()
+                    .id("measure-results")
+                    .role(gpui::Role::Group)
+                    .bg(palette.card)
+                    .text_color(palette.card_foreground)
+                    .border_1()
+                    .border_color(palette.border)
+                    .rounded(theme::RADIUS_LG)
+                    .shadow(shadow::sm())
+                    .children(rows),
+            );
         }
-        body = body.child(paragraph(strings::MEASURE_HISTORY, cx));
         let dir = self.dir.clone();
-        body = body.child(
-            controls::button("open-measurements", Variant::Outline)
-                .label(strings::MEASURE_OPEN)
-                .on_click(move |_, _, _| {
-                    if let Some(dir) = &dir {
-                        crate::startup::open_folder(&dir.join("measurements"));
-                    }
-                }),
+        results = results.child(muted(strings::MEASURE_HISTORY, cx)).child(
+            h_flex().child(
+                controls::button("open-measurements", Variant::Outline)
+                    .label(strings::MEASURE_OPEN)
+                    .icon(IconName::FolderOpen)
+                    .on_click(move |_, _, _| {
+                        if let Some(dir) = &dir {
+                            crate::startup::open_folder(&dir.join("measurements"));
+                        }
+                    }),
+            ),
         );
-        page(
+
+        let section = |id: &'static str, title: Option<&str>, body: gpui::Div, first: bool| {
+            v_flex()
+                .id(id)
+                .role(gpui::Role::Group)
+                .when(!first, |this| {
+                    this.border_t_1()
+                        .border_color(palette.border)
+                        .pt(space::XXL)
+                })
+                .when_some(title, |this, title| {
+                    this.child(div().mb(space::LG).child(heading(title, Level::Section)))
+                })
+                .child(body)
+        };
+        v_flex()
+            .w_full()
+            .max_w(layout::SETTINGS_SECTION_MAX)
+            .gap(settings_size::SECTION_GAP)
+            .child(section("measure-sample", None, sample, true))
+            .child(section(
+                "measure-models",
+                Some(strings::MEASURE_MODELS),
+                models,
+                false,
+            ))
+            .child(section(
+                "measure-results-section",
+                Some(strings::MEASURE_RESULTS),
+                results,
+                false,
+            ))
+    }
+}
+
+impl Shell {
+    /// Måling as a sub-page of Indstillinger > Transskription
+    /// (docs/design-paritet.md 2.10): the settings header with "Tilbage" to
+    /// that tab, and the view below in the settings column.
+    pub(crate) fn measurement_page(&self, cx: &mut Context<Shell>) -> AnyElement {
+        let header = self.sub_page_header(
+            "measurement-back",
             strings::MEASURE_TITLE,
-            None,
-            false,
-            layout::SETTINGS_SECTION_MAX,
-            body.into_any_element(),
+            |shell, cx| {
+                let (page, tab) = crate::pages::settings::MEASUREMENT_BACK;
+                shell.settings.select_tab(tab);
+                shell.page = page;
+                cx.notify();
+            },
             cx,
-        )
+        );
+        v_flex()
+            .id("page-measurement")
+            .size_full()
+            .child(header)
+            .child(
+                v_flex()
+                    .id("measurement-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .w_full()
+                    .overflow_y_scroll()
+                    .child(
+                        v_flex()
+                            .w_full()
+                            .max_w(layout::SETTINGS_MAX)
+                            .px(space::XXL)
+                            .pt(space::XL)
+                            .pb(space::XXL)
+                            .child(self.measurement.clone()),
+                    ),
+            )
+            .into_any_element()
     }
 }
