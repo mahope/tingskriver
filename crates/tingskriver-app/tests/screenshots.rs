@@ -97,6 +97,8 @@ fn fixtures() -> Vec<(String, Page, DbState, FixtureVariant)> {
         ("meeting-no-summary", FixtureMeeting::NoSummary),
         ("meeting-summary-error", FixtureMeeting::SummaryFailed),
         ("meeting-proposals", FixtureMeeting::Proposals),
+        ("meeting-delivery", FixtureMeeting::Delivery),
+        ("meeting-delivery-blocked", FixtureMeeting::DeliveryBlocked),
     ] {
         fixtures.push((
             name.into(),

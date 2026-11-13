@@ -33,6 +33,7 @@ use tingskriver_core::{
 
 use crate::controls::{self, Variant};
 use crate::meetings::MeetingsView;
+use crate::pages::meeting_delivery::DeliveryApproval;
 use crate::proposals::{ProposalReview, ProposalsApplied};
 use crate::startup::DbState;
 use crate::theme::{self, document as size, icon_size, layout, space, typography, Palette};
@@ -78,6 +79,8 @@ pub(crate) struct MeetingView {
     transcript: ListState,
     pub(crate) scroll: ScrollHandle,
     proposals: Option<Entity<ProposalReview>>,
+    /// "Aflever referatet til" below the summary.
+    delivery: Entity<DeliveryApproval>,
     /// Width of the content area, set by the shell each frame (the window
     /// minus the sidebar); drives the toolbar's label collapse.
     pub(crate) available: Pixels,
@@ -127,6 +130,7 @@ impl MeetingView {
             }
             _ => None,
         };
+        let delivery = cx.new(|cx| DeliveryApproval::new(model.clone(), meeting_id.clone(), cx));
         let mut view = MeetingView {
             model,
             meetings,
@@ -138,6 +142,7 @@ impl MeetingView {
             transcript: ListState::new(0, ListAlignment::Top, space::XXL),
             scroll: ScrollHandle::new(),
             proposals,
+            delivery,
             available: layout::DOCUMENT_MAX,
             utc: false,
             load: None,
@@ -155,9 +160,14 @@ impl MeetingView {
         meetings: Entity<MeetingsView>,
         document: Document,
         proposals: Option<Entity<ProposalReview>>,
+        delivery: crate::pages::settings_delivery::Status,
         transcript_open: bool,
         cx: &mut Context<Self>,
     ) -> Self {
+        // A queue with targets shows the approval block: scroll down to it.
+        let scroll_to_delivery = !delivery.targets.is_empty();
+        let delivery = cx
+            .new(|cx| DeliveryApproval::fixture(model.clone(), document.id.clone(), delivery, cx));
         let mut view = MeetingView {
             model,
             meetings,
@@ -169,13 +179,14 @@ impl MeetingView {
             transcript: ListState::new(0, ListAlignment::Top, space::XXL),
             scroll: ScrollHandle::new(),
             proposals,
+            delivery,
             available: layout::DOCUMENT_MAX,
             utc: true,
             load: None,
             _subscriptions: Vec::new(),
         };
         view.set_loaded(Loaded::new(document));
-        if transcript_open {
+        if transcript_open || scroll_to_delivery {
             // Show the transcript as the reference image does.
             view.scroll.scroll_to_bottom();
         }
@@ -616,22 +627,10 @@ impl MeetingView {
     }
 
     /// Where the summary goes after approval (Tauri `DeliveryApproval`).
-    fn delivery(&self, cx: &mut Context<Self>) -> AnyElement {
-        let palette = Self::palette(cx);
-        v_flex()
-            .mt(space::XXL)
-            .pt(space::LG)
-            .gap(space::SM)
-            .border_t_1()
-            .border_color(palette.border)
-            .child(strings::DOC_DELIVERY_TITLE)
-            .child(
-                div()
-                    .text_size(typography::SM)
-                    .text_color(palette.muted_foreground)
-                    .child(strings::DOC_DELIVERY_LATER),
-            )
-            .into_any_element()
+    fn delivery(&self, markdown: &str, cx: &mut Context<Self>) -> AnyElement {
+        self.delivery
+            .update(cx, |approval, _| approval.set_summary(markdown));
+        self.delivery.clone().into_any_element()
     }
 
     /// Pending AI proposals, as a card between the toolbar and the summary.
@@ -963,10 +962,10 @@ impl Render for MeetingView {
                     article = article.child(band);
                 }
                 article = article.child(div().mt(space::XL).child(self.summary(loaded, cx)));
-                // Below the summary, as Tauri's `DeliveryApproval`. A note
-                // until delivery (queue worker, targets) runs in this app.
+                // Below the summary, as Tauri's `DeliveryApproval`.
                 if summary.has_content() && summary.status != SummaryStatus::Running {
-                    article = article.child(self.delivery(cx));
+                    let markdown = summary.markdown.as_deref().unwrap_or_default();
+                    article = article.child(self.delivery(markdown, cx));
                 }
                 article = article.child(self.transcript_section(loaded, window, cx));
             }
@@ -1238,8 +1237,10 @@ impl Shell {
         });
         let (model, meetings) = (self.model.clone(), self.meetings.clone());
         let open = kind == FixtureMeeting::Transcript;
-        self.meeting_view =
-            Some(cx.new(|cx| MeetingView::fixture(model, meetings, document, proposals, open, cx)));
+        let delivery = fixture_delivery(kind);
+        self.meeting_view = Some(cx.new(|cx| {
+            MeetingView::fixture(model, meetings, document, proposals, delivery, open, cx)
+        }));
     }
 }
 
@@ -1258,6 +1259,34 @@ pub enum FixtureMeeting {
     SummaryFailed,
     /// The summary with a pending AI proposal above it.
     Proposals,
+    /// The summary scrolled to "Aflever referatet til" with one target.
+    Delivery,
+    /// The same while Kun lokal blocks delivery.
+    DeliveryBlocked,
+}
+
+/// The queue the delivery block shows: no targets, or one folder target.
+#[cfg(feature = "screenshot-tests")]
+fn fixture_delivery(kind: FixtureMeeting) -> crate::pages::settings_delivery::Status {
+    use tingskriver_core::delivery::{Destination, Policy, Target};
+    let mut status = crate::pages::settings_delivery::Status::empty();
+    if matches!(
+        kind,
+        FixtureMeeting::Delivery | FixtureMeeting::DeliveryBlocked
+    ) {
+        status.targets.push(Target {
+            id: "fixture-target".into(),
+            name: "Mødearkiv".into(),
+            destination: Destination::Folder {
+                path: "/arkiv".into(),
+            },
+        });
+        status.policy = Policy {
+            local_only: kind == FixtureMeeting::DeliveryBlocked,
+            private: false,
+        };
+    }
+    status
 }
 
 #[cfg(feature = "screenshot-tests")]

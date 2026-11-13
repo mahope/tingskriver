@@ -6,6 +6,7 @@ pub(crate) mod database_error;
 pub(crate) mod dictation;
 pub(crate) mod home;
 pub(crate) mod meeting;
+pub(crate) mod meeting_delivery;
 pub(crate) mod settings;
 pub(crate) mod settings_delivery;
 pub(crate) mod settings_tabs;

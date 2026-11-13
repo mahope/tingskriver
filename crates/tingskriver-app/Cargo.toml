@@ -57,3 +57,4 @@ velopack = "=1.2.161"
 [dev-dependencies]
 ttf-parser = "0.25"
 image = { version = "=0.25.10", default-features = false, features = ["png"] }
+tempfile = "3.3.0"
