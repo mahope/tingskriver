@@ -146,8 +146,13 @@ try {
   if (-not (Test-Path $update)) { Fail "$update is missing after install" }
   $entry = Get-ItemProperty $uninstallKey
   Write-Host "Uninstall entry: $($entry.DisplayName) $($entry.DisplayVersion)"
-  if ($ExpectedInstalledVersion -and $entry.DisplayVersion -ne $ExpectedInstalledVersion) {
-    Fail "Installed version $($entry.DisplayVersion), expected $ExpectedInstalledVersion"
+  # Velopack writes the Windows uninstall entry without the pre-release part
+  # (0.5.3-dev.1 shows as 0.5.3), so compare that entry with the base version.
+  # The exact pre-release suffix is not checked here; the update step below only
+  # proves the predecessor is older than the new version.
+  $expectedDisplayVersion = $ExpectedInstalledVersion -replace '-.*$', ''
+  if ($ExpectedInstalledVersion -and $entry.DisplayVersion -ne $expectedDisplayVersion) {
+    Fail "Installed version $($entry.DisplayVersion), expected $expectedDisplayVersion (from $ExpectedInstalledVersion)"
   }
   EndStep
 
