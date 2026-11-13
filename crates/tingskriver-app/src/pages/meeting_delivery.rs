@@ -94,6 +94,8 @@ pub(crate) struct DeliveryApproval {
     select: Option<Entity<Choices>>,
     /// The targets the select was last filled with.
     shown: Vec<(String, String)>,
+    /// A deferred refill of the select is already scheduled.
+    resync: bool,
     consent: bool,
     busy: bool,
     message: &'static str,
@@ -107,6 +109,8 @@ impl DeliveryApproval {
             let Ok(read) = this.update(cx, |this, cx| this.read(cx)) else {
                 return;
             };
+            // `None`: the host has not opened the queue yet. That is waiting,
+            // not a failed read.
             let result = match read {
                 Some(task) => Some(task.await),
                 None => None,
@@ -129,6 +133,7 @@ impl DeliveryApproval {
             load_failed: false,
             select: None,
             shown: Vec::new(),
+            resync: false,
             consent: false,
             busy: false,
             message: "",
@@ -158,12 +163,6 @@ impl DeliveryApproval {
         }
     }
 
-    /// Edits not yet saved block approval, as Tauri's `disabled`.
-    #[allow(dead_code)]
-    pub(crate) fn set_unsaved(&mut self, unsaved: bool) {
-        self.unsaved = unsaved;
-    }
-
     /// Start reading the queue; `None` while the host has not opened it.
     fn read(&self, cx: &mut Context<Self>) -> Option<Task<Result<Status, delivery::Error>>> {
         let model = self.model.read(cx);
@@ -184,7 +183,8 @@ impl DeliveryApproval {
                 self.status = Some(status);
             }
             // Keep what is shown after a failed read, as Tauri does.
-            _ if self.status.is_none() => self.load_failed = true,
+            Some(Err(_)) if self.status.is_none() => self.load_failed = true,
+            // Not opened yet (or a failed read with something to show).
             _ => {}
         }
     }
@@ -220,15 +220,26 @@ impl DeliveryApproval {
                 self.select =
                     Some(cx.new(|cx| SelectState::new(names, Some(IndexPath::new(0)), window, cx)));
             }
+            // Never touch another entity while rendering: refill the select
+            // right after this frame.
             Some(select) if targets != self.shown => {
-                let current = self.target_id(cx);
-                let keep = current
-                    .and_then(|id| targets.iter().position(|(t, _)| *t == id))
-                    .unwrap_or(0);
-                select.update(cx, |state, cx| {
-                    state.set_items(names, window, cx);
-                    state.set_selected_index(Some(IndexPath::new(keep)), window, cx);
-                });
+                if !self.resync {
+                    self.resync = true;
+                    cx.defer_in(window, move |this, window, cx| {
+                        this.resync = false;
+                        let current = this.target_id(cx);
+                        let keep = current
+                            .and_then(|id| targets.iter().position(|(t, _)| *t == id))
+                            .unwrap_or(0);
+                        select.update(cx, |state, cx| {
+                            state.set_items(names, window, cx);
+                            state.set_selected_index(Some(IndexPath::new(keep)), window, cx);
+                        });
+                        this.shown = targets;
+                        cx.notify();
+                    });
+                }
+                return;
             }
             Some(_) => {}
         }
