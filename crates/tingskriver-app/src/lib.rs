@@ -19,6 +19,7 @@ pub mod controls;
 pub mod crash;
 mod measurement;
 mod meetings;
+mod models;
 mod onboarding;
 mod pages;
 pub mod probe;
@@ -181,6 +182,9 @@ pub fn run() {
     let delivery = host.as_ref().map(Host::delivery);
     // First start: onboarding fetches the models through core.
     let onboarding_host = host.as_ref().map(|h| (h.handle(), h.bridge().subscribe()));
+    // Indstillinger > Transskription: the model manager listens to the same
+    // download events.
+    let models_host = host.as_ref().map(|h| (h.handle(), h.bridge().subscribe()));
     let events = bridge.as_ref().map(|bridge| bridge.subscribe());
     // With a tray icon, closing the window hides the app to the tray.
     let keep_running = host.as_ref().is_some_and(Host::has_tray);
@@ -208,7 +212,7 @@ pub fn run() {
                 page
             });
             let model = cx.new(|_| {
-                let mut model = ui::AppModel::new(handle, clock, log_path);
+                let mut model = ui::AppModel::new(handle.clone(), clock, log_path);
                 model.report_first_frame = !args.hidden;
                 if let Some(page) = start_page {
                     model.start_page = page;
@@ -273,6 +277,7 @@ pub fn run() {
                 .detach();
             }
             onboarding::init(model.clone(), onboarding_host, cx);
+            models::start(handle.clone(), models_host, cx);
             ui::init(model, cx);
             // "Opdatering klar" when the background updater has a version.
             about_dialog::watch_updates(cx);

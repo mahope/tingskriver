@@ -37,6 +37,31 @@ corrupted and the user has to download it again (up to about 3 GB for `large-v3`
 intentional: an unverifiable file is not loaded. The UI should explain it in the changelog
 and next to the model list (see the report on #181 and #174).
 
+## In the GPUI app (Indstillinger > Transskription, #174)
+
+Choose the engine (Parakeet or Whisper) and see a card per model with size, source,
+licence and revision; anything the manifest does not know is shown as "ukendt".
+
+- Opening the tab only reads the models folder. A download starts when you press "Hent";
+  the card shows size and source before that. Free disk space is checked first.
+- "Annullér" stops a download; the partial file is kept and "Hent" resumes it. "Prøv igen"
+  follows a failure (full disk, network loss, stalled source, failed checksum), each with
+  a Danish explanation. A model that is already installed is never touched by a failed
+  download: core swaps a file in only after its SHA-256 matches.
+- "Kontrolsum (SHA-256) bekræftet" appears only after a download that core checked, or
+  after "Kontrollér" has hashed the installed files. Otherwise the card says it has not
+  been checked in this session. A model that fails the check is offered "Slet" and "Hent igen".
+- "Vælg" saves the choice in `transcript_settings`, the row the Tauri app reads.
+- "Slet" asks first. It is disabled, with the reason under the card, while a recording,
+  its final transcription, a dictation or a transcription job is running. The check is
+  made again when you press "Slet" in the dialog, so a recording started meanwhile still
+  blocks the delete.
+
+Limits: the cards do not show warm/idle state or GPU/CPU status, and Syv.ai is a dictation
+engine set on the Diktering tab. Cloud providers that the Tauri app can save (Deepgram,
+ElevenLabs, Groq, OpenAI) are not offered here. If one is saved, the tab names it under
+the cards and warns that choosing a local model replaces it. Android downloads stay in #134.
+
 ## Sources and the reserve mirror
 
 `sources` is tried in order: the first is the upstream repository pinned to `revision`.

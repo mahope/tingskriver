@@ -591,6 +591,8 @@ impl Page {
 }
 
 #[cfg(feature = "screenshot-tests")]
+pub use crate::models::ModelsFixture;
+#[cfg(feature = "screenshot-tests")]
 pub use crate::pages::meeting::FixtureMeeting;
 
 /// Extra state of a screenshot fixture.
@@ -629,6 +631,8 @@ pub enum FixtureVariant {
     UpdateAvailable,
     /// "Gendan afbrudte møder" with two synthetic interrupted recordings.
     RecoveryDialog,
+    /// Indstillinger > Transskription with the models in one state (#174).
+    Models(ModelsFixture),
 }
 
 pub use crate::pages::settings::SettingsTab;
@@ -673,6 +677,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
+        let runtime_for_models = runtime.clone();
         let model = cx.new(|_| AppModel {
             db,
             app_data_dir: None,
@@ -710,6 +715,14 @@ impl Shell {
             },
             recorder: None,
         });
+        crate::models::set_fixture(
+            match variant {
+                FixtureVariant::Models(kind) => kind,
+                _ => crate::models::ModelsFixture::Empty,
+            },
+            runtime_for_models,
+            cx,
+        );
         crate::onboarding::set_fixture(
             match variant {
                 FixtureVariant::OnboardingWelcome => Some(crate::onboarding::Step::Welcome),
@@ -749,6 +762,9 @@ impl Shell {
             shell.sidebar_collapsed = variant == FixtureVariant::SidebarCollapsed;
             if let FixtureVariant::Settings(tab) = variant {
                 shell.settings.select_tab(tab);
+            }
+            if matches!(variant, FixtureVariant::Models(_)) {
+                shell.settings.select_tab(SettingsTab::Transcription);
             }
             shell.home = crate::recording::fixture(variant);
             if let FixtureVariant::Meeting(kind) = variant {
