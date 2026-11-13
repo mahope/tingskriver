@@ -566,6 +566,36 @@ fn levels_use_a_decibel_scale_and_fall_slowly() {
 }
 
 #[test]
+fn the_screen_follows_the_system_device_the_follower_switches_to() {
+    // The follower moves the system loopback to the device the meeting
+    // program plays on (#199). Core's snapshot names the new device, and
+    // neither the event nor the snapshot raises a notice or ends the recording.
+    let mut state = RecorderState {
+        phase: Phase::Recording,
+        ..Default::default()
+    };
+    let mut snapshot = RecordingSnapshot {
+        is_recording: true,
+        system: Some("Højttalere".into()),
+        ..Default::default()
+    };
+    apply_snapshot(&mut state, &snapshot);
+    assert_eq!(state.system.as_deref(), Some("Højttalere"));
+    let effects = apply_event(
+        &mut state,
+        "system-device-switched",
+        &json!({"device_name": "Headset (USB)", "previous_device_name": "Højttalere",
+                "reason": "active session", "gap_ms": 300}),
+    );
+    assert!(effects.is_empty());
+    snapshot.system = Some("Headset (USB)".into());
+    assert!(!apply_snapshot(&mut state, &snapshot));
+    assert_eq!(state.system.as_deref(), Some("Headset (USB)"));
+    assert_eq!(state.phase, Phase::Recording);
+    assert_eq!(state.notice, None);
+}
+
+#[test]
 fn a_missed_stop_is_noticed() {
     let mut state = RecorderState {
         phase: Phase::Recording,
