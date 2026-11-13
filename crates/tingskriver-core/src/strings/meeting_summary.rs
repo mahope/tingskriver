@@ -171,3 +171,23 @@ pub fn language_remove(label: &str) -> String {
 pub fn improve_done(segments: usize) -> String {
     IMPROVE_DONE.replace("{value}", &segments.to_string())
 }
+
+/// An error text with the reason after it ("... Kunne ikke læses.").
+pub fn with_reason(text: &str, reason: &str) -> String {
+    format!("{text} {reason}")
+}
+
+/// "40 %" under the progress bar.
+pub fn percent(value: u32) -> String {
+    format!("{value} %")
+}
+
+/// Element id of the pin button of a quick-pick language.
+pub fn pin_id(code: &str) -> String {
+    format!("summary-pin-{code}")
+}
+
+/// Element id of the remove button of a quick-pick language.
+pub fn remove_id(code: &str) -> String {
+    format!("summary-remove-{code}")
+}

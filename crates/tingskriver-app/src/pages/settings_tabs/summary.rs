@@ -698,7 +698,7 @@ impl Shell {
         if let Some(error) = &tab.load_error {
             return tab_column(vec![alert(
                 "summary-settings-error",
-                &format!("{} {error}", mtext::SUMMARY_SETTINGS_UNREADABLE),
+                &mtext::with_reason(mtext::SUMMARY_SETTINGS_UNREADABLE, error),
                 cx,
             )]);
         }
@@ -914,7 +914,7 @@ impl Shell {
                 Models::Failed(error) => {
                     body = body.child(alert(
                         "summary-models-error",
-                        &format!("{} {error}", mtext::SUMMARY_MODELS_FAILED),
+                        &mtext::with_reason(mtext::SUMMARY_MODELS_FAILED, error),
                         cx,
                     ))
                 }
@@ -1041,36 +1041,33 @@ fn language_chip(
             palette.secondary
         })
         .child(
-            controls::small_button(
-                SharedString::from(format!("summary-pin-{code}")),
-                Variant::Ghost,
-            )
-            .icon(if is_pinned {
-                IconName::Check
-            } else {
-                IconName::Plus
-            })
-            .label(label.clone())
-            .accessibility_label(if is_pinned {
-                mtext::language_unuse(&label)
-            } else {
-                mtext::language_use(&label)
-            })
-            .tooltip(if is_pinned {
-                mtext::language_unuse(&label)
-            } else {
-                mtext::language_use(&label)
-            })
-            .on_click(move |_, window, cx| {
-                let code = pin_code.clone();
-                let _ = pin_shell.update(cx, |shell, cx| {
-                    shell.change_languages(|p| p.toggle_pinned(&code), window, cx)
-                });
-            }),
+            controls::small_button(SharedString::from(mtext::pin_id(code)), Variant::Ghost)
+                .icon(if is_pinned {
+                    IconName::Check
+                } else {
+                    IconName::Plus
+                })
+                .label(label.clone())
+                .accessibility_label(if is_pinned {
+                    mtext::language_unuse(&label)
+                } else {
+                    mtext::language_use(&label)
+                })
+                .tooltip(if is_pinned {
+                    mtext::language_unuse(&label)
+                } else {
+                    mtext::language_use(&label)
+                })
+                .on_click(move |_, window, cx| {
+                    let code = pin_code.clone();
+                    let _ = pin_shell.update(cx, |shell, cx| {
+                        shell.change_languages(|p| p.toggle_pinned(&code), window, cx)
+                    });
+                }),
         )
         .child(
             controls::small_icon_button(
-                SharedString::from(format!("summary-remove-{code}")),
+                SharedString::from(mtext::remove_id(code)),
                 IconName::X,
                 mtext::language_remove(&label),
             )

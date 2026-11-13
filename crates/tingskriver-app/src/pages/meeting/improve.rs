@@ -464,7 +464,7 @@ impl MeetingView {
                             )),
                     )
                     .when_some(*percent, |this, percent| {
-                        this.child(note(&format!("{percent} %")))
+                        this.child(note(&text::percent(percent)))
                     })
                     .into_any_element(),
                 Stage::Idle => div().into_any_element(),
