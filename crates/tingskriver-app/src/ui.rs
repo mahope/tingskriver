@@ -755,6 +755,7 @@ impl Shell {
                 shell.open_fixture_meeting(kind, cx);
             }
             shell.dictation = crate::pages::dictation::DictationPage::fixture(variant);
+            crate::pages::settings_tabs::dictation::DictationTab::freeze_fixture(shell, window, cx);
             if variant == FixtureVariant::RecoveryDialog {
                 let model = shell.model.clone();
                 window.defer(cx, move |window, cx| {

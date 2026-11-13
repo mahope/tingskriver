@@ -745,6 +745,8 @@ pub fn measure_result_line(wer: &str, errors: &str, latency: &str, price: &str) 
         .replace("{price}", price)
 }
 
+/// The Diktering settings tab (docs/design-paritet.md, Job 7).
+pub mod dictation_settings;
 /// Onboarding (docs/design-paritet.md, Job 9).
 pub mod onboarding;
 /// The settings tabs Optagelser, Transskription, Opsummering and Beta

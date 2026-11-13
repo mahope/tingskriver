@@ -254,9 +254,16 @@ fn engine_label(entry: &HistoryEntry) -> &'static str {
 
 /// History, settings and status, as the Tauri commands read them.
 async fn fetch() -> Result<(Vec<HistoryEntry>, DictationSettings, Status), String> {
-    use tingskriver_core::dictation::{secrets, service};
+    use tingskriver_core::dictation::service;
     let service = service::get()?;
     let history = service.store.history(HISTORY_LIMIT).await?;
+    let status = read_status(&service).await;
+    Ok((history, service.settings(), status))
+}
+
+/// The status as Tauri's `dictation_get_status` reads it; also used by the
+/// Diktering settings tab.
+pub(crate) async fn read_status(service: &tingskriver_core::dictation::service::Service) -> Status {
     // Ok(false) also means "the Parakeet engine has not started". Tauri starts
     // it at launch; GPUI only starts it with a meeting transcription, and
     // until then local dictation cannot run either (warm::ensure_parakeet
@@ -266,13 +273,12 @@ async fn fetch() -> Result<(Vec<HistoryEntry>, DictationSettings, Status), Strin
         tingskriver_core::parakeet_engine::commands::parakeet_has_available_models()
             .await
             .unwrap_or(true);
-    let status = Status {
+    Status {
         platform_supported: cfg!(windows),
-        has_syv_key: secrets::syv_key().is_some(),
+        has_syv_key: tingskriver_core::dictation::secrets::syv_key().is_some(),
         local_model_available,
         last_error: service.last_error(),
-    };
-    Ok((history, service.settings(), status))
+    }
 }
 
 impl Shell {

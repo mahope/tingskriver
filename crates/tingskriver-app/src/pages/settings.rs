@@ -196,6 +196,8 @@ pub(crate) struct SettingsView {
     access: Entity<AccessSelect>,
     /// The add-target form of Aflevering af referat.
     pub(crate) delivery: super::settings_delivery::DeliveryForm,
+    /// The Diktering tab (`settings_tabs::dictation`).
+    pub(crate) dictation: super::settings_tabs::dictation::DictationTab,
     /// Where "Tilbage" goes: the last page shown before Indstillinger and
     /// the meeting open on it (`remember_return`).
     pub(crate) back: Option<(Page, Option<String>)>,
@@ -252,6 +254,7 @@ impl SettingsView {
                 .collect(),
             access,
             delivery: super::settings_delivery::DeliveryForm::new(window, cx),
+            dictation: super::settings_tabs::dictation::DictationTab::new(window, cx),
             back: None,
             _subscriptions: subscriptions,
         }
@@ -262,6 +265,9 @@ impl SettingsView {
     /// Show a tab and make it the one tab stop of the tab list.
     pub(crate) fn select_tab(&mut self, tab: SettingsTab) {
         self.tab = tab;
+        if tab == SettingsTab::Dictation {
+            self.dictation.shown();
+        }
         for (index, handle) in self.tab_focus.iter_mut().enumerate() {
             *handle = handle.clone().tab_stop(index == tab.index());
         }
@@ -283,9 +289,7 @@ impl Shell {
             SettingsTab::Transcription => self.transcription_settings_tab(cx),
             SettingsTab::Summary => self.summary_settings_tab(cx),
             SettingsTab::Beta => self.beta_settings_tab(cx),
-            SettingsTab::Dictation => tab_column(vec![
-                muted(strings::SETTINGS_MOVES_LATER, cx).into_any_element()
-            ]),
+            SettingsTab::Dictation => self.dictation_settings_tab(cx),
         };
         let body = v_flex()
             .id("settings-scroll")
@@ -1061,7 +1065,6 @@ impl Shell {
     }
 }
 
-/// The column of a tab: 672 px (`max-w-2xl`), sections 40 px apart.
 /// Open the recordings folder in the file manager (Generelt and Optagelser).
 /// The folder appears with the first recording, so create it first to give
 /// the file manager something to open.
@@ -1074,6 +1077,7 @@ pub(super) fn open_recordings_folder(runtime: &tokio::runtime::Handle, dir: Path
     });
 }
 
+/// The column of a tab: 672 px (`max-w-2xl`), sections 40 px apart.
 pub(super) fn tab_column(children: Vec<AnyElement>) -> AnyElement {
     v_flex()
         .w_full()

@@ -425,6 +425,14 @@ pub mod dictation {
     pub const SKELETON_HEIGHT: Pixels = px(80.0);
     /// The keyboard icon of the empty history (`h-6 w-6`).
     pub const EMPTY_ICON: Pixels = px(24.0);
+    /// Settings tab: the shortcut and key fields (`max-w-xs`).
+    pub const SHORTCUT_INPUT_MAX: Pixels = px(320.0);
+    /// Settings tab: the "Brug lokal model …" select (fits "1,5 s").
+    pub const FALLBACK_SELECT: Pixels = px(96.0);
+    /// Settings tab: a Stil pr. program select (fits "Normal").
+    pub const STYLE_SELECT: Pixels = px(112.0);
+    /// Settings tab: the Lydstyrke slider (`w-48`).
+    pub const VOLUME_SLIDER: Pixels = px(192.0);
 }
 
 // ---- end of Job 7 block ----
@@ -855,6 +863,12 @@ mod tests {
                 "warning text on the badge tint over card",
                 p.warning,
                 over(p.warning, p.card, settings_tabs::BADGE_TINT),
+            ),
+            // Job 7: the load-error box of the Diktering tab.
+            (
+                "destructive text on the destructive tint over background",
+                p.destructive,
+                over(p.destructive, p.background, settings_tabs::TINT),
             ),
             // Job 8: the error box of the update dialog.
             (

@@ -2,6 +2,7 @@
 //! Jobs 6 and 7). The frame and Generelt are in `pages::settings`.
 
 pub(crate) mod beta;
+pub(crate) mod dictation;
 pub(crate) mod recording;
 pub(crate) mod summary;
 pub(crate) mod transcription;
