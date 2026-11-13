@@ -571,7 +571,15 @@ catalogue! {
     DOC_SUMMARY_RETRY = "Lav referat igen";
     DOC_SUMMARY_INVALID = "Det gemte referat mangler eller kan ikke læses. Lav referatet igen.";
     DOC_DELIVERY_TITLE = "Aflever referatet til";
-    DOC_DELIVERY_LATER = "Aflevering af referatet er endnu ikke flyttet til denne app.";
+    DOC_DELIVERY_NO_TARGETS = "Du kan oprette et afleveringsmål i Indstillinger.";
+    DOC_DELIVERY_LOAD_FAILED = "Afleveringsmål kunne ikke læses. Kontrollér indstillingerne.";
+    DOC_DELIVERY_CONSENT = "Mødet må afleveres til det valgte mål";
+    DOC_DELIVERY_BLOCKED = "Aflevering er blokeret af dine privatindstillinger.";
+    DOC_DELIVERY_UNSAVED = "Gem dine ændringer, før du godkender referatet.";
+    DOC_DELIVERY_APPROVE = "Godkend og aflever referat";
+    DOC_DELIVERY_QUEUEING = "Lægger i kø…";
+    DOC_DELIVERY_QUEUED = "Referatet er godkendt og lagt i afleveringskøen. Se resultatet i Indstillinger.";
+    DOC_DELIVERY_FAILED = "Referatet kunne ikke afleveres. Kontrollér mål og privatindstillinger, og prøv igen.";
     DOC_TRANSCRIPT = "Transskript";
     DOC_LINES_NONE = "Ingen linjer";
     DOC_LINES_ONE = "1 linje";

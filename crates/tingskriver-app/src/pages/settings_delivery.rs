@@ -89,6 +89,11 @@ impl std::fmt::Debug for DeliveryModel {
 }
 
 impl DeliveryModel {
+    /// The host's queue, once it is open (the meeting page approves into it).
+    pub(crate) fn service(&self) -> Option<Delivery> {
+        self.service.as_ref().and_then(|s| s.get()).cloned()
+    }
+
     /// A loaded, empty queue for screenshot fixtures.
     #[cfg(feature = "screenshot-tests")]
     pub(crate) fn fixture() -> Self {
@@ -132,7 +137,7 @@ impl DeliveryModel {
     }
 }
 
-async fn fetch(service: &Delivery) -> Result<Status, Error> {
+pub(crate) async fn fetch(service: &Delivery) -> Result<Status, Error> {
     Ok(Status {
         policy: service.policy().await?,
         targets: service.targets().await?,
