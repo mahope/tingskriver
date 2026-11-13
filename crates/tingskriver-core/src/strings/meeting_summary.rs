@@ -23,6 +23,8 @@ catalogue! {
     SUMMARY_REMAKING = "Genskaber opsummering…";
     SUMMARY_USING = "Bruger {value}";
     SUMMARY_READY = "Opsummeringen er klar";
+    SUMMARY_READY_HELP = "Mødets opsummering er klar";
+    SUMMARY_WORKING = "Arbejder…";
     SUMMARY_READY_FILTERED = "Mødets opsummering er klar. Modellens tankegang er filtreret fra noterne.";
     SUMMARY_FALLBACK = "Opsummeringen er lavet med reservevalg";
     SUMMARY_FALLBACK_HELP = "Normalisering til engelsk mislykkedes, så den oprindelige, rensede opsummering blev beholdt.";
@@ -109,6 +111,12 @@ catalogue! {
 
     // Forbedr: RetranscribeDialog.tsx.
     IMPROVE_TITLE = "Transskribér mødet igen";
+    IMPROVE_DESCRIPTION = "Behandl lyden igen med andre sprogindstillinger";
+    IMPROVE_RUNNING_TITLE = "Transskriberer igen …";
+    IMPROVE_PROCESSING = "Behandler lyden …";
+    IMPROVE_FAILED_TITLE = "Gentranskriberingen mislykkedes";
+    IMPROVE_FAILED_DESCRIPTION = "Noget gik galt under gentranskriberingen";
+    IMPROVE_CANCELLED = "Gentranskriberingen er annulleret";
     IMPROVE_LANGUAGE = "Sprog";
     IMPROVE_LANGUAGE_AUTO = "Find sproget automatisk";
     IMPROVE_LANGUAGE_HELP = "Vælg et bestemt sprog for bedre træfsikkerhed, eller lad appen finde sproget selv";

@@ -411,6 +411,12 @@ pub mod document {
     pub const FOCUS_BORDER: Pixels = px(2.0);
     /// The proposals band above the summary scrolls inside this height.
     pub const PROPOSALS_MAX: Pixels = px(480.0);
+    /// The summary editor (a plain text field instead of BlockNote).
+    pub const EDITOR_HEIGHT: Pixels = px(440.0);
+    /// The "Transskribér mødet igen" dialog (`sm:max-w-[450px]`).
+    pub const IMPROVE_DIALOG_WIDTH: Pixels = px(450.0);
+    /// The model list of the language menu scrolls inside this height.
+    pub const MENU_MAX: Pixels = px(320.0);
 }
 
 // ---- end of Job 4 block ----

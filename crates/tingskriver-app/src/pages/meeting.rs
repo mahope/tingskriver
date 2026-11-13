@@ -4,10 +4,13 @@
 //! read-only text and the transcript folded in below. The whole page scrolls
 //! as one surface (docs/design-paritet.md, 2.4 and Job 4).
 //!
-//! Read-only first: editing the summary (BlockNote in Tauri), making a
-//! summary, the language/model/template choices, retranscription and
-//! delivery are not ported yet. Their controls are shown disabled with an
-//! explanation, never faked.
+//! Making, stopping and editing the summary lives in `meeting/summary.rs`
+//! (the editor is a plain Markdown text field; Tauri uses BlockNote), and
+//! "Forbedr" (retranscription) in `meeting/improve.rs`. Delivery is another
+//! job's and still shows its note.
+
+mod improve;
+mod summary;
 
 use std::rc::Rc;
 
@@ -20,21 +23,24 @@ use gpui_component::{
     button::{Button, ButtonRounded, ButtonVariants},
     checkbox::Checkbox,
     h_flex,
+    input::Textarea,
+    menu::{DropdownMenu, PopupMenu, PopupMenuItem},
     spinner::Spinner,
     v_flex, Disableable, Icon, Sizable, WindowExt,
 };
 use gpui_kit_assets::IconName;
 use tingskriver_core::{
     meeting_document::{self, Block, BlockKind, Document, SummaryStatus},
-    meeting_list,
+    meeting_list, meeting_summary,
     proposals::ProposalStore,
-    strings,
+    strings::{self, meeting_summary as summary_text},
 };
 
 use crate::controls::{self, Variant};
 use crate::meetings::MeetingsView;
 use crate::proposals::{ProposalReview, ProposalsApplied};
 use crate::startup::DbState;
+use crate::summary_run::Run;
 use crate::theme::{self, document as size, icon_size, layout, space, typography, Palette};
 use crate::ui::{heading, load_database, AppModel, Level, Shell};
 
@@ -85,6 +91,16 @@ pub(crate) struct MeetingView {
     /// goldens do not depend on the machine's time zone).
     utc: bool,
     load: Option<Task<()>>,
+    /// Making, stopping and what to say about it (`summary.rs`).
+    run: Run,
+    /// A loop reads the stored summary while a run goes.
+    watching: bool,
+    /// The summary text field, while editing.
+    editor: Option<summary::Editor>,
+    /// Language and template for the next summary.
+    choices: summary::Choices,
+    /// The "Forbedr" dialog and the retranscription it started.
+    improve: improve::Improve,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -141,9 +157,15 @@ impl MeetingView {
             available: layout::DOCUMENT_MAX,
             utc: false,
             load: None,
+            run: Run::default(),
+            watching: false,
+            editor: None,
+            choices: summary::Choices::with_template(meeting_summary::DEFAULT_TEMPLATE),
+            improve: improve::Improve::default(),
             _subscriptions: subscriptions,
         };
         view.reload(cx);
+        view.load_choices(cx);
         view
     }
 
@@ -172,6 +194,11 @@ impl MeetingView {
             available: layout::DOCUMENT_MAX,
             utc: true,
             load: None,
+            run: Run::default(),
+            watching: false,
+            editor: None,
+            choices: summary::Choices::fixture(),
+            improve: improve::Improve::default(),
             _subscriptions: Vec::new(),
         };
         view.set_loaded(Loaded::new(document));
@@ -180,6 +207,13 @@ impl MeetingView {
             view.scroll.scroll_to_bottom();
         }
         view
+    }
+
+    fn loaded(&self) -> Option<&Rc<Loaded>> {
+        match &self.state {
+            DocState::Ready(loaded) => Some(loaded),
+            _ => None,
+        }
     }
 
     fn set_loaded(&mut self, loaded: Loaded) {
@@ -212,7 +246,10 @@ impl MeetingView {
             let result = task.await;
             let _ = view.update(cx, |view, cx| {
                 match result {
-                    Ok(Ok(Some(document))) => view.set_loaded(Loaded::new(document)),
+                    Ok(Ok(Some(document))) => {
+                        view.set_loaded(Loaded::new(document));
+                        view.after_load(cx);
+                    }
                     // Deleted while open: the sidebar closes the page.
                     Ok(Ok(None)) => {}
                     Ok(Err(error)) => {
@@ -307,16 +344,6 @@ impl MeetingView {
             .child(self.sharing(cx));
         if let Some(loaded) = loaded {
             header = header.child(div().mt(space::LG).child(self.toolbar(loaded, cx)));
-            if loaded.document.transcript.is_empty() && !loaded.document.summary.has_content() {
-                return header.into_any_element();
-            }
-            header = header.child(
-                div()
-                    .mt(space::SM)
-                    .text_size(typography::SM)
-                    .text_color(palette.muted_foreground)
-                    .child(strings::DOC_SUMMARY_LATER),
-            );
         }
         header.into_any_element()
     }
@@ -407,95 +434,185 @@ impl MeetingView {
         let language_label = width >= size::LANGUAGE_LABEL_MIN;
         let summary = &loaded.document.summary;
         let has_summary = summary.has_content();
-        let running = summary.status == SummaryStatus::Running;
+        let writing = summary.status == SummaryStatus::Running || self.run.is_active();
+        let view = cx.entity().downgrade();
         let mut row = h_flex().flex_wrap().gap(space::SM).min_w_0();
         if !loaded.document.transcript.is_empty() {
-            let generate = segment(
-                "summary-generate",
-                IconName::Sparkles,
-                Some(if has_summary {
-                    strings::DOC_REGENERATE
-                } else {
-                    strings::DOC_GENERATE
-                }),
-                strings::DOC_SUMMARY_LATER,
-            )
-            .text_color(palette.primary)
-            .disabled(true);
+            let generate = if self.run.is_running() {
+                // Tauri: a destructive "Stop" while the summary is written.
+                segment(
+                    "summary-stop",
+                    IconName::Square,
+                    Some(summary_text::SUMMARY_STOP),
+                    summary_text::SUMMARY_STOP_TITLE,
+                )
+                .text_color(palette.destructive)
+                .disabled(self.run.stopping)
+                .on_click(cx.listener(|this, _, _, cx| this.stop(cx)))
+            } else if writing {
+                segment(
+                    "summary-generate",
+                    IconName::LoaderCircle,
+                    Some(summary_text::SUMMARY_WORKING),
+                    summary_text::SUMMARY_WORKING,
+                )
+                .text_color(palette.primary)
+                .disabled(true)
+            } else {
+                segment(
+                    "summary-generate",
+                    IconName::Sparkles,
+                    Some(if has_summary {
+                        strings::DOC_REGENERATE
+                    } else {
+                        strings::DOC_GENERATE
+                    }),
+                    if has_summary {
+                        summary_text::SUMMARY_REGENERATE_TITLE
+                    } else {
+                        summary_text::SUMMARY_GENERATE_TITLE
+                    },
+                )
+                .text_color(palette.primary)
+                .on_click(cx.listener(|this, _, _, cx| this.generate(cx)))
+            };
+            let language_name = self
+                .choices
+                .language
+                .as_deref()
+                .map(meeting_summary::language_label)
+                .unwrap_or_else(|| strings::DOC_LANGUAGE_AUTO.to_string());
+            let (current, recents) = (self.choices.language.clone(), self.choices.recents.clone());
+            let language_view = view.clone();
             let language = segment(
                 "summary-language",
                 IconName::Languages,
-                language_label.then_some(strings::DOC_LANGUAGE_AUTO),
+                None,
                 strings::DOC_LANGUAGE_LABEL,
             )
+            .when(language_label, |button| button.label(language_name))
             .dropdown_caret(true)
-            .disabled(true);
+            .disabled(writing)
+            .dropdown_menu(move |menu, _, _| {
+                language_menu(menu, &language_view, current.as_deref(), &recents)
+            });
             let model = segment(
                 "summary-model",
                 IconName::Settings,
                 labels.then_some(strings::DOC_MODEL),
-                strings::DOC_MODEL,
+                summary_text::SUMMARY_MODEL_TITLE,
             )
-            .disabled(true);
-            let template = segment(
-                "summary-template",
-                IconName::FileText,
-                labels.then_some(strings::DOC_TEMPLATE),
-                strings::DOC_TEMPLATE,
-            )
-            .disabled(true);
+            .on_click(|_, _, cx| crate::ui::open_summary_settings(cx));
+            let mut segments = vec![
+                generate.into_any_element(),
+                language.into_any_element(),
+                model.into_any_element(),
+            ];
+            if !self.choices.templates.is_empty() {
+                let templates = self.choices.templates.clone();
+                let chosen = self.choices.template.clone();
+                let template_view = view.clone();
+                segments.push(
+                    segment(
+                        "summary-template",
+                        IconName::FileText,
+                        labels.then_some(strings::DOC_TEMPLATE),
+                        summary_text::SUMMARY_TEMPLATE_TITLE,
+                    )
+                    .disabled(writing)
+                    .dropdown_menu(move |menu, _, _| {
+                        template_menu(menu, &template_view, &templates, &chosen)
+                    })
+                    .into_any_element(),
+                );
+            }
             row = row.child(
-                button_group(
-                    "summary-actions",
-                    strings::DOC_ACTIONS,
-                    vec![generate, language, model, template],
-                    cx,
-                )
-                .border_l_0()
-                .child(
-                    // Tauri tints the first segment's border (`border-primary/40`).
-                    div()
-                        .absolute()
-                        .top_0()
-                        .left_0()
-                        .bottom_0()
-                        .w(size::HAIRLINE)
-                        .bg(palette.primary.opacity(size::GENERATE_BORDER_ALPHA)),
-                ),
+                button_group("summary-actions", strings::DOC_ACTIONS, segments, cx)
+                    .border_l_0()
+                    .child(
+                        // Tauri tints the first segment's border (`border-primary/40`).
+                        div()
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .bottom_0()
+                            .w(size::HAIRLINE)
+                            .bg(palette.primary.opacity(size::GENERATE_BORDER_ALPHA)),
+                    ),
             );
         }
-        if has_summary && !running {
-            let save = segment(
-                "summary-save",
-                IconName::Save,
-                Some(strings::DOC_SAVE),
-                strings::DOC_EDIT_LATER,
-            )
-            .disabled(true);
+        if has_summary && !writing {
+            let mut segments = Vec::new();
+            if let Some(editor) = &self.editor {
+                let dirty = editor.is_dirty(cx);
+                segments.push(
+                    segment(
+                        "summary-save",
+                        IconName::Save,
+                        Some(if editor.saving {
+                            summary_text::SUMMARY_SAVING
+                        } else if dirty {
+                            summary_text::SUMMARY_SAVE_DIRTY
+                        } else {
+                            strings::DOC_SAVE
+                        }),
+                        summary_text::SUMMARY_SAVE_TITLE,
+                    )
+                    .when(dirty, |button| button.text_color(palette.primary))
+                    .disabled(editor.saving)
+                    .on_click(cx.listener(|this, _, _, cx| this.save_edit(cx)))
+                    .into_any_element(),
+                );
+                segments.push(
+                    segment(
+                        "summary-edit-cancel",
+                        IconName::X,
+                        labels.then_some(summary_text::SUMMARY_EDIT_CANCEL),
+                        summary_text::SUMMARY_EDIT_CANCEL_TITLE,
+                    )
+                    .disabled(editor.saving)
+                    .on_click(cx.listener(|this, _, _, cx| this.cancel_edit(cx)))
+                    .into_any_element(),
+                );
+            } else {
+                segments.push(
+                    segment(
+                        "summary-edit",
+                        IconName::Pencil,
+                        Some(summary_text::SUMMARY_EDIT),
+                        summary_text::SUMMARY_EDIT_TITLE,
+                    )
+                    .on_click(cx.listener(|this, _, window, cx| this.begin_edit(window, cx)))
+                    .into_any_element(),
+                );
+            }
             let document = loaded.document.clone();
-            let copy = segment(
-                "summary-copy",
-                IconName::Copy,
-                labels.then_some(strings::DOC_COPY),
-                strings::DOC_COPY_SUMMARY,
-            )
-            .on_click(move |_, window, cx| {
-                match meeting_document::summary_for_copy(
-                    &document,
-                    chrono::Utc::now(),
-                    &chrono::Local,
-                ) {
-                    Some(text) => {
-                        cx.write_to_clipboard(ClipboardItem::new_string(text));
-                        window.push_notification(strings::DOC_SUMMARY_COPIED, cx);
+            segments.push(
+                segment(
+                    "summary-copy",
+                    IconName::Copy,
+                    labels.then_some(strings::DOC_COPY),
+                    strings::DOC_COPY_SUMMARY,
+                )
+                .on_click(move |_, window, cx| {
+                    match meeting_document::summary_for_copy(
+                        &document,
+                        chrono::Utc::now(),
+                        &chrono::Local,
+                    ) {
+                        Some(text) => {
+                            cx.write_to_clipboard(ClipboardItem::new_string(text));
+                            window.push_notification(strings::DOC_SUMMARY_COPIED, cx);
+                        }
+                        None => window.push_notification(strings::DOC_NO_SUMMARY_TO_COPY, cx),
                     }
-                    None => window.push_notification(strings::DOC_NO_SUMMARY_TO_COPY, cx),
-                }
-            });
+                })
+                .into_any_element(),
+            );
             row = row.child(button_group(
                 "summary-updater",
                 strings::DOC_SUMMARY_ACTIONS,
-                vec![save, copy],
+                segments,
                 cx,
             ));
         }
@@ -507,7 +624,7 @@ impl MeetingView {
     fn summary(&self, loaded: &Loaded, cx: &mut Context<Self>) -> AnyElement {
         let palette = Self::palette(cx);
         let summary = &loaded.document.summary;
-        if summary.status == SummaryStatus::Running {
+        if summary.status == SummaryStatus::Running || self.run.is_active() {
             return v_flex()
                 .id("summary-running")
                 .role(gpui::Role::Status)
@@ -534,7 +651,13 @@ impl MeetingView {
                 )
                 .into_any_element();
         }
-        let failed = (summary.status == SummaryStatus::Failed).then(|| {
+        // The page's own failure comes first: a start that was refused (no
+        // transcript, a model that is not ready) has no stored error.
+        let failure = self.run.error.clone().or_else(|| {
+            (summary.status == SummaryStatus::Failed)
+                .then(|| summary.error.clone().unwrap_or_default())
+        });
+        let failed = failure.map(|error| {
             v_flex()
                 .id("summary-error")
                 .role(gpui::Role::Alert)
@@ -551,7 +674,7 @@ impl MeetingView {
                         .font_weight(FontWeight::MEDIUM)
                         .child(strings::DOC_SUMMARY_FAILED),
                 )
-                .when_some(summary.error.clone(), |this, error| this.child(error))
+                .when(!error.trim().is_empty(), |this| this.child(error))
         });
         if !summary.has_content() {
             // Tauri `EmptyStateSummary`.
@@ -587,15 +710,42 @@ impl MeetingView {
                 .child(
                     controls::button("summary-empty-generate", Variant::Primary)
                         .icon(Icon::from(IconName::Sparkles).size(icon_size::SM))
-                        .label(if summary.status == SummaryStatus::Failed {
+                        .label(if summary.status == SummaryStatus::Failed || self.run.error.is_some() {
                             strings::DOC_SUMMARY_RETRY
                         } else {
                             strings::DOC_GENERATE
                         })
-                        .tooltip(strings::DOC_SUMMARY_LATER)
-                        .disabled(true)
+                        .disabled(loaded.document.transcript.is_empty())
+                        .on_click(cx.listener(|this, _, _, cx| this.generate(cx)))
                         .self_center(),
                 )
+                .into_any_element();
+        }
+        if let Some(editor) = &self.editor {
+            return v_flex()
+                .id("summary-editor")
+                .gap(space::SM)
+                .child(
+                    Textarea::new(&editor.input)
+                        .aria_label(summary_text::SUMMARY_EDITOR_LABEL)
+                        .h(size::EDITOR_HEIGHT),
+                )
+                .child(
+                    div()
+                        .text_size(typography::SM)
+                        .text_color(palette.muted_foreground)
+                        .child(summary_text::SUMMARY_EDITOR_HELP),
+                )
+                .when_some(editor.error.clone(), |this, error| {
+                    this.child(
+                        div()
+                            .id("summary-editor-error")
+                            .role(gpui::Role::Alert)
+                            .text_size(typography::SM)
+                            .text_color(palette.destructive)
+                            .child(error),
+                    )
+                })
                 .into_any_element();
         }
         v_flex()
@@ -788,7 +938,7 @@ impl MeetingView {
             cx.write_to_clipboard(ClipboardItem::new_string(text));
             window.push_notification(strings::DOC_TRANSCRIPT_COPIED, cx);
         });
-        let mut segments = vec![copy];
+        let mut segments = vec![copy.into_any_element()];
         let folder = loaded
             .document
             .folder_path
@@ -804,16 +954,19 @@ impl MeetingView {
                         labels.then_some(strings::DOC_RECORDING),
                         strings::DOC_OPEN_RECORDING,
                     )
-                    .on_click(move |_, _, _| crate::startup::open_folder(&folder)),
+                    .on_click(move |_, _, _| crate::startup::open_folder(&folder))
+                    .into_any_element(),
                 );
                 segments.push(
                     segment(
                         "transcript-improve",
                         IconName::RefreshCw,
                         labels.then_some(strings::DOC_IMPROVE),
-                        strings::DOC_IMPROVE_LATER,
+                        summary_text::IMPROVE_TITLE,
                     )
-                    .disabled(true),
+                    .disabled(self.improve.is_running())
+                    .on_click(cx.listener(|this, _, window, cx| this.open_improve(window, cx)))
+                    .into_any_element(),
                 );
             }
             None => no_audio = Some(strings::DOC_NO_AUDIO),
@@ -965,7 +1118,7 @@ impl Render for MeetingView {
                 article = article.child(div().mt(space::XL).child(self.summary(loaded, cx)));
                 // Below the summary, as Tauri's `DeliveryApproval`. A note
                 // until delivery (queue worker, targets) runs in this app.
-                if summary.has_content() && summary.status != SummaryStatus::Running {
+                if summary.has_content() && summary.status != SummaryStatus::Running && !self.run.is_active() {
                     article = article.child(self.delivery(cx));
                 }
                 article = article.child(self.transcript_section(loaded, window, cx));
@@ -1114,7 +1267,7 @@ fn segment(
 fn button_group(
     id: &'static str,
     label: &'static str,
-    segments: Vec<Button>,
+    segments: Vec<AnyElement>,
     cx: &App,
 ) -> gpui::Stateful<gpui::Div> {
     let palette = crate::ui::palette(cx);
@@ -1137,6 +1290,66 @@ fn button_group(
                 })
                 .child(button)
         }))
+}
+
+/// The language menu: Automatisk, the quick picks, then every language.
+fn language_menu(
+    menu: PopupMenu,
+    view: &gpui::WeakEntity<MeetingView>,
+    current: Option<&str>,
+    recents: &[String],
+) -> PopupMenu {
+    let item = |label: String, code: Option<String>| {
+        let view = view.clone();
+        PopupMenuItem::new(label)
+            .checked(current == code.as_deref())
+            .on_click(move |_, _, cx| {
+                let code = code.clone();
+                let _ = view.update(cx, |this, cx| this.set_language(code, cx));
+            })
+    };
+    let mut menu = menu
+        .max_h(size::MENU_MAX)
+        .scrollable(true)
+        .item(item(strings::DOC_LANGUAGE_AUTO.to_string(), None));
+    if !recents.is_empty() {
+        menu = menu.separator();
+        for code in recents {
+            menu = menu.item(item(
+                meeting_summary::language_label(code),
+                Some(code.clone()),
+            ));
+        }
+    }
+    menu = menu.separator();
+    for (code, label) in meeting_summary::LANGUAGES {
+        if !recents.iter().any(|recent| recent == code) {
+            menu = menu.item(item((*label).to_string(), Some((*code).to_string())));
+        }
+    }
+    menu
+}
+
+/// The template menu (Tauri `DropdownMenu`, the description as the tooltip).
+fn template_menu(
+    menu: PopupMenu,
+    view: &gpui::WeakEntity<MeetingView>,
+    templates: &[meeting_summary::Template],
+    chosen: &str,
+) -> PopupMenu {
+    let mut menu = menu.max_h(size::MENU_MAX).scrollable(true);
+    for template in templates {
+        let (view, id) = (view.clone(), template.id.clone());
+        menu = menu.item(
+            PopupMenuItem::new(template.name.clone())
+                .checked(template.id == chosen)
+                .on_click(move |_, _, cx| {
+                    let id = id.clone();
+                    let _ = view.update(cx, |this, cx| this.set_template(id, cx));
+                }),
+        );
+    }
+    menu
 }
 
 /// Save "Må deles med AI-værktøjer" for one meeting.

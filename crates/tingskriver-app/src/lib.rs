@@ -27,6 +27,7 @@ pub mod recording;
 mod recovery;
 mod sidebar;
 pub mod single_instance;
+mod summary_run;
 pub mod startup;
 pub mod theme;
 pub mod ui;
@@ -181,6 +182,7 @@ pub fn run() {
     let delivery = host.as_ref().map(Host::delivery);
     // First start: onboarding fetches the models through core.
     let onboarding_host = host.as_ref().map(|h| (h.handle(), h.bridge().subscribe()));
+    let app_host = host.as_ref().map(|h| h.handle());
     let events = bridge.as_ref().map(|bridge| bridge.subscribe());
     // With a tray icon, closing the window hides the app to the tray.
     let keep_running = host.as_ref().is_some_and(Host::has_tray);
@@ -214,6 +216,7 @@ pub fn run() {
                     model.start_page = page;
                 }
                 model.recorder = recorder.clone();
+                model.host = app_host.clone();
                 model
             });
             if let Some(mut notices) = recorder.as_ref().and_then(|r| r.take_notices()) {
@@ -249,11 +252,18 @@ pub fn run() {
                                 tingskriver_core::transcription_queue::QueueEvent,
                             >(&event.payload_json)
                             {
+                                let finished = (status.status == "completed")
+                                    .then(|| status.meeting_id.clone());
                                 event_model.update(cx, |model, cx| {
                                     model.meeting_jobs.retain(|job| job.job_id != status.job_id);
                                     model.meeting_jobs.push(status);
                                     cx.notify();
                                 });
+                                // "Automatisk opsummering" (Opsummering settings).
+                                if let Some(meeting_id) = finished {
+                                    let model = event_model.clone();
+                                    cx.update(|cx| summary_run::auto_summary(model, meeting_id, cx));
+                                }
                             }
                         }
                     }
