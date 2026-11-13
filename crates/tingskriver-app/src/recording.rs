@@ -16,8 +16,8 @@
 //! happening instead of transcript lines.
 
 use gpui::{
-    div, prelude::*, relative, AnyElement, App, ClipboardItem, Context, FontWeight, Hsla,
-    SharedString,
+    canvas, div, fill, point, prelude::*, px, relative, size as gpui_size, AnyElement, App, Bounds,
+    ClipboardItem, Context, FontWeight, Hsla, Pixels, SharedString, StyledText,
 };
 use gpui_component::{
     h_flex, notification::Notification, spinner::Spinner, v_flex, Disableable as _, Icon,
@@ -208,8 +208,7 @@ pub struct Line {
     /// Start in the recording, in seconds.
     pub seconds: u64,
     pub text: String,
-    /// The recognizer is unsure: dotted underline in Tauri, a solid muted
-    /// underline here (gpui has no dotted text decoration).
+    /// The recognizer is unsure: a dotted underline (`dotted_text`).
     pub low_confidence: bool,
 }
 
@@ -716,12 +715,11 @@ fn transcript_line(index: usize, line: &Line, streaming: bool, cx: &App) -> AnyE
         .text_size(typography::MD)
         .line_height(relative(size::LINE_HEIGHT))
         .text_color(palette.foreground)
-        .when(line.low_confidence, |this| {
-            this.underline()
-                .text_decoration_color(palette.muted_foreground)
-                .text_decoration_1()
-        })
-        .child(line.text.clone());
+        .child(if line.low_confidence {
+            dotted_text(&line.text, palette.muted_foreground)
+        } else {
+            div().child(line.text.clone()).into_any_element()
+        });
     h_flex()
         .id(("recording-line", index))
         .when(line.low_confidence, |this| {
@@ -752,6 +750,63 @@ fn transcript_line(index: usize, line: &Line, streaming: bool, cx: &App) -> AnyE
                         .bg(palette.secondary)
                 })
                 .child(text),
+        )
+        .into_any_element()
+}
+
+/// X positions of the dots of a dotted underline from `start` to `end`:
+/// one pixel dots, one pixel apart (`decoration-dotted` at 1 px).
+fn dot_positions(start: f32, end: f32) -> impl Iterator<Item = f32> {
+    let count = ((end - start) / f32::from(size::DOT_PERIOD)).floor().max(0.0) as usize;
+    (0..count).map(move |n| start + n as f32 * f32::from(size::DOT_PERIOD))
+}
+
+/// Text with Tauri's dotted underline (`underline decoration-dotted`). gpui's
+/// text decoration is only solid or wavy, so the dots are painted under each
+/// wrapped line from the text layout.
+fn dotted_text(text: &str, color: Hsla) -> AnyElement {
+    let styled = StyledText::new(text.to_string());
+    let layout = styled.layout().clone();
+    let text = text.to_string();
+    div()
+        .relative()
+        .child(styled)
+        .child(
+            canvas(
+                |_, _, _| (),
+                move |_, _, window, _| {
+                    let line_height = layout.line_height();
+                    // (line top, first x, end x) per wrapped line.
+                    let mut lines: Vec<(Pixels, Pixels, Pixels)> = Vec::new();
+                    for (index, ch) in text.char_indices() {
+                        let Some(at) = layout.position_for_index(index) else {
+                            continue;
+                        };
+                        let advance = layout
+                            .position_for_index(index + ch.len_utf8())
+                            .filter(|next| next.y == at.y)
+                            .map_or(line_height * 0.4, |next| next.x - at.x);
+                        match lines.last_mut() {
+                            Some((top, _, end)) if *top == at.y => *end = at.x + advance,
+                            _ => lines.push((at.y, at.x, at.x + advance)),
+                        }
+                    }
+                    for (top, start, end) in lines {
+                        let y = top + line_height - size::DOT_OFFSET;
+                        for x in dot_positions(f32::from(start), f32::from(end)) {
+                            window.paint_quad(fill(
+                                Bounds::new(
+                                    point(px(x), y),
+                                    gpui_size(size::UNDERLINE, size::UNDERLINE),
+                                ),
+                                color,
+                            ));
+                        }
+                    }
+                },
+            )
+            .absolute()
+            .size_full(),
         )
         .into_any_element()
 }
@@ -966,6 +1021,14 @@ pub(crate) fn fixture(variant: crate::ui::FixtureVariant) -> HomeState {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_dotted_underline_has_a_dot_every_two_pixels() {
+        let dots: Vec<f32> = super::dot_positions(10.0, 17.0).collect();
+        assert_eq!(dots, vec![10.0, 12.0, 14.0]);
+        assert_eq!(super::dot_positions(5.0, 5.0).count(), 0);
+        assert_eq!(super::dot_positions(9.0, 4.0).count(), 0);
+    }
+
     use super::*;
 
     #[test]

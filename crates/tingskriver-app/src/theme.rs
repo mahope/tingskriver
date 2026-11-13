@@ -290,9 +290,14 @@ pub mod recording {
     pub const LINE_HEIGHT: f32 = 1.65;
     /// The timestamp sits 3 px lower to share the text's baseline (`mt-[3px]`).
     pub const TIMESTAMP_NUDGE: Pixels = px(3.0);
-    /// The low-confidence underline (1 px). Tauri draws it dotted; gpui only
-    /// has solid and wavy, so it is solid in the muted color.
+    /// The low-confidence underline: 1 px dots, painted by `dotted_text`
+    /// (gpui's own decoration is only solid or wavy).
     pub const UNDERLINE: Pixels = px(1.0);
+    /// Distance from one dot to the next (1 px dot, 1 px gap).
+    pub const DOT_PERIOD: Pixels = px(2.0);
+    /// How far above the bottom of the line box the dots sit
+    /// (`underline-offset-4` under a 1.65 line height at 16 px).
+    pub const DOT_OFFSET: Pixels = px(5.0);
     /// The filled stop square: lucide `Square` (18 of 24 units) at 14 px.
     pub const STOP_SQUARE: Pixels = px(10.5);
     pub const STOP_SQUARE_RADIUS: Pixels = px(2.0);

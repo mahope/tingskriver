@@ -257,15 +257,15 @@ impl AboutView {
             .text_color(palette.muted_foreground)
             .child(note)
             .child(
+                // One space each side, as `{' · '}` in Tauri.
                 h_flex()
-                    .gap(space::XS)
                     .child(footer_link(
                         "about-website",
                         strings::ABOUT_WEBSITE,
                         WEBSITE_URL,
                         cx,
                     ))
-                    .child(strings::ABOUT_LINK_SEPARATOR)
+                    .child(format!(" {} ", strings::ABOUT_LINK_SEPARATOR))
                     .child(footer_link(
                         "about-github",
                         strings::ABOUT_GITHUB,
