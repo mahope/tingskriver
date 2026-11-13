@@ -56,6 +56,7 @@ catalogue! {
     MODEL_SELECT_SAVE_FAILED = "Valget kunne ikke gemmes. Din tidligere model er bevaret.";
     MODEL_SELECT_NO_DATABASE = "Valget kan først gemmes, når databasen er åben. Din tidligere model er bevaret.";
     MODEL_DELETED = "{value} er slettet";
+    MODEL_SAVED_OTHER_PROVIDER = "Din gemte udbyder ({value}) kan ikke vælges her. Vælger du en model nedenfor, erstatter den den gemte udbyder.";
     MODEL_ERR_DISK = "Der er ikke plads nok på disken. Modellen fylder {size}. Frigør plads, og prøv igen.";
     MODEL_ERR_DISK_UNKNOWN = "Disken er fuld, eller modellen kunne ikke skrives. Frigør plads, og prøv igen.";
     MODEL_ERR_NETWORK = "Hentningen blev afbrudt, eller kilden svarede ikke. Tjek internetforbindelsen, og prøv igen. Det, der allerede er hentet, gemmes, så hentningen fortsætter, hvor den slap.";
@@ -73,6 +74,11 @@ catalogue! {
     MODEL_SELECTED_MISSING = "Din valgte model ligger ikke på computeren. Hent den igen, eller vælg en anden model.";
     // ParakeetModelManager.tsx:116: the toast after "Annullér".
     MODEL_CANCELLED = "Hentningen af {value} er annulleret";
+}
+
+/// "Din gemte udbyder (openai) kan ikke vælges her. …"
+pub fn model_saved_other_provider(provider: &str) -> String {
+    MODEL_SAVED_OTHER_PROVIDER.replace("{value}", provider)
 }
 
 /// "Bruger Lynhurtig til transskription".
@@ -100,6 +106,16 @@ pub fn model_details(
         .replace("{source}", source.unwrap_or(MODEL_UNKNOWN))
         .replace("{license}", license.unwrap_or(MODEL_UNKNOWN))
         .replace("{revision}", revision.unwrap_or(MODEL_UNKNOWN))
+}
+
+/// Accessible name of a card button: the verb and the model, "Slet Lynhurtig".
+pub fn model_action_label(verb: &str, name: &str) -> String {
+    format!("{verb} {name}")
+}
+
+/// The percent next to the progress bar.
+pub fn model_percent(percent: impl std::fmt::Display) -> String {
+    format!("{percent}%")
 }
 
 pub fn model_err_disk(size: &str) -> String {

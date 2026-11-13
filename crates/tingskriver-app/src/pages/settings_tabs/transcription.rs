@@ -22,7 +22,7 @@ use crate::controls::{self, Segment, Variant};
 use crate::models::{self, Busy, Check, Engine, Key, Load, Models, Row, State, Status};
 use crate::pages::settings::{alert, field_label, settings_section, tab_column};
 use crate::theme::{self, space, typography};
-use crate::ui::{heading, muted, palette, Level, Page, Shell};
+use crate::ui::{heading, muted, palette, AppModel, Level, Page, Shell};
 
 /// `border-2` of a model card.
 const CARD_BORDER: gpui::Pixels = gpui::px(2.0);
@@ -44,8 +44,8 @@ impl Shell {
         }
         let engine_body = match &models {
             Some(models) => {
-                let busy = self.models_busy(cx);
-                engine_body(models, busy, cx)
+                let busy = models_busy(&self.model, cx);
+                engine_body(models, &self.model, busy, cx)
             }
             None => muted(model_text::MODELS_NO_HOST, cx).into_any_element(),
         };
@@ -80,22 +80,23 @@ impl Shell {
             ),
         ])
     }
+}
 
-    /// What uses the models right now (recording, dictation, a job).
-    fn models_busy(&self, cx: &App) -> Option<Busy> {
-        let model = self.model.read(cx);
-        let phase = model
-            .recorder
-            .as_ref()
-            .map(|recorder| recorder.state().phase)
-            .unwrap_or_default();
-        let job_running = model.meeting_jobs.iter().any(|job| job.status == "running");
-        models::busy_reason(
-            phase,
-            tingskriver_core::dictation::service::is_dictating(),
-            job_running,
-        )
-    }
+/// What uses the models right now (recording, dictation, a job). Also
+/// asked again when a delete is confirmed.
+pub(crate) fn models_busy(app: &Entity<AppModel>, cx: &App) -> Option<Busy> {
+    let model = app.read(cx);
+    let phase = model
+        .recorder
+        .as_ref()
+        .map(|recorder| recorder.state().phase)
+        .unwrap_or_default();
+    let job_running = model.meeting_jobs.iter().any(|job| job.status == "running");
+    models::busy_reason(
+        phase,
+        tingskriver_core::dictation::service::is_dictating(),
+        job_running,
+    )
 }
 
 fn engine_label(engine: Engine) -> &'static str {
@@ -106,7 +107,12 @@ fn engine_label(engine: Engine) -> &'static str {
 }
 
 /// The engine choice, the model cards and what belongs to no card.
-fn engine_body(models: &Entity<Models>, busy: Option<Busy>, cx: &App) -> AnyElement {
+fn engine_body(
+    models: &Entity<Models>,
+    app: &Entity<AppModel>,
+    busy: Option<Busy>,
+    cx: &App,
+) -> AnyElement {
     let state = &models.read(cx).state;
     let view = state.view;
     let chooser = {
@@ -138,11 +144,17 @@ fn engine_body(models: &Entity<Models>, busy: Option<Busy>, cx: &App) -> AnyElem
                 )
                 .child(chooser),
         )
-        .child(model_list(models, state, busy, cx))
+        .child(model_list(models, app, state, busy, cx))
         .into_any_element()
 }
 
-fn model_list(models: &Entity<Models>, state: &State, busy: Option<Busy>, cx: &App) -> AnyElement {
+fn model_list(
+    models: &Entity<Models>,
+    app: &Entity<AppModel>,
+    state: &State,
+    busy: Option<Busy>,
+    cx: &App,
+) -> AnyElement {
     let palette = palette(cx);
     match &state.load {
         Load::Idle | Load::Loading => {
@@ -189,7 +201,7 @@ fn model_list(models: &Entity<Models>, state: &State, busy: Option<Busy>, cx: &A
         .rows_of(view)
         .map(|row| {
             let selected = selected_here.as_ref().is_some_and(|key| *key == row.key());
-            model_card(models, row, selected, busy, cx)
+            model_card(models, app, row, selected, busy, cx)
         })
         .collect::<Vec<_>>();
 
@@ -200,24 +212,33 @@ fn model_list(models: &Entity<Models>, state: &State, busy: Option<Busy>, cx: &A
             text::SAVED_SETTING_UNREADABLE,
             cx,
         ))
-    } else if let Some(row) = selected_here.as_ref().and_then(|key| state.row(key)) {
-        Some(if row.status() == Status::Ready {
-            div()
-                .id("models-using")
-                .text_size(typography::XS)
-                .text_color(palette.muted_foreground)
-                .text_center()
-                .child(model_text::model_using(&row.name()))
-                .into_any_element()
-        } else {
-            alert(
-                "models-selected-missing",
-                model_text::MODEL_SELECTED_MISSING,
-                cx,
-            )
-        })
+    } else if let Some(provider) = &state.saved_other_provider {
+        Some(alert(
+            "models-saved-other-provider",
+            &model_text::model_saved_other_provider(provider),
+            cx,
+        ))
     } else {
-        None
+        selected_here
+            .as_ref()
+            .and_then(|key| state.row(key))
+            .map(|row| {
+                if row.status() == Status::Ready {
+                    div()
+                        .id("models-using")
+                        .text_size(typography::XS)
+                        .text_color(palette.muted_foreground)
+                        .text_center()
+                        .child(model_text::model_using(&row.name()))
+                        .into_any_element()
+                } else {
+                    alert(
+                        "models-selected-missing",
+                        model_text::MODEL_SELECTED_MISSING,
+                        cx,
+                    )
+                }
+            })
     };
 
     v_flex()
@@ -259,6 +280,7 @@ fn key_id(key: &Key) -> SharedString {
 /// source, licence, revision and the checksum status.
 fn model_card(
     models: &Entity<Models>,
+    app: &Entity<AppModel>,
     row: &Row,
     selected: bool,
     busy: Option<Busy>,
@@ -306,7 +328,7 @@ fn model_card(
             )
         });
 
-    let actions = card_actions(models, row, &status, selected, busy, &name, &id, cx);
+    let actions = card_actions(models, app, row, &status, selected, busy, &name, &id, cx);
 
     let details = model_text::model_details(
         &model_text::model_size(row.size_mb()),
@@ -455,6 +477,7 @@ fn alert_line(id: ElementId, message: &str, cx: &App) -> AnyElement {
 #[allow(clippy::too_many_arguments)]
 fn card_actions(
     models: &Entity<Models>,
+    app: &Entity<AppModel>,
     row: &Row,
     status: &Status,
     selected: bool,
@@ -465,11 +488,11 @@ fn card_actions(
 ) -> AnyElement {
     let palette = palette(cx);
     let key = row.key();
-    let labelled = |verb: &str| SharedString::from(format!("{verb} {name}"));
+    let labelled = |verb: &str| SharedString::from(model_text::model_action_label(verb, name));
     let download = |label: &'static str, variant: Variant| {
         let models = models.clone();
         let key = key.clone();
-        controls::small_button(eid("model-download", &id), variant)
+        controls::small_button(eid("model-download", id), variant)
             .label(label)
             .accessibility_label(labelled(label))
             .on_click(move |_, _, cx| {
@@ -479,10 +502,10 @@ fn card_actions(
     };
     let delete = |label: &'static str, variant: Variant, blocked: Option<Busy>| {
         let models = models.clone();
+        let app = app.clone();
         let key = key.clone();
         let name = name.to_string();
-        let selected = selected;
-        let button = controls::small_button(eid("model-delete", &id), variant)
+        let button = controls::small_button(eid("model-delete", id), variant)
             .label(label)
             .accessibility_label(labelled(model_text::MODEL_DELETE_LABEL))
             .disabled(blocked.is_some());
@@ -495,6 +518,7 @@ fn card_actions(
                     .on_click(move |_, window, cx| {
                         confirm_delete(
                             models.clone(),
+                            app.clone(),
                             key.clone(),
                             name.clone(),
                             selected,
@@ -530,7 +554,7 @@ fn card_actions(
                 let models = models.clone();
                 let key = key.clone();
                 this.child(
-                    controls::small_button(eid("model-choose", &id), Variant::Outline)
+                    controls::small_button(eid("model-choose", id), Variant::Outline)
                         .label(model_text::MODEL_CHOOSE)
                         .accessibility_label(labelled(model_text::MODEL_CHOOSE))
                         .on_click(move |_, _, cx| {
@@ -543,7 +567,7 @@ fn card_actions(
                 let models = models.clone();
                 let key = key.clone();
                 this.child(
-                    controls::small_button(eid("model-verify", &id), Variant::Ghost)
+                    controls::small_button(eid("model-verify", id), Variant::Ghost)
                         .label(model_text::MODEL_CHECK)
                         .accessibility_label(labelled(model_text::MODEL_CHECK_LABEL))
                         .on_click(move |_, _, cx| {
@@ -607,7 +631,7 @@ fn progress_block(
                             this.child(
                                 div()
                                     .font_weight(FontWeight::SEMIBOLD)
-                                    .child(format!("{percent}%")),
+                                    .child(model_text::model_percent(percent)),
                             )
                         }),
                 )
@@ -620,11 +644,11 @@ fn progress_block(
                         .into_any_element()
                 } else {
                     let models = models.clone();
-                    controls::small_button(eid("model-cancel", &id), Variant::Ghost)
+                    controls::small_button(eid("model-cancel", id), Variant::Ghost)
                         .label(model_text::MODEL_CANCEL)
-                        .accessibility_label(SharedString::from(format!(
-                            "{} {name}",
-                            model_text::MODEL_CANCEL_LABEL
+                        .accessibility_label(SharedString::from(model_text::model_action_label(
+                            model_text::MODEL_CANCEL_LABEL,
+                            name,
                         )))
                         .on_click(move |_, _, cx| {
                             let key = key.clone();
@@ -635,7 +659,7 @@ fn progress_block(
         )
         .child(
             div()
-                .id(eid("model-progress", &id))
+                .id(eid("model-progress", id))
                 .role(gpui::Role::ProgressIndicator)
                 .aria_label(SharedString::from(model_text::model_progress_label(
                     name, percent,
@@ -669,6 +693,7 @@ fn progress_block(
 /// "Slet …?" as the meeting delete dialog. Deleting needs this answer.
 fn confirm_delete(
     models: Entity<Models>,
+    app: Entity<AppModel>,
     key: Key,
     name: String,
     selected: bool,
@@ -679,6 +704,7 @@ fn confirm_delete(
     let question = model_text::model_delete_confirm(&name, selected);
     window.open_dialog(cx, move |dialog, _, _| {
         let models = models.clone();
+        let app = app.clone();
         let key = key.clone();
         dialog
             .w(theme::sidebar::CONFIRM_DIALOG_WIDTH)
@@ -709,7 +735,10 @@ fn confirm_delete(
                             .on_click(move |_, window, cx| {
                                 window.close_dialog(cx);
                                 let key = key.clone();
-                                models.update(cx, |models, cx| models.delete(key, cx));
+                                // Asked again: a recording may have started
+                                // while the dialog was open.
+                                let busy = models_busy(&app, cx);
+                                models.update(cx, |models, cx| models.delete(key, busy, cx));
                             }),
                     ),
             )

@@ -288,6 +288,9 @@ pub(crate) struct State {
     pub selected: Option<Key>,
     /// The saved choice could not be read; never shown as the default.
     pub selected_unreadable: bool,
+    /// The saved provider is one this tab does not offer (Tauri can save
+    /// Deepgram, ElevenLabs, Groq, OpenAI). Shown, never hidden as "none".
+    pub saved_other_provider: Option<String>,
     /// The engine whose models are listed (Tauri's `uiProvider`).
     pub view: Engine,
     /// A message that belongs to no card (a choice that was not saved).
@@ -301,6 +304,7 @@ impl Default for State {
             rows: Vec::new(),
             selected: None,
             selected_unreadable: false,
+            saved_other_provider: None,
             // Tauri's default engine.
             view: Engine::Parakeet,
             notice: None,
@@ -435,7 +439,11 @@ impl State {
     /// "Annullerer…" and say why.
     pub(crate) fn cancel_pending(&mut self, key: &Key) {
         if let Some(row) = self.row_mut(key) {
-            row.error = Some(text::MODEL_CANCEL_PENDING.to_string());
+            // The download call may already have ended the state; then
+            // there is nothing left to wait for.
+            if row.transient.is_some() {
+                row.error = Some(text::MODEL_CANCEL_PENDING.to_string());
+            }
         }
     }
 
@@ -595,8 +603,10 @@ pub(crate) fn explain_error(raw: &str, size_mb: f64) -> String {
         || lower.contains("failed to start download")
         || lower.contains("kunne ikke hentes")
         || lower.contains("error sending request")
-        || lower.contains("connect")
-        || lower.contains("dns")
+        || lower.contains("connection")
+        || lower.contains("could not connect")
+        || lower.contains("dns error")
+        || lower.contains("dns lookup")
         || lower.contains("network")
         || lower.contains("stalled")
     {
@@ -680,15 +690,25 @@ async fn discover(host: &HostHandle) -> Result<Vec<Discovered>, String> {
     Ok(found)
 }
 
-async fn read_saved(host: &HostHandle) -> Result<Option<Key>, String> {
+/// The saved choice: a local model this tab offers, or the name of another
+/// saved provider.
+type Saved = (Option<Key>, Option<String>);
+
+async fn read_saved(host: &HostHandle) -> Result<Saved, String> {
     let Some(db) = host.database() else {
         // The database is not open yet (first start): nothing is saved.
-        return Ok(None);
+        return Ok((None, None));
     };
     let saved = SettingsRepository::get_transcript_config(db.pool())
         .await
         .map_err(|e| e.to_string())?;
-    Ok(saved.and_then(|s| Engine::from_provider(&s.provider).map(|e| (e, s.model))))
+    Ok(match saved {
+        None => (None, None),
+        Some(s) => match Engine::from_provider(&s.provider) {
+            Some(engine) => (Some((engine, s.model)), None),
+            None => (None, Some(s.provider)),
+        },
+    })
 }
 
 async fn start_download(host: HostHandle, key: Key) -> Result<(), String> {
@@ -713,6 +733,9 @@ async fn cancel_download(key: Key) -> Result<bool, String> {
     Ok(outcome == Outcome::Cancelled)
 }
 
+/// Core's `*_delete_corrupted_model` removes the model's folder or file
+/// whatever its state (it is the only delete command; the name is from the
+/// first use, a corrupt file), so it also deletes healthy models.
 async fn delete_model(key: Key) -> Result<(), String> {
     match key.0 {
         Engine::Parakeet => parakeet_engine::commands::parakeet_delete_corrupted_model(key.1).await,
@@ -921,8 +944,9 @@ impl Models {
                     Ok((found, saved)) => {
                         this.state.set_discovered(found);
                         match saved {
-                            Ok(saved) => {
+                            Ok((saved, other)) => {
                                 this.state.selected = saved;
+                                this.state.saved_other_provider = other;
                                 this.state.selected_unreadable = false;
                             }
                             Err(error) => {
@@ -1059,9 +1083,16 @@ impl Models {
         .detach();
     }
 
-    /// Delete after the user confirmed. The caller has checked that nothing
-    /// uses the model ([`Busy`]).
-    pub(crate) fn delete(&mut self, key: Key, cx: &mut Context<Self>) {
+    /// Delete after the user confirmed. The caller passes what uses the
+    /// models right now, read at the confirmation ([`Busy`]); a delete is
+    /// refused with the explanation when that is something.
+    pub(crate) fn delete(&mut self, key: Key, busy: Option<Busy>, cx: &mut Context<Self>) {
+        if let Some(busy) = busy {
+            // Re-checked at the confirmation, not only when the button was drawn.
+            self.state.notice = Some(busy.explanation().to_string());
+            cx.notify();
+            return;
+        }
         let name = self.state.row(&key).map(Row::name).unwrap_or_default();
         let task = self.runtime.spawn(delete_model(key.clone()));
         cx.spawn(async move |this, cx| {
@@ -1110,6 +1141,7 @@ impl Models {
                 match result {
                     Ok(()) => {
                         this.state.selected = Some(key);
+                        this.state.saved_other_provider = None;
                         this.state.selected_unreadable = false;
                     }
                     Err(error) => {
@@ -1337,6 +1369,28 @@ mod tests {
         assert_eq!(state.row(&key).unwrap().status(), Status::Missing);
         // And the model can be fetched again.
         assert!(state.begin_download(&key));
+    }
+
+    #[test]
+    fn a_late_cancel_pending_answer_leaves_no_error_on_an_idle_row() {
+        let mut state = state();
+        let key = parakeet(FAST);
+        state.begin_download(&key);
+        assert!(state.begin_cancel(&key));
+        state.cancel_pending(&key);
+        assert!(state.row(&key).unwrap().error.is_some());
+        // The download call ended first.
+        state.cancelled(&key);
+        state.row_mut(&key).unwrap().error = None;
+        state.cancel_pending(&key);
+        assert_eq!(state.row(&key).unwrap().error, None);
+    }
+
+    #[test]
+    fn unrelated_errors_are_not_shown_as_network_errors() {
+        let generic = explain_error("Stream disconnected_by_user at C:\\dnsmasq\\x", 1.0);
+        assert!(generic.contains("Hentningen mislykkedes"));
+        assert!(explain_error("error trying to connect: dns error", 1.0).contains("afbrudt"));
     }
 
     #[test]

@@ -53,10 +53,14 @@ licence and revision; anything the manifest does not know is shown as "ukendt".
   been checked in this session. A model that fails the check is offered "Slet" and "Hent igen".
 - "Vælg" saves the choice in `transcript_settings`, the row the Tauri app reads.
 - "Slet" asks first. It is disabled, with the reason under the card, while a recording,
-  its final transcription, a dictation or a transcription job is running.
+  its final transcription, a dictation or a transcription job is running. The check is
+  made again when you press "Slet" in the dialog, so a recording started meanwhile still
+  blocks the delete.
 
 Limits: the cards do not show warm/idle state or GPU/CPU status, and Syv.ai is a dictation
-engine set on the Diktering tab. Android downloads stay in #134.
+engine set on the Diktering tab. Cloud providers that the Tauri app can save (Deepgram,
+ElevenLabs, Groq, OpenAI) are not offered here. If one is saved, the tab names it under
+the cards and warns that choosing a local model replaces it. Android downloads stay in #134.
 
 ## Sources and the reserve mirror
 
