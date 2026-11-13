@@ -35,8 +35,9 @@ use crate::ui::{muted, palette, paragraph, AppModel, Shell};
 
 /// How often the queue is read again, as Tauri's 15 s timer.
 const POLL: Duration = Duration::from_secs(15);
-/// How often to check whether Generelt is shown (and the queue open).
-const WATCH: Duration = Duration::from_secs(1);
+/// First wait before looking again when the queue is not open yet; doubles up
+/// to `POLL`.
+const RETRY_FIRST: Duration = Duration::from_secs(1);
 
 /// Policy, targets and jobs, as Tauri's `delivery_status`.
 #[derive(Clone)]
@@ -145,33 +146,42 @@ async fn fetch(service: &Delivery) -> Result<Status, Error> {
 /// once on mount, then every 15 s. Elsewhere this only looks at the page.
 pub(crate) fn start(model: Entity<AppModel>, service: Arc<OnceCell<Delivery>>, cx: &mut App) {
     model.update(cx, |m, _| m.settings.delivery.service = Some(service));
+    let wake = shown_changed_signal();
     cx.spawn(async move |cx| {
         // When the queue was last read; `None` while Generelt is hidden, so
         // showing it again reads at once.
         let mut last_read: Option<Instant> = None;
+        // Wait before the next try while the queue is not open (backoff).
+        let mut retry = RETRY_FIRST;
         loop {
+            let runtime = model.read_with(cx, |m, _| m.runtime.clone());
+            // `None`: sleep until Generelt is shown or hidden again.
+            let mut wait = None;
             if !cx.update(|cx| crate::ui::settings_general_shown(cx)) {
                 last_read = None;
+                retry = RETRY_FIRST;
             } else if last_read.is_none_or(|at| at.elapsed() >= POLL) {
-                let (runtime, service) = model.read_with(cx, |m, _| {
-                    (
-                        m.runtime.clone(),
-                        m.settings
-                            .delivery
-                            .service
-                            .as_ref()
-                            .and_then(|s| s.get())
-                            .cloned(),
-                    )
+                let service = model.read_with(cx, |m, _| {
+                    m.settings
+                        .delivery
+                        .service
+                        .as_ref()
+                        .and_then(|s| s.get())
+                        .cloned()
                 });
                 let result = match service {
                     Some(service) => {
                         last_read = Some(Instant::now());
+                        retry = RETRY_FIRST;
                         Some(runtime.spawn(async move { fetch(&service).await }).await)
                     }
                     // Not open (yet): the Tauri app owns the queue, or it
-                    // could not be opened. Look again in a second.
-                    None => None,
+                    // could not be opened. Look again, with backoff.
+                    None => {
+                        wait = Some(retry);
+                        retry = (retry * 2).min(POLL);
+                        None
+                    }
                 };
                 model.update(cx, |m, cx| {
                     if m.settings.delivery.loaded(result) {
@@ -179,10 +189,40 @@ pub(crate) fn start(model: Entity<AppModel>, service: Arc<OnceCell<Delivery>>, c
                     }
                 });
             }
-            cx.background_executor().timer(WATCH).await;
+            if wait.is_none() {
+                wait = last_read.map(|at| POLL.saturating_sub(at.elapsed()));
+            }
+            let wake = wake.clone();
+            // Event driven: the shell tells when Generelt is shown or
+            // hidden. The timer only covers the 15 s refresh while shown.
+            let _ = runtime
+                .spawn(async move {
+                    match wait {
+                        Some(wait) => {
+                            tokio::select! {
+                                _ = wake.notified() => {}
+                                _ = tokio::time::sleep(wait) => {}
+                            }
+                        }
+                        None => wake.notified().await,
+                    }
+                })
+                .await;
         }
     })
     .detach();
+}
+
+static SHOWN_CHANGED: std::sync::OnceLock<Arc<tokio::sync::Notify>> = std::sync::OnceLock::new();
+
+/// Raised by the shell whenever Generelt is shown or hidden.
+fn shown_changed_signal() -> Arc<tokio::sync::Notify> {
+    SHOWN_CHANGED.get_or_init(Default::default).clone()
+}
+
+/// The shell calls this when it switched to or from Generelt.
+pub(crate) fn shown_changed() {
+    shown_changed_signal().notify_one();
 }
 
 /// Run one action on the queue, then read the status again. `done` is the

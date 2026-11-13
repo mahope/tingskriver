@@ -154,11 +154,25 @@ pub(crate) struct SavedModels {
     pub(crate) transcription_unreadable: bool,
     /// The same for the summary model.
     pub(crate) summary_unreadable: bool,
+    /// Failed reads in a row; reset by a read that works.
+    failures: u32,
 }
 
-/// How long to wait before reading the saved models again after a failed
-/// read (for example a database that is locked during startup).
+/// First wait before reading the saved models again after a failed read (for
+/// example a database that is locked during startup). It doubles each time.
 const SAVED_MODELS_RETRY: std::time::Duration = std::time::Duration::from_secs(5);
+/// After this many failed reads in a row the tab stops asking by itself; the
+/// line "could not be read" stays until the app is restarted.
+const SAVED_MODELS_MAX_FAILURES: u32 = 5;
+
+/// How long to wait after the `failures`-th failed read in a row, or `None`
+/// when the cap is reached: 5 s, 10 s, 20 s, 40 s, then give up.
+fn retry_delay(failures: u32) -> Option<std::time::Duration> {
+    if failures == 0 || failures >= SAVED_MODELS_MAX_FAILURES {
+        return None;
+    }
+    Some(SAVED_MODELS_RETRY * 2u32.pow(failures - 1))
+}
 
 /// Read [`SavedModels`] once the database is open. Called while drawing the
 /// Transskription and Opsummering tabs; the read runs on the tokio runtime.
@@ -190,8 +204,11 @@ pub(super) fn load_saved_models(shell: &Shell, cx: &mut Context<Shell>) {
             Err(_) => (Err(()), Err(())),
         };
         let failed = transcription.is_err() || summary.is_err();
+        let mut delay = None;
         model.update(cx, |m, cx| {
             let saved = &mut m.settings.saved_models;
+            saved.failures = if failed { saved.failures + 1 } else { 0 };
+            delay = retry_delay(saved.failures);
             saved.transcription_unreadable = transcription.is_err();
             saved.summary_unreadable = summary.is_err();
             if let Ok(value) = transcription {
@@ -202,9 +219,9 @@ pub(super) fn load_saved_models(shell: &Shell, cx: &mut Context<Shell>) {
             }
             cx.notify();
         });
-        if failed {
-            // Ask again on the next draw, but not in a tight loop.
-            cx.background_executor().timer(SAVED_MODELS_RETRY).await;
+        if let Some(delay) = delay {
+            // Ask again on the next draw, but with backoff and a cap.
+            cx.background_executor().timer(delay).await;
             model.update(cx, |m, cx| {
                 m.settings.saved_models.requested.set(false);
                 cx.notify();
@@ -212,4 +229,28 @@ pub(super) fn load_saved_models(shell: &Shell, cx: &mut Context<Shell>) {
         }
     })
     .detach();
+}
+
+#[cfg(test)]
+mod retry_tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn the_wait_doubles_and_then_stops() {
+        let waits: Vec<_> = (1..=SAVED_MODELS_MAX_FAILURES)
+            .map(retry_delay)
+            .collect();
+        assert_eq!(
+            waits,
+            vec![
+                Some(Duration::from_secs(5)),
+                Some(Duration::from_secs(10)),
+                Some(Duration::from_secs(20)),
+                Some(Duration::from_secs(40)),
+                None,
+            ]
+        );
+        assert_eq!(retry_delay(0), None, "a good read never retries");
+    }
 }

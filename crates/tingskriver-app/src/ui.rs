@@ -533,6 +533,19 @@ fn open_main_window(cx: &mut App) -> anyhow::Result<WindowHandle<Root>> {
             theme::sync_with_window(window, cx);
             let shell = cx.new(|cx| Shell::new(state_path, window, cx));
             cx.global_mut::<Globals>().shell = Some(shell.downgrade());
+            // Tell the delivery status when Generelt is shown or hidden.
+            let mut general_shown = false;
+            cx.observe(&shell, move |shell, cx| {
+                let shown = {
+                    let shell = shell.read(cx);
+                    shell.page == Page::Settings && shell.settings.tab == SettingsTab::General
+                };
+                if shown != general_shown {
+                    general_shown = shown;
+                    crate::pages::settings_delivery::shown_changed();
+                }
+            })
+            .detach();
             let model = model(cx);
             window.on_next_frame(move |_, cx| {
                 model.update(cx, |m, _| {
