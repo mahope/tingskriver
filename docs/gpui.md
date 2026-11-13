@@ -207,6 +207,20 @@ the same time; both use the same database with the same migrations.
     "Gendan" saves the meeting, transcribes it and opens it. Repeat and use
     "Slet" (it asks first): the dialog closes and the card on Home is gone.
 
+14. **Sleep and logoff (#179).** Record 1 minute, close the lid (or Sleep)
+    and wake the machine. No recording runs and nothing starts by itself;
+    Home shows the card "Et møde blev afsluttet af systemet" with cause
+    "dvale", the time and "Lyden er gemt", and the meeting opens with audio up
+    to the moment of sleep. Repeat with sign-out and sign-in: cause "logget
+    af". The log has one `power:` line per event ([host.md](host.md), steps
+    8 to 14).
+15. **Meeting program on another device (#199).** Set Windows' default output
+    to the speakers, play Teams or Zoom on a headset, and record. The pill
+    keeps recording; the system line shows the headset once the follower has
+    switched (about 4 s), the remote voices are in the saved system track,
+    and the log has `[DEVICE_FOLLOW]` with a gap of at most 1000 ms
+    ([enheder.md](enheder.md), test A).
+
 Write the results here:
 
 | Test | Result | Date, machine |
@@ -224,6 +238,8 @@ Write the results here:
 | 11. Tray start and stop | | |
 | 12. Microphone errors | | |
 | 13. Gendan afbrudte møder | | |
+| 14. Sleep and logoff | | |
+| 15. Meeting program on another device | | |
 
 **No-go** if text input (2, 3) or the UIA tree (4) fails without a fix in
 gpui-component's next release; the rest are fixable in the app.
