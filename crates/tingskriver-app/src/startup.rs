@@ -351,9 +351,13 @@ mod tests {
             backup_path,
             log_path: None,
         };
-        let with = DbFailure::from_init_error(&DbInitError::Corrupt(info(Some("data/backup".into()))));
+        let with =
+            DbFailure::from_init_error(&DbInitError::Corrupt(info(Some("data/backup".into()))));
         assert_eq!(with.backup_path, Some(PathBuf::from("data/backup")));
-        assert_eq!(with.database_path, PathBuf::from("data/meeting_minutes.sqlite"));
+        assert_eq!(
+            with.database_path,
+            PathBuf::from("data/meeting_minutes.sqlite")
+        );
         assert!(with.summary.contains("beskadiget"));
         let without = DbFailure::from_init_error(&DbInitError::Corrupt(info(None)));
         assert_eq!(without.backup_path, None);

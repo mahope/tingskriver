@@ -141,7 +141,8 @@ The first column is the exact identifier in the code; the script checks it.
 | `storage_notice` | Destructive notice inside `status_bar` while the audio is not being saved ("Lyden gemmes ikke: disken er fuld"), with an alert icon. Role alert. It stays until core reports the storage working again; a sticky notification says the same. | Storage errors during a recording. |
 | `device_notice` | Notice inside `status_bar` when the microphone changed: information (primary tint) or warning (warning tint), with "Luk beskeden". | Device changes during a recording. |
 | `empty_transcript` | Centered 12 px dot (primary, or warning when paused), 14 px "Optager mødet …" / "Optagelsen er sat på pause" and a 12 px hint, all muted. Tauri says "Lytter efter tale …" (`VirtualizedTranscriptView.tsx:262-276`), but no transcript is made while recording, so the hint says it is made after "Stop og gem". | A recording without transcript lines. |
-| `transcript_line` | Timestamp (14 px muted) and 16 px text at line height 1.65; the newest line while recording sits on `secondary`; unsure words are underlined in the muted color with a tooltip (solid, since gpui has no dotted underline like Tauri's). | Transcript lines on Home. |
+| `transcript_line` | Timestamp (14 px muted) and 16 px text at line height 1.65; the newest line while recording sits on `secondary`; unsure lines get Tauri's dotted underline in the muted color (painted by `dotted_text`, since gpui's decoration is only solid or wavy) and a tooltip. | Transcript lines on Home. |
+| `dotted_text` | Text with a 1 px dotted underline (1 px dots, 1 px apart) painted under every wrapped line from the text layout. | Low-confidence transcript lines. |
 | `recording_pill` | The floating pill (card, border, `rounded-full`, `shadow::md`): "Start optagelse" ("Gør klar…" with a spinner while core starts), or Pause/Genoptag, "Stop og gem" and `level_bars`, or a spinner with "Gemmer optagelsen…"; the overlays "Gemmer mødet…" and "Gør transskriptionen færdig…" replace it. `start_error` hangs under it. The buttons call the recorder. | Home only. |
 | `level_bars` | Three 4 px bars (microphone, both, system audio) whose height follows core's measured peaks on a −50 to 0 dB scale, falling over a few 200 ms ticks (Tauri draws random heights); 4 px `warning` dots at 60 % when paused. They never animate on their own, so reduced motion needs no special case. | The recording pill. |
 | `start_error` | Destructive alert under the pill (448 px): title, the lines of the Tauri message and "Luk besked". Role alert. | Why a recording could not start. |
@@ -211,7 +212,7 @@ The first column is the exact identifier in the code; the script checks it.
 | `disclosure` | A 44 px row with a chevron and a medium title that shows or hides a section (`aria-expanded`). | GPUI-only extras inside the About dialog. |
 | `build_details` | Build metadata, update status and "Kopiér diagnoseoplysninger" with its status line. | Only in `AboutView`. |
 | `legal` | "Privatlivspolitik", "Kontakt" and the four bundled documents in 200 px scroll boxes (arrow keys, Page Up/Down, Home/End). | Only in `AboutView`. |
-| `database_error_page` | Full-window error: icon, summary, advice, technical error, paths, "Åbn logmappen" and "Prøv igen". | The model for any blocking error: say what happened, what to do, where the log is. |
+| `database_error_page` | Full-window error as `DatabaseGate.tsx`: icon (kept), summary as the 24 px title, advice, label/value rows (Databasefil, Kopi af databasen when core took one, Logfil, Teknisk fejl in mono), "Åbn logmappen", "Åbn backup" and "Prøv igen" (the last is not in Tauri). | The model for any blocking error: say what happened, what to do, where the log is. |
 | `MeasurementView` | The view behind the Måling page (inputs, model choices, result). | |
 | `ProposalReview` | The view behind `proposals`: pending proposals for one meeting with their diffs and buttons. | |
 | `card` | One proposal in `ProposalReview`: title, diff and the buttons for its state. | Only inside `ProposalReview`. |
@@ -280,6 +281,17 @@ Change a row when the experience changes.
   [Concepts](#concepts)); do not coin synonyms in code or text.
 - Tokens, not values: if you need a number twice, it belongs in `theme.rs`.
 - Audio sources are "microphone" and "system", never "input"/"output".
+
+## Deliberate deviations from the Tauri app
+
+What the final states sweep (`docs/design-paritet.md` 2.9) left different on purpose:
+
+- Database error page: keeps the warning icon and a "Prøv igen" button (the Tauri page can only be left by restarting).
+- Notifications: gpui-component draws them with the popover token, Tauri's Sonner uses `card`. The two are equal in light mode and differ by one lightness point in dark mode. Position (top right), border and close button match.
+- Headings have no `letter-spacing: -0.01em` (gpui has no letter spacing).
+- The dotted underline is painted dot by dot, so it can differ from the browser's by a sub-pixel.
+- The Måling status line has no role or label while it has no message, so a screen reader finds nothing empty.
+- The settings tabs read the saved models with backoff (5, 10, 20, 40 s) and then stop; a restart tries again.
 
 ## Reference screenshots
 

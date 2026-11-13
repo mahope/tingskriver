@@ -757,7 +757,9 @@ fn transcript_line(index: usize, line: &Line, streaming: bool, cx: &App) -> AnyE
 /// X positions of the dots of a dotted underline from `start` to `end`:
 /// one pixel dots, one pixel apart (`decoration-dotted` at 1 px).
 fn dot_positions(start: f32, end: f32) -> impl Iterator<Item = f32> {
-    let count = ((end - start) / f32::from(size::DOT_PERIOD)).floor().max(0.0) as usize;
+    let count = ((end - start) / f32::from(size::DOT_PERIOD))
+        .floor()
+        .max(0.0) as usize;
     (0..count).map(move |n| start + n as f32 * f32::from(size::DOT_PERIOD))
 }
 

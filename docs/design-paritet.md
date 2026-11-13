@@ -179,7 +179,7 @@ Tauri route `/` (`app/page.tsx:184-251`, `_components/TranscriptPanel.tsx`, `Rec
 - Errors: destructive alert under the pill with title and bullet text, close X (`RecordingControls.tsx:416-431`); titles "Mikrofonen er ikke tilgængelig", "Systemlyd er ikke tilgængelig", "Tilladelse mangler", "Optagelsen kunne ikke starte" (`:120-136`).
 - Recovery dialog "Gendan afbrudte møder" (two panes: list + excerpt) (`TranscriptRecovery/TranscriptRecovery.tsx:121-177`).
 
-GPUI: Home (`pages/home.rs`, `recording.rs`) records through `tingskriver_host::Recorder` and has the idle hero, recording, paused, device-notice, saving and error states, with the "Gendan afbrudte møder" dialog (`recovery.rs`) and the sleep/logoff notice for meetings that ended early (see `docs/gpui.md`, manual tests 10 to 13). What remains differing is listed under Deliberate deviations in `docs/design.md`.
+GPUI: Home (`pages/home.rs`, `recording.rs`) records through `tingskriver_host::Recorder` and has the idle hero, recording, paused, device-notice, saving and error states, with the "Gendan afbrudte møder" dialog (`recovery.rs`) and the sleep/logoff notice for meetings that ended early (see `docs/gpui.md`, manual tests 10 to 13). What stays different on purpose is listed under "Deliberate deviations" in `docs/design.md`.
 
 ### 2.3 Meeting list (Restyle -> move)
 
@@ -240,7 +240,7 @@ GPUI: none.
 |---|---|---|---|
 | No meetings | sidebar text (2.1.4) + home idle hero | card with inbox icon on Møder page | follow Tauri |
 | Loading meetings | "Søger…" / list appears; settings "Henter indstillinger…" | `loading` spinner + text (`loading-light.png`) | keep spinner, restyle to 14 muted, place in sidebar list slot |
-| Database cannot open | `DatabaseGate.tsx:102-140`: left-aligned block max 576, 24 regular serif title, explanation, `dl` (Databasefil, Kopi af databasen, Logfil, Teknisk fejl with mono block), buttons "Åbn logmappen" + retry | `database_error_page` (`ui.rs:1506-1572`, `database-error-light.png`): 32 px red triangle, 26 semibold title, lines, mono block, primary + outline buttons | close already; change title to 24 regular, width 576, paths as dt/dd pairs, add the "Kopi af databasen" row if core reports it; keep the icon (allowed improvement) |
+| Database cannot open | `DatabaseGate.tsx:102-140`: left-aligned block max 576, 24 regular serif title, explanation, `dl` (Databasefil, Kopi af databasen, Logfil, Teknisk fejl with mono block), buttons "Åbn logmappen" + retry | `database_error_page` (`ui.rs:1506-1572`, `database-error-light.png`): 32 px red triangle, 26 semibold title, lines, mono block, primary + outline buttons | done (job 10): 24 regular title, width 576, label/value rows, "Kopi af databasen" and "Åbn backup" when core reports a backup; the icon and "Prøv igen" are kept (allowed improvements) |
 | Summary failed | `bg-destructive/10` box (2.4) | - | with 2.4 |
 | Recording errors | alert under pill (2.2) | - | with 2.2 |
 | Toasts | Sonner top-right, card bg, border, close button (`layout.tsx:296-303`) | gpui-component notifications | style notifications with card/border tokens in Job 1 |

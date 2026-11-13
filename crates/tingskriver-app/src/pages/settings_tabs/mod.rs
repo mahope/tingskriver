@@ -238,9 +238,7 @@ mod retry_tests {
 
     #[test]
     fn the_wait_doubles_and_then_stops() {
-        let waits: Vec<_> = (1..=SAVED_MODELS_MAX_FAILURES)
-            .map(retry_delay)
-            .collect();
+        let waits: Vec<_> = (1..=SAVED_MODELS_MAX_FAILURES).map(retry_delay).collect();
         assert_eq!(
             waits,
             vec![

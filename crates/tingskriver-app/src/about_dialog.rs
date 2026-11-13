@@ -402,44 +402,45 @@ impl AboutView {
                                     .h(size::DOCUMENT_HEIGHT)
                                     .flex_shrink_0()
                                     .child(
-                                div()
-                                    .id(("about-document", index))
-                                    .size_full()
-                                    .p(space::MD)
-                                    .rounded(theme::RADIUS)
-                                    .border_1()
-                                    .border_color(palette.border)
-                                    .bg(palette.card)
-                                    .text_size(typography::XS)
-                                    .text_color(palette.card_foreground)
-                                    .overflow_y_scroll()
-                                    .track_scroll(&self.document_scroll[index])
-                                    .on_key_down(cx.listener(
-                                        move |this, event: &gpui::KeyDownEvent, _, cx| {
-                                            let scroll = &this.document_scroll[index];
-                                            let mut offset = scroll.offset();
-                                            let page = scroll.bounds().size.height;
-                                            let line = size::DOCUMENT_SCROLL_LINE;
-                                            offset.y = match event.keystroke.key.as_str() {
-                                                "down" => offset.y - line,
-                                                "up" => offset.y + line,
-                                                "pagedown" => offset.y - page,
-                                                "pageup" => offset.y + page,
-                                                "home" => px(0.),
-                                                "end" => -scroll.max_offset().y,
-                                                _ => return,
-                                            };
-                                            offset.y =
-                                                offset.y.clamp(-scroll.max_offset().y, px(0.));
-                                            scroll.set_offset(offset);
-                                            cx.stop_propagation();
-                                            cx.notify();
-                                        },
-                                    ))
-                                    .tab_index(0)
-                                    .role(Role::Document)
-                                    .aria_label(*title)
-                                    .child(text.to_string()),
+                                        div()
+                                            .id(("about-document", index))
+                                            .size_full()
+                                            .p(space::MD)
+                                            .rounded(theme::RADIUS)
+                                            .border_1()
+                                            .border_color(palette.border)
+                                            .bg(palette.card)
+                                            .text_size(typography::XS)
+                                            .text_color(palette.card_foreground)
+                                            .overflow_y_scroll()
+                                            .track_scroll(&self.document_scroll[index])
+                                            .on_key_down(cx.listener(
+                                                move |this, event: &gpui::KeyDownEvent, _, cx| {
+                                                    let scroll = &this.document_scroll[index];
+                                                    let mut offset = scroll.offset();
+                                                    let page = scroll.bounds().size.height;
+                                                    let line = size::DOCUMENT_SCROLL_LINE;
+                                                    offset.y = match event.keystroke.key.as_str() {
+                                                        "down" => offset.y - line,
+                                                        "up" => offset.y + line,
+                                                        "pagedown" => offset.y - page,
+                                                        "pageup" => offset.y + page,
+                                                        "home" => px(0.),
+                                                        "end" => -scroll.max_offset().y,
+                                                        _ => return,
+                                                    };
+                                                    offset.y = offset
+                                                        .y
+                                                        .clamp(-scroll.max_offset().y, px(0.));
+                                                    scroll.set_offset(offset);
+                                                    cx.stop_propagation();
+                                                    cx.notify();
+                                                },
+                                            ))
+                                            .tab_index(0)
+                                            .role(Role::Document)
+                                            .aria_label(*title)
+                                            .child(text.to_string()),
                                     )
                                     .child(Scrollbar::vertical(&self.document_scroll[index])),
                             )

@@ -206,6 +206,17 @@ the same time; both use the same database with the same migrations.
     "Gendan afbrudte møder" opens with the recording (length, "Lyd findes").
     "Gendan" saves the meeting, transcribes it and opens it. Repeat and use
     "Slet" (it asks first): the dialog closes and the card on Home is gone.
+14. **States sweep.** (a) Open Om Tingskriver and scroll the two license
+    boxes and the dialog with a long list open: a scrollbar shows in each.
+    (b) With an update downloaded, start `tingskriver-app --hidden`, then open
+    the window from the tray: "Opdatering klar" shows. (c) Open Indstillinger
+    > Generelt, leave to Home and come back: the delivery list refreshes at
+    once and then every 15 s; Task Manager shows no steady CPU use while it
+    is hidden. (d) Rename `meeting_minutes.sqlite` to something unreadable
+    and start: the page shows summary, advice, Databasefil, Logfil and
+    Teknisk fejl, and "Åbn logmappen" opens the folder. (e) Open Måling from
+    Indstillinger > Transskription > "Sammenlign modeller på din egen
+    stemme".
 
 Write the results here:
 
@@ -224,6 +235,7 @@ Write the results here:
 | 11. Tray start and stop | | |
 | 12. Microphone errors | | |
 | 13. Gendan afbrudte møder | | |
+| 14. States sweep | | |
 
 **No-go** if text input (2, 3) or the UIA tree (4) fails without a fix in
 gpui-component's next release; the rest are fixable in the app.

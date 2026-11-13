@@ -445,7 +445,9 @@ pub(crate) fn show_update_ready(version: String, cx: &mut App) {
 }
 
 fn remember_update_ready(version: String) {
-    *UPDATE_READY_PENDING.lock().unwrap_or_else(|e| e.into_inner()) = Some(version);
+    *UPDATE_READY_PENDING
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = Some(version);
 }
 
 fn take_pending_update_ready() -> Option<String> {
