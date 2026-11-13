@@ -495,6 +495,12 @@ impl Recorder {
         self.state.borrow().clone()
     }
 
+    /// The host core runs against, for the settings that belong to the
+    /// recording (devices, start reminder).
+    pub fn host(&self) -> HostHandle {
+        self.app.clone()
+    }
+
     /// The messages for the user. There is one reader: the first caller.
     pub fn take_notices(&self) -> Option<mpsc::UnboundedReceiver<Notice>> {
         self.notice_receiver.lock().ok()?.take()

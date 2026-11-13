@@ -360,3 +360,204 @@ pub async fn get_audio_backend_info() -> Result<Vec<BackendInfo>, String> {
         }])
     }
 }
+
+/// The settings file the Tauri app keeps the start reminder in
+/// (`tauri-plugin-store`, `preferences.json` in the app data folder).
+pub const PREFERENCES_STORE: &str = "preferences.json";
+/// Key of the start reminder in [`PREFERENCES_STORE`].
+pub const RECORDING_NOTICE_KEY: &str = "show_recording_notification";
+
+/// Whether the reminder to tell the participants is shown when a recording
+/// starts. On unless the user switched it off (Tauri: `?? true`), also when
+/// the saved value is not a switch.
+pub fn recording_notice_enabled(app: &HostHandle) -> Result<bool, String> {
+    let stored = app.read_setting(PREFERENCES_STORE, RECORDING_NOTICE_KEY)?;
+    Ok(stored.and_then(|v| v.as_bool()).unwrap_or(true))
+}
+
+/// Save the start reminder where the Tauri app keeps it.
+pub fn set_recording_notice_enabled(app: &HostHandle, enabled: bool) -> Result<(), String> {
+    app.write_setting(
+        PREFERENCES_STORE,
+        RECORDING_NOTICE_KEY,
+        serde_json::Value::Bool(enabled),
+    )
+}
+
+#[cfg(test)]
+mod notice_tests {
+    use super::*;
+    use crate::database::manager::DatabaseManager;
+    use crate::host::{AppHost, ListenerId};
+    use std::sync::{Arc, Mutex};
+
+    fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(future)
+    }
+
+    #[derive(Default)]
+    struct Store {
+        values: Mutex<std::collections::HashMap<(String, String), serde_json::Value>>,
+        /// Every write fails, like a full or read-only disk.
+        fail_writes: std::sync::atomic::AtomicBool,
+    }
+
+    impl AppHost for Store {
+        fn emit_json(&self, _: &str, _: &str) -> Result<(), String> {
+            Ok(())
+        }
+        fn database(&self) -> Option<DatabaseManager> {
+            None
+        }
+        fn app_data_dir(&self) -> Result<PathBuf, String> {
+            Err("none".into())
+        }
+        fn listen(&self, _: &str, _: Box<dyn Fn(&str) + Send + Sync>) -> ListenerId {
+            0
+        }
+        fn unlisten(&self, _: ListenerId) {}
+        fn read_setting(
+            &self,
+            store: &str,
+            key: &str,
+        ) -> Result<Option<serde_json::Value>, String> {
+            Ok(self
+                .values
+                .lock()
+                .unwrap()
+                .get(&(store.into(), key.into()))
+                .cloned())
+        }
+        fn write_setting(
+            &self,
+            store: &str,
+            key: &str,
+            value: serde_json::Value,
+        ) -> Result<(), String> {
+            if self.fail_writes.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err("disk full".to_string());
+            }
+            self.values
+                .lock()
+                .unwrap()
+                .insert((store.into(), key.into()), value);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn the_reminder_is_on_until_switched_off() {
+        let host: HostHandle = Arc::new(Store::default());
+        assert!(recording_notice_enabled(&host).unwrap());
+        set_recording_notice_enabled(&host, false).unwrap();
+        assert!(!recording_notice_enabled(&host).unwrap());
+        set_recording_notice_enabled(&host, true).unwrap();
+        assert!(recording_notice_enabled(&host).unwrap());
+    }
+
+    #[test]
+    fn the_reminder_uses_the_tauri_store_and_key() {
+        let store = Arc::new(Store::default());
+        let host: HostHandle = store.clone();
+        set_recording_notice_enabled(&host, false).unwrap();
+        let saved = store.values.lock().unwrap();
+        assert_eq!(
+            saved.get(&(
+                "preferences.json".into(),
+                "show_recording_notification".into()
+            )),
+            Some(&serde_json::Value::Bool(false))
+        );
+    }
+
+    #[test]
+    fn a_saved_value_that_is_not_a_switch_means_on() {
+        let store = Arc::new(Store::default());
+        let host: HostHandle = store.clone();
+        store
+            .write_setting(
+                PREFERENCES_STORE,
+                RECORDING_NOTICE_KEY,
+                serde_json::json!("nej"),
+            )
+            .unwrap();
+        assert!(recording_notice_enabled(&host).unwrap());
+    }
+
+    #[test]
+    fn a_failed_save_of_the_reminder_is_an_error_and_keeps_the_old_value() {
+        let store = Arc::new(Store::default());
+        let host: HostHandle = store.clone();
+        set_recording_notice_enabled(&host, false).unwrap();
+        store
+            .fail_writes
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(
+            set_recording_notice_enabled(&host, true),
+            Err("disk full".to_string())
+        );
+        assert!(!recording_notice_enabled(&host).unwrap());
+    }
+
+    #[test]
+    fn chosen_devices_are_what_the_next_recording_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(Store::default());
+        let host: HostHandle = store.clone();
+        let chosen = RecordingPreferences {
+            save_folder: dir.path().join("recordings"),
+            preferred_mic_device: Some("Headset (input)".to_string()),
+            preferred_system_device: Some("Højttalere (output)".to_string()),
+            ..RecordingPreferences::default()
+        };
+        block_on(save_recording_preferences(&host, &chosen)).unwrap();
+        // `start_recording` reads them with this function.
+        let loaded = block_on(load_recording_preferences(&host)).unwrap();
+        assert_eq!(
+            loaded.preferred_mic_device.as_deref(),
+            Some("Headset (input)")
+        );
+        assert_eq!(
+            loaded.preferred_system_device.as_deref(),
+            Some("Højttalere (output)")
+        );
+        assert_eq!(loaded.save_folder, chosen.save_folder);
+        // The Tauri app reads the same store and key.
+        assert!(store
+            .values
+            .lock()
+            .unwrap()
+            .contains_key(&("recording_preferences.json".into(), "preferences".into())));
+        // Back to the defaults.
+        let reset = RecordingPreferences {
+            preferred_mic_device: None,
+            preferred_system_device: None,
+            ..loaded
+        };
+        block_on(save_recording_preferences(&host, &reset)).unwrap();
+        let loaded = block_on(load_recording_preferences(&host)).unwrap();
+        assert_eq!(loaded.preferred_mic_device, None);
+        assert_eq!(loaded.preferred_system_device, None);
+    }
+
+    #[test]
+    fn a_failed_save_of_the_devices_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(Store::default());
+        let host: HostHandle = store.clone();
+        store
+            .fail_writes
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let chosen = RecordingPreferences {
+            save_folder: dir.path().to_path_buf(),
+            preferred_mic_device: Some("Headset (input)".to_string()),
+            ..RecordingPreferences::default()
+        };
+        assert!(block_on(save_recording_preferences(&host, &chosen)).is_err());
+        let loaded = block_on(load_recording_preferences(&host)).unwrap();
+        assert_eq!(loaded.preferred_mic_device, None);
+    }
+}

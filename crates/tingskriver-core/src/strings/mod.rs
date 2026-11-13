@@ -130,7 +130,6 @@ catalogue! {
     SETTINGS_TAB_TRANSCRIPTION = "Transskription";
     SETTINGS_TAB_SUMMARY = "Opsummering";
     SETTINGS_TAB_BETA = "Beta";
-    SETTINGS_MOVES_LATER = "Kommer i en senere version.";
     APPEARANCE_HELP = "Vælg et lyst eller mørkt udseende, eller lad Tingskriver følge din computers indstilling.";
     APPEARANCE_SYSTEM = "Følg systemet";
     APPEARANCE_LIGHT = "Lyst";
@@ -308,7 +307,6 @@ catalogue! {
     LOADING_MEETINGS = "Indlæser møder …";
     NO_MEETINGS = "Ingen møder endnu";
     NO_MEETINGS_YET = "Ingen møder at vise endnu";
-    MEETINGS_LATER = "Mødelisten kommer hertil i en senere version. Indtil da finder du dine møder i den nuværende app.";
     // The Diktering page, copied from the Tauri app
     // (frontend/src/components/dictation/DictationHistory.tsx).
     DICTATION_SETTINGS = "Indstillinger";
@@ -352,7 +350,6 @@ catalogue! {
     DB_READY = "klar";
     DB_FAILED = "kunne ikke åbnes";
     NO_LOG = "ingen logfil (kun konsollen)";
-    SETTINGS_LATER = "Indstillingerne flytter hertil i en senere version. Her kan du se, hvordan appen kører.";
     VOICEPRINT_TITLE = "Stemmeaftryk";
     VOICEPRINT_STATUS_OFF = "Slået fra. Tingskriver husker ingen stemmer.";
     // Beta tab (Job 6): there is no switch to turn voiceprints on yet.
@@ -443,7 +440,7 @@ catalogue! {
     PROMPT_IGNORE = "Ignorér";
     PROMPT_REMINDER_TITLE = "Mødet starter om {value}";
     PROMPT_REMINDER_RECORD = "Optag mødet";
-    PROMPT_REMINDER_LATER = "Ikke nu";
+    PROMPT_REMINDER_NOT_NOW = "Ikke nu";
     PROMPT_END_TITLE = "Er mødet slut?";
     PROMPT_END_BODY = "Optagelsen stopper om {value}, hvis du ikke svarer.";
     PROMPT_END_STOP = "Stop optagelsen";

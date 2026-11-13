@@ -94,7 +94,7 @@ swallow every question.
   `PromptEvent::Held`. This PR therefore references #200 rather than closing it.
 - Meeting detection (#33/#59) and calendar start (#201) are on other branches.
   They create the `PromptWindow` and map the outcomes.
-- The GPUI settings page is a stub on `main` (`SETTINGS_LATER`), and there is
+- The GPUI settings page was a stub when this was written, and there was
   no about page or changelog there. The prompt behaviour (and `keys_hint()`)
   has to be listed on them when they exist.
 - No screenshot infrastructure (#49) is on `main`. The pill has a PNG renderer;

@@ -71,6 +71,7 @@ pub mod meeting_language;
 pub mod meeting_list;
 pub mod model_download;
 pub mod notes;
+pub mod notification_settings;
 pub mod ollama;
 pub mod onboarding;
 pub mod openai;

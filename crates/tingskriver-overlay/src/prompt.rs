@@ -123,7 +123,7 @@ impl PromptRequest {
             body: None,
             buttons: vec![
                 button(PromptAction::Record, strings::PROMPT_REMINDER_RECORD),
-                button(PromptAction::Later, strings::PROMPT_REMINDER_LATER),
+                button(PromptAction::Later, strings::PROMPT_REMINDER_NOT_NOW),
             ],
             countdown: Some(Countdown {
                 total: Duration::from_secs(30),

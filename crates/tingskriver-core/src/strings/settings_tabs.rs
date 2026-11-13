@@ -20,9 +20,38 @@ catalogue! {
     RECORDING_MICROPHONE_DEFAULT = "Standardmikrofon";
     RECORDING_SYSTEM = "Systemlyd";
     RECORDING_SYSTEM_DEFAULT = "Standard for systemlyd";
-    // GPUI: why the reminder and the devices cannot be set here.
-    RECORDING_SETTINGS_LATER = "Påmindelsen og lydenhederne bruges, når du optager. Optagelse er endnu ikke flyttet til denne app, så vælg dem i den nuværende app.";
-    RECORDING_NOTICE_LATER = "Påmindelsen og lydenhederne bruges, når du optager. Optagelse er endnu ikke flyttet til denne app, så vælg dem i den nuværende app. Kontakten viser standardværdien, ikke din gemte indstilling.";
+    // DeviceSelection.tsx:225-365 (the device list and its messages).
+    RECORDING_DEVICES_LOCKED = "Enhedsvalget er låst, mens en optagelse kører. Tilslutter du en ny enhed undervejs, skifter Tingskriver ikke til den. Stop optagelsen for at ændre enhed.";
+    RECORDING_DEVICES_LOAD_FAILED = "Lydenhederne kunne ikke hentes. Tjek computerens lydindstillinger, og tryk på knappen for at hente listen igen.";
+    RECORDING_DEVICES_LOADING = "Henter lydenheder…";
+    RECORDING_DEVICES_REFRESH = "Hent listen over lydenheder igen";
+    RECORDING_DEVICES_REFRESH_TOOLTIP = "Hent listen igen";
+    RECORDING_NO_MICROPHONES = "Ingen mikrofoner fundet. Tilslut en mikrofon, og hent listen igen.";
+    RECORDING_NO_SYSTEM = "Ingen enheder til systemlyd fundet. Hent listen igen, eller tjek computerens lydindstillinger.";
+    RECORDING_INFO_MICROPHONE_LABEL = "Mikrofon:";
+    RECORDING_INFO_MICROPHONE = "optager din stemme og lyden omkring dig";
+    RECORDING_INFO_SYSTEM_LABEL = "Systemlyd:";
+    RECORDING_INFO_SYSTEM = "optager lyd fra computeren (musik, opkald osv.)";
+    // RecordingSettings.tsx:94-136 (the toasts).
+    RECORDING_SETTING_SAVED = "Indstillingen er gemt";
+    RECORDING_SETTING_SAVE_FAILED = "Indstillingen kunne ikke gemmes";
+    RECORDING_SETTING_SAVE_FAILED_HELP = "Prøv igen. Hvis det fortsætter, så genstart Tingskriver.";
+    RECORDING_DEVICES_SAVED = "Enhedsvalg gemt";
+    RECORDING_DEVICES_SAVE_FAILED = "Enhedsvalget kunne ikke gemmes";
+    RECORDING_DEVICES_DEFAULT_NAME = "Standard";
+    // GPUI: the saved settings could not be read (Tauri falls back to the
+    // default folder and keeps going).
+    RECORDING_SETTINGS_UNREADABLE = "Dine gemte indstillinger for optagelse kunne ikke læses. Mappen og enhederne vises som standard.";
+    // recordingNotification.tsx:24-50 (shown when a recording starts).
+    RECORDING_REMINDER_TITLE = "Optagelsen er startet";
+    RECORDING_REMINDER_TEXT = "Fortæl deltagerne, at mødet optages.";
+    RECORDING_REMINDER_DONT_SHOW = "Vis ikke dette igen";
+    RECORDING_REMINDER_ACK = "Deltagerne er informeret";
+    // notifications/types.rs:116-135 (Notifikationer om start og slut).
+    NOTIFY_APP = "Tingskriver";
+    NOTIFY_STARTED = "Optagelsen er startet. Husk at fortælle de andre i mødet, at du optager.";
+    NOTIFY_STOPPED = "Optagelsen er stoppet og gemt";
+    NOTIFICATIONS_SAVE_FAILED = "Indstillingen kunne ikke gemmes. Prøv igen.";
 
     // Transskription: TranscriptSettings.tsx:101-128.
     TRANSCRIPTION_TITLE = "Transskription";
@@ -110,6 +139,21 @@ pub fn transcription_engine(id: &str) -> &str {
     }
 }
 
+/// The toast after a device choice (`RecordingSettings.tsx:118-122`).
+pub fn recording_devices_saved(microphone: Option<&str>, system: Option<&str>) -> String {
+    format!(
+        "Mikrofon: {}, systemlyd: {}",
+        microphone.unwrap_or(RECORDING_DEVICES_DEFAULT_NAME),
+        system.unwrap_or(RECORDING_DEVICES_DEFAULT_NAME)
+    )
+}
+
+/// The toast text when the device choice could not be saved
+/// (`RecordingSettings.tsx:127`).
+pub fn recording_devices_save_failed(error: &str) -> String {
+    format!("Prøv igen. {error}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -124,6 +168,18 @@ mod tests {
         assert_eq!(
             transcription_model_current("large-v3"),
             "Valgt model: large-v3"
+        );
+    }
+
+    #[test]
+    fn the_device_toast_names_defaults_as_tauri_does() {
+        assert_eq!(
+            recording_devices_saved(None, None),
+            "Mikrofon: Standard, systemlyd: Standard"
+        );
+        assert_eq!(
+            recording_devices_saved(Some("Headset (input)"), Some("Højttalere (output)")),
+            "Mikrofon: Headset (input), systemlyd: Højttalere (output)"
         );
     }
 }

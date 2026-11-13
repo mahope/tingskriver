@@ -105,16 +105,43 @@ pub(crate) struct SettingsModel {
     pub(crate) crash_dumps: Option<bool>,
     pub(crate) crash_dumps_pending: bool,
     pub(crate) crash_dumps_failed: bool,
+    /// "Notifikationer om start og slut" (Generelt): the Tauri app's
+    /// `notifications.json`, read at startup.
+    pub(crate) notifications: bool,
+    pub(crate) notifications_pending: bool,
+    pub(crate) notifications_failed: bool,
+    /// The file could not be read (or has no place): the switch is locked.
+    pub(crate) notifications_unreadable: bool,
 }
 
 impl SettingsModel {
+    /// The state with the notification switch read (`Err`: locked).
+    fn with_notifications(read: Result<bool, String>) -> Self {
+        if let Err(error) = &read {
+            log::warn!("The notification settings could not be read: {error}");
+        }
+        SettingsModel {
+            notifications: read.clone().unwrap_or(false),
+            notifications_unreadable: read.is_err(),
+            ..Default::default()
+        }
+    }
+
     pub(crate) fn load() -> Self {
         SettingsModel {
             recordings_dir: Some(tingskriver_core::audio::get_default_recordings_folder()),
             crash_dumps: cfg!(windows).then(tingskriver_core::crash_dumps::enabled),
-            ..Default::default()
+            ..Self::with_notifications(notifications_enabled())
         }
     }
+}
+
+/// Whether the start and end of a recording are announced, in the file the
+/// Tauri app keeps (`tingskriver_core::notification_settings`).
+fn notifications_enabled() -> Result<bool, String> {
+    let path = tingskriver_core::notification_settings::settings_path()
+        .ok_or_else(|| "no settings folder".to_string())?;
+    tingskriver_core::notification_settings::recording_notifications_enabled(&path)
 }
 
 /// Read the saved Udseende choice before the first window opens, so the app
@@ -198,6 +225,8 @@ pub(crate) struct SettingsView {
     pub(crate) delivery: super::settings_delivery::DeliveryForm,
     /// The Diktering tab (`settings_tabs::dictation`).
     pub(crate) dictation: super::settings_tabs::dictation::DictationTab,
+    /// The Optagelser tab (`settings_tabs::recording`).
+    pub(crate) recording: super::settings_tabs::recording::RecordingTab,
     /// Where "Tilbage" goes: the last page shown before Indstillinger and
     /// the meeting open on it (`remember_return`).
     pub(crate) back: Option<(Page, Option<String>)>,
@@ -255,6 +284,7 @@ impl SettingsView {
             access,
             delivery: super::settings_delivery::DeliveryForm::new(window, cx),
             dictation: super::settings_tabs::dictation::DictationTab::new(window, cx),
+            recording: super::settings_tabs::recording::RecordingTab::new(window, cx),
             back: None,
             _subscriptions: subscriptions,
         }
@@ -267,6 +297,9 @@ impl SettingsView {
         self.tab = tab;
         if tab == SettingsTab::Dictation {
             self.dictation.shown();
+        }
+        if tab == SettingsTab::Recording {
+            self.recording.shown();
         }
         for (index, handle) in self.tab_focus.iter_mut().enumerate() {
             *handle = handle.clone().tab_stop(index == tab.index());
@@ -497,8 +530,8 @@ impl Shell {
                     .map(|e| alert("appearance-error", e, cx)),
             );
 
-        // GPUI does not record yet, so there is nothing to notify about: the
-        // switch is shown as in Tauri but disabled, with the reason.
+        let model = self.model.read(cx);
+        let switch_model = self.model.clone();
         let notifications = v_flex()
             .gap(space::SM)
             .child(switch_row(
@@ -506,12 +539,27 @@ impl Shell {
                 strings::NOTIFICATIONS_LABEL,
                 Some(strings::NOTIFICATIONS_HINT),
                 controls::switch("notifications-switch")
-                    .checked(false)
-                    .disabled(true)
-                    .accessibility_label(strings::NOTIFICATIONS_LABEL),
+                    .checked(model.settings.notifications)
+                    .disabled(
+                        model.settings.notifications_pending
+                            || model.settings.notifications_unreadable,
+                    )
+                    .accessibility_label(strings::NOTIFICATIONS_LABEL)
+                    .on_click(move |value, _, cx| {
+                        set_notifications(switch_model.clone(), *value, cx)
+                    }),
                 cx,
             ))
-            .child(muted(strings::SETTINGS_MOVES_LATER, cx));
+            .when(
+                model.settings.notifications_failed || model.settings.notifications_unreadable,
+                |this| {
+                    this.child(alert(
+                        "notifications-error",
+                        tingskriver_core::strings::settings_tabs::NOTIFICATIONS_SAVE_FAILED,
+                        cx,
+                    ))
+                },
+            );
 
         let delivery = self.delivery_settings(cx);
 
@@ -1231,6 +1279,37 @@ fn set_crash_dumps(model: Entity<AppModel>, enabled: bool, cx: &mut App) {
     .detach();
 }
 
+/// Save the notification switch in the Tauri app's file, then show what was
+/// saved (a failed save leaves the switch as it was).
+fn set_notifications(model: Entity<AppModel>, enabled: bool, cx: &mut App) {
+    let runtime = model.update(cx, |m, cx| {
+        m.settings.notifications_pending = true;
+        m.settings.notifications_failed = false;
+        cx.notify();
+        m.runtime.clone()
+    });
+    let task = runtime.spawn_blocking(move || {
+        let path = tingskriver_core::notification_settings::settings_path()
+            .ok_or_else(|| "no settings folder".to_string())?;
+        tingskriver_core::notification_settings::set_recording_notifications(&path, enabled)
+    });
+    cx.spawn(async move |cx| {
+        let result = task.await.unwrap_or_else(|error| Err(error.to_string()));
+        if let Err(error) = &result {
+            log::warn!("The notification settings could not be saved: {error}");
+        }
+        model.update(cx, |m, cx| {
+            m.settings.notifications_pending = false;
+            m.settings.notifications_failed = result.is_err();
+            if result.is_ok() {
+                m.settings.notifications = enabled;
+            }
+            cx.notify();
+        });
+    })
+    .detach();
+}
+
 fn save_access(model: Entity<AppModel>, access: Access, cx: &mut App) {
     let state = model.read(cx);
     let DbState::Ready(db) = &state.db else {
@@ -1406,5 +1485,15 @@ mod tests {
             assert_eq!(ACCESS[row.row].0, access);
         }
         assert_eq!(access_index(None), None);
+    }
+
+    #[test]
+    fn the_notification_switch_follows_the_file_and_locks_when_it_is_unreadable() {
+        let on = SettingsModel::with_notifications(Ok(true));
+        assert!(on.notifications && !on.notifications_unreadable);
+        let off = SettingsModel::with_notifications(Ok(false));
+        assert!(!off.notifications && !off.notifications_unreadable);
+        let damaged = SettingsModel::with_notifications(Err("not valid JSON".to_string()));
+        assert!(!damaged.notifications && damaged.notifications_unreadable);
     }
 }

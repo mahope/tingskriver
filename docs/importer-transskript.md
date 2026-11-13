@@ -23,4 +23,4 @@ Mødet og transskriptet bliver stående. Referatpanelet viser fejlen og knappen 
 - Parser: `crates/tingskriver-core/src/subtitle/parser.rs` (rene funktioner, syntetiske testfiler).
 - Import og database: `crates/tingskriver-core/src/subtitle/import.rs`, migrering `20261105090000_add_meeting_import_key.sql`.
 - Tauri-kommandoer: `frontend/src-tauri/src/audio/import.rs`; UI: `ImportDialogContext`, `Sidebar`, `TranscriptDropBridge`.
-- GPUI-appen: mødelisten findes endnu kun som pladsholder (`MEETINGS_LATER`). Strengene `IMPORT_TRANSCRIPT*`, `SUMMARY_REDO` og `NO_AUDIO_FOR_MEETING` i `strings` er klar til, når den kommer.
+- GPUI-appen: mødelisten findes (`meetings.rs`), men importen er endnu ikke flyttet hertil (`IMPORT_LATER`). Strengene `IMPORT_TRANSCRIPT*`, `SUMMARY_REDO` og `NO_AUDIO_FOR_MEETING` i `strings` er klar til, når importen kommer.

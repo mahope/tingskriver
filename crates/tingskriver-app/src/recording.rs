@@ -260,12 +260,26 @@ impl Shell {
         let Some(recorder) = self.recorder(cx) else {
             return;
         };
+        let recorder_host = recorder.host();
         let mut states = recorder.subscribe();
         self.home = HomeState::from_recorder(&states.borrow_and_update());
         cx.spawn(async move |shell, cx| {
             while states.changed().await.is_ok() {
                 let home = HomeState::from_recorder(&states.borrow_and_update());
                 let updated = shell.update(cx, |shell, cx| {
+                    let was_recording = shell.home.is_recording();
+                    let is_recording = home.is_recording();
+                    if was_recording != is_recording {
+                        // The start reminder and the start/stop notifications.
+                        let model = shell.model.read(cx);
+                        crate::pages::settings_tabs::recording::recording_changed(
+                            was_recording,
+                            is_recording,
+                            model.runtime.clone(),
+                            recorder_host.clone(),
+                            &mut cx.to_async(),
+                        );
+                    }
                     if shell.home.becomes_free(&home) {
                         // Scans while recording or saving list the meeting's
                         // raw tracks as interrupted (finalize deletes them

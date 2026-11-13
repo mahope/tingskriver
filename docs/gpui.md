@@ -231,6 +231,25 @@ the same time; both use the same database with the same migrations.
     switched (about 4 s), the remote voices are in the saved system track,
     and the log has `[DEVICE_FOLLOW]` with a gap of at most 1000 ms
     ([enheder.md](enheder.md), test A).
+16. **Indstillinger for optagelse.** Indstillinger, Optagelser: the list
+    holds your microphones and outputs (the refresh button reads it again).
+    Choose a microphone and an output: the toast "Enhedsvalg gemt" names
+    them. Close and open the app: the choice is still there, and the next
+    recording uses it (status bar). Start a recording: the selects are
+    grey and the yellow note says the choice is locked; stop it and they
+    work again. Unplug the chosen microphone, press the refresh button:
+    the select goes back to "Standardmikrofon". Also open the Tauri app: it
+    shows the same choice. Start a recording with "Påmindelse ved
+    optagelsens start" on: a card says "Fortæl deltagerne, at mødet
+    optages." with "Vis ikke dette igen" and "Deltagerne er informeret";
+    tick the box and press the button: the switch in Optagelser is now off
+    and the next start shows no card. Switch it on again there. In
+    Generelt, switch "Notifikationer om start og slut" on: starting and
+    stopping a recording posts a Windows notification (and shows it in the
+    window). If no Windows notification appears, note it: the app
+    identifier `dk.mahoje.tingskriver` has to match the installed
+    shortcut.
+
 
 16. **Import.** Keep a short `.m4a` or `.mp3` (a few minutes), and a `.vtt` or
     `.srt` from Teams. (a) Click "Importér lyd" in the sidebar: the dialog
@@ -278,6 +297,7 @@ Write the results here:
 | 14. Move from the Tauri app | | |
 | 14. Sleep and logoff | | |
 | 15. Meeting program on another device | | |
+| 16. Indstillinger for optagelse | | |
 | 16. Importér lyd og transskript | | |
 
 **No-go** if text input (2, 3) or the UIA tree (4) fails without a fix in

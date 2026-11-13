@@ -192,6 +192,9 @@ pub fn run() {
         .with_assets(assets::Assets)
         .run(move |cx: &mut App| {
             gpui_component::init(cx);
+            // Windows needs the identity to post notifications (Generelt >
+            // Notifikationer om start og slut); it is Tauri's identifier.
+            cx.set_app_identity("dk.mahoje.tingskriver", "Tingskriver");
             assets::register_fonts(cx);
             theme::apply(theme::mode_for(cx.window_appearance()), cx);
             // Started hidden (tray, start with Windows), the app keeps
