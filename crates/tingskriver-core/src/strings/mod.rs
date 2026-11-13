@@ -561,8 +561,6 @@ catalogue! {
     DOC_COPY_SUMMARY = "Kopiér opsummeringen";
     DOC_SUMMARY_COPIED = "Opsummeringen er kopieret";
     DOC_NO_SUMMARY_TO_COPY = "Der er ingen opsummering at kopiere";
-    DOC_SUMMARY_LATER = "Opsummeringer laves og ændres endnu i den nuværende app.";
-    DOC_EDIT_LATER = "Referatet kan endnu ikke redigeres i denne app.";
     DOC_EMPTY_TITLE = "Ingen opsummering endnu";
     DOC_EMPTY_TEXT = "Lad AI lave en opsummering af mødets transskript med hovedpunkter, handlepunkter og beslutninger.";
     DOC_SUMMARY_RUNNING = "Skriver opsummeringen…";
@@ -585,7 +583,6 @@ catalogue! {
     DOC_OPEN_RECORDING = "Åbn mappen med optagelsen";
     DOC_NO_AUDIO = "Mødet har ingen lyd, kun et importeret transskript.";
     DOC_IMPROVE = "Forbedr";
-    DOC_IMPROVE_LATER = "Ny transskription af optagelsen er endnu ikke flyttet til denne app.";
     DOC_TRANSCRIPT_EMPTY = "Ingen transskription";
     DOC_TRANSCRIPT_EMPTY_HELP = "Der blev ikke genkendt tale i denne optagelse.";
     DOC_NUMBERED = "{value}.";
@@ -747,6 +744,8 @@ pub fn measure_result_line(wer: &str, errors: &str, latency: &str, price: &str) 
 
 /// The Diktering settings tab (docs/design-paritet.md, Job 7).
 pub mod dictation_settings;
+/// Making, stopping and editing a summary; the Opsummering tab's fields.
+pub mod meeting_summary;
 /// Onboarding (docs/design-paritet.md, Job 9).
 pub mod onboarding;
 /// The settings tabs Optagelser, Transskription, Opsummering and Beta

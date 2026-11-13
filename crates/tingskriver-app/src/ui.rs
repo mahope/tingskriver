@@ -63,6 +63,9 @@ pub struct AppModel {
     /// The meeting recorder of the host; `None` without one (no data folder,
     /// screenshot fixtures).
     pub recorder: Option<std::sync::Arc<tingskriver_host::Recorder>>,
+    /// What core needs from the app (summaries, retranscription); `None`
+    /// without a data folder and in screenshot fixtures.
+    pub host: Option<tingskriver_core::host::HostHandle>,
 }
 
 /// The MCP server program ships next to the app executable.
@@ -114,6 +117,7 @@ impl AppModel {
             languages: Default::default(),
             language_error: None,
             recorder: None,
+            host: None,
         }
         .with_languages_loaded()
     }
@@ -476,6 +480,23 @@ pub(crate) fn meetings_changed(cx: &mut App) {
     }
 }
 
+/// Open Indstillinger > Opsummering (the "AI-model" button of a meeting).
+/// "Tilbage" returns to the meeting that was open.
+pub(crate) fn open_summary_settings(cx: &mut App) {
+    let shell = cx
+        .global::<Globals>()
+        .shell
+        .as_ref()
+        .and_then(|s| s.upgrade());
+    if let Some(shell) = shell {
+        shell.update(cx, |shell, cx| {
+            shell.page = Page::Settings;
+            shell.settings.select_tab(SettingsTab::Summary);
+            cx.notify();
+        });
+    }
+}
+
 /// Open a meeting in the main window, if it is open (a finished recording).
 pub(crate) fn open_meeting(id: String, cx: &mut App) {
     let shell = cx
@@ -709,6 +730,7 @@ impl Shell {
                 ..Default::default()
             },
             recorder: None,
+            host: None,
         });
         crate::onboarding::set_fixture(
             match variant {
@@ -752,10 +774,11 @@ impl Shell {
             }
             shell.home = crate::recording::fixture(variant);
             if let FixtureVariant::Meeting(kind) = variant {
-                shell.open_fixture_meeting(kind, cx);
+                shell.open_fixture_meeting(kind, window, cx);
             }
             shell.dictation = crate::pages::dictation::DictationPage::fixture(variant);
             crate::pages::settings_tabs::dictation::DictationTab::freeze_fixture(shell, window, cx);
+            crate::pages::settings_tabs::summary::SummaryTab::freeze_fixture(shell, window, cx);
             if variant == FixtureVariant::RecoveryDialog {
                 let model = shell.model.clone();
                 window.defer(cx, move |window, cx| {

@@ -69,6 +69,7 @@ pub mod measurement;
 pub mod meeting_document;
 pub mod meeting_language;
 pub mod meeting_list;
+pub mod meeting_summary;
 pub mod model_download;
 pub mod notes;
 pub mod ollama;

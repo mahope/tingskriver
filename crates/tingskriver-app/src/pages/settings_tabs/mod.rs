@@ -137,9 +137,10 @@ pub(super) fn tinted_box(
         .into_any_element()
 }
 
-/// The saved transcription engine and summary model, read once from the
-/// database so the read-only selects show what is set (part of
-/// `SettingsModel`). Only provider and model are kept, never API keys.
+/// The saved transcription engine, read once from the database so the
+/// read-only select shows what is set (part of `SettingsModel`). Only
+/// provider and model are kept, never API keys. The summary model is read
+/// and saved by the Opsummering tab itself.
 #[derive(Debug, Default, Clone)]
 pub(crate) struct SavedModels {
     /// Set by the first draw that asks; a `Cell` because drawing only
@@ -147,13 +148,9 @@ pub(crate) struct SavedModels {
     requested: std::cell::Cell<bool>,
     /// (engine id, model), e.g. ("parakeet", "parakeet-tdt-0.6b-v3").
     pub(crate) transcription: Option<(String, String)>,
-    /// (provider id, model).
-    pub(crate) summary: Option<(String, String)>,
     /// The last read of the transcription setting failed, so the tab must
     /// not show the default as if it were the saved choice.
     pub(crate) transcription_unreadable: bool,
-    /// The same for the summary model.
-    pub(crate) summary_unreadable: bool,
 }
 
 /// How long to wait before reading the saved models again after a failed
@@ -178,27 +175,19 @@ pub(super) fn load_saved_models(shell: &Shell, cx: &mut Context<Shell>) {
             .await
             .map(|s| s.map(|s| (s.provider, s.model)))
             .map_err(|error| log::warn!("Could not read the transcription setting: {error}"));
-        let summary = SettingsRepository::get_model_config(&pool)
-            .await
-            .map(|s| s.map(|s| (s.provider, s.model)))
-            .map_err(|error| log::warn!("Could not read the summary model: {error}"));
-        (transcription, summary)
+        transcription
     });
     cx.spawn(async move |_, cx| {
-        let (transcription, summary) = match task.await {
+        let transcription = match task.await {
             Ok(read) => read,
-            Err(_) => (Err(()), Err(())),
+            Err(_) => Err(()),
         };
-        let failed = transcription.is_err() || summary.is_err();
+        let failed = transcription.is_err();
         model.update(cx, |m, cx| {
             let saved = &mut m.settings.saved_models;
             saved.transcription_unreadable = transcription.is_err();
-            saved.summary_unreadable = summary.is_err();
             if let Ok(value) = transcription {
                 saved.transcription = value;
-            }
-            if let Ok(value) = summary {
-                saved.summary = value;
             }
             cx.notify();
         });

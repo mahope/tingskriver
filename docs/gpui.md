@@ -241,6 +241,21 @@ Write the results here:
 | 14. Sleep and logoff | | |
 | 15. Meeting program on another device | | |
 
+**Summaries, Forbedr and Opsummering (manual, needs a model).** Open
+Indstillinger > Opsummering. Pick Ollama (or another provider), pick a
+model, press Gem: "Indstillingerne for opsummering er gemt". Restart the app
+and check that provider and model are still chosen; the Tauri app shows the
+same choice. Turn Automatisk opsummering on, add two languages, pin one.
+Open a meeting with a transcript: "Lav opsummering" shows "Stop" and
+"Skriver opsummeringen…", and the summary appears when done. "Stop" while it
+runs gives "Opsummeringen er stoppet". With Ollama stopped, "Lav om" must
+give a red message and keep the old summary. "Rediger" opens the text,
+change a word, "Gem ændringer": "Ændringerne er gemt", and the Tauri app
+shows the change. "Forbedr" asks for the language, shows progress and ends
+with "Gentranskriberingen er færdig. N afsnit er oprettet." Record a short
+meeting with the auto switch on: the summary starts when the transcript is
+ready.
+
 **No-go** if text input (2, 3) or the UIA tree (4) fails without a fix in
 gpui-component's next release; the rest are fixable in the app.
 
