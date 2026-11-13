@@ -201,6 +201,9 @@ pub(crate) struct SettingsView {
     /// Where "Tilbage" goes: the last page shown before Indstillinger and
     /// the meeting open on it (`remember_return`).
     pub(crate) back: Option<(Page, Option<String>)>,
+    /// A tab was opened since the saved models were last asked for; gives a
+    /// read that ran out of retries a new chance.
+    pub(crate) tab_opened: std::cell::Cell<bool>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -256,6 +259,7 @@ impl SettingsView {
             delivery: super::settings_delivery::DeliveryForm::new(window, cx),
             dictation: super::settings_tabs::dictation::DictationTab::new(window, cx),
             back: None,
+            tab_opened: std::cell::Cell::new(false),
             _subscriptions: subscriptions,
         }
     }
@@ -265,6 +269,7 @@ impl SettingsView {
     /// Show a tab and make it the one tab stop of the tab list.
     pub(crate) fn select_tab(&mut self, tab: SettingsTab) {
         self.tab = tab;
+        self.tab_opened.set(true);
         if tab == SettingsTab::Dictation {
             self.dictation.shown();
         }

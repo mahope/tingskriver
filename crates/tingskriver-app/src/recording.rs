@@ -1023,6 +1023,8 @@ pub(crate) fn fixture(variant: crate::ui::FixtureVariant) -> HomeState {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn the_dotted_underline_has_a_dot_every_two_pixels() {
         let dots: Vec<f32> = super::dot_positions(10.0, 17.0).collect();
@@ -1030,8 +1032,6 @@ mod tests {
         assert_eq!(super::dot_positions(5.0, 5.0).count(), 0);
         assert_eq!(super::dot_positions(9.0, 4.0).count(), 0);
     }
-
-    use super::*;
 
     #[test]
     fn clock_matches_tauri() {

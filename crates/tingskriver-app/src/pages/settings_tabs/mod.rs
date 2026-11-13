@@ -155,15 +155,26 @@ pub(crate) struct SavedModels {
     /// The same for the summary model.
     pub(crate) summary_unreadable: bool,
     /// Failed reads in a row; reset by a read that works.
-    failures: u32,
+    failures: std::cell::Cell<u32>,
 }
 
 /// First wait before reading the saved models again after a failed read (for
 /// example a database that is locked during startup). It doubles each time.
 const SAVED_MODELS_RETRY: std::time::Duration = std::time::Duration::from_secs(5);
 /// After this many failed reads in a row the tab stops asking by itself; the
-/// line "could not be read" stays until the app is restarted.
+/// line "could not be read" stays until the tab is opened again.
 const SAVED_MODELS_MAX_FAILURES: u32 = 5;
+
+impl SavedModels {
+    /// Opening a tab again is a new chance after the retries ran out: the
+    /// next draw reads the settings once more.
+    pub(crate) fn retry_if_given_up(&self) {
+        if self.failures.get() >= SAVED_MODELS_MAX_FAILURES {
+            self.failures.set(0);
+            self.requested.set(false);
+        }
+    }
+}
 
 /// How long to wait after the `failures`-th failed read in a row, or `None`
 /// when the cap is reached: 5 s, 10 s, 20 s, 40 s, then give up.
@@ -182,6 +193,9 @@ pub(super) fn load_saved_models(shell: &Shell, cx: &mut Context<Shell>) {
     let DbState::Ready(db) = &state.db else {
         return;
     };
+    if shell.settings.tab_opened.replace(false) {
+        state.settings.saved_models.retry_if_given_up();
+    }
     if state.settings.saved_models.requested.replace(true) {
         return;
     }
@@ -207,8 +221,9 @@ pub(super) fn load_saved_models(shell: &Shell, cx: &mut Context<Shell>) {
         let mut delay = None;
         model.update(cx, |m, cx| {
             let saved = &mut m.settings.saved_models;
-            saved.failures = if failed { saved.failures + 1 } else { 0 };
-            delay = retry_delay(saved.failures);
+            let failures = if failed { saved.failures.get() + 1 } else { 0 };
+            saved.failures.set(failures);
+            delay = retry_delay(failures);
             saved.transcription_unreadable = transcription.is_err();
             saved.summary_unreadable = summary.is_err();
             if let Ok(value) = transcription {
@@ -235,6 +250,18 @@ pub(super) fn load_saved_models(shell: &Shell, cx: &mut Context<Shell>) {
 mod retry_tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn opening_a_tab_again_gives_a_new_chance_only_after_giving_up() {
+        let saved = SavedModels::default();
+        saved.requested.set(true);
+        saved.failures.set(2);
+        saved.retry_if_given_up();
+        assert!(saved.requested.get() && saved.failures.get() == 2);
+        saved.failures.set(SAVED_MODELS_MAX_FAILURES);
+        saved.retry_if_given_up();
+        assert!(!saved.requested.get() && saved.failures.get() == 0);
+    }
 
     #[test]
     fn the_wait_doubles_and_then_stops() {

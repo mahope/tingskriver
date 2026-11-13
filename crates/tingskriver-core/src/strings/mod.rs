@@ -392,7 +392,6 @@ catalogue! {
     MODEL_HASH_MISMATCH = "Modelfilen {value} har ikke den forventede kontrolsum (SHA-256) og er slettet. Prøv at hente den igen.";
     MODEL_INSTALLED_MISMATCH = "Modelfilen {value} har ikke den forventede kontrolsum (SHA-256) og indlæses ikke. Slet modellen, og hent den igen.";
     MODEL_DOWNLOAD_FAILED = "Modelfilen {value} kunne ikke hentes. Tjek forbindelsen, og prøv igen.";
-    DATABASE_FAILED = "Tingskriver kunne ikke åbne dine møder";
     DATABASE_FILE_LABEL = "Databasefil";
     DATABASE_BACKUP_LABEL = "Kopi af databasen";
     DATABASE_LOG_LABEL = "Logfil";
