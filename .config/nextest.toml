@@ -1,0 +1,46 @@
+# cargo-nextest settings for the workspace (docs/testing.md).
+#
+# nextest runs every test in its own process, and runs tests from several
+# binaries at once. A `static Mutex` in a test file therefore no longer keeps
+# two tests apart. Tests that share something outside the process (the
+# interactive desktop, a window class, a global shortcut, a fixed path or
+# port) go in a test group with `max-threads = 1`, grouped by the shared
+# resource, so everything else stays parallel. Doctests do not run under
+# nextest; CI runs them with `cargo test --doc`.
+
+nextest-version = { required = "0.9.100" }
+
+[test-groups]
+# The interactive Windows desktop: the host registers system-wide shortcuts,
+# a tray icon and a low-level keyboard hook, and the overlay's window tests
+# look up the prompt window by class name (FindWindowW) and check that the
+# foreground window does not change. Two of these at once can see each
+# other's windows or focus changes. On Linux the host tests share nothing
+# outside the process, but they are cheap (a few seconds), so the package
+# stays serial on every platform, as CI ran it before (--test-threads=1).
+desktop-session = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = 'package(tingskriver-host)'
+test-group = 'desktop-session'
+
+# Windows-only overlay tests that create real windows: the two integration
+# test binaries and the prompt module's own unit tests (create_host opens a
+# window of the same class the integration tests search for).
+[[profile.default.overrides]]
+platform = 'cfg(windows)'
+filter = 'package(tingskriver-overlay) & (binary(windows_prompt) | binary(windows_overlay) | test(/^windows_prompt::/))'
+test-group = 'desktop-session'
+
+# The longest test (about a minute) starts first, so it does not end up as a
+# tail on its own after everything else has finished.
+[[profile.default.overrides]]
+filter = 'package(tingskriver-core) & binary(database_upgrade) & test(=every_older_schema_version_upgrades_without_losing_rows)'
+priority = 100
+
+# CI: run every test even after a failure (like cargo test --no-fail-fast) and
+# print the output of failed tests once, at the end, where the annotation script
+# (.github/scripts/annotate-errors.sh) picks up the last lines.
+[profile.ci]
+fail-fast = false
+failure-output = "final"

@@ -191,6 +191,14 @@ jobs:
         shell: bash
         run: .github/scripts/annotate-errors.sh cargo build --workspace --locked
 
+      # Runs the test binaries and their tests in parallel, each test in its own
+      # process. Tests that share the desktop run one at a time
+      # (.config/nextest.toml, docs/testing.md).
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
       # ort loads ONNX Runtime dynamically on Windows. The app points it at the
       # bundled DLL at startup; tests use the DLL the Tauri build script
       # downloaded instead of an older one from System32. The runner has no
@@ -201,20 +209,32 @@ jobs:
         env:
           ORT_DYLIB_PATH: ${{ github.workspace }}\frontend\src-tauri\binaries\onnxruntime\onnxruntime.dll
         run: >-
-          .github/scripts/annotate-errors.sh cargo test --workspace --locked --no-fail-fast
+          .github/scripts/annotate-errors.sh cargo nextest run --workspace --locked
+          --profile ci --no-output-indent
           --exclude tingskriver-host --
           --skip audio::playback_monitor::tests::test_get_output_device
 
-      # The host's tests register system-wide shortcuts and a tray icon; one at
-      # a time, with output, so a crash shows which test was running.
-      - name: Test tingskriver-host
+      # nextest does not run doctests.
+      - name: Doctests workspace
         if: ${{ !cancelled() }}
         shell: bash
         env:
           ORT_DYLIB_PATH: ${{ github.workspace }}\frontend\src-tauri\binaries\onnxruntime\onnxruntime.dll
         run: >-
-          .github/scripts/annotate-errors.sh cargo test --locked -p tingskriver-host --
-          --test-threads=1 --nocapture
+          .github/scripts/annotate-errors.sh cargo test --doc --workspace --locked --no-fail-fast
+          --exclude tingskriver-host
+
+      # The host's tests register system-wide shortcuts and a tray icon; one at
+      # a time, with output, so a crash shows which test was running
+      # (--no-capture runs one test at a time and passes the output through).
+      - name: Test tingskriver-host
+        if: ${{ !cancelled() }}
+        shell: bash
+        env:
+          ORT_DYLIB_PATH: ${{ github.workspace }}\frontend\src-tauri\binaries\onnxruntime\onnxruntime.dll
+        run: |
+          .github/scripts/annotate-errors.sh cargo nextest run --locked -p tingskriver-host --profile ci --no-capture
+          .github/scripts/annotate-errors.sh cargo test --doc --locked -p tingskriver-host
 
   linux-core:
     name: Core tests and crate boundaries (Linux)
@@ -263,11 +283,21 @@ jobs:
       - name: GPUI design document
         run: python3 scripts/check-design-doc.py
 
+      # Parallel test binaries and tests, each test in its own process
+      # (.config/nextest.toml, docs/testing.md). nextest does not run
+      # doctests, so they run with cargo test --doc.
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
       - name: Test tingskriver-core
-        run: .github/scripts/annotate-errors.sh cargo test --locked -p tingskriver-core
+        run: |
+          .github/scripts/annotate-errors.sh cargo nextest run --locked -p tingskriver-core --profile ci --no-output-indent
+          .github/scripts/annotate-errors.sh cargo test --doc --locked -p tingskriver-core
 
       - name: Test MCP stdio server
-        run: .github/scripts/annotate-errors.sh cargo test --locked -p tingskriver-mcp
+        run: .github/scripts/annotate-errors.sh cargo nextest run --locked -p tingskriver-mcp --profile ci --no-output-indent
       - name: Verify core I/O lint rejects blocking calls
         run: bash scripts/check-async-io-guard.sh
 
@@ -280,7 +310,7 @@ jobs:
         run: /usr/bin/python3 scripts/tests/test_delivery_schema.py
 
       - name: Test recording soak verifier
-        run: .github/scripts/annotate-errors.sh cargo test --locked -p tingskriver-core --example recording_soak
+        run: .github/scripts/annotate-errors.sh cargo nextest run --locked -p tingskriver-core --example recording_soak --profile ci --no-output-indent
 
       # Pilot tones through the production capture and writer; leakage between
       # the microphone and system tracks fails the job (#189, docs/recording-soak.md).
@@ -297,11 +327,15 @@ jobs:
 
       # The overlay's state model, layout and renderer are platform independent.
       - name: Test tingskriver-overlay
-        run: .github/scripts/annotate-errors.sh cargo test --locked -p tingskriver-overlay
+        run: |
+          .github/scripts/annotate-errors.sh cargo nextest run --locked -p tingskriver-overlay --profile ci --no-output-indent
+          .github/scripts/annotate-errors.sh cargo test --doc --locked -p tingskriver-overlay
 
       # The host's bridge, tray status, icon, shortcut registry and watchers.
       - name: Test tingskriver-host
-        run: .github/scripts/annotate-errors.sh cargo test --locked -p tingskriver-host
+        run: |
+          .github/scripts/annotate-errors.sh cargo nextest run --locked -p tingskriver-host --profile ci --no-output-indent
+          .github/scripts/annotate-errors.sh cargo test --doc --locked -p tingskriver-host
 
   # Release build of the GPUI app for the manual Windows tests in
   # docs/gpui.md (text input, IME, UI Automation, DPI, start time, no GPU).
