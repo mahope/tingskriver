@@ -28,6 +28,15 @@ cargo test -p tingskriver-core dictation
 cargo test --workspace                  # everything; the Tauri crate needs the Linux Tauri libraries
 ```
 
+CI runs the tests with [cargo-nextest](https://nexte.st), which runs test binaries and tests in parallel, each test in its own process, and runs the doctests separately (nextest skips them):
+
+```bash
+cargo nextest run --workspace --locked --exclude tingskriver-app --exclude tingskriver --exclude llama-helper
+cargo test --doc --workspace --locked --exclude tingskriver-app --exclude tingskriver --exclude llama-helper
+```
+
+Tests that share something outside the process (the desktop, a fixed path, a port) run one at a time through a test group in `.config/nextest.toml`; see [testing.md](testing.md#cargo-nextest).
+
 The database startup suite checks loading a three-hour meeting among 50 meetings
 without a wall-clock deadline. Run its separate 200 ms performance check in
 release mode on an idle runner:

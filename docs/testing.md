@@ -35,7 +35,9 @@ Hver ny test navngiver den fejl, den dækker, i testnavnet eller i en kommentar 
 Fra repoets rod, på Linux eller Windows:
 
 ```bash
-cargo test --locked -p tingskriver-core                 # platformuafhængig kerne
+cargo nextest run --locked -p tingskriver-core          # som CI: parallelt, hver test i sin egen proces
+cargo test --doc --locked -p tingskriver-core           # doctests (nextest kører dem ikke)
+cargo test --locked -p tingskriver-core                 # platformuafhængig kerne, uden nextest
 cargo test --locked -p tingskriver-core <filter>        # målrettet, fx: dictation
 cargo test --locked -p tingskriver-core --test device_decisions
 cargo test --locked -p tingskriver-core --example recording_soak   # kun verifier-testen, ikke soaken
@@ -47,6 +49,17 @@ bash scripts/check-async-io-guard.sh
 python3 scripts/check-gpui-lock.py
 cargo deny --locked check licenses bans
 ```
+
+### cargo-nextest
+
+CI kører testene med [cargo-nextest](https://nexte.st) (`cargo install --locked cargo-nextest`, eller `taiki-e/install-action` som i CI) og doctests bagefter med `cargo test --doc`, fordi nextest ikke kører dem. Hele workspacet som Linux-jobbet:
+
+```bash
+cargo nextest run --workspace --locked --exclude tingskriver-app --exclude tingskriver --exclude llama-helper
+cargo test --doc --workspace --locked --exclude tingskriver-app --exclude tingskriver --exclude llama-helper
+```
+
+nextest kører hver test i sin egen proces og flere testbinærer på én gang. En `static Mutex` i en testfil holder derfor ikke længere to tests fra hinanden. Rører en test noget uden for processen, som en fast sti, en port, en miljøvariabel, et vindue, en global genvej eller bakkeikonet, så læg den i en testgruppe med `max-threads = 1` i [.config/nextest.toml](../.config/nextest.toml) (grupperet efter ressourcen), i stedet for at slå den fra. I dag kører `tingskriver-host` og overlayets vinduestests på Windows i gruppen `desktop-session`. `--profile ci` kører alle tests færdige efter en fejl og gentager fejlenes output til sidst. `-- --skip <navn>` virker som under `cargo test`.
 
 Windows-kode (`#[cfg(windows)]`) kan typetjekkes fra Linux:
 
@@ -60,7 +73,7 @@ Tests, der kræver en Windows-session (hook, overlay, indsætning i et rigtigt v
 
 ## Hvad CI gør
 
-[.github/workflows/rust.yml](../.github/workflows/rust.yml) kører ved hvert push: Windows-workspacet (bygning og tests), kernens tests og crate-grænserne på Linux, `cargo xwin check`, `cargo deny` og en Windows-build af appen. Læs status for din gren med `scripts/ci-status.sh <gren>`. Særlige workflows (`recording-soak.yml`, `wer.yml`, `search-benchmark.yml`, `ydeevne-port.yml`) måler optagelse, ordfejl, søgning og ydeevne.
+[.github/workflows/rust.yml](../.github/workflows/rust.yml) kører ved hvert push (testene med `cargo nextest run --profile ci` plus `cargo test --doc`): Windows-workspacet (bygning og tests), kernens tests og crate-grænserne på Linux, `cargo xwin check`, `cargo deny` og en Windows-build af appen. Læs status for din gren med `scripts/ci-status.sh <gren>`. Særlige workflows (`recording-soak.yml`, `wer.yml`, `search-benchmark.yml`, `ydeevne-port.yml`) måler optagelse, ordfejl, søgning og ydeevne.
 
 ## Det, der ikke kan automatiseres
 
