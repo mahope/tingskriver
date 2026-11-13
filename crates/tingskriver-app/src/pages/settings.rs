@@ -198,6 +198,8 @@ pub(crate) struct SettingsView {
     pub(crate) delivery: super::settings_delivery::DeliveryForm,
     /// The Diktering tab (`settings_tabs::dictation`).
     pub(crate) dictation: super::settings_tabs::dictation::DictationTab,
+    /// The Opsummering tab (`settings_tabs::summary`).
+    pub(crate) summary: super::settings_tabs::summary::SummaryTab,
     /// Where "Tilbage" goes: the last page shown before Indstillinger and
     /// the meeting open on it (`remember_return`).
     pub(crate) back: Option<(Page, Option<String>)>,
@@ -255,6 +257,7 @@ impl SettingsView {
             access,
             delivery: super::settings_delivery::DeliveryForm::new(window, cx),
             dictation: super::settings_tabs::dictation::DictationTab::new(window, cx),
+            summary: super::settings_tabs::summary::SummaryTab::new(window, cx),
             back: None,
             _subscriptions: subscriptions,
         }
@@ -267,6 +270,9 @@ impl SettingsView {
         self.tab = tab;
         if tab == SettingsTab::Dictation {
             self.dictation.shown();
+        }
+        if tab == SettingsTab::Summary {
+            self.summary.shown();
         }
         for (index, handle) in self.tab_focus.iter_mut().enumerate() {
             *handle = handle.clone().tab_stop(index == tab.index());

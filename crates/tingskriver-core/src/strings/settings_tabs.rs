@@ -67,10 +67,6 @@ catalogue! {
     SUMMARY_PROVIDER_OLLAMA = "Ollama";
     SUMMARY_PROVIDER_OPENAI = "OpenAI";
     SUMMARY_PROVIDER_OPENROUTER = "OpenRouter";
-    // GPUI: why these cannot be set here yet.
-    SUMMARY_AUTO_LATER = "Opsummeringen laves, når en optagelse stopper. Optagelse er endnu ikke flyttet til denne app. Kontakten viser standardværdien, ikke din gemte indstilling.";
-    SUMMARY_LANGUAGE_LATER = "Hurtigvalg af sprog kommer i en senere version. Indtil da følger referatet indstillingerne under Transskription > Sprog.";
-    SUMMARY_MODEL_LATER = "Valg af model er endnu ikke flyttet til denne app. Vælg modellen i den nuværende app.";
 
     // Beta: BetaSettings.tsx:23-68, types/betaFeatures.ts:35-42.
     BETA_BANNER_TITLE = "Betafunktioner";
