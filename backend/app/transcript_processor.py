@@ -3,7 +3,7 @@ from typing import List, Tuple, Literal
 from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.groq import GroqModel
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.providers.groq import GroqProvider
 from pydantic_ai.providers.anthropic import AnthropicProvider
@@ -119,7 +119,7 @@ class TranscriptProcessor:
                 # Use environment variable for Ollama host configuration
                 ollama_host = os.getenv('OLLAMA_HOST', 'http://localhost:11434')
                 ollama_base_url = f"{ollama_host}/v1"
-                ollama_model = OpenAIModel(
+                ollama_model = OpenAIChatModel(
                     model_name=model_name, provider=OpenAIProvider(base_url=ollama_base_url)
                 )
                 llm = ollama_model
@@ -139,7 +139,7 @@ class TranscriptProcessor:
             elif model == "openai":
                 api_key = await db.get_api_key("openai")
                 if not api_key: raise ValueError("OPENAI_API_KEY environment variable not set")
-                llm = OpenAIModel(model_name, provider=OpenAIProvider(api_key=api_key))
+                llm = OpenAIChatModel(model_name, provider=OpenAIProvider(api_key=api_key))
                 logger.info(f"Using OpenAI model: {model_name}")
             # --- END OPENAI SUPPORT ---
             else:
@@ -149,8 +149,8 @@ class TranscriptProcessor:
             # Initialize the agent with the selected LLM
             agent = Agent(
                 llm,
-                result_type=SummaryResponse,
-                result_retries=2,
+                output_type=SummaryResponse,
+                retries={"output": 2},
             )
             logger.info("Pydantic-AI Agent initialized.")
 
@@ -170,7 +170,7 @@ class TranscriptProcessor:
                 try:
                     # Run the agent to get the structured summary for the chunk
                     if model != "ollama":
-                        summary_result = await agent.run(
+                        run_result = await agent.run(
                             f"""Given the following meeting transcript chunk, extract the relevant information according to the required JSON structure. If a specific section (like Critical Deadlines) has no relevant information in this chunk, return an empty list for its 'blocks'. Ensure the output is only the JSON data.
 
                             IMPORTANT: Block types must be one of: 'text', 'bullet', 'heading1', 'heading2'
@@ -195,6 +195,7 @@ class TranscriptProcessor:
                         Make sure the output is only the JSON data.
                         """,
                     )
+                        summary_result = run_result.output
                     else:
                         logger.info(f"Using Ollama model: {model_name} and chunk size: {chunk_size} with overlap: {overlap}")
                         response = await self.chat_ollama_model(model_name, chunk, custom_prompt)
@@ -209,16 +210,12 @@ class TranscriptProcessor:
                         logger.info(f"Summary result for chunk {i+1}: {summary_result}")
                         logger.info(f"Summary result type for chunk {i+1}: {type(summary_result)}")
 
-                    if hasattr(summary_result, 'data') and isinstance(summary_result.data, SummaryResponse):
-                         final_summary_pydantic = summary_result.data
-                    elif isinstance(summary_result, SummaryResponse):
-                         final_summary_pydantic = summary_result
-                    else:
-                         logger.error(f"Unexpected result type from agent for chunk {i+1}: {type(summary_result)}")
-                         continue # Skip this chunk
+                    if not isinstance(summary_result, SummaryResponse):
+                        logger.error(f"Unexpected result type from agent for chunk {i+1}: {type(summary_result)}")
+                        continue
 
                     # Convert the Pydantic model to a JSON string
-                    chunk_summary_json = final_summary_pydantic.model_dump_json()
+                    chunk_summary_json = summary_result.model_dump_json()
                     all_json_data.append(chunk_summary_json)
                     logger.info(f"Successfully generated summary for chunk {i+1}.")
 

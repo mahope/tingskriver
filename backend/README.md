@@ -29,3 +29,6 @@ deployments, security assessments of the supported app, or contributor setup.
 The old FastAPI service, Docker compose flow, standalone whisper-server flow,
 and related scripts are unsupported. The old unauthenticated FastAPI/CORS
 behavior must not be treated as a supported production API.
+
+The archived service's dependency set requires Python 3.11 or newer. It uses
+the Pydantic AI provider extras for Anthropic, Groq, and OpenAI.
