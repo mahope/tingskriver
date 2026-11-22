@@ -18,6 +18,17 @@ Frozen installation keeps the lockfile and installed dependency set aligned. Whe
 - **Windows packages:** Distribution builds use Vulkan-enabled Whisper and require an AVX2-capable x64 CPU. AVX-512 is not required.
 - **CUDA:** NVIDIA CUDA support requires a compatible source build and CUDA toolchain; the standard Windows installer does not select it automatically.
 
+### FFmpeg fallback on Linux and macOS
+
+If Tingskriver cannot find a local FFmpeg installation, it can download a
+fallback binary. Linux x86-64 and ARM64 now download from
+[BtbN on GitHub](https://github.com/BtbN/FFmpeg-Builds/releases). Intel Macs
+now download from [ffmpeg.martin-riedl.de](https://ffmpeg.martin-riedl.de/).
+On networks with an outbound allowlist, allow access to the relevant hosts or
+install FFmpeg on `PATH` before launching Tingskriver. The Linux downloads from
+`github.com` are redirected to `release-assets.githubusercontent.com`, so both
+hosts must be allowed there.
+
 ## Workspace, tests and CI for agents
 
 The repository is a Cargo workspace (see [arkitektur.md](arkitektur.md)): `crates/tingskriver-core` holds the logic, `crates/tingskriver-app` the GPUI app, `crates/tingskriver-overlay` the Windows overlay, `crates/tingskriver-host` the hook, shortcut and tray host and `frontend/src-tauri` the current Tauri app.

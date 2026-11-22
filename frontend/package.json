@@ -49,19 +49,19 @@
         "@remirror/extension-bold": "^3.0.1",
         "@remirror/extension-italic": "^3.0.1",
         "@remirror/extension-list": "^3.0.1",
-        "@remirror/extension-markdown": "^3.0.1",
+        "@remirror/extension-markdown": "^3.0.3",
         "@remirror/extension-mention": "^3.0.1",
         "@remirror/extension-underline": "^3.0.1",
         "@remirror/pm": "^3.0.0",
         "@remirror/react": "^3.0.1",
         "@tanstack/react-virtual": "^3.13.13",
-        "@tauri-apps/api": "^2.6.0",
+        "@tauri-apps/api": "^2.12.5",
         "@tauri-apps/plugin-fs": "^2.4.0",
         "@tauri-apps/plugin-notification": "~2.3.1",
         "@tauri-apps/plugin-os": "^2.3.2",
         "@tauri-apps/plugin-process": "^2.3.0",
         "@tauri-apps/plugin-store": "^2.4.0",
-        "@tauri-apps/plugin-updater": "^2.3.0",
+        "@tauri-apps/plugin-updater": "^2.14.1",
         "@tiptap/pm": "^2.10.4",
         "@tiptap/react": "^2.10.4",
         "@tiptap/starter-kit": "^2.10.4",
@@ -83,13 +83,18 @@
         "sonner": "^2.0.7",
         "tailwind-merge": "^3.3.1",
         "tailwindcss-animate": "^1.0.7",
-        "zod": "^3.25.71"
+        "zod": "^4.6.7"
+    },
+    "// pnpm.overrides": {
+        "prosemirror-view": "GHSA-c8x8-7fp4-3x9w",
+        "next@15>postcss": "GHSA-6g55-p6wh-862q, GHSA-r28c-9q8g-f849"
     },
     "pnpm": {
         "overrides": {
             "prosemirror-model": "1.25.3",
             "prosemirror-state": "1.4.3",
-            "prosemirror-view": "1.41.3",
+            "prosemirror-view": "1.42.9",
+            "next@15>postcss": "8.5.33",
             "prosemirror-transform": "1.10.4",
             "prosemirror-tables": "1.8.1"
         }
@@ -106,7 +111,7 @@
         "@types/react-test-renderer": "19.3.1",
         "autoprefixer": "^10.0.1",
         "concurrently": "^8.2.2",
-        "postcss": "^8",
+        "postcss": "^8.5.33",
         "react-test-renderer": "19.3.1",
         "tailwindcss": "^3.4.1",
         "typescript": "^5.7.2",
