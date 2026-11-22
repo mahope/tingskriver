@@ -25,7 +25,9 @@ fallback binary. Linux x86-64 and ARM64 now download from
 [BtbN on GitHub](https://github.com/BtbN/FFmpeg-Builds/releases). Intel Macs
 now download from [ffmpeg.martin-riedl.de](https://ffmpeg.martin-riedl.de/).
 On networks with an outbound allowlist, allow access to the relevant hosts or
-install FFmpeg on `PATH` before launching Tingskriver.
+install FFmpeg on `PATH` before launching Tingskriver. The Linux downloads from
+`github.com` are redirected to `release-assets.githubusercontent.com`, so both
+hosts must be allowed there.
 
 ## Workspace, tests and CI for agents
 
