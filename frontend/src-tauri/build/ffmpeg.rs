@@ -224,7 +224,12 @@ fn extract_zip(
             Some(name) => extract_dir.join(name),
             None => {
                 // Skip entries with path traversal sequences (e.g., "../")
-                println!("cargo:warning=⚠️  Skipping suspicious ZIP entry: {}", file.name());
+                // zip 9: name() returns a Result because the stored name may not be valid UTF-8.
+                let entry_name = file
+                    .name()
+                    .map(|name| name.into_owned())
+                    .unwrap_or_else(|_| String::from("<unreadable name>"));
+                println!("cargo:warning=⚠️  Skipping suspicious ZIP entry: {}", entry_name);
                 continue;
             }
         };
