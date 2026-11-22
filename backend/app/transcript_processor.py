@@ -116,13 +116,6 @@ class TranscriptProcessor:
                 llm = AnthropicModel(model_name, provider=AnthropicProvider(api_key=api_key))
                 logger.info(f"Using Claude model: {model_name}")
             elif model == "ollama":
-                # Use environment variable for Ollama host configuration
-                ollama_host = os.getenv('OLLAMA_HOST', 'http://localhost:11434')
-                ollama_base_url = f"{ollama_host}/v1"
-                ollama_model = OpenAIChatModel(
-                    model_name=model_name, provider=OpenAIProvider(base_url=ollama_base_url)
-                )
-                llm = ollama_model
                 if model_name.lower().startswith("phi4") or model_name.lower().startswith("llama"):
                     chunk_size = 10000
                     overlap = 1000
@@ -146,13 +139,13 @@ class TranscriptProcessor:
                 logger.error(f"Unsupported model provider requested: {model}")
                 raise ValueError(f"Unsupported model provider: {model}")
 
-            # Initialize the agent with the selected LLM
-            agent = Agent(
-                llm,
-                output_type=SummaryResponse,
-                retries={"output": 2},
-            )
-            logger.info("Pydantic-AI Agent initialized.")
+            if model != "ollama":
+                agent = Agent(
+                    llm,
+                    output_type=SummaryResponse,
+                    retries={"output": 2},
+                )
+                logger.info("Pydantic-AI Agent initialized.")
 
             # Split transcript into chunks
             step = chunk_size - overlap

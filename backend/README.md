@@ -32,3 +32,13 @@ behavior must not be treated as a supported production API.
 
 The archived service's dependency set requires Python 3.11 or newer. It uses
 the Pydantic AI provider extras for Anthropic, Groq, and OpenAI.
+
+With the archived Python dependencies installed, run the transcript summary
+regression tests from the repository root:
+
+```sh
+PYTHONPATH=backend/app python -m unittest discover -s backend/tests
+```
+
+The tests use synthetic transcripts, a temporary SQLite database, and local
+model doubles, so they require no provider credentials or network access.
